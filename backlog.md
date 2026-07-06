@@ -10,7 +10,7 @@
 
 ## P1
 
-- GitHub Releases with GoReleaser.
+- Evaluate whether GoReleaser is worth adding after the first manual GitHub Actions release workflow.
 - Nexus binary publishing.
 - Shell completions.
 - Homebrew tap.

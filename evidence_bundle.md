@@ -1,5 +1,43 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-GITHUB-BINARY-BUILD-WORKFLOW`
+
+Timestamp UTC: `2026-07-06T22:12:56Z`
+
+### Scope
+
+Add a GitHub Actions workflow for building and packaging public binary artifacts for `github.com/ildarbinanas-design/env-vault`.
+
+No tag, release, or package publishing was performed during this step.
+
+### Objective
+
+Allow maintainers to build downloadable binaries from GitHub with either a manual workflow run or a version tag.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Builds Linux, macOS, and Windows archives, uploads workflow artifacts, and creates a GitHub Release on `v*` tags |
+| `README.md` | Documents manual and tag-based binary builds |
+| `backlog.md` | Moves GoReleaser to an optional follow-up after the simple workflow |
+| `evidence_bundle.md` | Records this build-workflow change |
+
+### References
+
+| Source | Use |
+|---|---|
+| GitHub Actions artifacts documentation | Confirmed artifact upload/download workflow pattern |
+| GitHub Actions `GITHUB_TOKEN` documentation | Confirmed workflow-scoped token usage for release creation |
+| GitHub Releases documentation | Confirmed release assets are the right public distribution surface |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Release workflow not yet exercised on a real tag | open | Create a `v*` tag after review and verify release assets before announcing | planned |
+| Manual artifacts expire | accepted | Artifacts use 14-day retention; tagged releases attach persistent release assets | repo_verified |
+
 ## Task ID: `ENV-VAULT-GITHUB-FIRST-PUBLICATION`
 
 Timestamp UTC: `2026-07-06T22:06:17Z`

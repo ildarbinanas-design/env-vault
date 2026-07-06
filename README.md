@@ -33,6 +33,15 @@ go build -o env-vault ./cmd/env-vault
 ./env-vault version
 ```
 
+## GitHub Builds
+
+Binary archives are built by the `build-binaries` GitHub Actions workflow.
+
+- Manual build: open **Actions** -> **build-binaries** -> **Run workflow**.
+- Release build: push a version tag such as `v0.1.0`; the workflow builds archives and attaches them to a GitHub Release.
+
+Supported targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+
 ## Basic Usage
 
 ```sh
