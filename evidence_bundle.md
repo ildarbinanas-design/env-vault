@@ -1,5 +1,56 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-V0.0.1-FIRST-RELEASE`
+
+Timestamp UTC: `2026-07-06T22:40:17Z`
+
+### Scope
+
+Prepare and publish the first public release tag `v0.0.1` for `github.com/ildarbinanas-design/env-vault`.
+
+### Objective
+
+Ship the local MVP as a GitHub Release with downloadable binaries, after applying the open Dependabot security update and verifying the release build path.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `go.mod` and `go.sum` | Merged Dependabot PR #1, updating indirect `github.com/dvsekhvalnov/jose2go` from `v1.5.0` to `v1.7.0` |
+| `internal/cli/cli.go` | Changed the CLI version to a build-time variable |
+| `internal/cli/dry_run_test.go` | Added coverage proving `env-vault version` uses the build-time version |
+| `.github/workflows/build-binaries.yml` | Injects `github.ref_name` into release binaries through `-ldflags -X` |
+| `README.md` | Documents `v0.0.1` as the first release tag example |
+| `evidence_bundle.md` | Records this release preparation and verification run |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| GitHub connector read PR #1 metadata and changed files | passed; PR changed only `go.mod` and `go.sum` | connector_observed |
+| GitHub connector read PR #1 patch | passed; only indirect `jose2go` version and sums changed | connector_observed |
+| GitHub connector read PR #1 workflow run | passed; `ci` completed successfully for PR head | connector_observed |
+| GitHub connector squash-merge PR #1 | passed; merged as `00d11c2726949a65f00416c449ce6e1851a07456` | connector_observed |
+| `git pull --ff-only origin main` | passed; local `main` fast-forwarded to `00d11c2726949a65f00416c449ce6e1851a07456` | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `go test -race ./...` | passed | cli_observed |
+| `scripts/smoke.sh` | passed; no generated secret leaked to captured outputs or evidence | cli_observed |
+| `go mod tidy -diff` | passed; no diff required | cli_observed |
+| `go mod verify` | passed after the new dependency was present in the module cache | cli_observed |
+| `git diff --check` | passed | cli_observed |
+| Provider-token scan for old module path and provider wording | passed; no matches | cli_observed |
+| Policy scan for `secret get` and `--value` | passed; only policy/documentation prohibitions remain, no command implementation | cli_observed |
+| Local build with `-X .../internal/cli.Version=v0.0.1` plus `env-vault --json version` | passed; output reported `v0.0.1` | cli_observed |
+| Local release matrix build for linux amd64/arm64, darwin amd64/arm64, and windows amd64 | passed; Go emitted sandbox stat-cache warnings only | cli_observed |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| GitHub Release workflow still needs to run on the actual tag | open | Push `v0.0.1`, verify `build-binaries`, artifacts, and release page before announcing | planned |
+| macOS sandbox prevented Go stat-cache writes during local cross-builds | accepted | Builds exited successfully; warning affects cache metadata only, not produced binaries | cli_observed |
+
 ## Task ID: `ENV-VAULT-GITHUB-BINARY-BUILD-WORKFLOW`
 
 Timestamp UTC: `2026-07-06T22:12:56Z`

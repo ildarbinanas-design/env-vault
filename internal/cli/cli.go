@@ -20,7 +20,7 @@ import (
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore/teststore"
 )
 
-const Version = "0.1.0-local-mvp"
+var Version = "dev"
 
 type App struct {
 	stdin      io.Reader

@@ -49,12 +49,13 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          VERSION: ${{ github.ref_name }}
         run: |
           set -eu
           mkdir -p "dist/env-vault-${GOOS}-${GOARCH}"
           go build \
             -trimpath \
-            -ldflags="-s -w" \
+            -ldflags="-s -w -X github.com/ildarbinanas-design/env-vault/internal/cli.Version=${VERSION}" \
             -o "dist/env-vault-${GOOS}-${GOARCH}/env-vault${{ matrix.ext }}" \
             ./cmd/env-vault
           cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/env-vault-${GOOS}-${GOARCH}/"

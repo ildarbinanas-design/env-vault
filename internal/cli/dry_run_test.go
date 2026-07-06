@@ -14,6 +14,21 @@ import (
 	"github.com/ildarbinanas-design/env-vault/internal/testutil"
 )
 
+func TestVersionCommandUsesBuildVersion(t *testing.T) {
+	oldVersion := Version
+	Version = "v-test"
+	t.Cleanup(func() { Version = oldVersion })
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "version"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"version":"v-test"`) {
+		t.Fatalf("stdout does not contain build version: %s", stdout.String())
+	}
+}
+
 func TestSecretSetDryRunDoesNotStore(t *testing.T) {
 	storePath := setupTestBackend(t)
 	secretValue := testutil.EphemeralValue(t)
