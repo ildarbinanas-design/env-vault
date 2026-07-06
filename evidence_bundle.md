@@ -47,12 +47,15 @@ Ship the local MVP as a GitHub Release with downloadable binaries, after applyin
 | GitHub connector release-job log read | passed; root cause was `gh release create` running outside a git checkout without `--repo` | connector_observed |
 | Context7 query for GitHub CLI manual | passed; `gh release create --repo` is the documented way to select a repository explicitly | doc_verified |
 | Workflow release command update | passed; uses `--repo "github.com/${GITHUB_REPOSITORY}"` and `--verify-tag` | repo_verified |
+| Updated `v0.0.1` tag run on `b9dd8826b3dca3a0f638df39797cb13d1eb10aa5` | passed; `ci` and `build-binaries` completed successfully | api_observed |
+| GitHub Release API read for `v0.0.1` | passed; release exists at `https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.0.1` with 10 assets | api_observed |
+| Public release asset download check | passed; `env-vault-darwin-arm64.tar.gz` checksum verified and binary reported `v0.0.1` | cli_observed |
 
 ### Risks
 
 | Risk | Status | Mitigation | Claim status |
 |---|---|---|---|
-| GitHub Release workflow still needs to run on the actual tag | open | Push `v0.0.1`, verify `build-binaries`, artifacts, and release page before announcing | planned |
+| GitHub Release workflow still needs to run on the actual tag | closed | Updated `v0.0.1` tag run completed successfully and release assets were verified | api_observed |
 | macOS sandbox prevented Go stat-cache writes during local cross-builds | accepted | Builds exited successfully; warning affects cache metadata only, not produced binaries | cli_observed |
 | First `build-binaries` run for `v0.0.1` is failed in Actions history | accepted | Binary jobs succeeded; fix the release job, move the not-yet-released tag to the fixed commit, and verify the new run | api_observed |
 
