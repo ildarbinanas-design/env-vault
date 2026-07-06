@@ -1,0 +1,23 @@
+# Go build outputs
+bin/
+dist/
+coverage.out
+*.test
+
+# Local editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local secret-bearing material must never be committed
+.env
+.env.*
+.env-vault.yaml
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Temporary files
+tmp/
+*.log
