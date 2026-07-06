@@ -1,5 +1,57 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-GITHUB-FIRST-PUBLICATION`
+
+Timestamp UTC: `2026-07-06T22:06:17Z`
+
+### Scope
+
+First public GitHub publication for `/Users/ildarzaripov/env-vault`.
+
+Target repository: `https://github.com/ildarbinanas-design/env-vault`
+
+### Objective
+
+Create the public GitHub repository, publish the prepared `main` branch over SSH, and enable baseline repository security settings without storing the one-time GitHub token.
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Read one-time GitHub token from macOS clipboard | used only in memory; token not printed or stored | cli_observed |
+| GitHub API authenticated user check | passed; authenticated as repository owner | cli_observed |
+| GitHub API create repository | passed; public repository created | cli_observed |
+| GitHub API update repository metadata | passed | cli_observed |
+| GitHub API enable vulnerability alerts | passed | cli_observed |
+| GitHub API enable automated security fixes | passed | cli_observed |
+| GitHub API set repository topics | passed | cli_observed |
+| GitHub API enable private vulnerability reporting | passed | cli_observed |
+| `git remote add origin git@github.com:ildarbinanas-design/env-vault.git` | passed | cli_observed |
+| `git push -u origin main` | passed; `main` published | cli_observed |
+| GitHub API protect main branch | passed | cli_observed |
+| Clipboard cleanup | passed | cli_observed |
+| `git status --short --branch` | passed; local `main` tracks `origin/main` | cli_observed |
+| `git remote -v` | passed; SSH remote configured | cli_observed |
+| `git ls-remote --heads origin` | passed; remote `main` at `9dbfe1319fcd112a858fc8c6e77aa7361c958a3e` | cli_observed |
+| GitHub connector repo read | passed; repo is public, default branch `main`, connector has admin permission | connector_observed |
+
+### Security Notes
+
+| Check | Result | Claim status |
+|---|---|---|
+| Token in command line | not used | cli_observed |
+| Token in git remote URL | not used; SSH remote configured | cli_observed |
+| Token persisted to repository files | not used | repo_verified |
+| Token persisted to evidence | not used | repo_verified |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| One-time GitHub token may remain valid in GitHub account settings | open | Revoke/delete the token immediately in GitHub Developer Settings | user_action_required |
+| GitHub Actions result was not yet checked after first push | open | Verify the `ci` workflow run in GitHub after publication | planned |
+| Public repository settings can differ by account plan and GitHub availability | accepted | API calls recorded success for available baseline settings; manually inspect repository settings if needed | cli_observed |
+
 ## Task ID: `ENV-VAULT-GITHUB-PUBLICATION-PREP`
 
 Timestamp UTC: `2026-07-06T21:48:12Z`
