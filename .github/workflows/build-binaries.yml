@@ -97,4 +97,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes
+          gh release create "${GITHUB_REF_NAME}" dist/* --repo "github.com/${GITHUB_REPOSITORY}" --verify-tag --generate-notes

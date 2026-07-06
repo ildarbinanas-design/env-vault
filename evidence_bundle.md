@@ -43,6 +43,10 @@ Ship the local MVP as a GitHub Release with downloadable binaries, after applyin
 | Policy scan for `secret get` and `--value` | passed; only policy/documentation prohibitions remain, no command implementation | cli_observed |
 | Local build with `-X .../internal/cli.Version=v0.0.1` plus `env-vault --json version` | passed; output reported `v0.0.1` | cli_observed |
 | Local release matrix build for linux amd64/arm64, darwin amd64/arm64, and windows amd64 | passed; Go emitted sandbox stat-cache warnings only | cli_observed |
+| GitHub Actions first tag run for `v0.0.1` | `ci` passed; `build-binaries` binary jobs passed; `release` job failed before creating a Release | api_observed |
+| GitHub connector release-job log read | passed; root cause was `gh release create` running outside a git checkout without `--repo` | connector_observed |
+| Context7 query for GitHub CLI manual | passed; `gh release create --repo` is the documented way to select a repository explicitly | doc_verified |
+| Workflow release command update | passed; uses `--repo "github.com/${GITHUB_REPOSITORY}"` and `--verify-tag` | repo_verified |
 
 ### Risks
 
@@ -50,6 +54,7 @@ Ship the local MVP as a GitHub Release with downloadable binaries, after applyin
 |---|---|---|---|
 | GitHub Release workflow still needs to run on the actual tag | open | Push `v0.0.1`, verify `build-binaries`, artifacts, and release page before announcing | planned |
 | macOS sandbox prevented Go stat-cache writes during local cross-builds | accepted | Builds exited successfully; warning affects cache metadata only, not produced binaries | cli_observed |
+| First `build-binaries` run for `v0.0.1` is failed in Actions history | accepted | Binary jobs succeeded; fix the release job, move the not-yet-released tag to the fixed commit, and verify the new run | api_observed |
 
 ## Task ID: `ENV-VAULT-GITHUB-BINARY-BUILD-WORKFLOW`
 
