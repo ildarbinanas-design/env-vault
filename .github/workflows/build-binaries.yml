@@ -12,29 +12,39 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - goos: linux
             goarch: amd64
+            runner: ubuntu-latest
+            cgo: "0"
             ext: ""
             archive: tar.gz
           - goos: linux
             goarch: arm64
+            runner: ubuntu-latest
+            cgo: "0"
             ext: ""
             archive: tar.gz
           - goos: darwin
             goarch: amd64
+            runner: macos-15-intel
+            cgo: "1"
             ext: ""
             archive: tar.gz
           - goos: darwin
             goarch: arm64
+            runner: macos-15
+            cgo: "1"
             ext: ""
             archive: tar.gz
           - goos: windows
             goarch: amd64
+            runner: ubuntu-latest
+            cgo: "0"
             ext: ".exe"
             archive: zip
     steps:
@@ -48,7 +58,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: ${{ matrix.cgo }}
           VERSION: ${{ github.ref_name }}
         run: |
           set -eu

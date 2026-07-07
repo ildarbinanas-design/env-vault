@@ -23,9 +23,14 @@ The production allowlist includes OS keychain-style backends only:
 - macOS Keychain;
 - Secret Service;
 - KWallet;
-- Windows Credential Manager.
+- Windows Credential Manager;
+- `pass`.
 
-The `file`, `pass`, and kernel keyctl backends are not used as production fallback in this MVP.
+`pass` is allowed after the native platform stores. It requires the `pass` command and an initialized password store. When explicitly selected and unavailable, the CLI returns structured error code `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
+
+The `file` and kernel keyctl backends are not used as production fallback in this MVP. `keyring.FileBackend`, plaintext config, and env-file storage require a separate ADR and explicit approval before any production use.
+
+Passwork is not implemented and remains deferred.
 
 The CLI must not expose a `secret get` command or a command-line secret value flag.
 
@@ -98,9 +103,27 @@ Deferred as an optional connector.
 
 Rejected for production. Plaintext config or env files would undermine the core safety goal and risk shell history, backups, terminal transcripts, and accidental commits.
 
+### pass
+
+Pros:
+
+- Useful Linux backend for headless or minimal systems that already use password-store.
+- Avoids production plaintext fallback while keeping local user-controlled storage.
+
+Cons:
+
+- External `pass` command dependency.
+- Requires an initialized password store and user-managed GPG setup.
+
+Accepted as a production backend after native OS keychain-style backends.
+
+### Passwork
+
+Deferred. A Passwork product connector is out of MVP scope and would require separate design, authentication, and approval.
+
 ## Consequences
 
 - Production behavior does not fall back to plaintext storage.
-- Linux users may need a Secret Service-compatible daemon or desktop keyring.
+- Linux users may need a Secret Service-compatible daemon, desktop keyring, or an initialized `pass` password store.
 - Headless CI should use a CI secret manager or the explicitly gated test backend for tests only.
 - Future connectors can be added behind explicit backend selection without changing the profile schema.

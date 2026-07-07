@@ -61,7 +61,7 @@ func Resolve(ctx context.Context, store secretstore.Store, profileMappings, dire
 		}
 		exists, err := store.Exists(ctx, opts.Service, mapping.Name)
 		if err != nil {
-			return ResolveResult{}, apperrors.BackendUnavailable(opts.Command, "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+			return ResolveResult{}, backendUnavailable(opts.Command, err)
 		}
 		if !exists {
 			if mapping.Required {
@@ -83,7 +83,7 @@ func Resolve(ctx context.Context, store secretstore.Store, profileMappings, dire
 			return ResolveResult{}, missingSecretError(opts.Command, opts.Service, mapping.Name)
 		}
 		if err != nil {
-			return ResolveResult{}, apperrors.BackendUnavailable(opts.Command, "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+			return ResolveResult{}, backendUnavailable(opts.Command, err)
 		}
 		setEnv(&result.Env, envMap, mapping.Env, string(value))
 	}
@@ -137,4 +137,8 @@ func missingSecretError(command, service, name string) *apperrors.AppError {
 		remediation += " --service " + service
 	}
 	return apperrors.New(command, apperrors.CodeMissingSecret, "Missing secret: "+name, remediation, apperrors.ExitMissingSecret)
+}
+
+func backendUnavailable(command string, err error) *apperrors.AppError {
+	return apperrors.BackendUnavailable(command, "Secret backend unavailable", secretstore.BackendRemediation(err), err)
 }

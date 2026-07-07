@@ -22,20 +22,30 @@ jobs:
       - run: scripts/smoke.sh
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - goos: linux
             goarch: amd64
+            runner: ubuntu-latest
+            cgo: "0"
           - goos: linux
             goarch: arm64
+            runner: ubuntu-latest
+            cgo: "0"
           - goos: darwin
             goarch: amd64
+            runner: macos-15-intel
+            cgo: "1"
           - goos: darwin
             goarch: arm64
+            runner: macos-15
+            cgo: "1"
           - goos: windows
             goarch: amd64
+            runner: ubuntu-latest
+            cgo: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -45,3 +55,4 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}

@@ -10,9 +10,22 @@ import (
 const DefaultService = "env-vault"
 
 var (
-	ErrNotFound    = errors.New("secret not found")
-	ErrUnavailable = errors.New("secret backend unavailable")
+	ErrNotFound        = errors.New("secret not found")
+	ErrUnavailable     = errors.New("secret backend unavailable")
+	ErrPassUnavailable = errors.New("pass backend unavailable")
 )
+
+const (
+	DefaultBackendRemediation = "Run env-vault doctor or configure the OS keychain"
+	PassBackendRemediation    = "install pass or use another supported OS keychain backend."
+)
+
+func BackendRemediation(err error) string {
+	if errors.Is(err, ErrPassUnavailable) {
+		return PassBackendRemediation
+	}
+	return DefaultBackendRemediation
+}
 
 type Metadata struct {
 	Service     string

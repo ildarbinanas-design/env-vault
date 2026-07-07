@@ -24,7 +24,13 @@ Config files are created with mode `0600` where applicable.
 
 ## Backend Assumptions
 
-Production secret storage uses the operating system keychain through `github.com/99designs/keyring`. The production backend allowlist excludes plaintext file-style fallback.
+Production secret storage uses OS keychain-style backends through `github.com/99designs/keyring`: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. `pass` requires the `pass` command and an initialized password store.
+
+If `pass` is explicitly selected and unavailable, commands return structured error code `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
+
+The production backend allowlist excludes plaintext file-style fallback. `keyring.FileBackend`, env files, and other plaintext storage must not be production-enabled without a separate ADR and explicit approval.
+
+Passwork is not implemented in this MVP and is deferred.
 
 The insecure test backend is available only when all three gates are set:
 

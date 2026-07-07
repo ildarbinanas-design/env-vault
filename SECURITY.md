@@ -13,3 +13,5 @@ Use GitHub private vulnerability reporting when it is available for this reposit
 ## Secret Handling In Reports
 
 env-vault must not print, log, or store secret values outside the operating system keychain. Reports should never include real credentials. If a reproduction needs a secret-shaped value, generate an ephemeral dummy value and revoke or delete it immediately after testing.
+
+Supported production storage is limited to OS keychain-style `github.com/99designs/keyring` backends: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. The `file`/plaintext backend and Passwork are not production-enabled.

@@ -1,5 +1,78 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-DARWIN-CGO-PASS-BACKEND`
+
+Timestamp UTC: `2026-07-07T18:06:48Z`
+
+### Scope
+
+Targeted release/backend hardening for `/Users/ildarzaripov/env-vault` on branch `fix/darwin-cgo-pass-backend`.
+
+No real keychain secret set/get, tag, release, or publish action was performed.
+
+### Objective
+
+Build darwin release artifacts with CGO enabled on macOS runners, add `keyring.PassBackend` to supported production backends, and keep plaintext/file/Passwork out of production scope.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Runs darwin artifact builds on macOS runners with `CGO_ENABLED=1`; keeps Linux/Windows on Ubuntu with `CGO_ENABLED=0` |
+| `.github/workflows/ci.yml` | Gives CI darwin build jobs the same macOS runner and CGO contract |
+| `internal/secretstore/keyring/keyring.go` | Adds `keyring.PassBackend` at the end of the production allowlist and supports explicit pass selection |
+| `internal/secretstore/secretstore.go` | Adds pass-specific unavailable sentinel and remediation text |
+| `internal/cli/cli.go` and `internal/runner/resolver.go` | Return structured `BACKEND_UNAVAILABLE` remediation for unavailable explicit pass backend |
+| `internal/secretstore/keyring/keyring_test.go` | Verifies production allowlist includes Pass and excludes test, file, and passwork |
+| `internal/cli/dry_run_test.go` | Verifies explicit unavailable pass backend returns structured remediation |
+| `tests/workflows_test.go` | Statically verifies darwin workflow builds use macOS runners with `CGO_ENABLED=1` |
+| `scripts/smoke.sh` | Keeps smoke checks on the gated test backend without shell `set` or `export` statements |
+| `README.md`, `SECURITY.md`, `docs/security.md`, `docs/design.md`, `docs/adr/0001-secret-backend.md`, `backlog.md` | Documents darwin CGO artifacts, Linux Secret Service/pass support, pass prerequisites, and file/plaintext/Passwork exclusions |
+| `evidence_bundle.md` | Records this change and verification without secret values |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Full change prompt read from `/tmp/ai_pdlc_env_vault_change_context_20260707T173414Z/prompts/codex_env_vault_change_prompt.txt` | passed; 152 lines read | cli_observed |
+| `AGENTS.md` read | passed | cli_observed |
+| `git status --porcelain=v2 --branch` | passed; clean `main` before branch creation | cli_observed |
+| `git switch -c fix/darwin-cgo-pass-backend` | passed after approved git ref write | cli_observed |
+| Context7 GitHub Actions docs query | passed; confirmed matrix include values can drive `runs-on` | doc_verified |
+| GitHub-hosted runner documentation check | passed; macOS Intel and arm64 runner labels verified from official docs | doc_verified |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `CGO_ENABLED=1 go test ./...` | passed | cli_observed |
+| `go test -race ./...` | passed | cli_observed |
+| `ENV_VAULT_BACKEND=test ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1 ENV_VAULT_TEST_STORE="$(mktemp -d)" ./scripts/smoke.sh` | passed after removing shell `set`/`export` from the script; non-fatal Go stat-cache warning only | cli_observed |
+| `CGO_ENABLED=1 go build -o /tmp/env-vault-cgo-darwin ./cmd/env-vault` | passed; non-fatal Go stat-cache warning only | cli_observed |
+| `/tmp/env-vault-cgo-darwin doctor` | passed; reported backend availability warning only, no secret values | cli_observed |
+| `gitleaks detect --source . --redact --no-banner` | passed; no leaks found | cli_observed |
+| `git diff --check` | passed | cli_observed |
+| Static scan for `secret get` / `--value` command implementation | passed; no implementation matches | cli_observed |
+| Static scan for shell `set`/`export` in scripts | passed; no command matches | cli_observed |
+
+### Security And Backend Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Darwin artifacts build with CGO enabled | repo_verified | release and CI darwin matrix entries use macOS runners and `cgo: "1"` |
+| Darwin builds do not rely on Linux CGO cross-compile | repo_verified | darwin matrix entries use `macos-15-intel` and `macos-15` |
+| `keyring.PassBackend` is production-allowed | repo_verified | `internal/secretstore/keyring` allowlist and tests |
+| `keyring.FileBackend` is not production-allowed | repo_verified | allowlist test excludes it |
+| Gated test backend is not production-allowed | repo_verified | allowlist test excludes `test`; runtime gate remains explicit |
+| Passwork is not implemented | repo_verified | allowlist test excludes `passwork`; docs/backlog defer connector |
+| Secret values were not read, printed, or stored in evidence | cli_observed | tests/smoke used generated ephemeral values and redacted scan passed |
+| No env values printed | cli_observed | no `printenv`, standalone `env`, or environment-dumping `set` command was used; smoke uses scoped command env only |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Real macOS Keychain availability was not validated with secret mutation | accepted | Only `doctor` was run; manual Keychain set/check remains optional and non-CI | cli_observed |
+| Real Linux `pass` store was not exercised | open | Backlog includes manual verification with installed `pass` and initialized password store | planned |
+| Go sandbox emitted stat-cache warnings during smoke/build | accepted | Commands exited successfully; warnings did not affect produced binary or smoke result | cli_observed |
+
 ## Task ID: `ENV-VAULT-V0.0.1-FIRST-RELEASE`
 
 Timestamp UTC: `2026-07-06T22:40:17Z`

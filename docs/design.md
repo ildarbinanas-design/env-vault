@@ -19,6 +19,8 @@ env-vault is a Go CLI with a small package boundary:
 
 The interface supports `Set`, `Get`, `Exists`, `Delete`, and `List`. Commands never expose `Get` to the user. `Get` exists only so `exec` can inject values into the child environment.
 
+Production storage uses `github.com/99designs/keyring` with an explicit allowlist: macOS Keychain, Secret Service, KWallet, Windows Credential Manager, and `pass`. `pass` is kept after the platform keychain backends so discovery still prefers the native OS stores first. `keyring.FileBackend`, plaintext/env-file storage, and Passwork are not production backends.
+
 The public metadata fingerprint is not derived from secret values:
 
 ```text
@@ -90,3 +92,7 @@ The public module path is:
 ```text
 github.com/ildarbinanas-design/env-vault
 ```
+
+## Release Artifact Builds
+
+Darwin release artifacts are built on macOS GitHub-hosted runners with `CGO_ENABLED=1` because the macOS Keychain backend requires CGO-enabled darwin binaries. Linux and Windows artifact builds remain `CGO_ENABLED=0`.
