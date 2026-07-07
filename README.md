@@ -22,7 +22,8 @@ On Linux, process environment variables may be visible to the same user through 
 - There is no `--value` flag.
 - Secret input is accepted only through a hidden prompt or `--stdin`.
 - `--stdin` trims exactly one trailing newline byte.
-- Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only.
+- Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
+- The `file`/plaintext keyring backend is not production-enabled.
 - The test backend is insecure and enabled only when all three env vars are set: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and `ENV_VAULT_TEST_STORE=/tmp/...`.
 - Tests and smoke checks use generated ephemeral fixtures; stable secret payload fixtures are not stored in the repo.
 
@@ -41,6 +42,8 @@ Binary archives are built by the `build-binaries` GitHub Actions workflow.
 - Release build: push a version tag such as `v0.0.1`; the workflow builds archives and attaches them to a GitHub Release.
 
 Supported targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+
+macOS release artifacts are built on macOS runners with `CGO_ENABLED=1`; the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux and Windows release targets keep `CGO_ENABLED=0`.
 
 ## Basic Usage
 
@@ -118,7 +121,9 @@ profiles:
 
 macOS uses the system Keychain through the selected Go backend.
 
-Debian/Linux systems may require a Secret Service-compatible keyring daemon depending on desktop or headless setup. Headless environments should use a CI secret manager or an explicit supported backend, not plaintext config.
+Debian/Linux systems may require a Secret Service-compatible keyring daemon depending on desktop or headless setup. Linux also supports `pass` when the `pass` command is installed and the password store is initialized. Headless environments should use a CI secret manager or an explicit supported backend, not plaintext config.
+
+To force `pass`, set `ENV_VAULT_BACKEND=pass`. If `pass` is unavailable, commands return `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
 
 ## Shell Init Warning
 

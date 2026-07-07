@@ -3,12 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ildarbinanas-design/env-vault/internal/config"
+	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
+	"github.com/ildarbinanas-design/env-vault/internal/output"
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore/teststore"
 	"github.com/ildarbinanas-design/env-vault/internal/testutil"
@@ -90,6 +93,33 @@ func TestSecretSetStructuredErrorDoesNotLeakGeneratedValue(t *testing.T) {
 	}
 	testutil.AssertNotContains(t, "structured error stdout", stdout.String(), secretValue)
 	testutil.AssertNotContains(t, "structured error stderr", stderr.String(), secretValue)
+}
+
+func TestPassBackendUnavailableUsesStructuredRemediation(t *testing.T) {
+	t.Setenv(teststore.BackendEnv, "pass")
+	t.Setenv("PATH", t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "secret", "check", "nexus-token"}, strings.NewReader(""), &stdout, &stderr)
+	if code != apperrors.ExitBackendUnavailable {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	var env output.Envelope
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if env.OK || env.Error == nil {
+		t.Fatalf("expected structured error envelope: %#v", env)
+	}
+	if env.Error.Code != apperrors.CodeBackendUnavailable {
+		t.Fatalf("code=%q", env.Error.Code)
+	}
+	if env.Error.Remediation != secretstore.PassBackendRemediation {
+		t.Fatalf("remediation=%q", env.Error.Remediation)
+	}
 }
 
 func TestExecDryRunDoesNotRunChild(t *testing.T) {

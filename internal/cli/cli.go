@@ -171,7 +171,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 				return err
 			}
 			if err := store.Set(context.Background(), service, name, value); err != nil {
-				return apperrors.BackendUnavailable("secret_set", "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+				return backendUnavailable("secret_set", err)
 			}
 			return a.renderer().Success("secret_set", data, nil)
 		},
@@ -203,7 +203,7 @@ func (a *App) secretCheckCommand() *cobra.Command {
 			}
 			exists, err := store.Exists(context.Background(), service, args[0])
 			if err != nil {
-				return apperrors.BackendUnavailable("secret_check", "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+				return backendUnavailable("secret_check", err)
 			}
 			if !exists {
 				return missingSecretError("secret_check", service, args[0])
@@ -256,7 +256,7 @@ func (a *App) secretDeleteCommand() *cobra.Command {
 			if err := store.Delete(context.Background(), service, name); stderrors.Is(err, secretstore.ErrNotFound) {
 				return missingSecretError("secret_delete", service, name)
 			} else if err != nil {
-				return apperrors.BackendUnavailable("secret_delete", "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+				return backendUnavailable("secret_delete", err)
 			}
 			return a.renderer().Success("secret_delete", data, nil)
 		},
@@ -278,7 +278,7 @@ func (a *App) secretListCommand() *cobra.Command {
 			}
 			items, err := store.List(context.Background(), secretstore.DefaultService)
 			if err != nil {
-				return apperrors.BackendUnavailable("secret_list", "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+				return backendUnavailable("secret_list", err)
 			}
 			secrets := make([]map[string]string, 0, len(items))
 			for _, item := range items {
@@ -369,7 +369,7 @@ func (a *App) profileAddCommand() *cobra.Command {
 				}
 				exists, err := store.Exists(context.Background(), secretstore.DefaultService, mapping.Name)
 				if err != nil {
-					return apperrors.BackendUnavailable("profile_add", "Secret backend unavailable", "Run env-vault doctor or configure the OS keychain", err)
+					return backendUnavailable("profile_add", err)
 				}
 				if !exists {
 					return missingSecretError("profile_add", secretstore.DefaultService, mapping.Name)
@@ -583,6 +583,8 @@ func (a *App) doctorCommand() *cobra.Command {
 			backend := "keyring"
 			if teststore.EnabledFromEnv() {
 				backend = "test"
+			} else if os.Getenv(teststore.BackendEnv) == "pass" {
+				backend = "pass"
 			}
 			store, err := a.store("doctor")
 			if err != nil {
@@ -607,7 +609,14 @@ func (a *App) store(command string) (secretstore.Store, error) {
 	if teststore.RequestedFromEnv() {
 		return teststore.NewFromEnv(command)
 	}
-	return keyringstore.New(), nil
+	switch os.Getenv(teststore.BackendEnv) {
+	case "", "keyring":
+		return keyringstore.New(), nil
+	case "pass":
+		return keyringstore.NewPass(), nil
+	default:
+		return nil, apperrors.BackendUnavailable(command, "Unsupported secret backend requested", "Use an allowed production keyring backend or the explicitly gated test backend", secretstore.ErrUnavailable)
+	}
 }
 
 func (a *App) readSecret(useStdin bool) ([]byte, error) {
@@ -723,4 +732,8 @@ func missingSecretError(command, service, name string) *apperrors.AppError {
 		remediation += " --service " + service
 	}
 	return apperrors.New(command, apperrors.CodeMissingSecret, "Missing secret: "+name, remediation, apperrors.ExitMissingSecret)
+}
+
+func backendUnavailable(command string, err error) *apperrors.AppError {
+	return apperrors.BackendUnavailable(command, "Secret backend unavailable", secretstore.BackendRemediation(err), err)
 }
