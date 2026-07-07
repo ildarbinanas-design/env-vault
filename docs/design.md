@@ -95,4 +95,6 @@ github.com/ildarbinanas-design/env-vault
 
 ## Release Artifact Builds
 
+Release publication is tag-driven: pushing a `vX.Y.Z` tag runs the `build-binaries` workflow, which builds archives and creates the GitHub Release for that tag.
+
 Darwin release artifacts are built on macOS GitHub-hosted runners with `CGO_ENABLED=1` because the macOS Keychain backend requires CGO-enabled darwin binaries. Linux and Windows artifact builds remain `CGO_ENABLED=0`.
