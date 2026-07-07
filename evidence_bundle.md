@@ -1,5 +1,62 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-V0.0.2-DOCS-GATE`
+
+Timestamp UTC: `2026-07-07T19:49:33Z`
+
+### Scope
+
+Synchronize release and security documentation before the `v0.0.2` tag.
+
+No source code, workflow behavior, real keychain secret mutation, tag, release, or publish action was performed in this docs gate.
+
+### Objective
+
+Confirm current `main` reflects the darwin CGO and pass-backend release state, then update stale release/security docs before tagging.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `README.md` | Keeps the tag-driven release example aligned with the planned `v0.0.2` release |
+| `SECURITY.md` | Updates supported-version wording now that `v0.0.1` exists |
+| `docs/design.md` | Documents that release publication is tag-driven through `build-binaries` |
+| `evidence_bundle.md` | Records this docs gate without secret values |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Baseline repo, branch, status, remote, tags, and recent log checks | passed; repo was clean before sync | cli_observed |
+| `git fetch --prune origin` and `git fetch --prune --tags origin` | passed | cli_observed |
+| `git switch main` and `git pull --ff-only origin main` | passed; local `main` matched `origin/main` at `e5a7ca83e775c660a8e65cbf2794306d6dcb4463` | cli_observed |
+| `git merge-base --is-ancestor 8a5c314f8290d459d5bab7f6dd455a58a8bcf5fb HEAD` | failed; handled as squash/content-equivalent merge | cli_observed |
+| Content signatures for Pass backend, FileBackend exclusion, Passwork deferral, darwin macOS runners, and darwin `CGO_ENABLED=1` | passed | repo_verified |
+| Documentation check for Pass prerequisites, darwin CGO Keychain behavior, plaintext exclusion, and gated test backend | passed with one stale supported-version sentence found | repo_verified |
+| `git diff --name-status` | passed; docs/evidence files only | cli_observed |
+| `git diff --check` | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `CGO_ENABLED=1 go test ./...` | passed | cli_observed |
+| `ENV_VAULT_BACKEND=test ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1 ENV_VAULT_TEST_STORE="$(mktemp -d)" ./scripts/smoke.sh` | passed; non-fatal Go stat-cache warning only | cli_observed |
+| `gitleaks detect --source . --redact --no-banner` | passed; no leaks found | cli_observed |
+
+### Security And Backend Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Secret values were not read or printed | repo_verified | no secret-value command, env dump command, or real keychain mutation was run |
+| Release flow remains workflow-owned | repo_verified | docs state tag-driven `build-binaries` publication |
+| Production plaintext/file backend remains disabled | repo_verified | docs and allowlist tests exclude `keyring.FileBackend` |
+| Passwork remains deferred | repo_verified | docs/backlog and allowlist tests exclude Passwork |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Real macOS Keychain dummy mutation remains manual/non-CI | accepted | Release gate uses `doctor` only and avoids real secret mutation | planned |
+| Real Linux `pass` store verification remains manual/non-CI | open | Backlog keeps manual pass-store verification | planned |
+
 ## Task ID: `ENV-VAULT-DARWIN-CGO-PASS-BACKEND`
 
 Timestamp UTC: `2026-07-07T18:06:48Z`

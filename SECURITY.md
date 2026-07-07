@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-This project is a local MVP. Until the first tagged release, security fixes are handled on the `main` branch.
+This project is a local MVP. Security fixes are handled on the `main` branch and the latest tagged MVP release. Older MVP tags are not supported once a newer tag is published.
 
 ## Reporting a Vulnerability
 
