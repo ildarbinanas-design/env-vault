@@ -1,5 +1,41 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-1`
+
+Timestamp UTC: `2026-07-10T20:17:59Z`
+
+### Scope
+
+Correct unknown-flag remediation paths and add exact CLI regression coverage.
+No secret value, credential, tag, release, remote branch, or published artifact
+was read, changed, or created.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `internal/cli/cli.go` | Uses Cobra's complete `CommandPath()` directly so the program name is not duplicated |
+| `internal/cli/flags_test.go` | Covers root and nested unknown flags, exact remediation, and the non-duplication invariant |
+| `internal/cli/version_test.go` | Requires `version` and `--version` to emit the same exact version line with no stderr |
+| `evidence_bundle.md` | Records stage scope, checks, and residual risk without secret material |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Applicable `AGENTS.md` and both repository statuses | passed; both repositories started clean on `main` | cli_observed |
+| Context7 Cobra documentation query | passed; `CommandPath()` is the full path and the root flag handler is inherited by child commands | doc_verified |
+| `gofmt -w internal/cli/cli.go internal/cli/flags_test.go internal/cli/version_test.go` | passed | cli_observed |
+| Targeted CLI regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Other hand-written remediation strings could drift independently | accepted | this stage targets Cobra flag parsing; existing command-specific remediations remain covered by their command tests | repo_verified |
+| Release binaries have not been rebuilt or published | accepted | workflow hardening and release verification are handled in later stages; no publication is authorized | planned |
+
 ## Task ID: `ENV-VAULT-V0.0.5-RELEASE-WORKFLOW-HARDENING`
 
 Timestamp UTC: `2026-07-10T19:12:05Z`
