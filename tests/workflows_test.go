@@ -86,14 +86,16 @@ type workflowStep struct {
 
 func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
 	expected := map[string]string{
-		"actions/checkout":          "v7",
-		"actions/setup-go":          "v6",
-		"actions/upload-artifact":   "v7",
-		"actions/download-artifact": "v8",
+		"actions/checkout":                 "v7",
+		"actions/setup-go":                 "v6",
+		"actions/upload-artifact":          "v7",
+		"actions/download-artifact":        "v8",
+		"actions/dependency-review-action": "v5",
 	}
 	for _, path := range []string{
 		"../.github/workflows/build-binaries.yml",
 		"../.github/workflows/ci.yml",
+		"../.github/workflows/dependency-review.yml",
 		"../.github/workflows/reusable-quality.yml",
 	} {
 		wf := readWorkflow(t, path)
