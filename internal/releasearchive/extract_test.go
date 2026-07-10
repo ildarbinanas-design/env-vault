@@ -97,6 +97,17 @@ func TestTarRejectsHardLink(t *testing.T) {
 	requireErrorContains(t, err, "hard links are not allowed")
 }
 
+func TestTarRejectsSpecialFile(t *testing.T) {
+	spec := releaseArchives[0]
+	archivePath := filepath.Join(t.TempDir(), spec.name)
+	writeTarArchive(t, archivePath, []archiveEntry{
+		{name: spec.root + "/device", kind: tar.TypeChar, mode: 0o600},
+	})
+
+	err := extractOneForTest(t, archivePath, defaultLimits)
+	requireErrorContains(t, err, "unsupported tar entry type")
+}
+
 func TestTarRejectsOversizedFile(t *testing.T) {
 	spec := releaseArchives[0]
 	archivePath := filepath.Join(t.TempDir(), spec.name)
