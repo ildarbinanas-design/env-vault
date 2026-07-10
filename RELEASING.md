@@ -1,9 +1,10 @@
 # Releasing env-vault
 
 This is the operator runbook for build-only runs, new releases, repairs, and
-release incidents. It describes the repository state as well as the additional
-manual checks that are still required while Homebrew updates use a deploy key
-and a direct push.
+release incidents. Homebrew publication uses a version-specific pull request,
+an exact-head squash merge, and an exact post-merge CI gate. The automated
+health job repeats the immutable release and tap checks before the workflow can
+finish successfully.
 
 Do not publish from an unreviewed working tree. Do not move an existing tag,
 replace an existing release asset, or lower the Homebrew version.
@@ -112,10 +113,14 @@ Before a new release:
      --limit 10 --json databaseId,status,conclusion,headSha,url
    ```
 
-9. Confirm that the required external release settings are present before
-   migrating the tap update to a pull request. The exact proposed settings and
-   the current migration blocker are in
+9. Confirm that the required GitHub App installation, `release` environment,
+   and tap ruleset still match
    [`docs/release-external-settings.md`](docs/release-external-settings.md).
+   The `homebrew` job is the only job allowed to read the App client ID and
+   private key during a release; build-only and `health` runs must not receive
+   them. After any App installation or key change, dispatch
+   `audit-release-app.yml` and require it to prove that the installation
+   contains only `homebrew-tap` before publishing.
 
 ## Build-only validation
 
@@ -171,10 +176,10 @@ exact existing version. The workflow resolves the source SHA from that tag.
 
 | Mode | Rebuilds | Release assets | Homebrew | Health check | Use when |
 | --- | --- | --- | --- | --- | --- |
-| `none` | yes | reconcile | update/no-op | yes | first attempt, or a complete idempotent retry |
-| `release-assets` | yes | reconcile | update/no-op | yes | the tag is correct but the Release, assets, or attestations are incomplete |
-| `homebrew` | no | verify/download | update/no-op | yes | Release assets and attestations are complete and only the tap stage failed |
-| `health` | no | verify/download | verify only | yes | publication is complete and only health evidence must be repeated |
+| `none` | yes | reconcile | PR/update or exact no-op | yes | first attempt, or a complete idempotent retry |
+| `release-assets` | yes | reconcile | PR/update or exact no-op | yes | the tag is correct but the Release, assets, or attestations are incomplete |
+| `homebrew` | no | verify/download | resume PR or exact no-op | yes | Release assets and attestations are complete and the tap stage must be resumed |
+| `health` | no | verify/download | read-only verification | yes | publication is complete and only health evidence must be repeated |
 
 Dispatch a repair with:
 
@@ -190,6 +195,13 @@ table. A tag-triggered run cannot select repair mode. Missing attestations can
 be minted only when the workflow's own source SHA equals the release tag SHA.
 If `main` has advanced, rerun the original failed workflow attempt at that SHA;
 the workflow deliberately refuses to claim provenance from a later commit.
+
+The `none`, `release-assets`, and `homebrew` modes schedule the `homebrew` job,
+which alone declares `environment: release` and mints the short-lived tap App
+token. `health` skips that job and cannot read release-environment values. It
+clones the public tap default branch, verifies the exact generated formula, and
+waits for the successful `push` run on that exact tap SHA using read-only
+permissions.
 
 ### Safe retry rules
 
@@ -217,6 +229,11 @@ the workflow deliberately refuses to claim provenance from a later commit.
    SHA, or a rerun of the original failed workflow after `main` advances.
    `repair=homebrew` and `repair=health` verify existing attestations and fail
    closed; they do not mint replacements.
+8. A tap retry reuses only the deterministic `release/env-vault-$VERSION`
+   branch and matching PR. The helper rejects unexpected files, formula bytes,
+   release markers, source SHAs, closed PRs, or changed PR heads. After fixing
+   an external check or merge-policy failure, use `repair=homebrew`; never
+   overwrite or force-push the version branch.
 
 ### Current-release-only monotonic boundary
 
@@ -275,13 +292,19 @@ A release is healthy only when all of the following are true for the same
    if GitHub's persisted attestations for every archive still verify against
    `$SOURCE_SHA`.
 
-The current workflow's `health` job verifies items 1 through 4 and item 6, but
-the direct-push implementation does not yet wait for the exact tap CI run in
-item 5. Until the GitHub App/PR migration is approved and implemented, an
-operator must verify item 5 manually before declaring the release healthy. The
-job summary links to the Release, tap commit, tap checks page, attestations, and
-release run for navigation; those links are not evidence that tap CI was
-awaited or succeeded.
+The workflow verifies all six conditions. Before merge, `homebrew` waits for a
+successful `test-formula.yml` run whose event is `pull_request` and whose
+`head_sha` is the unchanged PR head. It then squash-merges with
+`--match-head-commit`, resolves the actual tap commit, and waits for a
+successful run whose event is `push` and whose `head_sha` is that exact commit.
+The `health` job verifies the formula at that commit and consumes those exact
+outputs. In `repair=health`, it independently resolves the current tap SHA and
+repeats the exact push-run wait without an App credential.
+
+The job summary links to the Release, source SHA, tap pull request when one
+exists, exact tap commit, successful exact-SHA tap CI run, attestations, and
+release workflow run. Treat those URLs as one evidence set; a checks page or a
+successful run for another SHA is not equivalent.
 
 ## Verify a completed release
 

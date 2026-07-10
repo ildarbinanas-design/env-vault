@@ -112,8 +112,26 @@ Darwin release artifacts are built on macOS GitHub-hosted runners with `CGO_ENAB
 After the GitHub Release succeeds, the workflow generates a combined SPDX SBOM
 and GitHub provenance/SBOM attestations for all five archives without changing
 the exact ten-asset Release contract. It then generates four platform
-URL/checksum stanzas and commits the formula directly to `homebrew-tap`. The
-tap's separate workflow verifies style, installation, and the installed
-version. The release workflow does not yet wait for the exact tap CI run, so an
-operator must verify that final gate; the planned PR-based update requires the
-external settings documented in `docs/release-external-settings.md`.
+URL/checksum stanzas and uses a short-lived, repository-scoped GitHub App token
+to create or reuse `release/env-vault-vX.Y.Z` in `homebrew-tap`. The generated
+pull request changes only `Formula/env-vault.rb` and carries a marker binding
+the version, source SHA, and formula digest. The workflow waits for
+`test-formula.yml` with `event=pull_request` and the exact PR head SHA before a
+squash merge that is guarded by the same head SHA. It then waits for the
+workflow with `event=push`, the exact merged/default-branch SHA, and a successful
+conclusion. Style, installation, and the installed exact version therefore form
+an automated release gate rather than a follow-up operator check.
+
+Only the `homebrew` job declares `environment: release` and can read
+`TAP_APP_CLIENT_ID` and `TAP_APP_PRIVATE_KEY`. Build-only, build, Release,
+supply-chain, and `health` jobs cannot read those values. The `health` repair is
+read-only: it verifies the tag, Release, checksums, attestations, generated
+formula, and the exact tap default-branch push run using public repository state
+and its read-only workflow token. Required external settings and credential
+rotation procedures are documented in `docs/release-external-settings.md`.
+
+A separate manually dispatched `audit-release-app.yml` workflow is the only
+non-release consumer of that environment. It requests a metadata-only token,
+fails unless the App installation contains exactly `homebrew-tap`, and relies
+on the token action's post-step revocation. Run it after installation or key
+changes and before the next publication.

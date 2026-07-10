@@ -39,11 +39,14 @@ Supported platforms: macOS arm64/amd64 and Linux arm64/amd64. Homebrew
 downloads do not receive the Gatekeeper quarantine attribute, so no
 `xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
 [ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
-and is generated and pushed by the release workflow. The tap runs style,
-installation, and exact-version checks separately. Until the planned tap-PR
-migration is configured, the release workflow does not wait for that CI; the
-operator must confirm the exact tap commit before declaring a release healthy.
-See [RELEASING.md](RELEASING.md). Upgrade with `brew upgrade env-vault`.
+and is generated and proposed through a pull request by the release workflow.
+The tap runs style, installation, and exact-version checks separately. The
+release workflow opens or reuses a version-specific tap pull request, waits for
+`test-formula.yml` on
+the exact pull-request head, squash-merges that exact head, and then waits for
+the workflow's successful `push` run on the resulting tap commit. The release
+is healthy only after that post-merge check succeeds. See
+[RELEASING.md](RELEASING.md). Upgrade with `brew upgrade env-vault`.
 
 ### Migrating a manual or `go install` installation to Homebrew
 
