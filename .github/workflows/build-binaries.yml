@@ -147,211 +147,13 @@ jobs:
           fi
           echo "release version ${target_version} is monotonic relative to Homebrew ${published_version}"
 
-  verify:
+  quality:
     if: needs.metadata.outputs.run_build == 'true'
     needs: [metadata]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.metadata.outputs.source_sha }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - run: go test ./...
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: scripts/smoke.sh
-
-  license:
-    if: needs.metadata.outputs.run_build == 'true'
-    needs: [metadata]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.metadata.outputs.source_sha }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.23.x"
-
-      - run: scripts/license-check.sh
-
-  build:
-    if: needs.metadata.outputs.run_build == 'true'
-    needs: [metadata]
-    name: ${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-            ext: ""
-            archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-latest
-            cgo: "0"
-            ext: ""
-            archive: tar.gz
-          - goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            cgo: "1"
-            ext: ""
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            runner: macos-15
-            cgo: "1"
-            ext: ""
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-            ext: ".exe"
-            archive: zip
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.metadata.outputs.source_sha }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-        run: |
-          set -eu
-          mkdir -p "dist/env-vault-${GOOS}-${GOARCH}"
-          go build \
-            -trimpath \
-            -ldflags="-s -w -X github.com/ildarbinanas-design/env-vault/internal/cli.Version=${VERSION}" \
-            -o "dist/env-vault-${GOOS}-${GOARCH}/env-vault${{ matrix.ext }}" \
-            ./cmd/env-vault
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/env-vault-${GOOS}-${GOARCH}/"
-
-      - name: Package
-        run: |
-          set -eu
-          cd dist
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            zip -r "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}"
-          else
-            tar -czf "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}"
-          fi
-          shasum -a 256 "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}" > "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}
-            dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256
-          retention-days: 14
-
-  smoke:
-    if: needs.metadata.outputs.run_build == 'true'
-    needs: [metadata, build]
-    name: smoke-${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-24.04-arm
-            archive: tar.gz
-          - goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            runner: macos-15
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            runner: windows-latest
-            archive: zip
-    steps:
-      - name: Download built artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist
-
-      - name: Verify exact version on Unix
-        if: runner.os != 'Windows'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          ARCHIVE: ${{ matrix.archive }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-        run: |
-          set -euo pipefail
-          name="env-vault-${GOOS}-${GOARCH}"
-          (
-            cd dist
-            shasum -a 256 -c "${name}.${ARCHIVE}.sha256"
-            tar -xzf "${name}.${ARCHIVE}"
-          )
-          binary="dist/${name}/env-vault"
-          printf '%s\n' "$VERSION" > expected-version.txt
-          "$binary" --version > version-flag.txt
-          "$binary" version > version-command.txt
-          diff -u expected-version.txt version-flag.txt
-          diff -u expected-version.txt version-command.txt
-
-      - name: Verify exact version on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $name = "env-vault-$env:GOOS-$env:GOARCH"
-          $archive = Join-Path "dist" "$name.zip"
-          $checksumFile = Join-Path "dist" "$name.zip.sha256"
-          $expectedChecksum = ((Get-Content -LiteralPath $checksumFile -Raw).Trim() -split '\s+')[0]
-          $actualChecksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualChecksum -cne $expectedChecksum) {
-            throw "checksum mismatch for $archive"
-          }
-          Expand-Archive -LiteralPath $archive -DestinationPath "dist/unpacked"
-          $binary = Join-Path "dist/unpacked/$name" "env-vault.exe"
-          $flagOutput = @(& $binary --version)
-          $flagExit = $LASTEXITCODE
-          if ($flagExit -ne 0 -or $flagOutput.Count -ne 1 -or $flagOutput[0] -cne $env:VERSION) {
-            throw "--version output '$($flagOutput -join '\n')', want '$env:VERSION'"
-          }
-          $commandOutput = @(& $binary version)
-          $commandExit = $LASTEXITCODE
-          if ($commandExit -ne 0 -or $commandOutput.Count -ne 1 -or $commandOutput[0] -cne $env:VERSION) {
-            throw "version output '$($commandOutput -join '\n')', want '$env:VERSION'"
-          }
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      source_sha: ${{ needs.metadata.outputs.source_sha }}
+      version: ${{ needs.metadata.outputs.version }}
 
   release:
     if: >-
@@ -361,12 +163,9 @@ jobs:
         needs.metadata.result == 'success' &&
         needs.preflight.result == 'success' &&
         needs.metadata.outputs.run_release == 'true' &&
-        needs.verify.result == 'success' &&
-        needs.license.result == 'success' &&
-        needs.build.result == 'success' &&
-        needs.smoke.result == 'success'
+        needs.quality.result == 'success'
       }}
-    needs: [metadata, preflight, verify, license, build, smoke]
+    needs: [metadata, preflight, quality]
     runs-on: ubuntu-latest
     permissions:
       contents: write

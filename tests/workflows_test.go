@@ -27,6 +27,11 @@ type workflowConcurrency struct {
 
 type workflowTriggers struct {
 	WorkflowDispatch workflowDispatch `yaml:"workflow_dispatch"`
+	WorkflowCall     workflowCall     `yaml:"workflow_call"`
+}
+
+type workflowCall struct {
+	Inputs map[string]workflowInput `yaml:"inputs"`
 }
 
 type workflowDispatch struct {
@@ -42,11 +47,13 @@ type workflowInput struct {
 }
 
 type workflowJob struct {
-	If       string           `yaml:"if"`
-	Needs    []string         `yaml:"needs"`
-	RunsOn   string           `yaml:"runs-on"`
-	Strategy workflowStrategy `yaml:"strategy"`
-	Steps    []workflowStep   `yaml:"steps"`
+	If       string            `yaml:"if"`
+	Needs    []string          `yaml:"needs"`
+	RunsOn   string            `yaml:"runs-on"`
+	Uses     string            `yaml:"uses"`
+	With     map[string]string `yaml:"with"`
+	Strategy workflowStrategy  `yaml:"strategy"`
+	Steps    []workflowStep    `yaml:"steps"`
 }
 
 type workflowStrategy struct {
@@ -58,19 +65,23 @@ type workflowMatrix struct {
 }
 
 type workflowTarget struct {
-	GOOS   string `yaml:"goos"`
-	GOARCH string `yaml:"goarch"`
-	Runner string `yaml:"runner"`
-	CGO    string `yaml:"cgo"`
+	OS      string `yaml:"os"`
+	GOOS    string `yaml:"goos"`
+	GOARCH  string `yaml:"goarch"`
+	Runner  string `yaml:"runner"`
+	CGO     string `yaml:"cgo"`
+	Ext     string `yaml:"ext"`
+	Archive string `yaml:"archive"`
 }
 
 type workflowStep struct {
-	Name string            `yaml:"name"`
-	Uses string            `yaml:"uses"`
-	If   string            `yaml:"if"`
-	Run  string            `yaml:"run"`
-	Env  map[string]string `yaml:"env"`
-	With map[string]string `yaml:"with"`
+	Name  string            `yaml:"name"`
+	Uses  string            `yaml:"uses"`
+	If    string            `yaml:"if"`
+	Shell string            `yaml:"shell"`
+	Run   string            `yaml:"run"`
+	Env   map[string]string `yaml:"env"`
+	With  map[string]string `yaml:"with"`
 }
 
 func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
@@ -80,7 +91,11 @@ func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
 		"actions/upload-artifact":   "v7",
 		"actions/download-artifact": "v8",
 	}
-	for _, path := range []string{"../.github/workflows/build-binaries.yml", "../.github/workflows/ci.yml"} {
+	for _, path := range []string{
+		"../.github/workflows/build-binaries.yml",
+		"../.github/workflows/ci.yml",
+		"../.github/workflows/reusable-quality.yml",
+	} {
 		wf := readWorkflow(t, path)
 		for jobName, job := range wf.Jobs {
 			for _, step := range job.Steps {
@@ -181,12 +196,12 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	}
 
 	release := wf.Jobs["release"]
-	for _, need := range []string{"metadata", "preflight", "verify", "license", "build"} {
+	for _, need := range []string{"metadata", "preflight", "quality"} {
 		if !slices.Contains(release.Needs, need) {
 			t.Fatalf("release needs=%v, missing %q", release.Needs, need)
 		}
 	}
-	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "needs.preflight.result == 'success'", "run_release == 'true'", "needs.verify.result == 'success'", "needs.smoke.result == 'success'"} {
+	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "needs.preflight.result == 'success'", "run_release == 'true'", "needs.quality.result == 'success'"} {
 		if !strings.Contains(release.If, snippet) {
 			t.Fatalf("release if=%q, missing %q", release.If, snippet)
 		}
@@ -250,14 +265,29 @@ func TestHomebrewMonotonicPreflightRunsBeforeReleaseMutation(t *testing.T) {
 func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
 	want := "${{ needs.metadata.outputs.version }}"
-	if !slices.Contains(wf.Jobs["build"].Needs, "metadata") {
-		t.Fatalf("build needs=%v, missing metadata", wf.Jobs["build"].Needs)
+	quality := wf.Jobs["quality"]
+	if !slices.Contains(quality.Needs, "metadata") {
+		t.Fatalf("quality needs=%v, missing metadata", quality.Needs)
+	}
+	if quality.Uses != "./.github/workflows/reusable-quality.yml" {
+		t.Fatalf("quality uses=%q", quality.Uses)
+	}
+	if quality.With["version"] != want {
+		t.Fatalf("quality version=%q, want %q", quality.With["version"], want)
+	}
+	if quality.With["source_sha"] != "${{ needs.metadata.outputs.source_sha }}" {
+		t.Fatalf("quality source_sha=%q", quality.With["source_sha"])
+	}
+
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	build := reusable.Jobs["build"]
+	if step := namedStep(t, build, "Build"); step.Env["VERSION"] != "${{ inputs.version }}" {
+		t.Fatalf("reusable build VERSION=%q", step.Env["VERSION"])
 	}
 	checks := []struct {
 		job  string
 		step string
 	}{
-		{job: "build", step: "Build"},
 		{job: "release", step: "Create GitHub Release"},
 		{job: "homebrew", step: "Generate formula"},
 		{job: "homebrew", step: "Push formula to tap"},
@@ -280,13 +310,71 @@ func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 	}
 }
 
-func TestReleaseAndCIRunPinnedLicenseGate(t *testing.T) {
-	for _, path := range []string{"../.github/workflows/build-binaries.yml", "../.github/workflows/ci.yml"} {
-		license := readWorkflowJob(t, path, "license")
-		step := runStep(t, license, "scripts/license-check.sh")
-		if step.Run != "scripts/license-check.sh" {
-			t.Fatalf("%s license step=%q", path, step.Run)
+func TestCIAndReleaseCallReusableQuality(t *testing.T) {
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	for _, inputName := range []string{"source_sha", "version"} {
+		input, ok := reusable.On.WorkflowCall.Inputs[inputName]
+		if !ok {
+			t.Fatalf("workflow_call missing %q input", inputName)
 		}
+		if !input.Required || input.Type != "string" {
+			t.Fatalf("workflow_call input %s required=%v type=%q", inputName, input.Required, input.Type)
+		}
+	}
+
+	ci := readWorkflow(t, "../.github/workflows/ci.yml")
+	if len(ci.Jobs) != 1 {
+		t.Fatalf("CI has %d jobs, want only reusable quality caller", len(ci.Jobs))
+	}
+	ciQuality := ci.Jobs["quality"]
+	if ciQuality.Uses != "./.github/workflows/reusable-quality.yml" {
+		t.Fatalf("CI quality uses=%q", ciQuality.Uses)
+	}
+	if ciQuality.With["source_sha"] != "${{ github.sha }}" || ciQuality.With["version"] != "ci-${{ github.sha }}" {
+		t.Fatalf("CI quality inputs=%v", ciQuality.With)
+	}
+
+	release := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	quality := release.Jobs["quality"]
+	if quality.Uses != "./.github/workflows/reusable-quality.yml" {
+		t.Fatalf("release quality uses=%q", quality.Uses)
+	}
+	if quality.If != "needs.metadata.outputs.run_build == 'true'" {
+		t.Fatalf("release quality if=%q", quality.If)
+	}
+	if quality.With["source_sha"] != "${{ needs.metadata.outputs.source_sha }}" || quality.With["version"] != "${{ needs.metadata.outputs.version }}" {
+		t.Fatalf("release quality inputs=%v", quality.With)
+	}
+	for _, removed := range []string{"verify", "license", "build", "smoke"} {
+		if _, ok := release.Jobs[removed]; ok {
+			t.Fatalf("release caller still duplicates reusable job %q", removed)
+		}
+	}
+}
+
+func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	license := reusable.Jobs["license"]
+	if license.RunsOn != "${{ matrix.runner }}" {
+		t.Fatalf("license runs-on=%q", license.RunsOn)
+	}
+	wantPlatforms := map[string]string{
+		"linux":   "ubuntu-latest",
+		"darwin":  "macos-15",
+		"windows": "windows-latest",
+	}
+	for _, target := range license.Strategy.Matrix.Include {
+		if target.Runner != wantPlatforms[target.OS] {
+			t.Fatalf("license %s runner=%q", target.OS, target.Runner)
+		}
+		delete(wantPlatforms, target.OS)
+	}
+	if len(wantPlatforms) != 0 {
+		t.Fatalf("license matrix missing native platforms: %v", wantPlatforms)
+	}
+	step := namedStep(t, license, "Check dependency licenses")
+	if step.Run != "scripts/license-check.sh" || step.Shell != "bash" {
+		t.Fatalf("license run=%q shell=%q", step.Run, step.Shell)
 	}
 
 	data, err := os.ReadFile("../scripts/license-check.sh")
@@ -299,6 +387,11 @@ func TestReleaseAndCIRunPinnedLicenseGate(t *testing.T) {
 	}
 	if strings.Contains(script, "@latest") {
 		t.Fatal("license script must not use @latest")
+	}
+	for _, snippet := range []string{"go env GOHOSTOS", "windows)", "cygpath -w", "go-licenses.exe", `GOBIN="$gobin"`} {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("license script missing platform-aware case %q", snippet)
+		}
 	}
 }
 
@@ -382,13 +475,19 @@ func TestHomebrewPushDoesNotMaskCommitFailures(t *testing.T) {
 
 func TestRepairBuildsUseTheResolvedTagCommit(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
-	for _, jobName := range []string{"verify", "license", "build"} {
-		job := wf.Jobs[jobName]
-		if job.If != "needs.metadata.outputs.run_build == 'true'" {
-			t.Fatalf("%s if=%q", jobName, job.If)
-		}
+	quality := wf.Jobs["quality"]
+	if quality.If != "needs.metadata.outputs.run_build == 'true'" {
+		t.Fatalf("quality if=%q", quality.If)
+	}
+	if quality.With["source_sha"] != "${{ needs.metadata.outputs.source_sha }}" {
+		t.Fatalf("quality source_sha=%q", quality.With["source_sha"])
+	}
+
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	for _, jobName := range []string{"test", "race", "smoke", "license", "build"} {
+		job := reusable.Jobs[jobName]
 		checkout := usesStep(t, job, "actions/checkout@v7")
-		if checkout.With["ref"] != "${{ needs.metadata.outputs.source_sha }}" {
+		if checkout.With["ref"] != "${{ inputs.source_sha }}" {
 			t.Fatalf("%s checkout ref=%q", jobName, checkout.With["ref"])
 		}
 	}
@@ -469,17 +568,20 @@ func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 }
 
 func TestReleaseDarwinBuildUsesMacOSRunnerAndCGO(t *testing.T) {
-	build := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "build")
+	build := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "build")
 	assertBuildMatrix(t, build)
 }
 
 func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
-	smoke := wf.Jobs["smoke"]
-	for _, need := range []string{"metadata", "build"} {
-		if !slices.Contains(smoke.Needs, need) {
-			t.Fatalf("smoke needs=%v, missing %q", smoke.Needs, need)
-		}
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	build := reusable.Jobs["build"]
+	upload := namedStep(t, build, "Upload artifact")
+	if upload.Uses != "actions/upload-artifact@v7" || upload.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" {
+		t.Fatalf("build artifact upload uses=%q with=%v", upload.Uses, upload.With)
+	}
+	smoke := reusable.Jobs["native-smoke"]
+	if !slices.Contains(smoke.Needs, "build") {
+		t.Fatalf("smoke needs=%v, missing build", smoke.Needs)
 	}
 	if smoke.RunsOn != "${{ matrix.runner }}" {
 		t.Fatalf("smoke runs-on=%q", smoke.RunsOn)
@@ -505,7 +607,7 @@ func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
 		t.Fatalf("missing native smoke targets: %v", wantRunners)
 	}
 
-	wantVersion := "${{ needs.metadata.outputs.version }}"
+	wantVersion := "${{ inputs.version }}"
 	unix := namedStep(t, smoke, "Verify exact version on Unix")
 	if unix.If != "runner.os != 'Windows'" || unix.Env["VERSION"] != wantVersion {
 		t.Fatalf("unix smoke if=%q VERSION=%q", unix.If, unix.Env["VERSION"])
@@ -537,14 +639,14 @@ func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
 		}
 	}
 
-	if !slices.Contains(wf.Jobs["release"].Needs, "smoke") {
-		t.Fatalf("release needs=%v, missing smoke", wf.Jobs["release"].Needs)
+	release := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "release")
+	if !slices.Contains(release.Needs, "quality") || !strings.Contains(release.If, "needs.quality.result == 'success'") {
+		t.Fatalf("release is not gated by reusable quality: needs=%v if=%q", release.Needs, release.If)
 	}
-}
-
-func TestCIDarwinBuildUsesMacOSRunnerAndCGO(t *testing.T) {
-	build := readWorkflowJob(t, "../.github/workflows/ci.yml", "build")
-	assertBuildMatrix(t, build)
+	download := usesStep(t, release, "actions/download-artifact@v8")
+	if download.With["path"] != "dist" || download.With["merge-multiple"] != "true" {
+		t.Fatalf("release artifact download with=%v", download.With)
+	}
 }
 
 func readWorkflowJob(t *testing.T, path, jobName string) workflowJob {
@@ -574,6 +676,9 @@ func assertBuildMatrix(t *testing.T, build workflowJob) {
 	t.Helper()
 	if build.RunsOn != "${{ matrix.runner }}" {
 		t.Fatalf("build runs-on=%q", build.RunsOn)
+	}
+	if len(build.Strategy.Matrix.Include) != 5 {
+		t.Fatalf("build targets=%d, want 5", len(build.Strategy.Matrix.Include))
 	}
 	targets := map[string]workflowTarget{}
 	for _, target := range build.Strategy.Matrix.Include {
