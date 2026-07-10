@@ -55,6 +55,10 @@ trap cleanup EXIT
 remote_names="$work_dir/remote-assets.txt"
 gh api "repos/$repository/releases/tags/$version" --jq '.assets[].name' > "$remote_names"
 
+while IFS= read -r remote_name; do
+  release_is_expected_asset "$remote_name" || release_die "unexpected release asset: $remote_name"
+done < "$remote_names"
+
 for asset in "${RELEASE_ASSETS[@]}"; do
   count=$(remote_count "$asset")
   [[ "$count" == "0" || "$count" == "1" ]] ||

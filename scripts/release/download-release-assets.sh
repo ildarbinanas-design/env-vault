@@ -41,6 +41,20 @@ mkdir -p "$parent"
 staging=$(mktemp -d "$parent/.env-vault-release-download.XXXXXX")
 trap cleanup EXIT
 
+remote_names="$staging/.remote-asset-names"
+gh api "repos/$repository/releases/tags/$version" --jq '.assets[].name' > "$remote_names"
+remote_count=$(LC_ALL=C awk 'END { print NR }' "$remote_names")
+[[ "$remote_count" == "${#RELEASE_ASSETS[@]}" ]] ||
+  release_die "release must contain exactly ${#RELEASE_ASSETS[@]} assets"
+while IFS= read -r remote_name; do
+  release_is_expected_asset "$remote_name" || release_die "unexpected release asset: $remote_name"
+done < "$remote_names"
+for asset in "${RELEASE_ASSETS[@]}"; do
+  count=$(LC_ALL=C grep -Fxc -- "$asset" "$remote_names" || true)
+  [[ "$count" == "1" ]] || release_die "release asset is missing or duplicated: $asset"
+done
+rm -f -- "$remote_names"
+
 download_args=(release download "$version" --repo "$repository" --dir "$staging")
 for asset in "${RELEASE_ASSETS[@]}"; do
   download_args+=(--pattern "$asset")

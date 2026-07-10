@@ -152,6 +152,7 @@ func TestReconcileReleaseAssets(t *testing.T) {
 		name          string
 		missing       []string
 		corrupt       string
+		extra         string
 		wantUploads   []string
 		wantStatus    int
 		wantInOutput  string
@@ -190,6 +191,12 @@ func TestReconcileReleaseAssets(t *testing.T) {
 			wantStatus:   1,
 			wantInOutput: "checksum mismatch for " + releaseTestArchives[0],
 		},
+		{
+			name:         "unexpected remote asset is fatal",
+			extra:        "unexpected-debug-binary",
+			wantStatus:   1,
+			wantInOutput: "unexpected release asset",
+		},
 	}
 
 	for _, test := range tests {
@@ -217,6 +224,11 @@ func TestReconcileReleaseAssets(t *testing.T) {
 				badChecksum := strings.Repeat("0", 64) + "  " + strings.TrimSuffix(test.corrupt, ".sha256") + "\n"
 				if err := os.WriteFile(filepath.Join(remoteDir, test.corrupt), []byte(badChecksum), 0o644); err != nil {
 					t.Fatalf("corrupt remote checksum: %v", err)
+				}
+			}
+			if test.extra != "" {
+				if err := os.WriteFile(filepath.Join(remoteDir, test.extra), []byte("unexpected\n"), 0o644); err != nil {
+					t.Fatalf("write unexpected remote asset: %v", err)
 				}
 			}
 			installReleaseAssetsFakeGH(t, fakeBin)
