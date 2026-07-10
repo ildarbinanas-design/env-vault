@@ -27,6 +27,41 @@ On Linux, process environment variables may be visible to the same user through 
 - The test backend is insecure and enabled only when all three env vars are set: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and `ENV_VAULT_TEST_STORE=/tmp/...`.
 - Tests and smoke checks use generated ephemeral fixtures; stable secret payload fixtures are not stored in the repo.
 
+## Install
+
+### Homebrew (macOS and Linux)
+
+```sh
+brew install ildarbinanas-design/tap/env-vault
+```
+
+Supported platforms: macOS arm64/amd64 and Linux arm64/amd64. Homebrew
+downloads do not receive the Gatekeeper quarantine attribute, so no
+`xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
+[ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
+and is updated automatically on every release. Upgrade with
+`brew upgrade env-vault`.
+
+### Manual download
+
+Download the archive for your platform from the
+[latest release](https://github.com/ildarbinanas-design/env-vault/releases/latest),
+verify its checksum, and unpack (substitute the version, OS, and architecture):
+
+```sh
+VERSION=v0.0.3 TARGET=darwin-arm64
+curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz"
+curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz.sha256"
+shasum -a 256 -c "env-vault-${TARGET}.tar.gz.sha256"
+tar xzf "env-vault-${TARGET}.tar.gz"
+./env-vault-${TARGET}/env-vault version
+```
+
+On Linux, use `sha256sum -c` if `shasum` is not available. With a manual
+download on macOS, the browser or curl-less tooling may quarantine the binary;
+`xattr -d com.apple.quarantine env-vault` removes the attribute. The Homebrew
+path above avoids this entirely.
+
 ## Install From Source
 
 ```sh
