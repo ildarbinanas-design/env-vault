@@ -122,6 +122,13 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 		ServiceName:            service,
 		AllowedBackends:        allowed,
 		KeychainSynchronizable: false,
+		// The pass backend ignores ServiceName and keys entries by PassPrefix.
+		// Without an explicit prefix it operates on the user's entire
+		// ~/.password-store, so List/Delete would enumerate and destroy
+		// unrelated personal entries. Scope every operation to env-vault's own
+		// namespace, per service, to keep it isolated and consistent with the
+		// other backends' ServiceName scoping.
+		PassPrefix: "env-vault/" + service,
 	})
 	if stderrors.Is(err, keyring.ErrNoAvailImpl) {
 		return nil, s.backendError(err)
