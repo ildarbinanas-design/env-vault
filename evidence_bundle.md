@@ -1,5 +1,52 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-APP-CUTOVER-COMPLETE`
+
+Timestamp UTC: `2026-07-10T22:46:27Z`
+
+### Scope
+
+Complete the least-privilege GitHub App cutover, publish `v0.0.6`, require the
+exact Homebrew pull-request and post-merge CI chain to succeed, verify the
+installed formula, and retire the legacy deploy credentials only after the
+release health gate passed. No existing tag was moved and no existing Release
+asset was replaced.
+
+### Publication Evidence
+
+| Item | Result | Claim status |
+|---|---|---|
+| GitHub App scope audit [29128162315](https://github.com/ildarbinanas-design/env-vault/actions/runs/29128162315) | passed at source `76c9ac760b9d98752d737a1875339ac3ca2de0e5`; the metadata-only audit observed exactly `ildarbinanas-design/homebrew-tap` | remote_observed |
+| Release workflow [29128230296](https://github.com/ildarbinanas-design/env-vault/actions/runs/29128230296) | passed metadata, monotonic preflight, test/vet/race/smoke, five builds, five native exact-version smokes, three native license scans, Release, supply-chain, Homebrew, and health jobs | remote_observed |
+| Release [`v0.0.6`](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.0.6) | published, non-draft, non-prerelease; lightweight tag and source `main` both resolve to `76c9ac760b9d98752d737a1875339ac3ca2de0e5` | remote_observed |
+| Release assets | exactly five archives plus their five `.sha256` companions; the workflow verified every pair and rejected replacement semantics | remote_observed |
+| [Supply-chain evidence](https://github.com/ildarbinanas-design/env-vault/attestations) | SPDX SBOM workflow artifact generated; the project verifier cryptographically verified one SLSA provenance and one SPDX attestation for each archive against the exact signer workflow and release source | remote_observed |
+| Homebrew PR [#3](https://github.com/ildarbinanas-design/homebrew-tap/pull/3) | exact head `b70542691637345922214d5a495d55fdfe9c83ea` passed [PR CI 29128368672](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29128368672) and squash-merged without bypass | remote_observed |
+| Homebrew publication | tap `main` is `f8f9897595914a21e657c7f6a1ce106e47867dfb`; exact [post-merge push CI 29128402784](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29128402784) passed | remote_observed |
+| Published formula | `version "0.0.6"`; exact `assert_equal "v#{version}", shell_output("#{bin}/env-vault --version").strip` | remote_observed |
+| Local Homebrew verification | upgraded only `env-vault` to `0.0.6`; both version commands returned exactly `v0.0.6`; `brew style` and `brew test` passed | cli_observed |
+| Final repository verification | gofmt, module verify/tidy diff, `go test ./...`, vet, race, smoke, pinned license scan, workflow regression tests, targeted ShellCheck, actionlint with exact stale-schema/intentional-literal diagnostics excluded, and diff checks passed | cli_observed |
+| Legacy credential retirement | repository secret `TAP_DEPLOY_KEY` and tap write deploy key `156891216` were deleted after health succeeded; follow-up lists contain neither | remote_observed |
+| Preserved manual-binary backup | still present at the requested path with its original observed size and modification time; it was not modified or deleted | cli_observed |
+
+### Final Trust Boundary
+
+| Control | Verified state | Claim status |
+|---|---|---|
+| GitHub App | private App with Actions read, Contents write, Pull requests write; installation scope is exactly `homebrew-tap` | remote_observed |
+| `release` environment | contains only App client-id/private-key names for this flow; deployment policies are `main` and tag `v*` | remote_observed |
+| `env-vault` main ruleset | no bypass actor; PR, thread resolution, strict `quality-gate`, `Dependency review`, `Analyze (go)`, and `Analyze (actions)` checks | remote_observed |
+| `homebrew-tap` main ruleset | no bypass actor; PR, thread resolution, squash-only merge, required `test`, force-push/deletion blocked | remote_observed |
+| Tap writer | the scoped GitHub App is the only configured release writer; legacy repository secret and deploy key are absent | remote_observed |
+
+### Residual Risk
+
+Archive extraction still has a theoretical parent-directory symlink-swap TOCTOU
+between path inspection and file creation. Release extraction runs in a private
+ephemeral runner output directory where a hostile concurrent local process is
+outside the threat model. A generalized extractor should move to `os.Root` or
+dirfd/openat with no-follow semantics.
+
 ## Task ID: `ENV-VAULT-RELEASE-APP-CUTOVER-CHECKPOINT`
 
 Timestamp UTC: `2026-07-10T22:30:47Z`
