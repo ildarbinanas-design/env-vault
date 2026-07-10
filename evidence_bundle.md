@@ -1,5 +1,67 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-APP-CUTOVER-CHECKPOINT`
+
+Timestamp UTC: `2026-07-10T22:30:47Z`
+
+### Scope
+
+Replace the Homebrew deploy-key direct push with a least-privilege GitHub App
+pull-request flow, apply the approved external release settings, publish the
+reviewed repository changes through pull requests, and establish exact tap CI
+evidence before the `v0.0.6` release. This checkpoint precedes the App scope
+audit and version publication. No existing tag was moved, no Release asset was
+replaced, and the preserved manual-binary backup was not accessed or changed.
+
+### Changes
+
+| Repository/file or setting | Purpose |
+|---|---|
+| `build-binaries.yml`, `publish-homebrew-pr.sh`, `merge-homebrew-pr.sh`, `wait-tap-ci.sh` | Create/reuse one deterministic formula PR, bind it to version/source/formula digest, wait exact PR CI, merge the unchanged head without bypass, and wait exact post-merge CI |
+| `audit-release-app.yml` | Mint a metadata-only token and fail unless the App installation contains exactly `homebrew-tap` |
+| release-script and workflow regression tests | Cover monotonic/no-op/partial PR state, markers and formula bytes, merge head drift, exact workflow/SHA/event, timeout, malformed API data, and removal of the direct-push path |
+| `reusable-quality.yml`, `ci.yml` | Run the pinned license scanner with Go 1.23 on Linux/macOS/Windows, avoid duplicate PR branch runs, and expose one stable `quality-gate` required-check context |
+| `internal/releasearchive` | Add a source-local conservative double-dot barrier recognized by CodeQL before tar/zip names reach filesystem helpers |
+| `README.md`, `RELEASING.md`, `docs/design.md`, `docs/release-external-settings.md` | Document the implemented App/PR flow, exact CI evidence, repair behavior, scope audit, credential rotation, and rollback |
+| GitHub App `env-vault-homebrew-release` | Dedicated private App with Actions read, Contents write, Pull requests write, no webhook, and no unrelated account permissions |
+| `env-vault` environment `release` | Store only `TAP_APP_CLIENT_ID` and `TAP_APP_PRIVATE_KEY`; allow deployment only from `main` and tags matching `v*` |
+| `homebrew-tap` ruleset `Protect Homebrew tap main` | Require a PR, squash, the GitHub Actions `test` context, conversation resolution, and block force-push/deletion with no bypass actor |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 and official GitHub Actions, GitHub CLI, GitHub App token, environment, ruleset, and CodeQL documentation | passed; current v3 `client-id`, explicit permissions, exact run filters, merge head guard, and path barrier were used | doc_verified |
+| Expired local `gh` authorization removal and browser OAuth login | passed; API identity is `ildarbinanas-design`; credential value was not printed or persisted in repository files | cli_observed |
+| `release` environment and deployment-policy API verification | passed; custom policies are exactly branch `main` and tag `v*`; environment contains the expected variable/secret names | cli_observed |
+| Homebrew tap PR [#1](https://github.com/ildarbinanas-design/homebrew-tap/pull/1) | passed required `test`; squash-merged without bypass at `bc8477a95437da3d171c14db306b51ef220ae963` | remote_observed |
+| Exact post-merge tap run [29127628637](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29127628637) | passed for `workflow=test-formula.yml`, `event=push`, and the exact merge SHA | remote_observed |
+| env-vault PR [#9](https://github.com/ildarbinanas-design/env-vault/pull/9) | 21 checks passed: test, vet, race, smoke, five builds, five native version smokes, three native license scans, stable quality gate, dependency review, and CodeQL | remote_observed |
+| Initial native license jobs | failed closed on all OS because `go-licenses v2.0.1` requires Go 1.23 while the project compatibility toolchain is Go 1.22 | remote_observed |
+| Explicit license runtime fix | passed locally and in all three rerun jobs; project test/build compatibility remains on `go.mod` | remote_observed |
+| CodeQL Zip Slip review threads | initial custom sanitizer was not modeled; source-local double-dot guards and tests added; rerun passed and both bot threads auto-resolved | remote_observed |
+| `go test ./...`, targeted vet, ShellCheck, pinned license scan, workflow regression tests, and `git diff --check` | passed at this checkpoint | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Release automation no longer contains an SSH direct push to tap `main` | repo_verified | no `TAP_DEPLOY_KEY`, `ssh-keyscan`, deploy-key file, or `HEAD:main` path remains in the workflow; regression tests reject reintroduction |
+| The App write token is explicitly scoped to `homebrew-tap` and the minimum three permissions | repo_verified | token action v3 inputs name one repository and Actions read, Contents write, Pull requests write |
+| A release cannot be healthy from a PR check or checks-page link alone | repo_verified | Homebrew waits the exact merged SHA's successful push run and passes its URL/SHA to health |
+| `repair=health` cannot read the App private key or mutate the tap | repo_verified | health skips the environment-backed Homebrew job and uses public/read-only state |
+| Native license scanning is executable on every configured runner | remote_observed | Linux, macOS, and Windows jobs passed with the explicit Go 1.23 tool runtime |
+| Archive traversal names are rejected before archive data reaches filesystem helpers | remote_observed | source-local tar/zip barrier, traversal/over-rejection tests, and successful CodeQL rerun |
+
+### Remaining Cutover Steps And Risks
+
+| Item | Status | Required action or mitigation | Claim status |
+|---|---|---|---|
+| Prove App installation selection after it was corrected from all repositories to selected repositories | pending | Merge `audit-release-app.yml`, dispatch it, and require its metadata-only exact-one-repository check to pass before release | planned |
+| Publish and health-check `v0.0.6` | pending | Merge env-vault PR #9, run the App scope audit, dispatch `build-binaries` from `main`, and verify exact tag/Release/assets/attestations/tap PR/tap SHA/tap CI | planned |
+| Remove legacy `TAP_DEPLOY_KEY` and matching tap deploy key | pending | Delete both only after the first App-based release is healthy, then verify no remaining reference or writer | planned |
+| Parent-directory symlink replacement between `Lstat` and file creation is not prevented by lexical archive-name checks | accepted | release extraction runs in a private ephemeral runner output directory; a hostile concurrent local process is outside this workflow threat model; a future generalized extractor should use dirfd/openat `O_NOFOLLOW` or `os.Root` | repo_verified |
+
 ## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-5`
 
 Timestamp UTC: `2026-07-10T21:44:47Z`
