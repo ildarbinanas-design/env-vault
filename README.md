@@ -39,8 +39,9 @@ Supported platforms: macOS arm64/amd64 and Linux arm64/amd64. Homebrew
 downloads do not receive the Gatekeeper quarantine attribute, so no
 `xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
 [ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
-and is updated automatically on every release. Upgrade with
-`brew upgrade env-vault`.
+and is generated and pushed by the release workflow. A separate Homebrew tap
+workflow verifies style, installation, and the installed version before the
+update is considered healthy. Upgrade with `brew upgrade env-vault`.
 
 ### Manual download
 
@@ -49,12 +50,12 @@ Download the archive for your platform from the
 verify its checksum, and unpack (substitute the version, OS, and architecture):
 
 ```sh
-VERSION=v0.0.3 TARGET=darwin-arm64
+VERSION=v0.0.5 TARGET=darwin-arm64
 curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz"
 curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz.sha256"
 shasum -a 256 -c "env-vault-${TARGET}.tar.gz.sha256"
 tar xzf "env-vault-${TARGET}.tar.gz"
-./env-vault-${TARGET}/env-vault version
+./env-vault-${TARGET}/env-vault --version
 ```
 
 On Linux, use `sha256sum -c` if `shasum` is not available. With a manual
@@ -73,10 +74,17 @@ go build -o env-vault ./cmd/env-vault
 
 Binary archives are built by the `build-binaries` GitHub Actions workflow.
 
-- Manual build: open **Actions** -> **build-binaries** -> **Run workflow**.
-- Release build: push a version tag such as `v0.0.2`; the workflow builds archives and attaches them to a GitHub Release.
+- Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
+  leave the optional version input blank.
+- Manual release: run the workflow from the default branch with an explicit
+  `vX.Y.Z` version. The workflow validates the version, runs tests and the
+  pinned license gate, builds all archives, creates the tag and GitHub Release,
+  then updates the Homebrew tap.
+- Tag release: pushing a strict `vX.Y.Z` tag remains supported and runs the same
+  verification, build, release, and Homebrew jobs.
 
 Supported targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+Each release contains five archives and five matching SHA-256 files.
 
 macOS release artifacts are built on macOS runners with `CGO_ENABLED=1`; the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux and Windows release targets keep `CGO_ENABLED=0`.
 

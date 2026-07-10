@@ -95,6 +95,20 @@ github.com/ildarbinanas-design/env-vault
 
 ## Release Artifact Builds
 
-Release publication is tag-driven: pushing a `vX.Y.Z` tag runs the `build-binaries` workflow, which builds archives and creates the GitHub Release for that tag.
+Release publication is owned by `build-binaries`. A strict `vX.Y.Z` tag push
+starts a release, while a manual dispatch from the default branch may supply an
+optional `vX.Y.Z` input. A dispatch without a version is build-only. A manual
+release creates its tag with the workflow-scoped `GITHUB_TOKEN`, avoiding a
+second recursive tag workflow.
+
+Every release waits for unit tests, vet, race tests, smoke tests, a pinned
+`go-licenses` gate, and all platform builds. It publishes five archives and
+five matching SHA-256 files. The version is injected into each binary through
+Go linker flags.
 
 Darwin release artifacts are built on macOS GitHub-hosted runners with `CGO_ENABLED=1` because the macOS Keychain backend requires CGO-enabled darwin binaries. Linux and Windows artifact builds remain `CGO_ENABLED=0`.
+
+After the GitHub Release succeeds, the workflow generates four Homebrew URL and
+SHA branches, commits the formula to `homebrew-tap`, and lets the tap's separate
+workflow verify style, installation, and the installed version. GitHub Release
+publication and tap verification are intentionally separate, observable gates.

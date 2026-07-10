@@ -16,9 +16,9 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - Every implementation run must update an evidence bundle with commands, scope, checks, risks, and claim statuses.
 - Do not commit, push, tag, release, create a remote, or publish without explicit approval.
 
-## Local MVP Scope
+## Project Scope
 
-This repository is a local MVP bootstrap. GitHub remote creation, publishing, releases, tags, and module path migration still require explicit approval.
+This repository contains the public env-vault MVP at `github.com/ildarbinanas-design/env-vault`. Commits, pushes, tags, releases, and other publishing actions still require explicit approval.
 
 The MVP command surface is allowed to include:
 

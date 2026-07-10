@@ -2,6 +2,12 @@ name: build-binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional release version (vX.Y.Z). Leave blank for a build-only run."
+        required: false
+        default: ""
+        type: string
   push:
     tags:
       - "v*"
@@ -10,7 +16,69 @@ permissions:
   contents: read
 
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - id: resolve
+        name: Resolve build version and release mode
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          version="$REF_NAME"
+          publish=false
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            publish=true
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            if [[ "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+              echo "manual releases must run from refs/heads/${DEFAULT_BRANCH}" >&2
+              exit 1
+            fi
+            version="$INPUT_VERSION"
+            publish=true
+          fi
+          if [[ "$publish" == "true" && ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "release version must match vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'publish=%s\n' "$publish" >> "$GITHUB_OUTPUT"
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: scripts/smoke.sh
+
+  license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+
+      - run: scripts/license-check.sh
+
   build:
+    needs: [metadata]
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -48,9 +116,9 @@ jobs:
             ext: ".exe"
             archive: zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -59,7 +127,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.cgo }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -eu
           mkdir -p "dist/env-vault-${GOOS}-${GOARCH}"
@@ -82,7 +150,7 @@ jobs:
           shasum -a 256 "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}" > "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -91,37 +159,60 @@ jobs:
           retention-days: 14
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    if: needs.metadata.outputs.publish == 'true'
+    needs: [metadata, verify, license, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
+      - name: Create release tag for manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            --raw-field "ref=refs/tags/${VERSION}" \
+            --raw-field "sha=${GITHUB_SHA}" \
+            --silent; then
+            existing_sha="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" \
+              --jq '.object.sha')"
+            if [ "$existing_sha" != "$GITHUB_SHA" ]; then
+              echo "tag ${VERSION} already points to ${existing_sha}" >&2
+              exit 1
+            fi
+            echo "tag ${VERSION} already points to this commit"
+          fi
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -eu
-          gh release create "${GITHUB_REF_NAME}" dist/* --repo "github.com/${GITHUB_REPOSITORY}" --verify-tag --generate-notes
+          gh release create "${VERSION}" dist/* --repo "github.com/${GITHUB_REPOSITORY}" --verify-tag --generate-notes
 
   homebrew:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: release
+    if: needs.metadata.outputs.publish == 'true'
+    needs: [metadata, release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
       - name: Generate formula
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -eu
           v="${VERSION#v}"
@@ -166,7 +257,7 @@ jobs:
             end
 
             test do
-              assert_match "env-vault", shell_output("#{bin}/env-vault --help")
+              assert_match version.to_s, shell_output("#{bin}/env-vault --version")
             end
           end
           EOF
@@ -174,7 +265,7 @@ jobs:
       - name: Push formula to tap
         env:
           TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -eu
           mkdir -p "$HOME/.ssh"
@@ -188,5 +279,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/env-vault.rb
-          git commit -m "env-vault ${VERSION}" || exit 0
+          if git diff --cached --quiet; then
+            echo "formula already matches ${VERSION}"
+            exit 0
+          fi
+          git commit -m "env-vault ${VERSION}"
           git push origin HEAD:main
