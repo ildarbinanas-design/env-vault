@@ -147,6 +147,143 @@ func TestGetReleaseStateClassifiesGitHubResponses(t *testing.T) {
 	}
 }
 
+func TestArtifactAttestationStateIsIdempotentAndFailClosed(t *testing.T) {
+	tests := []struct {
+		name         string
+		mode         string
+		wantStatus   int
+		wantOutput   string
+		wantAPICalls int
+		wantVerifies int
+	}{
+		{
+			name:         "complete evidence verifies and performs no mutation",
+			mode:         "complete",
+			wantStatus:   0,
+			wantOutput:   "complete|complete",
+			wantAPICalls: 10,
+			wantVerifies: 10,
+		},
+		{
+			name:         "explicitly missing SBOM evidence requests repair",
+			mode:         "sbom-missing",
+			wantStatus:   0,
+			wantOutput:   "complete|missing",
+			wantAPICalls: 10,
+			wantVerifies: 5,
+		},
+		{
+			name:         "existing SBOM does not duplicate missing provenance",
+			mode:         "provenance-missing",
+			wantStatus:   0,
+			wantOutput:   "missing|complete",
+			wantAPICalls: 10,
+			wantVerifies: 5,
+		},
+		{
+			name:         "API failure is not treated as missing",
+			mode:         "api-503",
+			wantStatus:   1,
+			wantOutput:   "HTTP 503",
+			wantAPICalls: 1,
+		},
+		{
+			name:         "network failure is not treated as missing",
+			mode:         "network",
+			wantStatus:   1,
+			wantOutput:   "no HTTP response",
+			wantAPICalls: 1,
+		},
+		{
+			name:         "unverifiable existing evidence is fatal",
+			mode:         "verify-invalid",
+			wantStatus:   1,
+			wantOutput:   "fake gh: attestation verification failed",
+			wantAPICalls: 5,
+			wantVerifies: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			assetDir := filepath.Join(root, "assets")
+			fakeBin := filepath.Join(root, "bin")
+			callLog := filepath.Join(root, "gh-calls.log")
+			makeDirectory(t, assetDir)
+			writeReleaseAssetFixture(t, assetDir)
+			installAttestationFakeGH(t, fakeBin)
+
+			output, status := runReleaseScript(
+				t,
+				"../scripts/release/artifact-attestation-state.sh",
+				[]string{
+					assetDir,
+					releaseTestRepository,
+					releaseTestRepository + "/.github/workflows/build-binaries.yml",
+					lightweightCommitSHA,
+				},
+				map[string]string{
+					"FAKE_ATTEST_MODE": test.mode,
+					"FAKE_GH_CALL_LOG": callLog,
+					"PATH":             fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"TMPDIR":           root,
+				},
+			)
+			if status != test.wantStatus {
+				t.Fatalf("exit status=%d, want %d\n%s", status, test.wantStatus, output)
+			}
+			if test.wantStatus == 0 {
+				if got := strings.TrimSpace(output); got != test.wantOutput {
+					t.Fatalf("state=%q, want %q", got, test.wantOutput)
+				}
+			} else if !strings.Contains(output, test.wantOutput) {
+				t.Fatalf("output does not contain %q:\n%s", test.wantOutput, output)
+			}
+
+			calls := readOptionalFile(t, callLog)
+			if got := strings.Count(calls, "api --method GET"); got != test.wantAPICalls {
+				t.Fatalf("API calls=%d, want %d\n%s", got, test.wantAPICalls, calls)
+			}
+			if got := strings.Count(calls, "attestation verify"); got != test.wantVerifies {
+				t.Fatalf("verification calls=%d, want %d\n%s", got, test.wantVerifies, calls)
+			}
+			if test.wantVerifies > 0 {
+				for _, snippet := range []string{
+					"--repo example/env-vault",
+					"--signer-workflow example/env-vault/.github/workflows/build-binaries.yml",
+					"--source-digest " + lightweightCommitSHA,
+				} {
+					if !strings.Contains(calls, snippet) {
+						t.Fatalf("verification calls missing %q:\n%s", snippet, calls)
+					}
+				}
+			}
+			if test.mode == "complete" {
+				if got := strings.Count(calls, "--predicate-type https://spdx.dev/Document/v2.3"); got != 5 {
+					t.Fatalf("SPDX verification calls=%d, want 5\n%s", got, calls)
+				}
+				for _, predicate := range []string{
+					"predicate_type=https://slsa.dev/provenance/v1",
+					"predicate_type=https://spdx.dev/Document/v2.3",
+				} {
+					if got := strings.Count(calls, predicate); got != 5 {
+						t.Fatalf("attestation API filter %q calls=%d, want 5\n%s", predicate, got, calls)
+					}
+				}
+			}
+			if test.mode == "sbom-missing" && strings.Contains(calls, "--predicate-type https://spdx.dev/Document/v2.3") {
+				t.Fatalf("missing SBOM predicate must not verify or duplicate an absent SBOM attestation:\n%s", calls)
+			}
+			if test.mode == "provenance-missing" {
+				if got := strings.Count(calls, "--predicate-type https://spdx.dev/Document/v2.3"); got != 5 {
+					t.Fatalf("existing SBOM verification calls=%d, want 5\n%s", got, calls)
+				}
+			}
+		})
+	}
+}
+
 func TestReconcileReleaseAssets(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -442,6 +579,66 @@ case "$operation" in
   *)
     printf 'fake gh: unsupported release operation: %s\n' "$operation" >&2
     exit 104
+    ;;
+esac
+`
+	writeExecutable(t, filepath.Join(binDir, "gh"), script)
+}
+
+func installAttestationFakeGH(t *testing.T, binDir string) {
+	t.Helper()
+	makeDirectory(t, binDir)
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+
+mode=${FAKE_ATTEST_MODE:?FAKE_ATTEST_MODE is required}
+call_log=${FAKE_GH_CALL_LOG:?FAKE_GH_CALL_LOG is required}
+printf '%s\n' "$*" >> "$call_log"
+
+case ${1:-} in
+  api)
+    predicate=''
+    previous=''
+    for argument in "$@"; do
+      if [[ $previous == -f && $argument == predicate_type=* ]]; then
+        predicate=${argument#predicate_type=}
+      fi
+      previous=$argument
+    done
+    case "$mode" in
+      sbom-missing)
+        if [[ $predicate == https://spdx.dev/Document/v2.3 ]]; then
+          printf 'gh: Not Found (HTTP 404)\n' >&2
+          exit 1
+        fi
+        ;;
+      provenance-missing)
+        if [[ $predicate == https://slsa.dev/provenance/v1 ]]; then
+          printf 'gh: Not Found (HTTP 404)\n' >&2
+          exit 1
+        fi
+        ;;
+      api-503)
+        printf 'gh: Service Unavailable (HTTP 503)\n' >&2
+        exit 1
+        ;;
+      network)
+        printf 'dial tcp: network is unreachable\n' >&2
+        exit 1
+        ;;
+    esac
+    printf '1\n'
+    ;;
+  attestation)
+    [[ ${2:-} == verify ]] || exit 90
+    if [[ $mode == verify-invalid ]]; then
+      printf 'fake gh: attestation verification failed\n' >&2
+      exit 1
+    fi
+    ;;
+  *)
+    printf 'fake gh: unsupported command: %s\n' "$*" >&2
+    exit 91
     ;;
 esac
 `

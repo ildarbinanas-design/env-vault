@@ -252,6 +252,131 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: scripts/release/reconcile-release-assets.sh "$VERSION" dist
 
+  supply_chain:
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.metadata.result == 'success' &&
+        needs.metadata.outputs.publish == 'true' &&
+        (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
+        needs.release.result == 'success'
+      }}
+    needs: [metadata, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download canonical release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: scripts/release/download-release-assets.sh "$VERSION" release-dist
+
+      - id: attestation-state
+        name: Detect complete existing attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          state="$(scripts/release/artifact-attestation-state.sh \
+            release-dist \
+            "$GITHUB_REPOSITORY" \
+            "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
+            "$SOURCE_SHA")"
+          provenance_state=''
+          sbom_state=''
+          extra=''
+          IFS='|' read -r provenance_state sbom_state extra <<< "$state"
+          for value in "$provenance_state" "$sbom_state"; do
+            case "$value" in
+              complete|missing) ;;
+              *) echo "unexpected attestation state: $state" >&2; exit 1 ;;
+            esac
+          done
+          [[ -z "$extra" ]] || {
+            echo "unexpected attestation state: $state" >&2
+            exit 1
+          }
+          create_provenance=false
+          create_sbom=false
+          [[ "$provenance_state" == "complete" ]] || create_provenance=true
+          [[ "$sbom_state" == "complete" ]] || create_sbom=true
+          if [[ "$create_provenance" == "true" || "$create_sbom" == "true" ]]; then
+            if [[ "$RUN_SHA" != "$SOURCE_SHA" ]]; then
+              echo "cannot attest release ${SOURCE_SHA} from workflow source ${RUN_SHA}" >&2
+              echo "rerun the original release workflow at ${SOURCE_SHA}; never mint provenance from a later main commit" >&2
+              exit 1
+            fi
+            echo "supply-chain evidence is incomplete; generating only missing predicates"
+          else
+            echo "all provenance and SPDX attestations already verify at ${SOURCE_SHA}; no-op"
+          fi
+          {
+            printf 'create_provenance=%s\n' "$create_provenance"
+            printf 'create_sbom=%s\n' "$create_sbom"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go for safe extraction
+        if: steps.attestation-state.outputs.create_sbom == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Safely extract packages for SBOM
+        if: steps.attestation-state.outputs.create_sbom == 'true'
+        run: go run ./cmd/release-extract --input-dir release-dist --output-dir sbom-root
+
+      - name: Generate SPDX SBOM
+        if: steps.attestation-state.outputs.create_sbom == 'true'
+        uses: anchore/sbom-action@v0
+        with:
+          path: sbom-root
+          format: spdx-json
+          output-file: env-vault-sbom.spdx.json
+          syft-version: v1.44.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SPDX SBOM workflow artifact
+        if: steps.attestation-state.outputs.create_sbom == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: env-vault-sbom-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}
+          path: env-vault-sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Attest build provenance
+        if: steps.attestation-state.outputs.create_provenance == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-dist/env-vault-linux-amd64.tar.gz
+            release-dist/env-vault-linux-arm64.tar.gz
+            release-dist/env-vault-darwin-amd64.tar.gz
+            release-dist/env-vault-darwin-arm64.tar.gz
+            release-dist/env-vault-windows-amd64.zip
+
+      - name: Attest SPDX SBOM
+        if: steps.attestation-state.outputs.create_sbom == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-dist/env-vault-linux-amd64.tar.gz
+            release-dist/env-vault-linux-arm64.tar.gz
+            release-dist/env-vault-darwin-amd64.tar.gz
+            release-dist/env-vault-darwin-arm64.tar.gz
+            release-dist/env-vault-windows-amd64.zip
+          sbom-path: env-vault-sbom.spdx.json
+
   homebrew:
     if: >-
       ${{
@@ -263,15 +388,17 @@ jobs:
         (
           (
             (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
-            needs.release.result == 'success'
+            needs.release.result == 'success' &&
+            needs.supply_chain.result == 'success'
           ) ||
           (
             needs.metadata.outputs.repair == 'homebrew' &&
-            needs.release.result == 'skipped'
+            needs.release.result == 'skipped' &&
+            needs.supply_chain.result == 'skipped'
           )
         )
       }}
-    needs: [metadata, preflight, release]
+    needs: [metadata, preflight, release, supply_chain]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -339,22 +466,28 @@ jobs:
           (
             (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
             needs.release.result == 'success' &&
+            needs.supply_chain.result == 'success' &&
             needs.homebrew.result == 'success'
           ) ||
           (
             needs.metadata.outputs.repair == 'homebrew' &&
             needs.release.result == 'skipped' &&
+            needs.supply_chain.result == 'skipped' &&
             needs.homebrew.result == 'success'
           ) ||
           (
             needs.metadata.outputs.repair == 'health' &&
             needs.release.result == 'skipped' &&
+            needs.supply_chain.result == 'skipped' &&
             needs.homebrew.result == 'skipped'
           )
         )
       }}
-    needs: [metadata, release, homebrew]
+    needs: [metadata, release, supply_chain, homebrew]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@v7
 
@@ -376,7 +509,27 @@ jobs:
             exit 1
           fi
           scripts/release/download-release-assets.sh "$VERSION" health-dist
+          scripts/release/verify-artifact-attestations.sh \
+            health-dist \
+            "$GITHUB_REPOSITORY" \
+            "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
+            "$SOURCE_SHA"
           git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git health-tap
           scripts/release/verify-homebrew-formula.sh \
             "$VERSION" health-dist health-tap/Formula/env-vault.rb
-          echo "release ${VERSION} is healthy"
+          tap_sha="$(git -C health-tap rev-parse HEAD)"
+          release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
+          tap_commit_url="${GITHUB_SERVER_URL}/ildarbinanas-design/homebrew-tap/commit/${tap_sha}"
+          tap_ci_url="${tap_commit_url}/checks"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          attestations_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/attestations"
+          {
+            printf '## env-vault %s automated release checks\n\n' "$VERSION"
+            printf -- '- Release: [%s](%s)\n' "$VERSION" "$release_url"
+            printf -- '- Tap commit: [%s](%s)\n' "$tap_sha" "$tap_commit_url"
+            printf -- '- Tap CI checks: [checks for %s](%s)\n' "$tap_sha" "$tap_ci_url"
+            printf -- '- Supply-chain attestations: [repository attestations](%s)\n' "$attestations_url"
+            printf -- '- Release workflow run: [run %s](%s)\n\n' "$GITHUB_RUN_ID" "$run_url"
+            printf '> Tap CI is not awaited by this workflow yet; verify the exact tap commit manually.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "automated release checks passed for ${VERSION}; tap CI still requires manual verification"

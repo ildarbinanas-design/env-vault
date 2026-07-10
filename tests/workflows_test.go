@@ -47,13 +47,14 @@ type workflowInput struct {
 }
 
 type workflowJob struct {
-	If       string            `yaml:"if"`
-	Needs    []string          `yaml:"needs"`
-	RunsOn   string            `yaml:"runs-on"`
-	Uses     string            `yaml:"uses"`
-	With     map[string]string `yaml:"with"`
-	Strategy workflowStrategy  `yaml:"strategy"`
-	Steps    []workflowStep    `yaml:"steps"`
+	If          string            `yaml:"if"`
+	Needs       []string          `yaml:"needs"`
+	RunsOn      string            `yaml:"runs-on"`
+	Uses        string            `yaml:"uses"`
+	With        map[string]string `yaml:"with"`
+	Permissions map[string]string `yaml:"permissions"`
+	Strategy    workflowStrategy  `yaml:"strategy"`
+	Steps       []workflowStep    `yaml:"steps"`
 }
 
 type workflowStrategy struct {
@@ -90,6 +91,8 @@ func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
 		"actions/setup-go":                 "v6",
 		"actions/upload-artifact":          "v7",
 		"actions/download-artifact":        "v8",
+		"actions/attest":                   "v4",
+		"anchore/sbom-action":              "v0",
 		"actions/dependency-review-action": "v5",
 	}
 	for _, path := range []string{
@@ -291,6 +294,7 @@ func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 		step string
 	}{
 		{job: "release", step: "Create GitHub Release"},
+		{job: "supply_chain", step: "Download canonical release assets"},
 		{job: "homebrew", step: "Generate formula"},
 		{job: "homebrew", step: "Push formula to tap"},
 	}
@@ -546,12 +550,12 @@ func TestReleaseReusesTagAndReleaseAndReconcilesAssets(t *testing.T) {
 
 func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 	health := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "health")
-	for _, need := range []string{"metadata", "release", "homebrew"} {
+	for _, need := range []string{"metadata", "release", "supply_chain", "homebrew"} {
 		if !slices.Contains(health.Needs, need) {
 			t.Fatalf("health needs=%v, missing %q", health.Needs, need)
 		}
 	}
-	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "repair == 'health'", "needs.release.result == 'skipped'", "needs.homebrew.result == 'success'", "needs.homebrew.result == 'skipped'"} {
+	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "repair == 'health'", "needs.release.result == 'skipped'", "needs.supply_chain.result == 'success'", "needs.supply_chain.result == 'skipped'", "needs.homebrew.result == 'success'", "needs.homebrew.result == 'skipped'"} {
 		if !strings.Contains(health.If, snippet) {
 			t.Fatalf("health if=%q, missing %q", health.If, snippet)
 		}
@@ -561,11 +565,154 @@ func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 		"resolve-tag-sha.sh",
 		"get-release-state.sh",
 		"download-release-assets.sh",
+		"verify-artifact-attestations.sh",
 		"verify-homebrew-formula.sh",
+		"GITHUB_STEP_SUMMARY",
+		"Tap CI checks",
+		"Tap CI is not awaited",
 	} {
 		if !strings.Contains(verify.Run, snippet) {
 			t.Fatalf("health verification missing %q", snippet)
 		}
+	}
+}
+
+func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	supply := wf.Jobs["supply_chain"]
+	for _, need := range []string{"metadata", "release"} {
+		if !slices.Contains(supply.Needs, need) {
+			t.Fatalf("supply_chain needs=%v, missing %q", supply.Needs, need)
+		}
+	}
+	for _, snippet := range []string{
+		"always()",
+		"!cancelled()",
+		"publish == 'true'",
+		"repair == 'none'",
+		"repair == 'release-assets'",
+		"needs.release.result == 'success'",
+	} {
+		if !strings.Contains(supply.If, snippet) {
+			t.Fatalf("supply_chain if=%q, missing %q", supply.If, snippet)
+		}
+	}
+	wantPermissions := map[string]string{
+		"contents":          "read",
+		"id-token":          "write",
+		"attestations":      "write",
+		"artifact-metadata": "write",
+	}
+	if len(supply.Permissions) != len(wantPermissions) {
+		t.Fatalf("supply_chain permissions=%v", supply.Permissions)
+	}
+	for permission, want := range wantPermissions {
+		if got := supply.Permissions[permission]; got != want {
+			t.Fatalf("supply_chain permission %s=%q, want %q", permission, got, want)
+		}
+	}
+
+	download := namedStep(t, supply, "Download canonical release assets")
+	if download.Run != `scripts/release/download-release-assets.sh "$VERSION" release-dist` {
+		t.Fatalf("supply-chain download=%q", download.Run)
+	}
+	state := namedStep(t, supply, "Detect complete existing attestations")
+	for _, snippet := range []string{
+		"artifact-attestation-state.sh",
+		"$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml",
+		"$SOURCE_SHA",
+		"complete|missing",
+		"create_provenance",
+		"create_sbom",
+		"$RUN_SHA\" != \"$SOURCE_SHA",
+		"rerun the original release workflow",
+		"GITHUB_OUTPUT",
+	} {
+		if !strings.Contains(state.Run, snippet) {
+			t.Fatalf("attestation state step missing %q", snippet)
+		}
+	}
+	if state.Env["RUN_SHA"] != "${{ github.sha }}" || state.Env["SOURCE_SHA"] != "${{ needs.metadata.outputs.source_sha }}" {
+		t.Fatalf("attestation state SHA inputs=%v", state.Env)
+	}
+
+	setupGo := namedStep(t, supply, "Set up Go for safe extraction")
+	if setupGo.Uses != "actions/setup-go@v6" || setupGo.With["go-version-file"] != "go.mod" {
+		t.Fatalf("safe extraction Go setup uses=%q with=%v", setupGo.Uses, setupGo.With)
+	}
+	extract := namedStep(t, supply, "Safely extract packages for SBOM")
+	if extract.Run != "go run ./cmd/release-extract --input-dir release-dist --output-dir sbom-root" {
+		t.Fatalf("safe SBOM extraction command=%q", extract.Run)
+	}
+	for _, step := range []workflowStep{setupGo, extract} {
+		if step.If != "steps.attestation-state.outputs.create_sbom == 'true'" {
+			t.Fatalf("safe extraction step if=%q", step.If)
+		}
+	}
+
+	sbom := namedStep(t, supply, "Generate SPDX SBOM")
+	if sbom.Uses != "anchore/sbom-action@v0" {
+		t.Fatalf("SBOM action=%q", sbom.Uses)
+	}
+	for key, want := range map[string]string{
+		"path":                  "sbom-root",
+		"format":                "spdx-json",
+		"output-file":           "env-vault-sbom.spdx.json",
+		"syft-version":          "v1.44.0",
+		"upload-artifact":       "false",
+		"upload-release-assets": "false",
+	} {
+		if got := sbom.With[key]; got != want {
+			t.Fatalf("SBOM input %s=%q, want %q", key, got, want)
+		}
+	}
+	upload := namedStep(t, supply, "Upload SPDX SBOM workflow artifact")
+	if upload.Uses != "actions/upload-artifact@v7" || upload.With["retention-days"] != "14" {
+		t.Fatalf("SBOM artifact upload uses=%q with=%v", upload.Uses, upload.With)
+	}
+	if !strings.Contains(upload.With["name"], "github.run_attempt") {
+		t.Fatalf("SBOM artifact name is not retry-safe: %q", upload.With["name"])
+	}
+
+	wantSubjects := []string{
+		"release-dist/env-vault-linux-amd64.tar.gz",
+		"release-dist/env-vault-linux-arm64.tar.gz",
+		"release-dist/env-vault-darwin-amd64.tar.gz",
+		"release-dist/env-vault-darwin-arm64.tar.gz",
+		"release-dist/env-vault-windows-amd64.zip",
+	}
+	for _, stepName := range []string{"Attest build provenance", "Attest SPDX SBOM"} {
+		step := namedStep(t, supply, stepName)
+		if step.Uses != "actions/attest@v4" {
+			t.Fatalf("%s uses=%q", stepName, step.Uses)
+		}
+		if got := strings.Fields(step.With["subject-path"]); !slices.Equal(got, wantSubjects) {
+			t.Fatalf("%s subjects=%v, want %v", stepName, got, wantSubjects)
+		}
+	}
+	provenanceAttestation := namedStep(t, supply, "Attest build provenance")
+	if provenanceAttestation.If != "steps.attestation-state.outputs.create_provenance == 'true'" {
+		t.Fatalf("provenance attestation if=%q", provenanceAttestation.If)
+	}
+	if sbomAttestation := namedStep(t, supply, "Attest SPDX SBOM"); sbomAttestation.With["sbom-path"] != "env-vault-sbom.spdx.json" {
+		t.Fatalf("SBOM attestation inputs=%v", sbomAttestation.With)
+	} else if sbomAttestation.If != "steps.attestation-state.outputs.create_sbom == 'true'" {
+		t.Fatalf("SBOM attestation if=%q", sbomAttestation.If)
+	}
+
+	homebrew := wf.Jobs["homebrew"]
+	if !slices.Contains(homebrew.Needs, "supply_chain") {
+		t.Fatalf("homebrew needs=%v, missing supply_chain", homebrew.Needs)
+	}
+	for _, snippet := range []string{"needs.supply_chain.result == 'success'", "needs.supply_chain.result == 'skipped'"} {
+		if !strings.Contains(homebrew.If, snippet) {
+			t.Fatalf("homebrew supply-chain gate missing %q", snippet)
+		}
+	}
+
+	health := wf.Jobs["health"]
+	if health.Permissions["contents"] != "read" || health.Permissions["attestations"] != "read" {
+		t.Fatalf("health permissions=%v", health.Permissions)
 	}
 }
 
