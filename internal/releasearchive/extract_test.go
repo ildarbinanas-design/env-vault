@@ -60,7 +60,18 @@ func TestTarRejectsTraversal(t *testing.T) {
 	})
 
 	err := extractOneForTest(t, archivePath, defaultLimits)
-	requireErrorContains(t, err, "path")
+	requireErrorContains(t, err, "double-dot sequences in paths are not allowed")
+}
+
+func TestTarRejectsDoubleDotWithinFilename(t *testing.T) {
+	spec := releaseArchives[0]
+	archivePath := filepath.Join(t.TempDir(), spec.name)
+	writeTarArchive(t, archivePath, []archiveEntry{
+		{name: spec.root + "/env..vault", kind: tar.TypeReg, mode: 0o644, content: "bad"},
+	})
+
+	err := extractOneForTest(t, archivePath, defaultLimits)
+	requireErrorContains(t, err, "double-dot sequences in paths are not allowed")
 }
 
 func TestTarRejectsAbsolutePath(t *testing.T) {
@@ -144,7 +155,18 @@ func TestZipRejectsTraversal(t *testing.T) {
 	})
 
 	err := extractOneForTest(t, archivePath, defaultLimits)
-	requireErrorContains(t, err, "path")
+	requireErrorContains(t, err, "double-dot sequences in paths are not allowed")
+}
+
+func TestZipRejectsDoubleDotWithinFilename(t *testing.T) {
+	spec := releaseArchives[len(releaseArchives)-1]
+	archivePath := filepath.Join(t.TempDir(), spec.name)
+	writeZipArchive(t, archivePath, []archiveEntry{
+		{name: spec.root + "/env..vault.exe", kind: tar.TypeReg, mode: 0o644, content: "bad"},
+	})
+
+	err := extractOneForTest(t, archivePath, defaultLimits)
+	requireErrorContains(t, err, "double-dot sequences in paths are not allowed")
 }
 
 func TestZipRejectsWindowsAbsolutePath(t *testing.T) {

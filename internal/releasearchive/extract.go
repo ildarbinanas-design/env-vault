@@ -258,6 +258,13 @@ func extractTarGz(spec archiveSpec, archivePath, outputDir string, state *extrac
 		if nextErr != nil {
 			return fmt.Errorf("read tar entry: %w", nextErr)
 		}
+		// Keep this source-local guard in addition to validateEntryName's
+		// canonical component checks. Besides conservatively rejecting every
+		// traversal-like spelling, it makes the archive-to-filesystem trust
+		// boundary explicit to static data-flow analysis.
+		if strings.Contains(header.Name, "..") {
+			return fmt.Errorf("entry %q: double-dot sequences in paths are not allowed", header.Name)
+		}
 		entryCount++
 		if entryCount > state.limits.entriesPerArchive {
 			return fmt.Errorf("entry count exceeds limit %d", state.limits.entriesPerArchive)
@@ -358,6 +365,11 @@ func extractZip(spec archiveSpec, archivePath, outputDir string, state *extracti
 	var archiveBytes int64
 	var regularFiles int
 	for _, file := range reader.File {
+		// See the equivalent tar guard above. This must remain before the entry
+		// name is propagated to any filesystem helper.
+		if strings.Contains(file.Name, "..") {
+			return fmt.Errorf("entry %q: double-dot sequences in paths are not allowed", file.Name)
+		}
 		kind, typeErr := zipEntryKind(file)
 		if typeErr != nil {
 			return fmt.Errorf("entry %q: %w", file.Name, typeErr)
