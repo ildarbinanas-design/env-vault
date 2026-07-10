@@ -8,14 +8,14 @@ OS-keychain-backed env profile executor for safe local automation.
 
 env-vault will help local automation load named environment profiles without exposing secret values in files, logs, shell history, or evidence.
 
-## Bootstrap Boundary
+## Historical Bootstrap Boundary
 
-This bootstrap creates repository structure, project policy, and a version placeholder only. It does not implement the full MVP CLI.
+This charter originally described the repository bootstrap. That phase is
+complete: the MVP CLI, production keychain backends, public GitHub repository,
+binary releases, and Homebrew distribution now exist.
 
-## Non-Goals For Bootstrap
+## Current Non-Goals
 
-- No GitHub remote creation.
-- No public release.
-- No production secret backend implementation.
-- No profile execution implementation.
 - No plaintext production secret backend.
+- No command that returns secret values.
+- No automatic secret rotation.

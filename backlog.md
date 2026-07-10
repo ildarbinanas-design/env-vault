@@ -11,10 +11,9 @@
 
 ## P1
 
-- Evaluate whether GoReleaser is worth adding after the first manual GitHub Actions release workflow.
+- Evaluate whether GoReleaser would materially improve the working custom release and Homebrew pipeline.
 - Nexus binary publishing.
 - Shell completions.
-- Homebrew tap.
 - Debian package.
 - Profile import/export without values.
 
@@ -26,3 +25,10 @@
 - MCP server wrapper for agent runtime.
 - Policy hooks for enterprise use.
 - Secret rotation workflow helpers.
+
+## Completed
+
+- Public GitHub binary releases for Linux, macOS, and Windows.
+- Homebrew formula distribution with automatic tap updates and tap CI.
+- Default-branch manual releases with explicit semantic versions and retained tag-driven releases.
+- Pinned automated license gate before release publication.

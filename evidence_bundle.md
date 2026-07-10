@@ -1,5 +1,80 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-V0.0.5-RELEASE-WORKFLOW-HARDENING`
+
+Timestamp UTC: `2026-07-10T19:12:05Z`
+
+### Scope
+
+Harden the existing GitHub Release and Homebrew publication path, synchronize
+stale project documentation, and prepare the approved `v0.0.5` patch release.
+
+No secret value, keychain item, `TAP_DEPLOY_KEY`, GitHub token value, or raw
+credential material was read or persisted. External publication results are
+verified separately after this evidence-bearing commit passes review and CI.
+
+### Baseline
+
+- Local branch started clean from `main` at
+  `765627566f1d5ba175de017fe8ef3614a0408453`.
+- `v0.0.4` already existed at that commit with ten verified release assets.
+- `homebrew-tap` already contained the successful bot update for `v0.0.4`.
+- The prior release path required a manually pushed tag; a blank
+  `workflow_dispatch` produced temporary artifacts only.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Resolves one validated version, preserves build-only dispatches and tag releases, adds default-branch manual releases, requires tests and license checks, updates actions to Node.js 24 majors, creates tags with `GITHUB_TOKEN`, verifies installed Homebrew version, and stops masking commit failures |
+| `.github/workflows/ci.yml` | Updates action majors and adds the pinned license job |
+| `scripts/license-check.sh` | Runs `go-licenses v2.0.1` from a temporary tool directory with an explicit permissive allowlist |
+| `tests/workflows_test.go` | Adds regression coverage for action majors, release metadata, semantic-version gates, resolved-version propagation, license gates, Homebrew version testing, and commit/push ordering |
+| `README.md`, `docs/design.md` | Documents build-only dispatches, manual and tag releases, verification gates, artifacts, and Homebrew publication boundaries |
+| `AGENTS.md`, `docs/project-charter.md`, `backlog.md`, `THIRD_PARTY_NOTICES.md` | Replaces stale bootstrap state, closes completed distribution work, and records the automated license policy |
+| `evidence_bundle.md` | Records scope, checks, claims, and residual risks without secret values |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Official action release and `action.yml` checks | passed; `checkout@v7`, `setup-go@v6`, `upload-artifact@v7`, and `download-artifact@v8` exist and declare `node24` | doc_verified |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `go test -race ./...` | passed | cli_observed |
+| `scripts/smoke.sh` | passed | cli_observed |
+| `scripts/license-check.sh` | passed with pinned `go-licenses v2.0.1`; expected non-Go assembly warning only | cli_observed |
+| `sh -n scripts/license-check.sh` and `shellcheck scripts/license-check.sh` | passed | cli_observed |
+| `go mod verify` and `go mod tidy -diff` | passed; module files unchanged | cli_observed |
+| `gitleaks detect --source . --redact --no-banner` | passed; no leaks found | cli_observed |
+| `git diff --check` | passed | cli_observed |
+| Native release build with `Version=v0.0.5` | passed; both `--version` and JSON `version` reported `v0.0.5` | cli_observed |
+| Linux amd64/arm64 and Windows amd64 cross-builds | passed with `CGO_ENABLED=0` | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Manual publication requires a strict `vMAJOR.MINOR.PATCH` input from the default branch | repo_verified | metadata job and workflow regression tests |
+| Dispatch without a version remains build-only | repo_verified | metadata publish output defaults to `false` |
+| Tag-driven releases remain supported | repo_verified | `push.tags: v*` plus strict metadata validation |
+| Release publication waits for tests, license validation, and all five platform builds | repo_verified | direct `needs` contract on the release job |
+| Manual release tags use the workflow-scoped token and do not require a PAT | repo_verified | refs API step uses `${{ github.token }}` |
+| Homebrew commit errors are no longer treated as successful no-ops | repo_verified | staged-diff guard followed by unmasked commit and push |
+| Generated Homebrew formula verifies the installed binary version | repo_verified | formula test uses `--version` and `version.to_s` |
+| Secret values were not read, printed, or recorded | cli_observed | no keychain mutation, token-read command, env dump, or secret output was used |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| GitHub Release and downstream tap CI are not atomic | accepted | report the release healthy only after the tap workflow succeeds | repo_verified |
+| Action major tags are mutable | accepted | use official GitHub-owned actions and regression-test the expected majors; consider immutable SHA pins separately | planned |
+| License scanning requires network access and cannot inspect assembly for further dependencies | accepted | pin the scanner version, fail closed on disallowed licenses, and record the non-Go warning | cli_observed |
+| Tap CI currently runs only on `macos-latest` | open | add Linux and explicit architecture coverage as a separate distribution task | planned |
+| Real OS keychain mutation was not part of this workflow-only change | accepted | existing backend tests and smoke checks remain the non-destructive release gate | cli_observed |
+| Local Go builds emitted non-fatal sandbox stat-cache warnings | accepted | all build commands exited successfully and produced versioned binaries | cli_observed |
+
 ## Task ID: `ENV-VAULT-V0.0.2-DOCS-GATE`
 
 Timestamp UTC: `2026-07-07T19:49:33Z`
