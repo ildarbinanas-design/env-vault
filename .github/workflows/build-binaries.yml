@@ -108,3 +108,85 @@ jobs:
         run: |
           set -eu
           gh release create "${GITHUB_REF_NAME}" dist/* --repo "github.com/${GITHUB_REPOSITORY}" --verify-tag --generate-notes
+
+  homebrew:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate formula
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          v="${VERSION#v}"
+          sha() { cut -d' ' -f1 "dist/env-vault-$1.tar.gz.sha256"; }
+          DARWIN_ARM64="$(sha darwin-arm64)"
+          DARWIN_AMD64="$(sha darwin-amd64)"
+          LINUX_ARM64="$(sha linux-arm64)"
+          LINUX_AMD64="$(sha linux-amd64)"
+          for h in "$DARWIN_ARM64" "$DARWIN_AMD64" "$LINUX_ARM64" "$LINUX_AMD64"; do
+            echo "$h" | grep -qE '^[0-9a-f]{64}$' || { echo "malformed sha256: '$h'" >&2; exit 1; }
+          done
+          mkdir -p tap-out
+          cat > tap-out/env-vault.rb <<EOF
+          class EnvVault < Formula
+            desc "Secure environment variable vault for running commands with profiles"
+            homepage "https://github.com/ildarbinanas-design/env-vault"
+            version "${v}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-darwin-arm64.tar.gz"
+                sha256 "${DARWIN_ARM64}"
+              else
+                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-darwin-amd64.tar.gz"
+                sha256 "${DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-linux-arm64.tar.gz"
+                sha256 "${LINUX_ARM64}"
+              else
+                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-linux-amd64.tar.gz"
+                sha256 "${LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "env-vault"
+            end
+
+            test do
+              assert_match "env-vault", shell_output("#{bin}/env-vault --help")
+            end
+          end
+          EOF
+
+      - name: Push formula to tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eu
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$HOME/.ssh/tap_deploy_key"
+          chmod 600 "$HOME/.ssh/tap_deploy_key"
+          ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap_deploy_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o IdentitiesOnly=yes"
+          git clone --depth 1 git@github.com:ildarbinanas-design/homebrew-tap.git tap
+          install -m 644 tap-out/env-vault.rb tap/Formula/env-vault.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/env-vault.rb
+          git commit -m "env-vault ${VERSION}" || exit 0
+          git push origin HEAD:main
