@@ -1,5 +1,56 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-3`
+
+Timestamp UTC: `2026-07-10T20:28:26Z`
+
+### Scope
+
+Make Homebrew version validation exact in both the published formula and its
+release-time generator, and document a non-destructive migration from manual or
+`go install` binaries. The preserved manual-binary backup was not accessed or
+changed. No remote tap update, release, tag, credential change, or push occurred.
+
+### Changes
+
+| Repository/file | Purpose |
+|---|---|
+| `env-vault/.github/workflows/build-binaries.yml` | Generates an exact `assert_equal "v#{version}"` formula test |
+| `env-vault/tests/workflows_test.go` | Requires the full exact assertion, rejects substring matching, and rejects `link_overwrite` |
+| `env-vault/README.md` | Adds inspect, dry-run, timestamped backup, plain-link, and PATH verification steps for migration |
+| `homebrew-tap/Formula/env-vault.rb` | Uses the same exact version assertion as the generator |
+| `env-vault/evidence_bundle.md` | Records checks and the local Homebrew trust limitation |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 Homebrew documentation query | passed; confirmed formula test assertions and safe linking behavior | doc_verified |
+| Targeted generated-formula regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `brew style Formula/env-vault.rb` | passed; one file, no offenses | cli_observed |
+| `ruby -c Formula/env-vault.rb` | passed | cli_observed |
+| `brew test --force ildarbinanas-design/tap/env-vault` | passed against the installed v0.0.5 keg | cli_observed |
+| Exact installed-binary comparison with `v0.0.5` | passed | cli_observed |
+| Temporary local test tap cleanup | passed; tap removed and no trust exception was persisted | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The checked-in tap formula and future generated formula use identical exact version semantics | repo_verified | both contain the same `assert_equal ... .strip` line; regression test protects the generator |
+| The formula cannot silently opt into overwriting unmanaged files | repo_verified | no `link_overwrite`; regression test rejects adding it to generated content |
+| Migration inspects before mutation and uses only `--overwrite --dry-run` | repo_verified | README sequence backs up the exact conflict, then uses plain `brew link` |
+| The existing manual-binary backup remains untouched | cli_observed | no command referenced, moved, or removed the preserved backup path |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Current Homebrew rejects loading an untrusted temporary local tap for `brew test` | accepted | did not persist a trust-policy exception; working formula passed style/Ruby parsing, generator regression, and exact installed-binary checks; remote tap CI remains authoritative | cli_observed |
+| Homebrew auto-update ran while creating the temporary tap | accepted | no env-vault repository, formula, installed keg, or preserved backup was changed; temporary tap was removed | cli_observed |
+| Tap update is still a direct push and release does not yet await tap CI | open | addressed in the reliability/process stages | planned |
+
 ## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-2`
 
 Timestamp UTC: `2026-07-10T20:21:36Z`

@@ -185,14 +185,23 @@ func TestReleaseAndCIRunPinnedLicenseGate(t *testing.T) {
 	}
 }
 
-func TestHomebrewPushDoesNotMaskCommitFailures(t *testing.T) {
+func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
 	homebrew := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "homebrew")
 	generate := namedStep(t, homebrew, "Generate formula")
-	for _, snippet := range []string{"assert_match version.to_s", "--version"} {
-		if !strings.Contains(generate.Run, snippet) {
-			t.Fatalf("generated formula test missing %q", snippet)
-		}
+	want := `assert_equal "v#{version}", shell_output("#{bin}/env-vault --version").strip`
+	if !strings.Contains(generate.Run, want) {
+		t.Fatalf("generated formula test missing exact assertion %q", want)
 	}
+	if strings.Contains(generate.Run, "assert_match") {
+		t.Fatal("generated formula must not accept a version substring")
+	}
+	if strings.Contains(generate.Run, "link_overwrite") {
+		t.Fatal("generated formula must not overwrite unmanaged files")
+	}
+}
+
+func TestHomebrewPushDoesNotMaskCommitFailures(t *testing.T) {
+	homebrew := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "homebrew")
 	push := namedStep(t, homebrew, "Push formula to tap")
 	if strings.Contains(push.Run, "git commit -m \"env-vault ${VERSION}\" || exit 0") {
 		t.Fatal("homebrew push masks git commit failures")
