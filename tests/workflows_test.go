@@ -29,6 +29,11 @@ type workflowConcurrency struct {
 type workflowTriggers struct {
 	WorkflowDispatch workflowDispatch `yaml:"workflow_dispatch"`
 	WorkflowCall     workflowCall     `yaml:"workflow_call"`
+	Push             workflowPush     `yaml:"push"`
+}
+
+type workflowPush struct {
+	Branches []string `yaml:"branches"`
 }
 
 type workflowCall struct {
@@ -383,6 +388,9 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	}
 
 	ci := readWorkflow(t, "../.github/workflows/ci.yml")
+	if !slices.Equal(ci.On.Push.Branches, []string{"main"}) {
+		t.Fatalf("CI push branches=%v, want main only to avoid duplicate PR branch runs", ci.On.Push.Branches)
+	}
 	if len(ci.Jobs) != 1 {
 		t.Fatalf("CI has %d jobs, want only reusable quality caller", len(ci.Jobs))
 	}
