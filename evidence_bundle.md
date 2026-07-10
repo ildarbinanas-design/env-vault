@@ -1,5 +1,51 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-2`
+
+Timestamp UTC: `2026-07-10T20:21:36Z`
+
+### Scope
+
+Require every packaged release binary to report the exact resolved build version
+through both supported version commands on a compatible native runner. No tag,
+release, remote workflow run, credential, or published artifact was created.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Adds post-build native smoke jobs for all five targets, exact checks for `--version` and `version`, archive checksum verification, and a release dependency on those checks |
+| `tests/workflows_test.go` | Protects the native runner matrix, exact two-command comparisons, resolved-version propagation, and the release gate |
+| `evidence_bundle.md` | Records the stage scope, documentation basis, checks, and residual risks |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 GitHub Actions documentation query | passed; confirmed matrix-driven runners and workflow concurrency syntax | doc_verified |
+| Official GitHub-hosted runner reference | passed; `ubuntu-24.04-arm` and `windows-latest` are current standard native labels | doc_verified |
+| Targeted workflow regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `gofmt -w tests/workflows_test.go` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Cross-compiled binaries are never executed on the incompatible Ubuntu build runner | repo_verified | all execution moved to a post-build native smoke matrix |
+| Linux arm64 executes on arm64 hardware | repo_verified | smoke target uses `ubuntu-24.04-arm` |
+| Windows amd64 executes on Windows | repo_verified | smoke target uses `windows-latest` and PowerShell-native extraction/checking |
+| Both version commands must exactly match the resolved `${VERSION}` | repo_verified | Unix byte-for-byte `diff`; Windows one-line case-sensitive comparisons; regression tests inspect both paths |
+| GitHub Release creation cannot start before every native smoke check passes | repo_verified | release job directly needs `smoke` |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Native runner labels and installed images can change over time | accepted | use documented standard labels and keep the matrix protected by tests; remote CI remains the authoritative execution check | doc_verified |
+| Windows PowerShell smoke code cannot execute on the local macOS host | accepted | YAML structure is parsed by Go regression tests; the Windows job runs only on `windows-latest` | repo_verified |
+| No remote Actions workflow was run in this local-only stage | accepted | publication and push require separate approval | planned |
+
 ## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-1`
 
 Timestamp UTC: `2026-07-10T20:17:59Z`

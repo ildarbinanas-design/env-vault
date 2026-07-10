@@ -215,6 +215,75 @@ func TestReleaseDarwinBuildUsesMacOSRunnerAndCGO(t *testing.T) {
 	assertBuildMatrix(t, build)
 }
 
+func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	smoke := wf.Jobs["smoke"]
+	for _, need := range []string{"metadata", "build"} {
+		if !slices.Contains(smoke.Needs, need) {
+			t.Fatalf("smoke needs=%v, missing %q", smoke.Needs, need)
+		}
+	}
+	if smoke.RunsOn != "${{ matrix.runner }}" {
+		t.Fatalf("smoke runs-on=%q", smoke.RunsOn)
+	}
+	wantRunners := map[string]string{
+		"linux/amd64":   "ubuntu-latest",
+		"linux/arm64":   "ubuntu-24.04-arm",
+		"darwin/amd64":  "macos-15-intel",
+		"darwin/arm64":  "macos-15",
+		"windows/amd64": "windows-latest",
+	}
+	if len(smoke.Strategy.Matrix.Include) != len(wantRunners) {
+		t.Fatalf("smoke targets=%d, want %d", len(smoke.Strategy.Matrix.Include), len(wantRunners))
+	}
+	for _, target := range smoke.Strategy.Matrix.Include {
+		key := target.GOOS + "/" + target.GOARCH
+		if target.Runner != wantRunners[key] {
+			t.Fatalf("smoke %s runner=%q, want %q", key, target.Runner, wantRunners[key])
+		}
+		delete(wantRunners, key)
+	}
+	if len(wantRunners) != 0 {
+		t.Fatalf("missing native smoke targets: %v", wantRunners)
+	}
+
+	wantVersion := "${{ needs.metadata.outputs.version }}"
+	unix := namedStep(t, smoke, "Verify exact version on Unix")
+	if unix.If != "runner.os != 'Windows'" || unix.Env["VERSION"] != wantVersion {
+		t.Fatalf("unix smoke if=%q VERSION=%q", unix.If, unix.Env["VERSION"])
+	}
+	for _, snippet := range []string{
+		`printf '%s\n' "$VERSION"`,
+		`"$binary" --version`,
+		`"$binary" version`,
+		"diff -u expected-version.txt version-flag.txt",
+		"diff -u expected-version.txt version-command.txt",
+	} {
+		if !strings.Contains(unix.Run, snippet) {
+			t.Fatalf("unix version smoke missing %q", snippet)
+		}
+	}
+
+	windows := namedStep(t, smoke, "Verify exact version on Windows")
+	if windows.If != "runner.os == 'Windows'" || windows.Env["VERSION"] != wantVersion {
+		t.Fatalf("windows smoke if=%q VERSION=%q", windows.If, windows.Env["VERSION"])
+	}
+	for _, snippet := range []string{
+		"& $binary --version",
+		"& $binary version",
+		".Count -ne 1",
+		"-cne $env:VERSION",
+	} {
+		if !strings.Contains(windows.Run, snippet) {
+			t.Fatalf("windows version smoke missing %q", snippet)
+		}
+	}
+
+	if !slices.Contains(wf.Jobs["release"].Needs, "smoke") {
+		t.Fatalf("release needs=%v, missing smoke", wf.Jobs["release"].Needs)
+	}
+}
+
 func TestCIDarwinBuildUsesMacOSRunnerAndCGO(t *testing.T) {
 	build := readWorkflowJob(t, "../.github/workflows/ci.yml", "build")
 	assertBuildMatrix(t, build)

@@ -158,9 +158,97 @@ jobs:
             dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256
           retention-days: 14
 
+  smoke:
+    needs: [metadata, build]
+    name: smoke-${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            archive: zip
+    steps:
+      - name: Download built artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist
+
+      - name: Verify exact version on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ARCHIVE: ${{ matrix.archive }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="env-vault-${GOOS}-${GOARCH}"
+          (
+            cd dist
+            shasum -a 256 -c "${name}.${ARCHIVE}.sha256"
+            tar -xzf "${name}.${ARCHIVE}"
+          )
+          binary="dist/${name}/env-vault"
+          printf '%s\n' "$VERSION" > expected-version.txt
+          "$binary" --version > version-flag.txt
+          "$binary" version > version-command.txt
+          diff -u expected-version.txt version-flag.txt
+          diff -u expected-version.txt version-command.txt
+
+      - name: Verify exact version on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "env-vault-$env:GOOS-$env:GOARCH"
+          $archive = Join-Path "dist" "$name.zip"
+          $checksumFile = Join-Path "dist" "$name.zip.sha256"
+          $expectedChecksum = ((Get-Content -LiteralPath $checksumFile -Raw).Trim() -split '\s+')[0]
+          $actualChecksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualChecksum -cne $expectedChecksum) {
+            throw "checksum mismatch for $archive"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath "dist/unpacked"
+          $binary = Join-Path "dist/unpacked/$name" "env-vault.exe"
+          $flagOutput = @(& $binary --version)
+          $flagExit = $LASTEXITCODE
+          if ($flagExit -ne 0 -or $flagOutput.Count -ne 1 -or $flagOutput[0] -cne $env:VERSION) {
+            throw "--version output '$($flagOutput -join '\n')', want '$env:VERSION'"
+          }
+          $commandOutput = @(& $binary version)
+          $commandExit = $LASTEXITCODE
+          if ($commandExit -ne 0 -or $commandOutput.Count -ne 1 -or $commandOutput[0] -cne $env:VERSION) {
+            throw "version output '$($commandOutput -join '\n')', want '$env:VERSION'"
+          }
+
   release:
     if: needs.metadata.outputs.publish == 'true'
-    needs: [metadata, verify, license, build]
+    needs: [metadata, verify, license, build, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
