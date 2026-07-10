@@ -16,6 +16,7 @@ import (
 type workflow struct {
 	On          workflowTriggers       `yaml:"on"`
 	Concurrency workflowConcurrency    `yaml:"concurrency"`
+	Permissions map[string]string      `yaml:"permissions"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
 
@@ -47,14 +48,17 @@ type workflowInput struct {
 }
 
 type workflowJob struct {
-	If          string            `yaml:"if"`
-	Needs       []string          `yaml:"needs"`
-	RunsOn      string            `yaml:"runs-on"`
-	Uses        string            `yaml:"uses"`
-	With        map[string]string `yaml:"with"`
-	Permissions map[string]string `yaml:"permissions"`
-	Strategy    workflowStrategy  `yaml:"strategy"`
-	Steps       []workflowStep    `yaml:"steps"`
+	If             string            `yaml:"if"`
+	Needs          []string          `yaml:"needs"`
+	RunsOn         string            `yaml:"runs-on"`
+	Uses           string            `yaml:"uses"`
+	With           map[string]string `yaml:"with"`
+	Permissions    map[string]string `yaml:"permissions"`
+	Outputs        map[string]string `yaml:"outputs"`
+	Environment    string            `yaml:"environment"`
+	TimeoutMinutes int               `yaml:"timeout-minutes"`
+	Strategy       workflowStrategy  `yaml:"strategy"`
+	Steps          []workflowStep    `yaml:"steps"`
 }
 
 type workflowStrategy struct {
@@ -92,10 +96,12 @@ func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
 		"actions/upload-artifact":          "v7",
 		"actions/download-artifact":        "v8",
 		"actions/attest":                   "v4",
+		"actions/create-github-app-token":  "v3",
 		"anchore/sbom-action":              "v0",
 		"actions/dependency-review-action": "v5",
 	}
 	for _, path := range []string{
+		"../.github/workflows/audit-release-app.yml",
 		"../.github/workflows/build-binaries.yml",
 		"../.github/workflows/ci.yml",
 		"../.github/workflows/dependency-review.yml",
@@ -117,6 +123,54 @@ func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestReleaseAppScopeAuditIsMetadataOnly(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/audit-release-app.yml")
+	if wf.Permissions["contents"] != "read" || len(wf.Permissions) != 1 {
+		t.Fatalf("scope audit workflow permissions=%v", wf.Permissions)
+	}
+	if wf.Concurrency.Group != "env-vault-release-app-audit" || wf.Concurrency.CancelInProgress {
+		t.Fatalf("scope audit concurrency=%+v", wf.Concurrency)
+	}
+	scope := wf.Jobs["scope"]
+	if scope.Environment != "release" || scope.TimeoutMinutes != 5 || scope.RunsOn != "ubuntu-latest" {
+		t.Fatalf("scope audit environment=%q timeout=%d runner=%q", scope.Environment, scope.TimeoutMinutes, scope.RunsOn)
+	}
+	token := namedStep(t, scope, "Mint metadata-only installation token")
+	if token.Uses != "actions/create-github-app-token@v3" {
+		t.Fatalf("scope audit token action=%q", token.Uses)
+	}
+	for key, want := range map[string]string{
+		"client-id":           "${{ vars.TAP_APP_CLIENT_ID }}",
+		"private-key":         "${{ secrets.TAP_APP_PRIVATE_KEY }}",
+		"owner":               "${{ github.repository_owner }}",
+		"permission-metadata": "read",
+	} {
+		if got := token.With[key]; got != want {
+			t.Fatalf("scope audit token input %s=%q, want %q", key, got, want)
+		}
+	}
+	for _, forbidden := range []string{"repositories", "permission-actions", "permission-contents", "permission-pull-requests", "skip-token-revoke"} {
+		if _, ok := token.With[forbidden]; ok {
+			t.Fatalf("scope audit token unexpectedly sets %q", forbidden)
+		}
+	}
+	verify := namedStep(t, scope, "Require a single-repository installation")
+	for _, snippet := range []string{
+		"installation/repositories",
+		"ildarbinanas-design/homebrew-tap",
+		`${#repositories[@]}" != "1`,
+		"GITHUB_STEP_SUMMARY",
+		"metadata read",
+	} {
+		if !strings.Contains(verify.Run, snippet) {
+			t.Fatalf("scope audit missing %q", snippet)
+		}
+	}
+	if verify.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
+		t.Fatalf("scope audit verify env=%v", verify.Env)
 	}
 }
 
@@ -296,7 +350,7 @@ func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 		{job: "release", step: "Create GitHub Release"},
 		{job: "supply_chain", step: "Download canonical release assets"},
 		{job: "homebrew", step: "Generate formula"},
-		{job: "homebrew", step: "Push formula to tap"},
+		{job: "homebrew", step: "Create or reuse Homebrew pull request"},
 	}
 	for _, check := range checks {
 		step := namedStep(t, wf.Jobs[check.job], check.step)
@@ -449,32 +503,85 @@ func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
 	}
 }
 
-func TestHomebrewPushDoesNotMaskCommitFailures(t *testing.T) {
+func TestHomebrewPublishesThroughScopedAppPRAndAwaitsExactCI(t *testing.T) {
 	homebrew := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "homebrew")
-	push := namedStep(t, homebrew, "Push formula to tap")
-	if strings.Contains(push.Run, "git commit -m \"env-vault ${VERSION}\" || exit 0") {
-		t.Fatal("homebrew push masks git commit failures")
+	if homebrew.Environment != "release" || homebrew.TimeoutMinutes != 55 {
+		t.Fatalf("homebrew environment=%q timeout=%d", homebrew.Environment, homebrew.TimeoutMinutes)
 	}
-	for _, snippet := range []string{"git diff --cached --quiet", "git commit -m", "git push origin HEAD:main"} {
-		if !strings.Contains(push.Run, snippet) {
-			t.Fatalf("homebrew push missing %q", snippet)
+	if len(homebrew.Permissions) != 1 || homebrew.Permissions["contents"] != "read" {
+		t.Fatalf("homebrew permissions=%v", homebrew.Permissions)
+	}
+	for output, want := range map[string]string{
+		"publication_state": "${{ steps.tap-result.outputs.publication_state }}",
+		"pr_number":         "${{ steps.tap-result.outputs.pr_number }}",
+		"pr_url":            "${{ steps.tap-result.outputs.pr_url }}",
+		"tap_sha":           "${{ steps.tap-result.outputs.tap_sha }}",
+		"tap_ci_url":        "${{ steps.tap-push-ci.outputs.run_url }}",
+	} {
+		if got := homebrew.Outputs[output]; got != want {
+			t.Fatalf("homebrew output %s=%q, want %q", output, got, want)
 		}
 	}
-	guard := strings.Index(push.Run, "git diff --cached --quiet")
-	commit := strings.Index(push.Run, "git commit -m")
-	pushIndex := strings.Index(push.Run, "git push origin HEAD:main")
-	if !(guard < commit && commit < pushIndex) {
-		t.Fatalf("homebrew publish order guard=%d commit=%d push=%d", guard, commit, pushIndex)
+
+	token := namedStep(t, homebrew, "Mint scoped Homebrew App token")
+	if token.Uses != "actions/create-github-app-token@v3" {
+		t.Fatalf("Homebrew token action=%q", token.Uses)
 	}
-	for _, snippet := range []string{
-		"semver-compare.sh",
-		"refusing Homebrew downgrade",
-		"cmp -s tap-out/env-vault.rb tap/Formula/env-vault.rb",
-		"same version, tag SHA, and checksums already published; no-op",
-		"same version but generated formula differs",
+	for key, want := range map[string]string{
+		"client-id":                "${{ vars.TAP_APP_CLIENT_ID }}",
+		"private-key":              "${{ secrets.TAP_APP_PRIVATE_KEY }}",
+		"owner":                    "${{ github.repository_owner }}",
+		"repositories":             "homebrew-tap",
+		"permission-actions":       "read",
+		"permission-contents":      "write",
+		"permission-pull-requests": "write",
 	} {
-		if !strings.Contains(push.Run, snippet) {
-			t.Fatalf("Homebrew monotonic/idempotent guard missing %q", snippet)
+		if got := token.With[key]; got != want {
+			t.Fatalf("Homebrew token input %s=%q, want %q", key, got, want)
+		}
+	}
+	if _, ok := token.With["skip-token-revoke"]; ok {
+		t.Fatal("Homebrew App token must be revoked by the action post-step")
+	}
+
+	publish := namedStep(t, homebrew, "Create or reuse Homebrew pull request")
+	for _, snippet := range []string{"publish-homebrew-pr.sh", "tap-out/env-vault.rb", "ildarbinanas-design/homebrew-tap", "GITHUB_OUTPUT"} {
+		if !strings.Contains(publish.Run, snippet) {
+			t.Fatalf("Homebrew PR publication missing %q", snippet)
+		}
+	}
+	if publish.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" || publish.Env["SOURCE_SHA"] != "${{ needs.metadata.outputs.source_sha }}" {
+		t.Fatalf("Homebrew PR publication env=%v", publish.Env)
+	}
+
+	prCI := namedStep(t, homebrew, "Wait for exact Homebrew pull request CI")
+	if prCI.If != "steps.publish-tap-pr.outputs.state == 'OPEN'" {
+		t.Fatalf("Homebrew PR CI if=%q", prCI.If)
+	}
+	for _, snippet := range []string{"wait-tap-ci.sh", "test-formula.yml", `"$HEAD_SHA"`, "pull_request", "GITHUB_OUTPUT"} {
+		if !strings.Contains(prCI.Run, snippet) {
+			t.Fatalf("Homebrew PR CI missing %q", snippet)
+		}
+	}
+
+	merge := namedStep(t, homebrew, "Merge exact Homebrew pull request head")
+	for _, snippet := range []string{"merge-homebrew-pr.sh", `"$PR_NUMBER"`, `"$HEAD_SHA"`, "GITHUB_OUTPUT"} {
+		if !strings.Contains(merge.Run, snippet) {
+			t.Fatalf("Homebrew merge missing %q", snippet)
+		}
+	}
+
+	pushCI := namedStep(t, homebrew, "Wait for exact Homebrew default-branch CI")
+	for _, snippet := range []string{"wait-tap-ci.sh", "test-formula.yml", `"$TAP_SHA"`, "push", "GITHUB_OUTPUT"} {
+		if !strings.Contains(pushCI.Run, snippet) {
+			t.Fatalf("Homebrew push CI missing %q", snippet)
+		}
+	}
+
+	allSteps := fmt.Sprintf("%v", homebrew.Steps)
+	for _, forbidden := range []string{"TAP_DEPLOY_KEY", "HEAD:main", "tap_deploy_key", "ssh-keyscan", "--admin", "--force"} {
+		if strings.Contains(allSteps, forbidden) {
+			t.Fatalf("Homebrew workflow retains forbidden direct-push/bypass behavior %q", forbidden)
 		}
 	}
 }
@@ -567,18 +674,31 @@ func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 		"download-release-assets.sh",
 		"verify-artifact-attestations.sh",
 		"verify-homebrew-formula.sh",
+		"wait-tap-ci.sh",
+		"test-formula.yml",
+		"push",
 		"GITHUB_STEP_SUMMARY",
 		"/releases/tag/${VERSION}",
 		"/homebrew-tap/commit/${tap_sha}",
-		"${tap_commit_url}/checks",
 		"/actions/runs/${GITHUB_RUN_ID}",
 		"/${GITHUB_REPOSITORY}/attestations",
-		"Tap CI checks",
-		"Tap CI is not awaited",
+		"Source commit",
+		"Tap pull request",
+		"Exact tap CI",
+		"including exact tap CI",
 	} {
 		if !strings.Contains(verify.Run, snippet) {
 			t.Fatalf("health verification missing %q", snippet)
 		}
+	}
+	if health.Environment != "" {
+		t.Fatalf("read-only health job unexpectedly uses environment %q", health.Environment)
+	}
+	if strings.Contains(verify.Run, "Tap CI is not awaited") || strings.Contains(verify.Run, "requires manual verification") {
+		t.Fatal("health still describes exact tap CI as a manual check")
+	}
+	if verify.Env["PUBLISHED_TAP_SHA"] != "${{ needs.homebrew.outputs.tap_sha }}" || verify.Env["PUBLISHED_TAP_CI_URL"] != "${{ needs.homebrew.outputs.tap_ci_url }}" {
+		t.Fatalf("health does not consume exact Homebrew outputs: %v", verify.Env)
 	}
 }
 

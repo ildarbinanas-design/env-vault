@@ -400,6 +400,16 @@ jobs:
       }}
     needs: [metadata, preflight, release, supply_chain]
     runs-on: ubuntu-latest
+    timeout-minutes: 55
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      publication_state: ${{ steps.tap-result.outputs.publication_state }}
+      pr_number: ${{ steps.tap-result.outputs.pr_number }}
+      pr_url: ${{ steps.tap-result.outputs.pr_url }}
+      tap_sha: ${{ steps.tap-result.outputs.tap_sha }}
+      tap_ci_url: ${{ steps.tap-push-ci.outputs.run_url }}
     steps:
       - uses: actions/checkout@v7
 
@@ -416,44 +426,128 @@ jobs:
           mkdir -p tap-out
           scripts/release/generate-homebrew-formula.sh "$VERSION" release-dist tap-out/env-vault.rb
 
-      - name: Push formula to tap
+      - id: tap-token
+        name: Mint scoped Homebrew App token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+          permission-actions: read
+          permission-contents: write
+          permission-pull-requests: write
+
+      - id: publish-tap-pr
+        name: Create or reuse Homebrew pull request
         env:
-          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
           VERSION: ${{ needs.metadata.outputs.version }}
+        run: >-
+          scripts/release/publish-homebrew-pr.sh
+          "$VERSION"
+          tap-out/env-vault.rb
+          ildarbinanas-design/homebrew-tap
+          >> "$GITHUB_OUTPUT"
+
+      - id: tap-pr-ci
+        name: Wait for exact Homebrew pull request CI
+        if: steps.publish-tap-pr.outputs.state == 'OPEN'
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
         run: |
-          set -eu
-          mkdir -p "$HOME/.ssh"
-          printf '%s\n' "$TAP_DEPLOY_KEY" > "$HOME/.ssh/tap_deploy_key"
-          chmod 600 "$HOME/.ssh/tap_deploy_key"
-          ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap_deploy_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o IdentitiesOnly=yes"
-          git clone --depth 1 git@github.com:ildarbinanas-design/homebrew-tap.git tap
-          target_version="${VERSION#v}"
-          published_version="$(sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p' tap/Formula/env-vault.rb)"
-          comparison="$(scripts/release/semver-compare.sh "$target_version" "$published_version")"
-          if [[ "$comparison" == "-1" ]]; then
-            echo "refusing Homebrew downgrade from ${published_version} to ${target_version}" >&2
+          set -euo pipefail
+          run_url="$(scripts/release/wait-tap-ci.sh \
+            ildarbinanas-design/homebrew-tap \
+            test-formula.yml \
+            "$HEAD_SHA" \
+            pull_request \
+            900 \
+            10)"
+          printf 'run_url=%s\n' "$run_url" >> "$GITHUB_OUTPUT"
+
+      - id: merge-tap-pr
+        name: Merge exact Homebrew pull request head
+        if: steps.publish-tap-pr.outputs.state == 'OPEN'
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.publish-tap-pr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          merge_sha="$(scripts/release/merge-homebrew-pr.sh \
+            ildarbinanas-design/homebrew-tap \
+            "$PR_NUMBER" \
+            "$HEAD_SHA")"
+          printf 'merge_sha=%s\n' "$merge_sha" >> "$GITHUB_OUTPUT"
+
+      - id: tap-result
+        name: Resolve Homebrew publication result
+        env:
+          STATE: ${{ steps.publish-tap-pr.outputs.state }}
+          PUBLISHED_TAP_SHA: ${{ steps.publish-tap-pr.outputs.tap_sha }}
+          MERGED_TAP_SHA: ${{ steps.merge-tap-pr.outputs.merge_sha }}
+          PR_NUMBER: ${{ steps.publish-tap-pr.outputs.pr_number }}
+          PR_URL: ${{ steps.publish-tap-pr.outputs.pr_url }}
+        run: |
+          set -euo pipefail
+          case "$STATE" in
+            OPEN)
+              tap_sha="$MERGED_TAP_SHA"
+              publication_state=merged
+              ;;
+            MERGED|PUBLISHED)
+              tap_sha="$PUBLISHED_TAP_SHA"
+              publication_state=already-published
+              ;;
+            *)
+              echo "unsupported Homebrew publication state: $STATE" >&2
+              exit 1
+              ;;
+          esac
+          [[ "$tap_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Homebrew publication returned an invalid tap SHA" >&2
             exit 1
-          fi
-          if [[ "$comparison" == "0" ]]; then
-            if cmp -s tap-out/env-vault.rb tap/Formula/env-vault.rb; then
-              echo "same version, tag SHA, and checksums already published; no-op"
-              exit 0
+          }
+          {
+            printf 'publication_state=%s\n' "$publication_state"
+            printf 'pr_number=%s\n' "$PR_NUMBER"
+            printf 'pr_url=%s\n' "$PR_URL"
+            printf 'tap_sha=%s\n' "$tap_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: tap-push-ci
+        name: Wait for exact Homebrew default-branch CI
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          TAP_SHA: ${{ steps.tap-result.outputs.tap_sha }}
+        run: |
+          set -euo pipefail
+          run_url="$(scripts/release/wait-tap-ci.sh \
+            ildarbinanas-design/homebrew-tap \
+            test-formula.yml \
+            "$TAP_SHA" \
+            push \
+            900 \
+            10)"
+          printf 'run_url=%s\n' "$run_url" >> "$GITHUB_OUTPUT"
+
+      - name: Report recoverable Homebrew failure
+        if: failure()
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          PR_URL: ${{ steps.publish-tap-pr.outputs.pr_url }}
+        run: |
+          {
+            printf '## Homebrew publication needs repair\n\n'
+            printf -- '- Version: `%s`\n' "$VERSION"
+            if [[ -n "$PR_URL" ]]; then
+              printf -- '- Pull request: [%s](%s)\n' "$PR_URL" "$PR_URL"
             fi
-            echo "same version but generated formula differs in checksums or metadata" >&2
-            exit 1
-          fi
-          install -m 644 tap-out/env-vault.rb tap/Formula/env-vault.rb
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/env-vault.rb
-          if git diff --cached --quiet; then
-            echo "target version is newer but generated formula has no diff" >&2
-            exit 1
-          fi
-          git commit -m "env-vault ${VERSION}"
-          git push origin HEAD:main
+            printf '\nRetry from `main` with `repair=homebrew` after resolving the reported failure.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   health:
     if: >-
@@ -494,8 +588,12 @@ jobs:
       - name: Verify release and Homebrew health
         env:
           GH_TOKEN: ${{ github.token }}
+          REPAIR: ${{ needs.metadata.outputs.repair }}
           VERSION: ${{ needs.metadata.outputs.version }}
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+          PUBLISHED_TAP_SHA: ${{ needs.homebrew.outputs.tap_sha }}
+          PUBLISHED_TAP_CI_URL: ${{ needs.homebrew.outputs.tap_ci_url }}
+          TAP_PR_URL: ${{ needs.homebrew.outputs.pr_url }}
         run: |
           set -euo pipefail
           tag_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
@@ -514,22 +612,50 @@ jobs:
             "$GITHUB_REPOSITORY" \
             "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
             "$SOURCE_SHA"
-          git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git health-tap
+          if [[ "$REPAIR" == "health" ]]; then
+            git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git health-tap
+            tap_sha="$(git -C health-tap rev-parse HEAD)"
+            tap_ci_url="$(scripts/release/wait-tap-ci.sh \
+              ildarbinanas-design/homebrew-tap \
+              test-formula.yml \
+              "$tap_sha" \
+              push \
+              900 \
+              10)"
+            tap_pr_url=''
+          else
+            tap_sha="$PUBLISHED_TAP_SHA"
+            tap_ci_url="$PUBLISHED_TAP_CI_URL"
+            tap_pr_url="$TAP_PR_URL"
+            [[ "$tap_sha" =~ ^[0-9a-f]{40}$ && "$tap_ci_url" == https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/* ]] || {
+              echo "Homebrew job did not return exact tap health evidence" >&2
+              exit 1
+            }
+            git init health-tap
+            git -C health-tap remote add origin https://github.com/ildarbinanas-design/homebrew-tap.git
+            git -C health-tap fetch --depth 1 origin "$tap_sha"
+            git -C health-tap checkout --detach FETCH_HEAD
+            [[ "$(git -C health-tap rev-parse HEAD)" == "$tap_sha" ]] || {
+              echo "fetched tap commit does not match Homebrew output" >&2
+              exit 1
+            }
+          fi
           scripts/release/verify-homebrew-formula.sh \
             "$VERSION" health-dist health-tap/Formula/env-vault.rb
-          tap_sha="$(git -C health-tap rev-parse HEAD)"
           release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
           tap_commit_url="${GITHUB_SERVER_URL}/ildarbinanas-design/homebrew-tap/commit/${tap_sha}"
-          tap_ci_url="${tap_commit_url}/checks"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           attestations_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/attestations"
           {
             printf '## env-vault %s automated release checks\n\n' "$VERSION"
             printf -- '- Release: [%s](%s)\n' "$VERSION" "$release_url"
+            printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
+            if [[ -n "$tap_pr_url" ]]; then
+              printf -- '- Tap pull request: [%s](%s)\n' "$tap_pr_url" "$tap_pr_url"
+            fi
             printf -- '- Tap commit: [%s](%s)\n' "$tap_sha" "$tap_commit_url"
-            printf -- '- Tap CI checks: [checks for %s](%s)\n' "$tap_sha" "$tap_ci_url"
+            printf -- '- Exact tap CI: [successful run for %s](%s)\n' "$tap_sha" "$tap_ci_url"
             printf -- '- Supply-chain attestations: [repository attestations](%s)\n' "$attestations_url"
-            printf -- '- Release workflow run: [run %s](%s)\n\n' "$GITHUB_RUN_ID" "$run_url"
-            printf '> Tap CI is not awaited by this workflow yet; verify the exact tap commit manually.\n'
+            printf -- '- Release workflow run: [run %s](%s)\n' "$GITHUB_RUN_ID" "$run_url"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "automated release checks passed for ${VERSION}; tap CI still requires manual verification"
+          echo "automated release checks passed for ${VERSION}, including exact tap CI"
