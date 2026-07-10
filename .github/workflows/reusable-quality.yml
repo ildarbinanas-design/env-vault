@@ -76,7 +76,9 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          # go-licenses v2.0.1 requires Go 1.23 or newer. Keep the project
+          # compatibility jobs on go.mod while pinning the tool runtime here.
+          go-version: "1.23.x"
 
       - name: Check dependency licenses
         shell: bash

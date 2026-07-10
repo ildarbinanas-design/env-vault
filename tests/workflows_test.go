@@ -432,6 +432,10 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 	if len(wantPlatforms) != 0 {
 		t.Fatalf("license matrix missing native platforms: %v", wantPlatforms)
 	}
+	setup := usesStep(t, license, "actions/setup-go@v6")
+	if setup.With["go-version"] != "1.23.x" || setup.With["go-version-file"] != "" {
+		t.Fatalf("license toolchain inputs=%v, want explicit Go 1.23.x", setup.With)
+	}
 	step := namedStep(t, license, "Check dependency licenses")
 	if step.Run != "scripts/license-check.sh" || step.Shell != "bash" {
 		t.Fatalf("license run=%q shell=%q", step.Run, step.Shell)
