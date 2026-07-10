@@ -16,3 +16,18 @@ jobs:
     with:
       source_sha: ${{ github.sha }}
       version: ci-${{ github.sha }}
+
+  quality-gate:
+    if: always()
+    needs: [quality]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every reusable quality job
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+        run: |
+          if [[ "$QUALITY_RESULT" != "success" ]]; then
+            echo "reusable quality workflow result: $QUALITY_RESULT" >&2
+            exit 1
+          fi
+          echo "all reusable quality jobs passed"

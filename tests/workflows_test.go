@@ -391,8 +391,8 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if !slices.Equal(ci.On.Push.Branches, []string{"main"}) {
 		t.Fatalf("CI push branches=%v, want main only to avoid duplicate PR branch runs", ci.On.Push.Branches)
 	}
-	if len(ci.Jobs) != 1 {
-		t.Fatalf("CI has %d jobs, want only reusable quality caller", len(ci.Jobs))
+	if len(ci.Jobs) != 2 {
+		t.Fatalf("CI has %d jobs, want reusable quality caller plus stable gate", len(ci.Jobs))
 	}
 	ciQuality := ci.Jobs["quality"]
 	if ciQuality.Uses != "./.github/workflows/reusable-quality.yml" {
@@ -400,6 +400,14 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	}
 	if ciQuality.With["source_sha"] != "${{ github.sha }}" || ciQuality.With["version"] != "ci-${{ github.sha }}" {
 		t.Fatalf("CI quality inputs=%v", ciQuality.With)
+	}
+	gate := ci.Jobs["quality-gate"]
+	if gate.If != "always()" || !slices.Equal(gate.Needs, []string{"quality"}) || gate.RunsOn != "ubuntu-latest" {
+		t.Fatalf("quality gate if=%q needs=%v runner=%q", gate.If, gate.Needs, gate.RunsOn)
+	}
+	require := namedStep(t, gate, "Require every reusable quality job")
+	if require.Env["QUALITY_RESULT"] != "${{ needs.quality.result }}" || !strings.Contains(require.Run, `"$QUALITY_RESULT" != "success"`) {
+		t.Fatalf("quality gate step env=%v run=%q", require.Env, require.Run)
 	}
 
 	release := readWorkflow(t, "../.github/workflows/build-binaries.yml")
