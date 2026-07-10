@@ -39,9 +39,50 @@ Supported platforms: macOS arm64/amd64 and Linux arm64/amd64. Homebrew
 downloads do not receive the Gatekeeper quarantine attribute, so no
 `xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
 [ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
-and is generated and pushed by the release workflow. A separate Homebrew tap
-workflow verifies style, installation, and the installed version before the
-update is considered healthy. Upgrade with `brew upgrade env-vault`.
+and is generated and proposed through a pull request by the release workflow.
+The tap runs style, installation, and exact-version checks separately. The
+release workflow opens or reuses a version-specific tap pull request, waits for
+`test-formula.yml` on
+the exact pull-request head, squash-merges that exact head, and then waits for
+the workflow's successful `push` run on the resulting tap commit. The release
+is healthy only after that post-merge check succeeds. See
+[RELEASING.md](RELEASING.md). Upgrade with `brew upgrade env-vault`.
+
+### Migrating a manual or `go install` installation to Homebrew
+
+First inspect every executable that your shell can resolve and the current
+Homebrew-prefix entry. These commands do not change anything:
+
+```sh
+type -a env-vault
+ls -l /opt/homebrew/bin/env-vault
+go version -m /opt/homebrew/bin/env-vault
+brew link --overwrite env-vault --dry-run
+```
+
+The `/opt/homebrew` path is the default on Apple Silicon. If Homebrew uses a
+different prefix, obtain it with `brew --prefix` and inspect that prefix's
+`bin/env-vault` instead. The dry run may mention files that Homebrew would
+replace, but it does not replace them.
+
+If the dry run reports an unmanaged manual binary or symlink, move that exact
+conflicting file to a new backup path before linking. Never overwrite an
+existing backup:
+
+```sh
+backup_dir="$HOME/.local/share/env-vault/backups"
+backup="$backup_dir/env-vault-pre-homebrew-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$backup_dir"
+test ! -e "$backup" && mv /opt/homebrew/bin/env-vault "$backup"
+brew link env-vault
+hash -r
+```
+
+If `type -a env-vault` shows a `go install` location such as
+`$(go env GOPATH)/bin/env-vault` before the Homebrew path, back up that file in
+the same way or remove its directory from the earlier part of `PATH`. Run
+`type -a env-vault` and `env-vault --version` again after linking. The formula
+does not opt into automatic overwriting of files it does not own.
 
 ### Manual download
 
@@ -73,6 +114,8 @@ go build -o env-vault ./cmd/env-vault
 ## GitHub Builds
 
 Binary archives are built by the `build-binaries` GitHub Actions workflow.
+Both release builds and pull-request CI call the same `reusable-quality.yml`
+workflow, including native license scans on Linux, macOS, and Windows.
 
 - Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
   leave the optional version input blank.
@@ -84,7 +127,10 @@ Binary archives are built by the `build-binaries` GitHub Actions workflow.
   verification, build, release, and Homebrew jobs.
 
 Supported targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
-Each release contains five archives and five matching SHA-256 files.
+Each release contains exactly five archives and five matching SHA-256 files.
+The combined SPDX SBOM is a 14-day workflow artifact, and GitHub build
+provenance and SBOM attestations are stored separately for all five archives;
+they are deliberately not added to the immutable ten-asset Release contract.
 
 macOS release artifacts are built on macOS runners with `CGO_ENABLED=1`; the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux and Windows release targets keep `CGO_ENABLED=0`.
 

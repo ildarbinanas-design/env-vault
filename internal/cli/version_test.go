@@ -19,11 +19,15 @@ func TestVersionFlagMatchesVersionCommand(t *testing.T) {
 	if code := Run([]string{"version"}, strings.NewReader(""), &cmdOut, &cmdErr); code != 0 {
 		t.Fatalf("version code=%d stderr=%s", code, cmdErr.String())
 	}
-	if flagOut.String() != cmdOut.String() {
-		t.Fatalf("--version output %q differs from version output %q", flagOut.String(), cmdOut.String())
+	const want = "v-test\n"
+	if flagOut.String() != want {
+		t.Fatalf("--version output=%q, want exact value %q", flagOut.String(), want)
 	}
-	if strings.TrimSpace(flagOut.String()) != "v-test" {
-		t.Fatalf("unexpected --version output: %q", flagOut.String())
+	if cmdOut.String() != want {
+		t.Fatalf("version output=%q, want exact value %q", cmdOut.String(), want)
+	}
+	if flagErr.String() != "" || cmdErr.String() != "" {
+		t.Fatalf("unexpected stderr: --version=%q version=%q", flagErr.String(), cmdErr.String())
 	}
 }
 

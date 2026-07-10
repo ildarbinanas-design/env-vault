@@ -2,6 +2,8 @@ name: ci
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -9,59 +11,23 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  quality:
+    uses: ./.github/workflows/reusable-quality.yml
+    with:
+      source_sha: ${{ github.sha }}
+      version: ci-${{ github.sha }}
+
+  quality-gate:
+    if: always()
+    needs: [quality]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - run: go test ./...
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: scripts/smoke.sh
-
-  license:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.23.x"
-      - run: scripts/license-check.sh
-
-  build:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-latest
-            cgo: "0"
-          - goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            cgo: "1"
-          - goos: darwin
-            goarch: arm64
-            runner: macos-15
-            cgo: "1"
-          - goos: windows
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - run: go build ./cmd/env-vault
+      - name: Require every reusable quality job
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+        run: |
+          if [[ "$QUALITY_RESULT" != "success" ]]; then
+            echo "reusable quality workflow result: $QUALITY_RESULT" >&2
+            exit 1
+          fi
+          echo "all reusable quality jobs passed"

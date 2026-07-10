@@ -1,5 +1,332 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-APP-CUTOVER-CHECKPOINT`
+
+Timestamp UTC: `2026-07-10T22:30:47Z`
+
+### Scope
+
+Replace the Homebrew deploy-key direct push with a least-privilege GitHub App
+pull-request flow, apply the approved external release settings, publish the
+reviewed repository changes through pull requests, and establish exact tap CI
+evidence before the `v0.0.6` release. This checkpoint precedes the App scope
+audit and version publication. No existing tag was moved, no Release asset was
+replaced, and the preserved manual-binary backup was not accessed or changed.
+
+### Changes
+
+| Repository/file or setting | Purpose |
+|---|---|
+| `build-binaries.yml`, `publish-homebrew-pr.sh`, `merge-homebrew-pr.sh`, `wait-tap-ci.sh` | Create/reuse one deterministic formula PR, bind it to version/source/formula digest, wait exact PR CI, merge the unchanged head without bypass, and wait exact post-merge CI |
+| `audit-release-app.yml` | Mint a metadata-only token and fail unless the App installation contains exactly `homebrew-tap` |
+| release-script and workflow regression tests | Cover monotonic/no-op/partial PR state, markers and formula bytes, merge head drift, exact workflow/SHA/event, timeout, malformed API data, and removal of the direct-push path |
+| `reusable-quality.yml`, `ci.yml` | Run the pinned license scanner with Go 1.23 on Linux/macOS/Windows, avoid duplicate PR branch runs, and expose one stable `quality-gate` required-check context |
+| `internal/releasearchive` | Add a source-local conservative double-dot barrier recognized by CodeQL before tar/zip names reach filesystem helpers |
+| `README.md`, `RELEASING.md`, `docs/design.md`, `docs/release-external-settings.md` | Document the implemented App/PR flow, exact CI evidence, repair behavior, scope audit, credential rotation, and rollback |
+| GitHub App `env-vault-homebrew-release` | Dedicated private App with Actions read, Contents write, Pull requests write, no webhook, and no unrelated account permissions |
+| `env-vault` environment `release` | Store only `TAP_APP_CLIENT_ID` and `TAP_APP_PRIVATE_KEY`; allow deployment only from `main` and tags matching `v*` |
+| `homebrew-tap` ruleset `Protect Homebrew tap main` | Require a PR, squash, the GitHub Actions `test` context, conversation resolution, and block force-push/deletion with no bypass actor |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 and official GitHub Actions, GitHub CLI, GitHub App token, environment, ruleset, and CodeQL documentation | passed; current v3 `client-id`, explicit permissions, exact run filters, merge head guard, and path barrier were used | doc_verified |
+| Expired local `gh` authorization removal and browser OAuth login | passed; API identity is `ildarbinanas-design`; credential value was not printed or persisted in repository files | cli_observed |
+| `release` environment and deployment-policy API verification | passed; custom policies are exactly branch `main` and tag `v*`; environment contains the expected variable/secret names | cli_observed |
+| Homebrew tap PR [#1](https://github.com/ildarbinanas-design/homebrew-tap/pull/1) | passed required `test`; squash-merged without bypass at `bc8477a95437da3d171c14db306b51ef220ae963` | remote_observed |
+| Exact post-merge tap run [29127628637](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29127628637) | passed for `workflow=test-formula.yml`, `event=push`, and the exact merge SHA | remote_observed |
+| env-vault PR [#9](https://github.com/ildarbinanas-design/env-vault/pull/9) | 21 checks passed: test, vet, race, smoke, five builds, five native version smokes, three native license scans, stable quality gate, dependency review, and CodeQL | remote_observed |
+| Initial native license jobs | failed closed on all OS because `go-licenses v2.0.1` requires Go 1.23 while the project compatibility toolchain is Go 1.22 | remote_observed |
+| Explicit license runtime fix | passed locally and in all three rerun jobs; project test/build compatibility remains on `go.mod` | remote_observed |
+| CodeQL Zip Slip review threads | initial custom sanitizer was not modeled; source-local double-dot guards and tests added; rerun passed and both bot threads auto-resolved | remote_observed |
+| `go test ./...`, targeted vet, ShellCheck, pinned license scan, workflow regression tests, and `git diff --check` | passed at this checkpoint | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Release automation no longer contains an SSH direct push to tap `main` | repo_verified | no `TAP_DEPLOY_KEY`, `ssh-keyscan`, deploy-key file, or `HEAD:main` path remains in the workflow; regression tests reject reintroduction |
+| The App write token is explicitly scoped to `homebrew-tap` and the minimum three permissions | repo_verified | token action v3 inputs name one repository and Actions read, Contents write, Pull requests write |
+| A release cannot be healthy from a PR check or checks-page link alone | repo_verified | Homebrew waits the exact merged SHA's successful push run and passes its URL/SHA to health |
+| `repair=health` cannot read the App private key or mutate the tap | repo_verified | health skips the environment-backed Homebrew job and uses public/read-only state |
+| Native license scanning is executable on every configured runner | remote_observed | Linux, macOS, and Windows jobs passed with the explicit Go 1.23 tool runtime |
+| Archive traversal names are rejected before archive data reaches filesystem helpers | remote_observed | source-local tar/zip barrier, traversal/over-rejection tests, and successful CodeQL rerun |
+
+### Remaining Cutover Steps And Risks
+
+| Item | Status | Required action or mitigation | Claim status |
+|---|---|---|---|
+| Prove App installation selection after it was corrected from all repositories to selected repositories | pending | Merge `audit-release-app.yml`, dispatch it, and require its metadata-only exact-one-repository check to pass before release | planned |
+| Publish and health-check `v0.0.6` | pending | Merge env-vault PR #9, run the App scope audit, dispatch `build-binaries` from `main`, and verify exact tag/Release/assets/attestations/tap PR/tap SHA/tap CI | planned |
+| Remove legacy `TAP_DEPLOY_KEY` and matching tap deploy key | pending | Delete both only after the first App-based release is healthy, then verify no remaining reference or writer | planned |
+| Parent-directory symlink replacement between `Lstat` and file creation is not prevented by lexical archive-name checks | accepted | release extraction runs in a private ephemeral runner output directory; a hostile concurrent local process is outside this workflow threat model; a future generalized extractor should use dirfd/openat `O_NOFOLLOW` or `os.Root` | repo_verified |
+
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-5`
+
+Timestamp UTC: `2026-07-10T21:44:47Z`
+
+### Scope
+
+Implement the remaining release-process improvements that do not require new
+credentials or GitHub repository settings, and document the exact external
+configuration needed for a future Homebrew pull-request flow. No credential,
+GitHub App, environment, ruleset, branch-protection setting, dependency-graph
+setting, tag, Release, remote workflow run, or push was created or changed. The
+preserved manual-binary backup was not accessed or changed.
+
+### Changes
+
+| Repository/file or area | Purpose |
+|---|---|
+| `env-vault/.github/workflows/reusable-quality.yml`, `ci.yml`, `build-binaries.yml` | Reuse one test/vet/race/smoke/license/build/native-version workflow from CI and releases |
+| `env-vault/scripts/license-check.sh` | Run pinned `go-licenses v2.0.1` natively on Linux, macOS, and Windows |
+| `env-vault/.github/dependabot.yml`, `dependency-review.yml`, `tests/process_config_test.go` | Add weekly Go/Actions updates and pull-request dependency review with current action majors |
+| `homebrew-tap/.github/dependabot.yml` | Add weekly Actions updates for the tap |
+| `env-vault/internal/releasearchive`, `cmd/release-extract` | Safely and boundedly extract the exact five packages before SBOM inspection; reject traversal, links, special files, collisions, and resource-limit violations |
+| `env-vault/scripts/release/artifact-attestation-state.sh`, `verify-artifact-attestations.sh` | Classify missing predicates without treating API failures as absence and verify archive digest, signer workflow, predicate, and release source SHA |
+| `env-vault/.github/workflows/build-binaries.yml` supply-chain and health jobs | Generate a Syft v1.44.0 SPDX workflow artifact, publish provenance/SBOM attestations separately from the exact ten Release assets, avoid duplicate complete predicates, gate Homebrew, and add Release/tap/tap-CI/attestation/run links to the job summary |
+| `env-vault/RELEASING.md` | Define preparation, retry, repair, rollback/withdrawal, immutable boundaries, supply-chain verification, and a healthy release |
+| `env-vault/docs/release-external-settings.md` | Specify the proposed least-privilege GitHub App, release environment, tap ruleset/CI, dependency-review setting, approval decisions, and deploy-key cutover without applying them |
+| `README.md`, `docs/design.md`, `THIRD_PARTY_NOTICES.md` | Describe reusable quality gates, native license scans, the ten-asset/SBOM boundary, and the current manual tap-CI limitation accurately |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 current GitHub Actions, GitHub CLI, actionlint, Syft, and Homebrew documentation | passed; current runner labels, action inputs/permissions, attestation verification, SBOM, and lint behavior were used | doc_verified |
+| Official `actions/attest@v4` and `anchore/sbom-action@v0` action definitions | passed; confirmed multi-subject paths, `sbom-path`, Node 24, `artifact-metadata: write`, and explicit release-asset opt-out | doc_verified |
+| `gofmt` tracked Go sources | passed; no unformatted files | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `go test -race ./...` | passed | cli_observed |
+| `scripts/smoke.sh` | passed; sandbox emitted only a non-fatal Go module stat-cache warning | cli_observed |
+| `scripts/license-check.sh` | passed with pinned v2.0.1; expected assembly-inspection warning only | cli_observed |
+| `shellcheck scripts/release/*.sh scripts/license-check.sh` | passed | cli_observed |
+| actionlint v1.7.12 | passed after ignoring only its known false-positive for current `concurrency.queue` syntax | cli_observed |
+| Workflow/config and fake-GitHub regression tests | passed; includes repair gates, native runners, exact assets/formula, API 404/503/network classification, partial predicate state, source SHA, and summary structure | cli_observed |
+| Release archive extractor tests | passed; valid packages plus traversal, absolute paths, symlink, hardlink, special/collision, duplicate, entry-count, and size-limit failures | cli_observed |
+| `brew style Formula/env-vault.rb` and `ruby -c Formula/env-vault.rb` | passed; no offenses and syntax valid | cli_observed |
+| `brew test --force ildarbinanas-design/tap/env-vault` | passed against installed v0.0.5 | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| CI and releases cannot drift across duplicated quality/build matrices | repo_verified | both callers use `reusable-quality.yml`; regression tests reject duplicated release jobs |
+| License policy is evaluated on every supported host OS | repo_verified | native Linux/macOS/Windows matrix plus pinned cross-platform script |
+| Supply-chain evidence cannot change the immutable Release asset set | repo_verified | SBOM upload is a workflow artifact; `upload-release-assets: false`; Release download requires exactly ten assets |
+| A complete same-version retry does not create duplicate attestations | repo_verified | predicate-specific API state and verification produce separate `create_provenance`/`create_sbom` outputs; complete evidence is a no-op |
+| Attestations must match the archive, expected signer, predicate, and release source commit | repo_verified | `gh attestation verify` uses repository, signer workflow, exact predicate, and `--source-digest`; workflow refuses creation when run SHA differs |
+| Dependency update and review configuration is version-controlled | repo_verified | weekly Dependabot configs, PR-only dependency review, and regression tests |
+| Tap PR publication and exact tap-CI waiting were not enabled without an approved trust boundary | repo_verified | current direct-push workflow remains explicit; proposed external settings and approval checklist are documented separately |
+
+### Risks And External Blockers
+
+| Risk or blocker | Status | Mitigation or required action | Claim status |
+|---|---|---|---|
+| Homebrew still updates by deploy-key direct push and release health does not await tap CI | blocked | Approve and configure the dedicated GitHub App, `release` environment, tap ruleset/required check, and auto-merge policy in `docs/release-external-settings.md`; then implement the PR/wait path | user_action_required |
+| Dependency review is not yet a required server-side check | blocked | Enable/confirm dependency graph, observe the real `Dependency review` context, and add it to the default-branch ruleset after approval | user_action_required |
+| A late `release-assets` repair cannot honestly mint provenance after `main` moves past the release SHA | accepted | Rerun the original workflow at the release SHA; the new workflow fails closed instead of signing from a later commit; fix forward with a new patch if the original run is unavailable | repo_verified |
+| Attestation and multi-platform jobs were not exercised in live GitHub Actions | accepted | Local/fake-API tests, actionlint, exact action docs, and native local checks passed; a pushed PR CI run is the remaining authoritative execution check | planned |
+| actionlint v1.7.12 predates current `concurrency.queue` syntax | accepted | Ignore only that exact diagnostic; official current documentation and a regression test protect the queue setting | doc_verified |
+
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-4`
+
+Timestamp UTC: `2026-07-10T20:55:34Z`
+
+### Scope
+
+Make the release workflow serialized, monotonic, idempotent, resumable after
+partial failure, and explicitly repairable at the release-assets, Homebrew, or
+health stage. No live tag, GitHub Release, asset, tap branch, credential, or
+remote workflow run was created, moved, overwritten, or deleted.
+
+### Changes
+
+| File or area | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Adds a global non-cancelling FIFO release queue, repair inputs/start-at gates, canonical source SHA, read-only monotonic preflight, existing tag/Release acceptance, asset reconciliation, commit-time monotonic/no-op guards, and final health verification |
+| `scripts/release/lib.sh` | Defines the exact five archives/ten assets and strict archive/checksum validation |
+| `scripts/release/resolve-tag-sha.sh` | Resolves lightweight or annotated tags to a commit and distinguishes explicit 404 from operational failures |
+| `scripts/release/get-release-state.sh` | Reads stable Release state and distinguishes explicit absence from auth/network/API failure |
+| `scripts/release/reconcile-release-assets.sh` | Verifies existing pairs, uploads only missing members, rejects mismatches, and never overwrites an asset |
+| `scripts/release/download-release-assets.sh` | Downloads exactly the required assets into staging and publishes the directory only after every pair verifies |
+| `scripts/release/generate-homebrew-formula.sh`, `verify-homebrew-formula.sh` | Generate and byte-compare the formula from verified Release assets |
+| `scripts/release/semver-compare.sh` | Compares unbounded numeric SemVer components without integer overflow |
+| `tests/release_scripts_test.go` | Uses fake GitHub APIs/assets to cover annotated tags, 404/503/network failures, all four partial-pair states, checksum mismatch, zero-upload no-op, and overwrite prohibition |
+| `tests/workflows_test.go` | Protects concurrency, repair wiring, result gates, source checkouts, preflight order, Release reuse, exact formula generation, monotonic/no-op behavior, and health checks |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 and official GitHub Actions concurrency documentation | passed; confirmed static groups, `cancel-in-progress: false`, and current `queue: max` semantics | doc_verified |
+| Context7 actionlint documentation | passed; selected pinned actionlint v1.7.12 | doc_verified |
+| `bash -n scripts/release/*.sh` | passed | cli_observed |
+| `shellcheck -x scripts/release/*.sh` | passed | cli_observed |
+| Fake-GitHub resolver/state/reconciliation tests | passed | cli_observed |
+| Workflow regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| actionlint v1.7.12 with only its known `queue` false-positive ignored | passed with no remaining diagnostics | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Concurrent release requests cannot cancel a running or already queued release | repo_verified | one global group, `cancel-in-progress: false`, `queue: max`; regression test |
+| A target below the published Homebrew version cannot mutate tag, Release, or tap | repo_verified | read-only preflight is a direct release dependency; commit-time guard repeats the check for TOCTOU |
+| Same version, same expected tag commit, verified assets, and identical formula is an external no-op | repo_verified | tag/Release reuse, zero-upload reconciliation, byte-identical formula exit, then health verification |
+| Existing tags are accepted only at the expected peeled commit | repo_verified | resolver follows annotated tag objects; mismatch is fatal; no PATCH/DELETE/move operation exists |
+| Existing Release assets are never silently replaced | repo_verified | remote complete pairs are verified; only missing members are uploaded; `--clobber` is forbidden by code and tests |
+| A checksum or SHA mismatch is fatal | repo_verified | strict pair/SHA comparisons and fake-API regression cases |
+| Repair modes have explicit start-at behavior | repo_verified | `release-assets`, `homebrew`, and `health` choices plus exact skipped/success result gates |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| actionlint v1.7.12 predates GitHub's May 2026 `concurrency.queue` syntax | accepted | ignore only that exact linter diagnostic; official GitHub docs and a dedicated regression test protect `queue: max` | doc_verified |
+| GitHub API mutation paths were not exercised against the live repository | accepted | fake `gh` tests cover success, partial state, explicit 404, 503/network error, and mismatch behavior; live publication remains separately authorized | cli_observed |
+| `release-assets` repair rejects a version older than the current tap | accepted | prevents an old repair from downgrading Homebrew; document the current-release-only boundary in the process-improvement stage | planned |
+| Tap still updates by direct push and this stage does not await tap CI | open | cross-repository PR/authentication and downstream CI settings are handled in the process-improvement stage | planned |
+
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-3`
+
+Timestamp UTC: `2026-07-10T20:28:26Z`
+
+### Scope
+
+Make Homebrew version validation exact in both the published formula and its
+release-time generator, and document a non-destructive migration from manual or
+`go install` binaries. The preserved manual-binary backup was not accessed or
+changed. No remote tap update, release, tag, credential change, or push occurred.
+
+### Changes
+
+| Repository/file | Purpose |
+|---|---|
+| `env-vault/.github/workflows/build-binaries.yml` | Generates an exact `assert_equal "v#{version}"` formula test |
+| `env-vault/tests/workflows_test.go` | Requires the full exact assertion, rejects substring matching, and rejects `link_overwrite` |
+| `env-vault/README.md` | Adds inspect, dry-run, timestamped backup, plain-link, and PATH verification steps for migration |
+| `homebrew-tap/Formula/env-vault.rb` | Uses the same exact version assertion as the generator |
+| `env-vault/evidence_bundle.md` | Records checks and the local Homebrew trust limitation |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 Homebrew documentation query | passed; confirmed formula test assertions and safe linking behavior | doc_verified |
+| Targeted generated-formula regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `brew style Formula/env-vault.rb` | passed; one file, no offenses | cli_observed |
+| `ruby -c Formula/env-vault.rb` | passed | cli_observed |
+| `brew test --force ildarbinanas-design/tap/env-vault` | passed against the installed v0.0.5 keg | cli_observed |
+| Exact installed-binary comparison with `v0.0.5` | passed | cli_observed |
+| Temporary local test tap cleanup | passed; tap removed and no trust exception was persisted | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The checked-in tap formula and future generated formula use identical exact version semantics | repo_verified | both contain the same `assert_equal ... .strip` line; regression test protects the generator |
+| The formula cannot silently opt into overwriting unmanaged files | repo_verified | no `link_overwrite`; regression test rejects adding it to generated content |
+| Migration inspects before mutation and uses only `--overwrite --dry-run` | repo_verified | README sequence backs up the exact conflict, then uses plain `brew link` |
+| The existing manual-binary backup remains untouched | cli_observed | no command referenced, moved, or removed the preserved backup path |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Current Homebrew rejects loading an untrusted temporary local tap for `brew test` | accepted | did not persist a trust-policy exception; working formula passed style/Ruby parsing, generator regression, and exact installed-binary checks; remote tap CI remains authoritative | cli_observed |
+| Homebrew auto-update ran while creating the temporary tap | accepted | no env-vault repository, formula, installed keg, or preserved backup was changed; temporary tap was removed | cli_observed |
+| Tap update is still a direct push and release does not yet await tap CI | open | addressed in the reliability/process stages | planned |
+
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-2`
+
+Timestamp UTC: `2026-07-10T20:21:36Z`
+
+### Scope
+
+Require every packaged release binary to report the exact resolved build version
+through both supported version commands on a compatible native runner. No tag,
+release, remote workflow run, credential, or published artifact was created.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Adds post-build native smoke jobs for all five targets, exact checks for `--version` and `version`, archive checksum verification, and a release dependency on those checks |
+| `tests/workflows_test.go` | Protects the native runner matrix, exact two-command comparisons, resolved-version propagation, and the release gate |
+| `evidence_bundle.md` | Records the stage scope, documentation basis, checks, and residual risks |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 GitHub Actions documentation query | passed; confirmed matrix-driven runners and workflow concurrency syntax | doc_verified |
+| Official GitHub-hosted runner reference | passed; `ubuntu-24.04-arm` and `windows-latest` are current standard native labels | doc_verified |
+| Targeted workflow regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `gofmt -w tests/workflows_test.go` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Cross-compiled binaries are never executed on the incompatible Ubuntu build runner | repo_verified | all execution moved to a post-build native smoke matrix |
+| Linux arm64 executes on arm64 hardware | repo_verified | smoke target uses `ubuntu-24.04-arm` |
+| Windows amd64 executes on Windows | repo_verified | smoke target uses `windows-latest` and PowerShell-native extraction/checking |
+| Both version commands must exactly match the resolved `${VERSION}` | repo_verified | Unix byte-for-byte `diff`; Windows one-line case-sensitive comparisons; regression tests inspect both paths |
+| GitHub Release creation cannot start before every native smoke check passes | repo_verified | release job directly needs `smoke` |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Native runner labels and installed images can change over time | accepted | use documented standard labels and keep the matrix protected by tests; remote CI remains the authoritative execution check | doc_verified |
+| Windows PowerShell smoke code cannot execute on the local macOS host | accepted | YAML structure is parsed by Go regression tests; the Windows job runs only on `windows-latest` | repo_verified |
+| No remote Actions workflow was run in this local-only stage | accepted | publication and push require separate approval | planned |
+
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-1`
+
+Timestamp UTC: `2026-07-10T20:17:59Z`
+
+### Scope
+
+Correct unknown-flag remediation paths and add exact CLI regression coverage.
+No secret value, credential, tag, release, remote branch, or published artifact
+was read, changed, or created.
+
+### Changes
+
+| File | Purpose |
+|---|---|
+| `internal/cli/cli.go` | Uses Cobra's complete `CommandPath()` directly so the program name is not duplicated |
+| `internal/cli/flags_test.go` | Covers root and nested unknown flags, exact remediation, and the non-duplication invariant |
+| `internal/cli/version_test.go` | Requires `version` and `--version` to emit the same exact version line with no stderr |
+| `evidence_bundle.md` | Records stage scope, checks, and residual risk without secret material |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Applicable `AGENTS.md` and both repository statuses | passed; both repositories started clean on `main` | cli_observed |
+| Context7 Cobra documentation query | passed; `CommandPath()` is the full path and the root flag handler is inherited by child commands | doc_verified |
+| `gofmt -w internal/cli/cli.go internal/cli/flags_test.go internal/cli/version_test.go` | passed | cli_observed |
+| Targeted CLI regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| Other hand-written remediation strings could drift independently | accepted | this stage targets Cobra flag parsing; existing command-specific remediations remain covered by their command tests | repo_verified |
+| Release binaries have not been rebuilt or published | accepted | workflow hardening and release verification are handled in later stages; no publication is authorized | planned |
+
 ## Task ID: `ENV-VAULT-V0.0.5-RELEASE-WORKFLOW-HARDENING`
 
 Timestamp UTC: `2026-07-10T19:12:05Z`

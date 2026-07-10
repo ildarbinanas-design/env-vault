@@ -1,0 +1,47 @@
+name: audit-release-app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: env-vault-release-app-audit
+  cancel-in-progress: false
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: release
+    steps:
+      - id: app-token
+        name: Mint metadata-only installation token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-metadata: read
+
+      - name: Require a single-repository installation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t repositories < <(
+            gh api --paginate installation/repositories \
+              --jq '.repositories[].full_name'
+          )
+          if [[ "${#repositories[@]}" != "1" || "${repositories[0]:-}" != "ildarbinanas-design/homebrew-tap" ]]; then
+            echo "release App installation scope must contain only homebrew-tap" >&2
+            exit 1
+          fi
+          {
+            printf '## Release App scope audit\n\n'
+            printf -- '- Installation contains only `ildarbinanas-design/homebrew-tap`.\n'
+            printf -- '- Audit token permission: metadata read.\n'
+            printf -- '- The token is revoked by the action post-step.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

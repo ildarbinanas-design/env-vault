@@ -116,7 +116,7 @@ func (a *App) rootCommand() *cobra.Command {
 	root.SetOut(a.stdout)
 	root.SetErr(a.stderr)
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return apperrors.Usage(commandID(cmd), err.Error(), "Run: env-vault "+cmd.CommandPath()+" --help")
+		return apperrors.Usage(commandID(cmd), err.Error(), "Run: "+cmd.CommandPath()+" --help")
 	})
 
 	flags := root.PersistentFlags()
