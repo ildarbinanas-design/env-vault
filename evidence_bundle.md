@@ -1,5 +1,75 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-5`
+
+Timestamp UTC: `2026-07-10T21:44:47Z`
+
+### Scope
+
+Implement the remaining release-process improvements that do not require new
+credentials or GitHub repository settings, and document the exact external
+configuration needed for a future Homebrew pull-request flow. No credential,
+GitHub App, environment, ruleset, branch-protection setting, dependency-graph
+setting, tag, Release, remote workflow run, or push was created or changed. The
+preserved manual-binary backup was not accessed or changed.
+
+### Changes
+
+| Repository/file or area | Purpose |
+|---|---|
+| `env-vault/.github/workflows/reusable-quality.yml`, `ci.yml`, `build-binaries.yml` | Reuse one test/vet/race/smoke/license/build/native-version workflow from CI and releases |
+| `env-vault/scripts/license-check.sh` | Run pinned `go-licenses v2.0.1` natively on Linux, macOS, and Windows |
+| `env-vault/.github/dependabot.yml`, `dependency-review.yml`, `tests/process_config_test.go` | Add weekly Go/Actions updates and pull-request dependency review with current action majors |
+| `homebrew-tap/.github/dependabot.yml` | Add weekly Actions updates for the tap |
+| `env-vault/internal/releasearchive`, `cmd/release-extract` | Safely and boundedly extract the exact five packages before SBOM inspection; reject traversal, links, special files, collisions, and resource-limit violations |
+| `env-vault/scripts/release/artifact-attestation-state.sh`, `verify-artifact-attestations.sh` | Classify missing predicates without treating API failures as absence and verify archive digest, signer workflow, predicate, and release source SHA |
+| `env-vault/.github/workflows/build-binaries.yml` supply-chain and health jobs | Generate a Syft v1.44.0 SPDX workflow artifact, publish provenance/SBOM attestations separately from the exact ten Release assets, avoid duplicate complete predicates, gate Homebrew, and add Release/tap/tap-CI/attestation/run links to the job summary |
+| `env-vault/RELEASING.md` | Define preparation, retry, repair, rollback/withdrawal, immutable boundaries, supply-chain verification, and a healthy release |
+| `env-vault/docs/release-external-settings.md` | Specify the proposed least-privilege GitHub App, release environment, tap ruleset/CI, dependency-review setting, approval decisions, and deploy-key cutover without applying them |
+| `README.md`, `docs/design.md`, `THIRD_PARTY_NOTICES.md` | Describe reusable quality gates, native license scans, the ten-asset/SBOM boundary, and the current manual tap-CI limitation accurately |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 current GitHub Actions, GitHub CLI, actionlint, Syft, and Homebrew documentation | passed; current runner labels, action inputs/permissions, attestation verification, SBOM, and lint behavior were used | doc_verified |
+| Official `actions/attest@v4` and `anchore/sbom-action@v0` action definitions | passed; confirmed multi-subject paths, `sbom-path`, Node 24, `artifact-metadata: write`, and explicit release-asset opt-out | doc_verified |
+| `gofmt` tracked Go sources | passed; no unformatted files | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `go test -race ./...` | passed | cli_observed |
+| `scripts/smoke.sh` | passed; sandbox emitted only a non-fatal Go module stat-cache warning | cli_observed |
+| `scripts/license-check.sh` | passed with pinned v2.0.1; expected assembly-inspection warning only | cli_observed |
+| `shellcheck scripts/release/*.sh scripts/license-check.sh` | passed | cli_observed |
+| actionlint v1.7.12 | passed after ignoring only its known false-positive for current `concurrency.queue` syntax | cli_observed |
+| Workflow/config and fake-GitHub regression tests | passed; includes repair gates, native runners, exact assets/formula, API 404/503/network classification, partial predicate state, source SHA, and summary structure | cli_observed |
+| Release archive extractor tests | passed; valid packages plus traversal, absolute paths, symlink, hardlink, special/collision, duplicate, entry-count, and size-limit failures | cli_observed |
+| `brew style Formula/env-vault.rb` and `ruby -c Formula/env-vault.rb` | passed; no offenses and syntax valid | cli_observed |
+| `brew test --force ildarbinanas-design/tap/env-vault` | passed against installed v0.0.5 | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| CI and releases cannot drift across duplicated quality/build matrices | repo_verified | both callers use `reusable-quality.yml`; regression tests reject duplicated release jobs |
+| License policy is evaluated on every supported host OS | repo_verified | native Linux/macOS/Windows matrix plus pinned cross-platform script |
+| Supply-chain evidence cannot change the immutable Release asset set | repo_verified | SBOM upload is a workflow artifact; `upload-release-assets: false`; Release download requires exactly ten assets |
+| A complete same-version retry does not create duplicate attestations | repo_verified | predicate-specific API state and verification produce separate `create_provenance`/`create_sbom` outputs; complete evidence is a no-op |
+| Attestations must match the archive, expected signer, predicate, and release source commit | repo_verified | `gh attestation verify` uses repository, signer workflow, exact predicate, and `--source-digest`; workflow refuses creation when run SHA differs |
+| Dependency update and review configuration is version-controlled | repo_verified | weekly Dependabot configs, PR-only dependency review, and regression tests |
+| Tap PR publication and exact tap-CI waiting were not enabled without an approved trust boundary | repo_verified | current direct-push workflow remains explicit; proposed external settings and approval checklist are documented separately |
+
+### Risks And External Blockers
+
+| Risk or blocker | Status | Mitigation or required action | Claim status |
+|---|---|---|---|
+| Homebrew still updates by deploy-key direct push and release health does not await tap CI | blocked | Approve and configure the dedicated GitHub App, `release` environment, tap ruleset/required check, and auto-merge policy in `docs/release-external-settings.md`; then implement the PR/wait path | user_action_required |
+| Dependency review is not yet a required server-side check | blocked | Enable/confirm dependency graph, observe the real `Dependency review` context, and add it to the default-branch ruleset after approval | user_action_required |
+| A late `release-assets` repair cannot honestly mint provenance after `main` moves past the release SHA | accepted | Rerun the original workflow at the release SHA; the new workflow fails closed instead of signing from a later commit; fix forward with a new patch if the original run is unavailable | repo_verified |
+| Attestation and multi-platform jobs were not exercised in live GitHub Actions | accepted | Local/fake-API tests, actionlint, exact action docs, and native local checks passed; a pushed PR CI run is the remaining authoritative execution check | planned |
+| actionlint v1.7.12 predates current `concurrency.queue` syntax | accepted | Ignore only that exact diagnostic; official current documentation and a regression test protect the queue setting | doc_verified |
+
 ## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-4`
 
 Timestamp UTC: `2026-07-10T20:55:34Z`

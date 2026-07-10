@@ -101,14 +101,19 @@ optional `vX.Y.Z` input. A dispatch without a version is build-only. A manual
 release creates its tag with the workflow-scoped `GITHUB_TOKEN`, avoiding a
 second recursive tag workflow.
 
-Every release waits for unit tests, vet, race tests, smoke tests, a pinned
-`go-licenses` gate, and all platform builds. It publishes five archives and
-five matching SHA-256 files. The version is injected into each binary through
-Go linker flags.
+Both pull-request CI and releases call `reusable-quality.yml`. Every release
+waits for unit tests, vet, race tests, smoke tests, a pinned native
+`go-licenses` matrix on Linux, macOS, and Windows, and all platform builds. It
+publishes exactly five archives and five matching SHA-256 files. The version is
+injected into each binary through Go linker flags.
 
 Darwin release artifacts are built on macOS GitHub-hosted runners with `CGO_ENABLED=1` because the macOS Keychain backend requires CGO-enabled darwin binaries. Linux and Windows artifact builds remain `CGO_ENABLED=0`.
 
-After the GitHub Release succeeds, the workflow generates four Homebrew URL and
-SHA branches, commits the formula to `homebrew-tap`, and lets the tap's separate
-workflow verify style, installation, and the installed version. GitHub Release
-publication and tap verification are intentionally separate, observable gates.
+After the GitHub Release succeeds, the workflow generates a combined SPDX SBOM
+and GitHub provenance/SBOM attestations for all five archives without changing
+the exact ten-asset Release contract. It then generates four platform
+URL/checksum stanzas and commits the formula directly to `homebrew-tap`. The
+tap's separate workflow verifies style, installation, and the installed
+version. The release workflow does not yet wait for the exact tap CI run, so an
+operator must verify that final gate; the planned PR-based update requires the
+external settings documented in `docs/release-external-settings.md`.

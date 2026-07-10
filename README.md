@@ -39,9 +39,11 @@ Supported platforms: macOS arm64/amd64 and Linux arm64/amd64. Homebrew
 downloads do not receive the Gatekeeper quarantine attribute, so no
 `xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
 [ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
-and is generated and pushed by the release workflow. A separate Homebrew tap
-workflow verifies style, installation, and the installed version before the
-update is considered healthy. Upgrade with `brew upgrade env-vault`.
+and is generated and pushed by the release workflow. The tap runs style,
+installation, and exact-version checks separately. Until the planned tap-PR
+migration is configured, the release workflow does not wait for that CI; the
+operator must confirm the exact tap commit before declaring a release healthy.
+See [RELEASING.md](RELEASING.md). Upgrade with `brew upgrade env-vault`.
 
 ### Migrating a manual or `go install` installation to Homebrew
 
@@ -109,6 +111,8 @@ go build -o env-vault ./cmd/env-vault
 ## GitHub Builds
 
 Binary archives are built by the `build-binaries` GitHub Actions workflow.
+Both release builds and pull-request CI call the same `reusable-quality.yml`
+workflow, including native license scans on Linux, macOS, and Windows.
 
 - Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
   leave the optional version input blank.
@@ -120,7 +124,10 @@ Binary archives are built by the `build-binaries` GitHub Actions workflow.
   verification, build, release, and Homebrew jobs.
 
 Supported targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
-Each release contains five archives and five matching SHA-256 files.
+Each release contains exactly five archives and five matching SHA-256 files.
+The combined SPDX SBOM is a 14-day workflow artifact, and GitHub build
+provenance and SBOM attestations are stored separately for all five archives;
+they are deliberately not added to the immutable ten-asset Release contract.
 
 macOS release artifacts are built on macOS runners with `CGO_ENABLED=1`; the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux and Windows release targets keep `CGO_ENABLED=0`.
 

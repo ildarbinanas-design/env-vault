@@ -11,7 +11,8 @@ Direct runtime dependencies:
 | `golang.org/x/term` | `v0.29.0` | BSD-3-Clause |
 | `gopkg.in/yaml.v3` | `v3.0.1` | MIT/Apache-2.0 style Go YAML license |
 
-Release CI runs `scripts/license-check.sh`, pinned to `go-licenses v2.0.1`,
-before publishing binaries. The gate checks the resolved CLI dependency tree
-and allows only the documented permissive license families. Update this direct
-dependency table whenever the direct requirements in `go.mod` change.
+CI runs `scripts/license-check.sh`, pinned to `go-licenses v2.0.1`, natively on
+Linux, macOS, and Windows before publishing binaries. The matrix checks the
+resolved CLI dependency tree and allows only the documented permissive license
+families. Update this direct dependency table whenever the direct requirements
+in `go.mod` change.
