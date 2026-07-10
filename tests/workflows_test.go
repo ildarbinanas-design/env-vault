@@ -1,7 +1,11 @@
 package tests
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -10,8 +14,15 @@ import (
 )
 
 type workflow struct {
-	On   workflowTriggers       `yaml:"on"`
-	Jobs map[string]workflowJob `yaml:"jobs"`
+	On          workflowTriggers       `yaml:"on"`
+	Concurrency workflowConcurrency    `yaml:"concurrency"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowConcurrency struct {
+	Group            string `yaml:"group"`
+	CancelInProgress bool   `yaml:"cancel-in-progress"`
+	Queue            string `yaml:"queue"`
 }
 
 type workflowTriggers struct {
@@ -23,10 +34,11 @@ type workflowDispatch struct {
 }
 
 type workflowInput struct {
-	Description string `yaml:"description"`
-	Required    bool   `yaml:"required"`
-	Default     string `yaml:"default"`
-	Type        string `yaml:"type"`
+	Description string   `yaml:"description"`
+	Required    bool     `yaml:"required"`
+	Default     string   `yaml:"default"`
+	Type        string   `yaml:"type"`
+	Options     []string `yaml:"options"`
 }
 
 type workflowJob struct {
@@ -58,6 +70,7 @@ type workflowStep struct {
 	If   string            `yaml:"if"`
 	Run  string            `yaml:"run"`
 	Env  map[string]string `yaml:"env"`
+	With map[string]string `yaml:"with"`
 }
 
 func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
@@ -87,6 +100,47 @@ func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
 	}
 }
 
+func TestReleaseConcurrencyIsGlobalAndNeverCancelsInProgress(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	if wf.Concurrency.Group != "env-vault-release" {
+		t.Fatalf("concurrency group=%q, want global env-vault-release", wf.Concurrency.Group)
+	}
+	if wf.Concurrency.CancelInProgress {
+		t.Fatal("release workflow must never cancel an in-progress publication")
+	}
+	if wf.Concurrency.Queue != "max" {
+		t.Fatalf("concurrency queue=%q, want max so pending releases are not replaced", wf.Concurrency.Queue)
+	}
+}
+
+func TestSemverComparisonHandlesLargeNumericComponents(t *testing.T) {
+	cases := []struct {
+		left  string
+		right string
+		want  string
+	}{
+		{left: "0.0.10", right: "0.0.9", want: "1"},
+		{left: "2.0.0", right: "10.0.0", want: "-1"},
+		{left: "1.2.3", right: "1.2.3", want: "0"},
+		{left: "999999999999999999999999.0.0", right: "999999999999999999999998.999.999", want: "1"},
+	}
+	for _, tc := range cases {
+		cmd := exec.Command("bash", "../scripts/release/semver-compare.sh", tc.left, tc.right)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("compare %s %s: %v\n%s", tc.left, tc.right, err, output)
+		}
+		if got := strings.TrimSpace(string(output)); got != tc.want {
+			t.Fatalf("compare %s %s=%q, want %q", tc.left, tc.right, got, tc.want)
+		}
+	}
+	for _, invalid := range []string{"v1.2.3", "01.2.3", "1.2", "1.2.3-rc.1"} {
+		if err := exec.Command("bash", "../scripts/release/semver-compare.sh", invalid, "1.2.3").Run(); err == nil {
+			t.Fatalf("invalid semver %q unexpectedly accepted", invalid)
+		}
+	}
+}
+
 func TestManualReleaseInputAndGates(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
 	version, ok := wf.On.WorkflowDispatch.Inputs["version"]
@@ -96,10 +150,28 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	if version.Required || version.Default != "" || version.Type != "string" {
 		t.Fatalf("version input required=%v default=%q type=%q", version.Required, version.Default, version.Type)
 	}
+	repair, ok := wf.On.WorkflowDispatch.Inputs["repair"]
+	if !ok {
+		t.Fatal("workflow_dispatch missing repair input")
+	}
+	wantRepairOptions := []string{"none", "release-assets", "homebrew", "health"}
+	if !repair.Required || repair.Default != "none" || repair.Type != "choice" || !slices.Equal(repair.Options, wantRepairOptions) {
+		t.Fatalf("repair input required=%v default=%q type=%q options=%v", repair.Required, repair.Default, repair.Type, repair.Options)
+	}
 
 	metadata := wf.Jobs["metadata"]
 	resolve := namedStep(t, metadata, "Resolve build version and release mode")
-	for _, snippet := range []string{"refs/heads/${DEFAULT_BRANCH}", "vMAJOR.MINOR.PATCH", "GITHUB_OUTPUT", "publish=false"} {
+	for _, snippet := range []string{
+		"refs/heads/${DEFAULT_BRANCH}",
+		"vMAJOR.MINOR.PATCH",
+		"GITHUB_OUTPUT",
+		"publish=false",
+		"repair mode requires an explicit version",
+		"scripts/release/resolve-tag-sha.sh",
+		"run_release",
+		"run_homebrew",
+		"source_sha",
+	} {
 		if !strings.Contains(resolve.Run, snippet) {
 			t.Fatalf("metadata resolution missing %q", snippet)
 		}
@@ -109,26 +181,69 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	}
 
 	release := wf.Jobs["release"]
-	for _, need := range []string{"metadata", "verify", "license", "build"} {
+	for _, need := range []string{"metadata", "preflight", "verify", "license", "build"} {
 		if !slices.Contains(release.Needs, need) {
 			t.Fatalf("release needs=%v, missing %q", release.Needs, need)
 		}
 	}
-	if release.If != "needs.metadata.outputs.publish == 'true'" {
-		t.Fatalf("release if=%q", release.If)
+	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "needs.preflight.result == 'success'", "run_release == 'true'", "needs.verify.result == 'success'", "needs.smoke.result == 'success'"} {
+		if !strings.Contains(release.If, snippet) {
+			t.Fatalf("release if=%q, missing %q", release.If, snippet)
+		}
 	}
 
 	createTag := namedStep(t, release, "Create release tag for manual dispatch")
-	if createTag.If != "github.event_name == 'workflow_dispatch'" {
+	if createTag.If != "github.event_name == 'workflow_dispatch' && needs.metadata.outputs.repair == 'none'" {
 		t.Fatalf("manual tag step if=%q", createTag.If)
 	}
-	for _, snippet := range []string{"GITHUB_SHA", "git/refs", "existing_sha", "--raw-field"} {
+	for _, snippet := range []string{"SOURCE_SHA", "git/refs", "existing_sha", "--raw-field", "already points to the expected commit; no-op"} {
 		if !strings.Contains(createTag.Run, snippet) && createTag.Env[snippet] == "" {
 			t.Fatalf("manual tag step missing %q", snippet)
 		}
 	}
 	if createTag.Env["VERSION"] != "${{ needs.metadata.outputs.version }}" {
 		t.Fatalf("manual tag VERSION=%q", createTag.Env["VERSION"])
+	}
+	for _, snippet := range []string{`tag_status" == "0`, `tag_status" != "4`, `exit "$tag_status"`} {
+		if !strings.Contains(createTag.Run, snippet) {
+			t.Fatalf("manual tag error classification missing %q", snippet)
+		}
+	}
+	if strings.Contains(createTag.Run, "2>/dev/null") {
+		t.Fatal("manual tag creation must not hide resolver failures")
+	}
+	verifyTag := namedStep(t, release, "Verify release tag commit")
+	for _, snippet := range []string{"resolve-tag-sha.sh", `existing_sha" != "$SOURCE_SHA`, "exit 1"} {
+		if !strings.Contains(verifyTag.Run, snippet) {
+			t.Fatalf("tag verification missing %q", snippet)
+		}
+	}
+}
+
+func TestHomebrewMonotonicPreflightRunsBeforeReleaseMutation(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	preflight := wf.Jobs["preflight"]
+	if !slices.Contains(preflight.Needs, "metadata") {
+		t.Fatalf("preflight needs=%v", preflight.Needs)
+	}
+	for _, snippet := range []string{"always()", "!cancelled()", "publish == 'true'", "repair != 'health'"} {
+		if !strings.Contains(preflight.If, snippet) {
+			t.Fatalf("preflight if=%q, missing %q", preflight.If, snippet)
+		}
+	}
+	guard := namedStep(t, preflight, "Guard Homebrew version monotonicity")
+	for _, snippet := range []string{
+		"https://github.com/ildarbinanas-design/homebrew-tap.git",
+		"semver-compare.sh",
+		"refusing release downgrade",
+		"exit 1",
+	} {
+		if !strings.Contains(guard.Run, snippet) {
+			t.Fatalf("preflight guard missing %q", snippet)
+		}
+	}
+	if !slices.Contains(wf.Jobs["release"].Needs, "preflight") {
+		t.Fatal("release mutation is not gated by monotonic preflight")
 	}
 }
 
@@ -155,11 +270,13 @@ func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 	}
 
 	homebrew := wf.Jobs["homebrew"]
-	if !slices.Contains(homebrew.Needs, "metadata") || !slices.Contains(homebrew.Needs, "release") {
+	if !slices.Contains(homebrew.Needs, "metadata") || !slices.Contains(homebrew.Needs, "preflight") || !slices.Contains(homebrew.Needs, "release") {
 		t.Fatalf("homebrew needs=%v", homebrew.Needs)
 	}
-	if homebrew.If != "needs.metadata.outputs.publish == 'true'" {
-		t.Fatalf("homebrew if=%q", homebrew.If)
+	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "needs.preflight.result == 'success'", "run_homebrew == 'true'", "needs.release.result == 'success'", "repair == 'homebrew'", "needs.release.result == 'skipped'"} {
+		if !strings.Contains(homebrew.If, snippet) {
+			t.Fatalf("homebrew if=%q, missing %q", homebrew.If, snippet)
+		}
 	}
 }
 
@@ -188,14 +305,47 @@ func TestReleaseAndCIRunPinnedLicenseGate(t *testing.T) {
 func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
 	homebrew := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "homebrew")
 	generate := namedStep(t, homebrew, "Generate formula")
+	if !strings.Contains(generate.Run, "scripts/release/generate-homebrew-formula.sh") {
+		t.Fatal("workflow must use the tested Homebrew formula generator")
+	}
+	assetDir := t.TempDir()
+	for _, archive := range []string{
+		"env-vault-darwin-arm64.tar.gz",
+		"env-vault-darwin-amd64.tar.gz",
+		"env-vault-linux-arm64.tar.gz",
+		"env-vault-linux-amd64.tar.gz",
+	} {
+		contents := []byte("fixture:" + archive)
+		if err := os.WriteFile(filepath.Join(assetDir, archive), contents, 0o644); err != nil {
+			t.Fatalf("write archive fixture: %v", err)
+		}
+		digest := sha256.Sum256(contents)
+		checksum := fmt.Sprintf("%x  %s\n", digest, archive)
+		if err := os.WriteFile(filepath.Join(assetDir, archive+".sha256"), []byte(checksum), 0o644); err != nil {
+			t.Fatalf("write checksum fixture: %v", err)
+		}
+	}
+	formulaPath := filepath.Join(t.TempDir(), "env-vault.rb")
+	cmd := exec.Command("bash", "../scripts/release/generate-homebrew-formula.sh", "v1.2.3", assetDir, formulaPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate formula: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(formulaPath)
+	if err != nil {
+		t.Fatalf("read generated formula: %v", err)
+	}
+	formula := string(data)
 	want := `assert_equal "v#{version}", shell_output("#{bin}/env-vault --version").strip`
-	if !strings.Contains(generate.Run, want) {
+	if !strings.Contains(formula, want) {
 		t.Fatalf("generated formula test missing exact assertion %q", want)
 	}
-	if strings.Contains(generate.Run, "assert_match") {
+	if !strings.Contains(formula, `version "1.2.3"`) {
+		t.Fatalf("generated formula has wrong version: %s", formula)
+	}
+	if strings.Contains(formula, "assert_match") {
 		t.Fatal("generated formula must not accept a version substring")
 	}
-	if strings.Contains(generate.Run, "link_overwrite") {
+	if strings.Contains(formula, "link_overwrite") {
 		t.Fatal("generated formula must not overwrite unmanaged files")
 	}
 }
@@ -216,6 +366,105 @@ func TestHomebrewPushDoesNotMaskCommitFailures(t *testing.T) {
 	pushIndex := strings.Index(push.Run, "git push origin HEAD:main")
 	if !(guard < commit && commit < pushIndex) {
 		t.Fatalf("homebrew publish order guard=%d commit=%d push=%d", guard, commit, pushIndex)
+	}
+	for _, snippet := range []string{
+		"semver-compare.sh",
+		"refusing Homebrew downgrade",
+		"cmp -s tap-out/env-vault.rb tap/Formula/env-vault.rb",
+		"same version, tag SHA, and checksums already published; no-op",
+		"same version but generated formula differs",
+	} {
+		if !strings.Contains(push.Run, snippet) {
+			t.Fatalf("Homebrew monotonic/idempotent guard missing %q", snippet)
+		}
+	}
+}
+
+func TestRepairBuildsUseTheResolvedTagCommit(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	for _, jobName := range []string{"verify", "license", "build"} {
+		job := wf.Jobs[jobName]
+		if job.If != "needs.metadata.outputs.run_build == 'true'" {
+			t.Fatalf("%s if=%q", jobName, job.If)
+		}
+		checkout := usesStep(t, job, "actions/checkout@v7")
+		if checkout.With["ref"] != "${{ needs.metadata.outputs.source_sha }}" {
+			t.Fatalf("%s checkout ref=%q", jobName, checkout.With["ref"])
+		}
+	}
+}
+
+func TestReleaseReusesTagAndReleaseAndReconcilesAssets(t *testing.T) {
+	release := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "release")
+	create := namedStep(t, release, "Create GitHub Release")
+	for _, snippet := range []string{
+		"get-release-state.sh",
+		`release_status" == "4`,
+		"already exists; reconciling assets",
+		"gh release create",
+		"--verify-tag",
+	} {
+		if !strings.Contains(create.Run, snippet) {
+			t.Fatalf("release reuse step missing %q", snippet)
+		}
+	}
+	reconcile := namedStep(t, release, "Reconcile release assets")
+	if reconcile.Run != `scripts/release/reconcile-release-assets.sh "$VERSION" dist` {
+		t.Fatalf("reconcile run=%q", reconcile.Run)
+	}
+
+	for _, path := range []string{
+		"../scripts/release/reconcile-release-assets.sh",
+		"../scripts/release/download-release-assets.sh",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(data), "--clobber") {
+			t.Fatalf("%s must never overwrite an existing release asset", path)
+		}
+	}
+	reconcileData, err := os.ReadFile("../scripts/release/reconcile-release-assets.sh")
+	if err != nil {
+		t.Fatalf("read reconcile script: %v", err)
+	}
+	reconcileScript := string(reconcileData)
+	for _, snippet := range []string{
+		`archive_count" == "1" && "$checksum_count" == "1`,
+		"release_write_checksum_pair",
+		`release_verify_checksum_pair "$local_dir/$archive" "$pair_dir/$checksum"`,
+		`gh release upload "$version" "$local_dir/$archive" "$local_dir/$checksum"`,
+		"download-release-assets.sh",
+	} {
+		if !strings.Contains(reconcileScript, snippet) {
+			t.Fatalf("asset reconciliation missing critical case %q", snippet)
+		}
+	}
+}
+
+func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
+	health := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "health")
+	for _, need := range []string{"metadata", "release", "homebrew"} {
+		if !slices.Contains(health.Needs, need) {
+			t.Fatalf("health needs=%v, missing %q", health.Needs, need)
+		}
+	}
+	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "repair == 'health'", "needs.release.result == 'skipped'", "needs.homebrew.result == 'success'", "needs.homebrew.result == 'skipped'"} {
+		if !strings.Contains(health.If, snippet) {
+			t.Fatalf("health if=%q, missing %q", health.If, snippet)
+		}
+	}
+	verify := namedStep(t, health, "Verify release and Homebrew health")
+	for _, snippet := range []string{
+		"resolve-tag-sha.sh",
+		"get-release-state.sh",
+		"download-release-assets.sh",
+		"verify-homebrew-formula.sh",
+	} {
+		if !strings.Contains(verify.Run, snippet) {
+			t.Fatalf("health verification missing %q", snippet)
+		}
 	}
 }
 
@@ -375,6 +624,17 @@ func namedStep(t *testing.T, job workflowJob, name string) workflowStep {
 		}
 	}
 	t.Fatalf("step %q not found", name)
+	return workflowStep{}
+}
+
+func usesStep(t *testing.T, job workflowJob, uses string) workflowStep {
+	t.Helper()
+	for _, step := range job.Steps {
+		if step.Uses == uses {
+			return step
+		}
+	}
+	t.Fatalf("uses step %q not found", uses)
 	return workflowStep{}
 }
 

@@ -8,6 +8,16 @@ on:
         required: false
         default: ""
         type: string
+      repair:
+        description: "Resume an existing release at this stage. Requires version."
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - release-assets
+          - homebrew
+          - health
   push:
     tags:
       - "v*"
@@ -15,19 +25,33 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: env-vault-release
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   metadata:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       publish: ${{ steps.resolve.outputs.publish }}
+      repair: ${{ steps.resolve.outputs.repair }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      run_build: ${{ steps.resolve.outputs.run_build }}
+      run_release: ${{ steps.resolve.outputs.run_release }}
+      run_homebrew: ${{ steps.resolve.outputs.run_homebrew }}
     steps:
+      - uses: actions/checkout@v7
+
       - id: resolve
         name: Resolve build version and release mode
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REPAIR: ${{ inputs.repair }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -35,6 +59,19 @@ jobs:
           set -euo pipefail
           version="$REF_NAME"
           publish=false
+          repair="${INPUT_REPAIR:-none}"
+          case "$repair" in
+            none|release-assets|homebrew|health) ;;
+            *) echo "unsupported repair mode: $repair" >&2; exit 1 ;;
+          esac
+          if [[ "$EVENT_NAME" == "push" && "$repair" != "none" ]]; then
+            echo "tag-triggered releases cannot select repair mode" >&2
+            exit 1
+          fi
+          if [[ "$repair" != "none" && -z "$INPUT_VERSION" ]]; then
+            echo "repair mode requires an explicit version" >&2
+            exit 1
+          fi
           if [[ "$EVENT_NAME" == "push" ]]; then
             publish=true
           elif [[ -n "$INPUT_VERSION" ]]; then
@@ -49,13 +86,75 @@ jobs:
             echo "release version must match vMAJOR.MINOR.PATCH" >&2
             exit 1
           fi
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          printf 'publish=%s\n' "$publish" >> "$GITHUB_OUTPUT"
+          source_sha="$GITHUB_SHA"
+          if [[ "$publish" == "true" && ( "$EVENT_NAME" == "push" || "$repair" != "none" ) ]]; then
+            source_sha="$(scripts/release/resolve-tag-sha.sh "$version")"
+          fi
+          run_build=true
+          run_release=false
+          run_homebrew=false
+          if [[ "$publish" == "true" ]]; then
+            case "$repair" in
+              none|release-assets)
+                run_release=true
+                run_homebrew=true
+                ;;
+              homebrew)
+                run_build=false
+                run_homebrew=true
+                ;;
+              health)
+                run_build=false
+                ;;
+            esac
+          fi
+          {
+            printf 'version=%s\n' "$version"
+            printf 'publish=%s\n' "$publish"
+            printf 'repair=%s\n' "$repair"
+            printf 'source_sha=%s\n' "$source_sha"
+            printf 'run_build=%s\n' "$run_build"
+            printf 'run_release=%s\n' "$run_release"
+            printf 'run_homebrew=%s\n' "$run_homebrew"
+          } >> "$GITHUB_OUTPUT"
 
-  verify:
+  preflight:
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.metadata.result == 'success' &&
+        needs.metadata.outputs.publish == 'true' &&
+        needs.metadata.outputs.repair != 'health'
+      }}
+    needs: [metadata]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Guard Homebrew version monotonicity
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git tap-preflight
+          target_version="${VERSION#v}"
+          published_version="$(sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p' tap-preflight/Formula/env-vault.rb)"
+          comparison="$(scripts/release/semver-compare.sh "$target_version" "$published_version")"
+          if [[ "$comparison" == "-1" ]]; then
+            echo "refusing release downgrade from ${published_version} to ${target_version}" >&2
+            exit 1
+          fi
+          echo "release version ${target_version} is monotonic relative to Homebrew ${published_version}"
+
+  verify:
+    if: needs.metadata.outputs.run_build == 'true'
+    needs: [metadata]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.source_sha }}
 
       - uses: actions/setup-go@v6
         with:
@@ -67,9 +166,13 @@ jobs:
       - run: scripts/smoke.sh
 
   license:
+    if: needs.metadata.outputs.run_build == 'true'
+    needs: [metadata]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.source_sha }}
 
       - uses: actions/setup-go@v6
         with:
@@ -78,6 +181,7 @@ jobs:
       - run: scripts/license-check.sh
 
   build:
+    if: needs.metadata.outputs.run_build == 'true'
     needs: [metadata]
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
@@ -117,6 +221,8 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.metadata.outputs.source_sha }}
 
       - uses: actions/setup-go@v6
         with:
@@ -159,6 +265,7 @@ jobs:
           retention-days: 14
 
   smoke:
+    if: needs.metadata.outputs.run_build == 'true'
     needs: [metadata, build]
     name: smoke-${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
@@ -247,37 +354,71 @@ jobs:
           }
 
   release:
-    if: needs.metadata.outputs.publish == 'true'
-    needs: [metadata, verify, license, build, smoke]
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.metadata.result == 'success' &&
+        needs.preflight.result == 'success' &&
+        needs.metadata.outputs.run_release == 'true' &&
+        needs.verify.result == 'success' &&
+        needs.license.result == 'success' &&
+        needs.build.result == 'success' &&
+        needs.smoke.result == 'success'
+      }}
+    needs: [metadata, preflight, verify, license, build, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
       - name: Create release tag for manual dispatch
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && needs.metadata.outputs.repair == 'none'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if ! gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/git/refs" \
-            --raw-field "ref=refs/tags/${VERSION}" \
-            --raw-field "sha=${GITHUB_SHA}" \
-            --silent; then
-            existing_sha="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" \
-              --jq '.object.sha')"
-            if [ "$existing_sha" != "$GITHUB_SHA" ]; then
-              echo "tag ${VERSION} already points to ${existing_sha}" >&2
+          set +e
+          existing_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
+          tag_status=$?
+          set -e
+          if [[ "$tag_status" == "0" ]]; then
+            if [[ "$existing_sha" != "$SOURCE_SHA" ]]; then
+              echo "tag ${VERSION} points to ${existing_sha}, expected ${SOURCE_SHA}" >&2
               exit 1
             fi
-            echo "tag ${VERSION} already points to this commit"
+            echo "tag ${VERSION} already points to the expected commit; no-op"
+            exit 0
+          fi
+          if [[ "$tag_status" != "4" ]]; then
+            echo "failed to resolve existing tag ${VERSION}" >&2
+            exit "$tag_status"
+          fi
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            --raw-field "ref=refs/tags/${VERSION}" \
+            --raw-field "sha=${SOURCE_SHA}" \
+            --silent
+
+      - name: Verify release tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          existing_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
+          if [[ "$existing_sha" != "$SOURCE_SHA" ]]; then
+            echo "tag ${VERSION} points to ${existing_sha}, expected ${SOURCE_SHA}" >&2
+            exit 1
           fi
 
       - name: Create GitHub Release
@@ -285,70 +426,69 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          set -eu
-          gh release create "${VERSION}" dist/* --repo "github.com/${GITHUB_REPOSITORY}" --verify-tag --generate-notes
+          set -euo pipefail
+          set +e
+          state="$(scripts/release/get-release-state.sh "$VERSION")"
+          release_status=$?
+          set -e
+          if [[ "$release_status" == "0" ]]; then
+            if [[ "$state" != "${VERSION}|false|false" ]]; then
+              echo "existing release state is incompatible: ${state}" >&2
+              exit 1
+            fi
+            echo "release ${VERSION} already exists; reconciling assets"
+          elif [[ "$release_status" == "4" ]]; then
+            gh release create "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes
+          else
+            echo "failed to query existing release ${VERSION}" >&2
+            exit "$release_status"
+          fi
+
+      - name: Reconcile release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: scripts/release/reconcile-release-assets.sh "$VERSION" dist
 
   homebrew:
-    if: needs.metadata.outputs.publish == 'true'
-    needs: [metadata, release]
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.metadata.result == 'success' &&
+        needs.preflight.result == 'success' &&
+        needs.metadata.outputs.run_homebrew == 'true' &&
+        (
+          (
+            (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
+            needs.release.result == 'success'
+          ) ||
+          (
+            needs.metadata.outputs.repair == 'homebrew' &&
+            needs.release.result == 'skipped'
+          )
+        )
+      }}
+    needs: [metadata, preflight, release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: dist
-          merge-multiple: true
+      - uses: actions/checkout@v7
+
+      - name: Download and verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: scripts/release/download-release-assets.sh "$VERSION" release-dist
 
       - name: Generate formula
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          set -eu
-          v="${VERSION#v}"
-          sha() { cut -d' ' -f1 "dist/env-vault-$1.tar.gz.sha256"; }
-          DARWIN_ARM64="$(sha darwin-arm64)"
-          DARWIN_AMD64="$(sha darwin-amd64)"
-          LINUX_ARM64="$(sha linux-arm64)"
-          LINUX_AMD64="$(sha linux-amd64)"
-          for h in "$DARWIN_ARM64" "$DARWIN_AMD64" "$LINUX_ARM64" "$LINUX_AMD64"; do
-            echo "$h" | grep -qE '^[0-9a-f]{64}$' || { echo "malformed sha256: '$h'" >&2; exit 1; }
-          done
           mkdir -p tap-out
-          cat > tap-out/env-vault.rb <<EOF
-          class EnvVault < Formula
-            desc "Secure environment variable vault for running commands with profiles"
-            homepage "https://github.com/ildarbinanas-design/env-vault"
-            version "${v}"
-            license "MIT"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-darwin-arm64.tar.gz"
-                sha256 "${DARWIN_ARM64}"
-              else
-                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-darwin-amd64.tar.gz"
-                sha256 "${DARWIN_AMD64}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm?
-                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-linux-arm64.tar.gz"
-                sha256 "${LINUX_ARM64}"
-              else
-                url "https://github.com/ildarbinanas-design/env-vault/releases/download/v${v}/env-vault-linux-amd64.tar.gz"
-                sha256 "${LINUX_AMD64}"
-              end
-            end
-
-            def install
-              bin.install "env-vault"
-            end
-
-            test do
-              assert_equal "v#{version}", shell_output("#{bin}/env-vault --version").strip
-            end
-          end
-          EOF
+          scripts/release/generate-homebrew-formula.sh "$VERSION" release-dist tap-out/env-vault.rb
 
       - name: Push formula to tap
         env:
@@ -362,14 +502,82 @@ jobs:
           ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap_deploy_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o IdentitiesOnly=yes"
           git clone --depth 1 git@github.com:ildarbinanas-design/homebrew-tap.git tap
+          target_version="${VERSION#v}"
+          published_version="$(sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p' tap/Formula/env-vault.rb)"
+          comparison="$(scripts/release/semver-compare.sh "$target_version" "$published_version")"
+          if [[ "$comparison" == "-1" ]]; then
+            echo "refusing Homebrew downgrade from ${published_version} to ${target_version}" >&2
+            exit 1
+          fi
+          if [[ "$comparison" == "0" ]]; then
+            if cmp -s tap-out/env-vault.rb tap/Formula/env-vault.rb; then
+              echo "same version, tag SHA, and checksums already published; no-op"
+              exit 0
+            fi
+            echo "same version but generated formula differs in checksums or metadata" >&2
+            exit 1
+          fi
           install -m 644 tap-out/env-vault.rb tap/Formula/env-vault.rb
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/env-vault.rb
           if git diff --cached --quiet; then
-            echo "formula already matches ${VERSION}"
-            exit 0
+            echo "target version is newer but generated formula has no diff" >&2
+            exit 1
           fi
           git commit -m "env-vault ${VERSION}"
           git push origin HEAD:main
+
+  health:
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.metadata.result == 'success' &&
+        needs.metadata.outputs.publish == 'true' &&
+        (
+          (
+            (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
+            needs.release.result == 'success' &&
+            needs.homebrew.result == 'success'
+          ) ||
+          (
+            needs.metadata.outputs.repair == 'homebrew' &&
+            needs.release.result == 'skipped' &&
+            needs.homebrew.result == 'success'
+          ) ||
+          (
+            needs.metadata.outputs.repair == 'health' &&
+            needs.release.result == 'skipped' &&
+            needs.homebrew.result == 'skipped'
+          )
+        )
+      }}
+    needs: [metadata, release, homebrew]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify release and Homebrew health
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
+          if [[ "$tag_sha" != "$SOURCE_SHA" ]]; then
+            echo "tag ${VERSION} points to ${tag_sha}, expected ${SOURCE_SHA}" >&2
+            exit 1
+          fi
+          state="$(scripts/release/get-release-state.sh "$VERSION")"
+          if [[ "$state" != "${VERSION}|false|false" ]]; then
+            echo "release is not healthy: ${state}" >&2
+            exit 1
+          fi
+          scripts/release/download-release-assets.sh "$VERSION" health-dist
+          git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git health-tap
+          scripts/release/verify-homebrew-formula.sh \
+            "$VERSION" health-dist health-tap/Formula/env-vault.rb
+          echo "release ${VERSION} is healthy"

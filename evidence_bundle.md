@@ -1,5 +1,67 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-4`
+
+Timestamp UTC: `2026-07-10T20:55:34Z`
+
+### Scope
+
+Make the release workflow serialized, monotonic, idempotent, resumable after
+partial failure, and explicitly repairable at the release-assets, Homebrew, or
+health stage. No live tag, GitHub Release, asset, tap branch, credential, or
+remote workflow run was created, moved, overwritten, or deleted.
+
+### Changes
+
+| File or area | Purpose |
+|---|---|
+| `.github/workflows/build-binaries.yml` | Adds a global non-cancelling FIFO release queue, repair inputs/start-at gates, canonical source SHA, read-only monotonic preflight, existing tag/Release acceptance, asset reconciliation, commit-time monotonic/no-op guards, and final health verification |
+| `scripts/release/lib.sh` | Defines the exact five archives/ten assets and strict archive/checksum validation |
+| `scripts/release/resolve-tag-sha.sh` | Resolves lightweight or annotated tags to a commit and distinguishes explicit 404 from operational failures |
+| `scripts/release/get-release-state.sh` | Reads stable Release state and distinguishes explicit absence from auth/network/API failure |
+| `scripts/release/reconcile-release-assets.sh` | Verifies existing pairs, uploads only missing members, rejects mismatches, and never overwrites an asset |
+| `scripts/release/download-release-assets.sh` | Downloads exactly the required assets into staging and publishes the directory only after every pair verifies |
+| `scripts/release/generate-homebrew-formula.sh`, `verify-homebrew-formula.sh` | Generate and byte-compare the formula from verified Release assets |
+| `scripts/release/semver-compare.sh` | Compares unbounded numeric SemVer components without integer overflow |
+| `tests/release_scripts_test.go` | Uses fake GitHub APIs/assets to cover annotated tags, 404/503/network failures, all four partial-pair states, checksum mismatch, zero-upload no-op, and overwrite prohibition |
+| `tests/workflows_test.go` | Protects concurrency, repair wiring, result gates, source checkouts, preflight order, Release reuse, exact formula generation, monotonic/no-op behavior, and health checks |
+
+### Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 and official GitHub Actions concurrency documentation | passed; confirmed static groups, `cancel-in-progress: false`, and current `queue: max` semantics | doc_verified |
+| Context7 actionlint documentation | passed; selected pinned actionlint v1.7.12 | doc_verified |
+| `bash -n scripts/release/*.sh` | passed | cli_observed |
+| `shellcheck -x scripts/release/*.sh` | passed | cli_observed |
+| Fake-GitHub resolver/state/reconciliation tests | passed | cli_observed |
+| Workflow regression tests | passed | cli_observed |
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| actionlint v1.7.12 with only its known `queue` false-positive ignored | passed with no remaining diagnostics | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Concurrent release requests cannot cancel a running or already queued release | repo_verified | one global group, `cancel-in-progress: false`, `queue: max`; regression test |
+| A target below the published Homebrew version cannot mutate tag, Release, or tap | repo_verified | read-only preflight is a direct release dependency; commit-time guard repeats the check for TOCTOU |
+| Same version, same expected tag commit, verified assets, and identical formula is an external no-op | repo_verified | tag/Release reuse, zero-upload reconciliation, byte-identical formula exit, then health verification |
+| Existing tags are accepted only at the expected peeled commit | repo_verified | resolver follows annotated tag objects; mismatch is fatal; no PATCH/DELETE/move operation exists |
+| Existing Release assets are never silently replaced | repo_verified | remote complete pairs are verified; only missing members are uploaded; `--clobber` is forbidden by code and tests |
+| A checksum or SHA mismatch is fatal | repo_verified | strict pair/SHA comparisons and fake-API regression cases |
+| Repair modes have explicit start-at behavior | repo_verified | `release-assets`, `homebrew`, and `health` choices plus exact skipped/success result gates |
+
+### Risks
+
+| Risk | Status | Mitigation | Claim status |
+|---|---|---|---|
+| actionlint v1.7.12 predates GitHub's May 2026 `concurrency.queue` syntax | accepted | ignore only that exact linter diagnostic; official GitHub docs and a dedicated regression test protect `queue: max` | doc_verified |
+| GitHub API mutation paths were not exercised against the live repository | accepted | fake `gh` tests cover success, partial state, explicit 404, 503/network error, and mismatch behavior; live publication remains separately authorized | cli_observed |
+| `release-assets` repair rejects a version older than the current tap | accepted | prevents an old repair from downgrading Homebrew; document the current-release-only boundary in the process-improvement stage | planned |
+| Tap still updates by direct push and this stage does not await tap CI | open | cross-repository PR/authentication and downstream CI settings are handled in the process-improvement stage | planned |
+
 ## Task ID: `ENV-VAULT-RELEASE-PROCESS-STAGE-3`
 
 Timestamp UTC: `2026-07-10T20:28:26Z`
