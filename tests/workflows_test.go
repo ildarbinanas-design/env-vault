@@ -568,6 +568,11 @@ func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 		"verify-artifact-attestations.sh",
 		"verify-homebrew-formula.sh",
 		"GITHUB_STEP_SUMMARY",
+		"/releases/tag/${VERSION}",
+		"/homebrew-tap/commit/${tap_sha}",
+		"${tap_commit_url}/checks",
+		"/actions/runs/${GITHUB_RUN_ID}",
+		"/${GITHUB_REPOSITORY}/attestations",
 		"Tap CI checks",
 		"Tap CI is not awaited",
 	} {
