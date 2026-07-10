@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -21,6 +22,41 @@ import (
 )
 
 var Version = "dev"
+
+// resolveVersion prefers the release version injected through -ldflags and
+// falls back to module/VCS metadata the Go toolchain embeds into source builds.
+func resolveVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return Version
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	revision := ""
+	modified := false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return Version
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	if modified {
+		return Version + "-" + revision + "-dirty"
+	}
+	return Version + "-" + revision
+}
 
 type App struct {
 	stdin      io.Reader
@@ -58,12 +94,16 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func (a *App) rootCommand() *cobra.Command {
+	var showVersion bool
 	root := &cobra.Command{
 		Use:           "env-vault",
 		Short:         "OS-keychain-backed environment profile executor",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				return a.renderVersion()
+			}
 			return apperrors.Usage("root", "Command is required", "Run: env-vault --help")
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -87,6 +127,7 @@ func (a *App) rootCommand() *cobra.Command {
 	flags.BoolVar(&a.output.Verbose, "verbose", false, "include additional non-secret diagnostics")
 	flags.BoolVar(&a.dryRunFlag, "dry-run", false, "validate without performing mutations or executing child processes")
 	flags.StringVar(&a.configPath, "config", "", "config file path")
+	root.Flags().BoolVar(&showVersion, "version", false, "print version and exit")
 
 	root.AddCommand(a.versionCommand())
 	root.AddCommand(a.secretCommand())
@@ -114,9 +155,13 @@ func (a *App) versionCommand() *cobra.Command {
 		Use:   "version",
 		Short: "Print version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.renderer().Success("version", map[string]any{"version": Version}, nil)
+			return a.renderVersion()
 		},
 	}
+}
+
+func (a *App) renderVersion() error {
+	return a.renderer().Success("version", map[string]any{"version": resolveVersion()}, nil)
 }
 
 func (a *App) secretCommand() *cobra.Command {
