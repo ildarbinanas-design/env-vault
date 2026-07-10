@@ -18,16 +18,16 @@ asset was replaced.
 |---|---|---|
 | GitHub App scope audit [29128162315](https://github.com/ildarbinanas-design/env-vault/actions/runs/29128162315) | passed at source `76c9ac760b9d98752d737a1875339ac3ca2de0e5`; the metadata-only audit observed exactly `ildarbinanas-design/homebrew-tap` | remote_observed |
 | Release workflow [29128230296](https://github.com/ildarbinanas-design/env-vault/actions/runs/29128230296) | passed metadata, monotonic preflight, test/vet/race/smoke, five builds, five native exact-version smokes, three native license scans, Release, supply-chain, Homebrew, and health jobs | remote_observed |
-| Release [`v0.0.6`](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.0.6) | published, non-draft, non-prerelease; lightweight tag and source `main` both resolve to `76c9ac760b9d98752d737a1875339ac3ca2de0e5` | remote_observed |
+| Release [`v0.0.6`](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.0.6) | published, non-draft, non-prerelease; the lightweight tag resolves to `76c9ac760b9d98752d737a1875339ac3ca2de0e5`, and release run 29128230296 was dispatched from `main` at that same source SHA | remote_observed |
 | Release assets | exactly five archives plus their five `.sha256` companions; the workflow verified every pair and rejected replacement semantics | remote_observed |
 | [Supply-chain evidence](https://github.com/ildarbinanas-design/env-vault/attestations) | SPDX SBOM workflow artifact generated; the project verifier cryptographically verified one SLSA provenance and one SPDX attestation for each archive against the exact signer workflow and release source | remote_observed |
 | Homebrew PR [#3](https://github.com/ildarbinanas-design/homebrew-tap/pull/3) | exact head `b70542691637345922214d5a495d55fdfe9c83ea` passed [PR CI 29128368672](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29128368672) and squash-merged without bypass | remote_observed |
-| Homebrew publication | tap `main` is `f8f9897595914a21e657c7f6a1ce106e47867dfb`; exact [post-merge push CI 29128402784](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29128402784) passed | remote_observed |
+| Homebrew publication | the formula publication squash commit is `f8f9897595914a21e657c7f6a1ce106e47867dfb`; exact [post-merge push CI 29128402784](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29128402784) passed at that commit | remote_observed |
 | Published formula | `version "0.0.6"`; exact `assert_equal "v#{version}", shell_output("#{bin}/env-vault --version").strip` | remote_observed |
 | Local Homebrew verification | upgraded only `env-vault` to `0.0.6`; both version commands returned exactly `v0.0.6`; `brew style` and `brew test` passed | cli_observed |
 | Final repository verification | gofmt, module verify/tidy diff, `go test ./...`, vet, race, smoke, pinned license scan, workflow regression tests, targeted ShellCheck, actionlint with exact stale-schema/intentional-literal diagnostics excluded, and diff checks passed | cli_observed |
 | Legacy credential retirement | repository secret `TAP_DEPLOY_KEY` and tap write deploy key `156891216` were deleted after health succeeded; follow-up lists contain neither | remote_observed |
-| Preserved manual-binary backup | still present at the requested path with its original observed size and modification time; it was not modified or deleted | cli_observed |
+| Preserved manual-binary backup | still present at the requested path; observed size `7,531,074` bytes and mtime `2026-07-09T09:34:44+0300`; it was not modified or deleted | cli_observed |
 
 ### Final Trust Boundary
 
