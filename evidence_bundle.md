@@ -1,5 +1,80 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-SECURITY-AND-DISTRIBUTION-BASELINE`
+
+Timestamp UTC: `2026-07-14T21:51:07Z`
+
+### Scope
+
+Harden local runtime identifier, config-write, environment-collision, and
+Homebrew-generation boundaries on local branch
+`codex/security-baseline-env-vault` from clean `main` at
+`859cbfebf6b6b3ed84408100741ea5bcf5df0ee1`. No real secret value, keychain
+item, password-store entry, remote ref, commit, tag, release, or remote setting
+was changed. The coordinated local tap branch
+`codex/distribution-hardening-tap` at base
+`f8f9897595914a21e657c7f6a1ce106e47867dfb` was read to align the upstream
+generator; this env-vault wave did not edit any `homebrew-tap` file.
+
+### Changes
+
+| Area | Purpose |
+|---|---|
+| `internal/secretstore`, `internal/config`, `internal/cli` | Centralize secret/service validation; preserve safe slash hierarchy while rejecting absolute, backslash, empty, `.` and `..` path forms |
+| `internal/secretstore/keyring` | Repeat identifier validation immediately before backend access; fake-pass regression proves the exact safe prefix and proves unsafe input cannot invoke the backend |
+| `internal/config` | Reject existing and dangling config symlinks; publish a synced mode-`0600` temporary sibling with atomic rename instead of truncating the target |
+| `internal/platform`, `internal/runner` | Use one case-insensitive portable environment key for mapping duplicates, inherited collisions, override replacement, and `--clean-env`, including Windows `Path`/`PATH` |
+| Go regression tests | Cover traversal/service variants, safe slash names, fake-pass argv, symlink targets, concurrent complete-file visibility, case-only mapping duplicates, override deduplication, and Windows-style minimal env |
+| `scripts/release/generate-homebrew-formula.sh` | Emit Homebrew-native `on_macos`/`on_linux` plus `on_arm`/`on_intel` blocks, declare macOS Sequoia as the minimum, and install the three archived documentation files without changing version, URL, or checksum inputs |
+| `tests/workflows_test.go` | Require the release build to archive all three documentation files; generate four fake archive/checksum pairs; verify exact platform/architecture URL/checksum placement; reject `Hardware::CPU` branching; require minimum/docs/exact-version behavior; and pass the generated result through `verify-homebrew-formula.sh` |
+| `README.md`, `RELEASING.md`, `docs/design.md`, `docs/security.md` | Document the implemented runtime boundaries, macOS 15+ support floor, generated-formula contract, and remaining transaction-lock limitation |
+
+### Commands And Results
+
+| Command | Result | Claim status |
+|---|---|---|
+| `git switch -c codex/security-baseline-env-vault` | passed from clean `main` at the recorded source SHA | cli_observed |
+| `gofmt -w` on changed Go files | passed | cli_observed |
+| targeted modified-package `go test` with sandbox-local `GOCACHE` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-security-full-cache go test ./...` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-security-race-cache go test -race ./...` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-security-vet-cache go vet ./...` | passed | cli_observed |
+| `go test -count=10 ./internal/config ./internal/runner ./internal/secretstore/keyring` with sandbox-local `GOCACHE` | passed | cli_observed |
+| Windows amd64 `go test -c` for platform, secretstore, keyring, config, runner, and CLI packages | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-homebrew-target-cache-2 go test ./tests -run '^TestGeneratedHomebrewFormulaPreservesDistributionContract$' -v` | passed; verified the workflow docs-copy contract, generated four temporary archive/checksum fixtures and the formula, then passed `verify-homebrew-formula.sh` | cli_observed |
+| `gh release download v0.0.6`, regenerate from all ten published assets, then `cmp` with the coordinated tap formula | passed; both formula files have SHA-256 `fb3d7c888f758379a2ebc6b119ccdc49b079066fcf30b75ea2044bc764f3ca52` | remote_observed |
+| List the published Darwin arm64 and Linux amd64 archive members | passed; both contain `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, and the binary | remote_observed |
+| `shellcheck -x scripts/release/generate-homebrew-formula.sh scripts/release/verify-homebrew-formula.sh` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-homebrew-full-cache-2 go test ./...` | passed after the final generator/test synchronization | cli_observed |
+| `GOCACHE=/tmp/env-vault-homebrew-vet-cache-2 go vet ./...` | passed after the final generator/test synchronization | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `pass` operations cannot use a secret or service traversal to leave the `env-vault` prefix | repo_verified | shared component validation plus adapter-level validation; fake-pass tests verify safe argv and zero calls for unsafe identifiers |
+| Existing safe slash-separated secret and service names remain supported | repo_verified | validator and fake-pass positive regression cases |
+| A config target symlink is not followed, created through, or replaced | cli_observed | existing-target and dangling-target tests preserve the symlink and outside target state |
+| Readers see a complete old or new config during concurrent saves | cli_observed | concurrent writer/reader regression plus atomic temporary-file replacement and race test |
+| Environment mapping identity is portable to Windows | repo_verified | canonical key is used for config duplicate, runtime collision, replacement, and minimal-env selection; Windows-style tests and Windows cross-compilation pass |
+| The next generated formula cannot silently return to `Hardware::CPU.arm?` or omit the macOS minimum/documentation contract without failing the workflow regression suite | repo_verified | generated-fixture test requires exact DSL counts, Sequoia dependency, documentation installation, archived documentation inputs, and absence of `Hardware::CPU` |
+| Each generated architecture URL retains the SHA-256 of its matching archive | cli_observed | the regression creates four distinct archive bytes/checksums, requires each exact platform/selector URL/checksum block, and runs the project's exact formula verifier |
+| The published `v0.0.6` assets regenerate the coordinated local tap formula byte-for-byte | remote_observed | all ten release assets were downloaded read-only into a temporary directory; regenerated and tap formula SHA-256 values both equal `fb3d7c888f758379a2ebc6b119ccdc49b079066fcf30b75ea2044bc764f3ca52` |
+| The formula's documentation install inputs exist in the published archives | remote_observed | member listings for Darwin arm64 and Linux amd64 contain all three documentation files; the release workflow uses the same packaging step for every target |
+| No remote or production secret-store mutation occurred | cli_observed | only local Git/file commands, fake pass, generated non-secret fixtures, and local test processes were used |
+
+### Residual Risks
+
+| Risk | Status | Mitigation or next action | Claim status |
+|---|---|---|---|
+| Profile commands still perform load-modify-save outside one inter-process lock, so concurrent successful commands can logically lose an update | open | Introduce a cross-platform locked config transaction API and move profile create/add/remove into it; current atomic save prevents truncation/corruption only | repo_verified |
+| A hostile same-user process that can swap a parent directory or replace the temporary filename after close remains outside the target-symlink fix | accepted | Keep config directories user-owned; a stronger future implementation should use dirfd/openat or `os.Root` no-follow operations | repo_verified |
+| Windows behavior was cross-compiled but not executed on a native Windows host in this local run | planned | Require the existing Windows CI runner to execute focused runtime tests before release | cli_observed |
+| Real Keychain, Secret Service, WinCred, KWallet, and `pass` stores were not exercised | accepted | Run separately with disposable identifiers only after review; fake-pass tests cover the namespace boundary without touching user data | cli_observed |
+| Generator synchronization and the coordinated tap hardening exist only on local, uncommitted branches; no formula was published and no release was created | planned | Review both local diffs together, then use the normal PR and release gates only after explicit authorization | cli_observed |
+| This env-vault run did not execute `brew style`, install, or test against a live tap checkout | planned | The coordinated `homebrew-tap` wave owns those platform checks; upstream protects the generator contract with fake archives, ShellCheck, Go regression tests, and the exact formula verifier | cli_observed |
+
 ## Task ID: `ENV-VAULT-RELEASE-APP-CUTOVER-COMPLETE`
 
 Timestamp UTC: `2026-07-10T22:46:27Z`

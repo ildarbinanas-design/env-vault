@@ -40,7 +40,21 @@ profiles:
         required: true
 ```
 
-Secret names allow letters, digits, dot, underscore, dash, slash, and at-sign. Colon, newline, and control characters are rejected. Environment variables must match `[A-Za-z_][A-Za-z0-9_]*`.
+Secret names allow letters, digits, dot, underscore, dash, slash, and at-sign.
+Slash-separated hierarchy is preserved, but absolute paths, empty components,
+`.`/`..` components, backslashes, colon, newline, and control characters are
+rejected. Service names use the same path-safety rules, and the production
+keyring adapter repeats both validations before opening a backend. Environment
+variables must match `[A-Za-z_][A-Za-z0-9_]*`; names that differ only by case
+are treated as the same portable target because Windows environment names are
+case-insensitive.
+
+Config saves reject a symlink target and publish a mode `0600` temporary sibling
+with `fsync` followed by atomic rename. This prevents truncation, partial reads,
+and writes through a tracked config symlink. The surrounding load-modify-save
+operation is not yet protected by an inter-process transaction lock, so two
+concurrent profile mutations can still overwrite one another's logical update
+even though each resulting file is complete.
 
 ## Exec Flow
 
@@ -107,15 +121,20 @@ waits for unit tests, vet, race tests, smoke tests, a pinned native
 publishes exactly five archives and five matching SHA-256 files. The version is
 injected into each binary through Go linker flags.
 
-Darwin release artifacts are built on macOS GitHub-hosted runners with `CGO_ENABLED=1` because the macOS Keychain backend requires CGO-enabled darwin binaries. Linux and Windows artifact builds remain `CGO_ENABLED=0`.
+Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
+runners with `CGO_ENABLED=1` because the macOS Keychain backend requires
+CGO-enabled darwin binaries. Linux and Windows artifact builds remain
+`CGO_ENABLED=0`.
 
 After the GitHub Release succeeds, the workflow generates a combined SPDX SBOM
 and GitHub provenance/SBOM attestations for all five archives without changing
-the exact ten-asset Release contract. It then generates four platform
-URL/checksum stanzas and uses a short-lived, repository-scoped GitHub App token
-to create or reuse `release/env-vault-vX.Y.Z` in `homebrew-tap`. The generated
-pull request changes only `Formula/env-vault.rb` and carries a marker binding
-the version, source SHA, and formula digest. The workflow waits for
+the exact ten-asset Release contract. It then generates declarative
+`on_macos`/`on_linux` and `on_arm`/`on_intel` URL/checksum blocks. The formula
+declares macOS Sequoia as its minimum and installs the archived README, license,
+and third-party notices as documentation. A short-lived, repository-scoped
+GitHub App token creates or reuses `release/env-vault-vX.Y.Z` in `homebrew-tap`.
+The generated pull request changes only `Formula/env-vault.rb` and carries a
+marker binding the version, source SHA, and formula digest. The workflow waits for
 `test-formula.yml` with `event=pull_request` and the exact PR head SHA before a
 squash merge that is guarded by the same head SHA. It then waits for the
 workflow with `event=push`, the exact merged/default-branch SHA, and a successful

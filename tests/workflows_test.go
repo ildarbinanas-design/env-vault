@@ -475,13 +475,20 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 	}
 }
 
-func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
+func TestGeneratedHomebrewFormulaPreservesDistributionContract(t *testing.T) {
 	homebrew := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "homebrew")
 	generate := namedStep(t, homebrew, "Generate formula")
 	if !strings.Contains(generate.Run, "scripts/release/generate-homebrew-formula.sh") {
 		t.Fatal("workflow must use the tested Homebrew formula generator")
 	}
+	quality := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	archiveBuild := namedStep(t, quality.Jobs["build"], "Build")
+	archiveDocs := `cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/env-vault-${GOOS}-${GOARCH}/"`
+	if strings.Count(archiveBuild.Run, archiveDocs) != 1 {
+		t.Fatalf("release build must archive all formula-installed documentation exactly once; build step:\n%s", archiveBuild.Run)
+	}
 	assetDir := t.TempDir()
+	archiveDigests := make(map[string]string)
 	for _, archive := range []string{
 		"env-vault-darwin-arm64.tar.gz",
 		"env-vault-darwin-amd64.tar.gz",
@@ -493,6 +500,7 @@ func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
 			t.Fatalf("write archive fixture: %v", err)
 		}
 		digest := sha256.Sum256(contents)
+		archiveDigests[archive] = fmt.Sprintf("%x", digest)
 		checksum := fmt.Sprintf("%x  %s\n", digest, archive)
 		if err := os.WriteFile(filepath.Join(assetDir, archive+".sha256"), []byte(checksum), 0o644); err != nil {
 			t.Fatalf("write checksum fixture: %v", err)
@@ -502,6 +510,10 @@ func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
 	cmd := exec.Command("bash", "../scripts/release/generate-homebrew-formula.sh", "v1.2.3", assetDir, formulaPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("generate formula: %v\n%s", err, output)
+	}
+	verify := exec.Command("bash", "../scripts/release/verify-homebrew-formula.sh", "v1.2.3", assetDir, formulaPath)
+	if output, err := verify.CombinedOutput(); err != nil {
+		t.Fatalf("verify generated formula: %v\n%s", err, output)
 	}
 	data, err := os.ReadFile(formulaPath)
 	if err != nil {
@@ -514,6 +526,50 @@ func TestGeneratedHomebrewFormulaRequiresExactVersion(t *testing.T) {
 	}
 	if !strings.Contains(formula, `version "1.2.3"`) {
 		t.Fatalf("generated formula has wrong version: %s", formula)
+	}
+	for snippet, wantCount := range map[string]int{
+		"  on_macos do\n    depends_on macos: :sequoia": 1,
+		"  on_linux do":   1,
+		"    on_arm do":   2,
+		"    on_intel do": 2,
+		`    doc.install %w[README.md LICENSE THIRD_PARTY_NOTICES.md]`: 1,
+	} {
+		if got := strings.Count(formula, snippet); got != wantCount {
+			t.Fatalf("generated formula occurrence count for %q=%d, want %d\n%s", snippet, got, wantCount, formula)
+		}
+	}
+	macStart := strings.Index(formula, "  on_macos do\n")
+	linuxStart := strings.Index(formula, "  on_linux do\n")
+	installStart := strings.Index(formula, "  def install\n")
+	if macStart < 0 || linuxStart <= macStart || installStart <= linuxStart {
+		t.Fatalf("generated formula has invalid platform block ordering:\n%s", formula)
+	}
+	sections := map[string]string{
+		"darwin": formula[macStart:linuxStart],
+		"linux":  formula[linuxStart:installStart],
+	}
+	for _, target := range []struct {
+		archive  string
+		platform string
+		selector string
+	}{
+		{archive: "env-vault-darwin-arm64.tar.gz", platform: "darwin", selector: "on_arm"},
+		{archive: "env-vault-darwin-amd64.tar.gz", platform: "darwin", selector: "on_intel"},
+		{archive: "env-vault-linux-arm64.tar.gz", platform: "linux", selector: "on_arm"},
+		{archive: "env-vault-linux-amd64.tar.gz", platform: "linux", selector: "on_intel"},
+	} {
+		wantBlock := fmt.Sprintf(
+			"    %s do\n      url \"https://github.com/ildarbinanas-design/env-vault/releases/download/v1.2.3/%s\"\n      sha256 \"%s\"\n    end",
+			target.selector,
+			target.archive,
+			archiveDigests[target.archive],
+		)
+		if strings.Count(sections[target.platform], wantBlock) != 1 {
+			t.Fatalf("generated formula must contain exact %s/%s URL/checksum block %q\n%s", target.platform, target.selector, wantBlock, formula)
+		}
+	}
+	if strings.Contains(formula, "Hardware::CPU") {
+		t.Fatal("generated formula must use Homebrew on_arm/on_intel blocks, not Hardware::CPU branching")
 	}
 	if strings.Contains(formula, "assert_match") {
 		t.Fatal("generated formula must not accept a version substring")
