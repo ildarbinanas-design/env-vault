@@ -1,5 +1,76 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-CONFIG-TRANSACTION-WAVE-2`
+
+Timestamp UTC: `2026-07-14T22:33:44Z`
+
+### Scope
+
+Close the cooperative lost-update risk for profile mutations on local PR branch
+`codex/security-baseline-env-vault`, starting from
+`76290585b93e16f62ab1aedee1b04bae2a80cd0d`. This wave changed only the local
+`env-vault` worktree. It did not commit, push, publish a release, change a remote
+setting, edit `homebrew-tap` or `observability-stack`, or access a production
+secret backend.
+
+`github.com/gofrs/flock v0.13.0` was evaluated but not selected because its
+official module file requires Go 1.24. The verified compatible
+`github.com/gofrs/flock v0.12.1` module requires Go 1.21 and provides the needed
+`New`, `SetPermissions`, `TryLockContext`, and `Unlock`/`Close` API with Darwin,
+Linux, and Windows implementations. The project therefore retains its Go 1.22
+directive and existing `golang.org/x/sys v0.30.0` selection.
+
+### Changes
+
+| Area | Purpose |
+|---|---|
+| `internal/config/transaction.go` | Serialize Load→mutate→Validate→atomic Save through a bounded exclusive lock on persistent adjacent `<config>.lock` |
+| Lock target boundary | Create with `flock.SetPermissions(0600)`, correct existing POSIX permissions, reject symlink/non-regular targets before acquisition and recheck after acquisition/chmod, and never remove the stable lock file |
+| `internal/cli/cli.go` | Route real profile create/add/remove operations through `config.Transaction`; keep dry runs non-mutating and complete `--check-secret` backend access before the config lock |
+| Structured errors | Add `CONFIG_LOCKED` with config-invalid exit status, preserved context deadline/cancellation cause, bounded five-second maximum wait, and retry remediation |
+| Regression tests | Cover interprocess serialization and retained updates, concurrent CLI adds, timeout semantics, stable inode/mode, permission repair, unsafe lock targets, all three profile mutations, dry-run behavior, and backend-before-lock ordering |
+| `.gitignore`, process regression | Ignore exact default local `.env-vault.yaml.lock` alongside `.env-vault.yaml` without hiding unrelated `*.lock` files |
+| Dependency and notices | Pin `github.com/gofrs/flock v0.12.1`, retain Go 1.22/x/sys 0.30.0, record BSD-3-Clause in `THIRD_PARTY_NOTICES.md`, and keep a tidy module graph |
+| `README.md`, `docs/design.md`, `docs/security.md` | Document the implemented transaction, persistent lock rationale, timeout contract, non-locking dry-run/backend behavior, and remaining hostile same-user filesystem race |
+
+### Commands And Results
+
+| Command | Result | Claim status |
+|---|---|---|
+| Official module-file/source inspection for `gofrs/flock` v0.13.0 and v0.12.1 | v0.13.0 requires Go 1.24; v0.12.1 requires Go 1.21 and contains the required cross-platform API | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-target-cache-5 go test -count=3 ./internal/config ./internal/cli -run 'TestTransaction\|TestProfile\|TestConcurrentProfile'` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-ignore-cache go test ./tests -run '^TestLocalConfigAndTransactionLockAreIgnored$' -v` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-full-cache go test ./...` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-race-cache go test -race ./...` | passed, including subprocess and concurrent CLI transaction regressions | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-vet-cache go vet ./...` | passed | cli_observed |
+| `go mod verify` | passed; all modules verified | cli_observed |
+| `go mod tidy -diff -go=1.22` with sandbox-local `GOCACHE` | passed with no diff | cli_observed |
+| Windows amd64 `go test -c` for config and CLI plus `go build ./cmd/env-vault` | passed with `CGO_ENABLED=0` | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-license-cache scripts/license-check.sh` | passed with pinned `go-licenses v2.0.1`; flock resolved as an allowed BSD dependency | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Cooperating profile commands no longer lose a successful concurrent update to the same config | cli_observed | two subprocesses are coordinated so the second cannot enter while the first holds the transaction; final config retains both updates, and 12 concurrent CLI adds retain all mappings |
+| Profile create/add/remove use the same complete transaction boundary | repo_verified | all three commands call `applyConfigMutation`, which delegates real mutations to `config.Transaction`; command regression creates, adds, and removes through one persistent lock |
+| A contended transaction fails predictably instead of waiting forever | cli_observed | held-lock test observes `context.DeadlineExceeded`, `CONFIG_LOCKED`, exit 5, retry remediation, no callback, and sub-second completion under an 80 ms caller deadline |
+| The cooperative lock identity remains stable between commands | cli_observed | the lock is not removed and sequential transactions observe the same file identity; interprocess and race tests pass |
+| Unsafe lock targets are rejected before mutation | cli_observed | symlink and directory targets prevent callback execution; the symlink target sentinel remains unchanged |
+| Secret backend existence checks do not wait inside the config transaction | cli_observed | with the config lock held elsewhere, `profile add --check-secret` returns `MISSING_SECRET` before the one-second bound rather than `CONFIG_LOCKED` |
+| Dry-run remains non-mutating and the default local lock cannot be accidentally tracked | repo_verified | dry-run test observes neither config nor lock; process regression requires exact `.gitignore` entries for both local paths |
+| Go 1.22 compatibility was preserved | repo_verified | `go.mod` remains `go 1.22`, flock v0.12.1 declares Go 1.21, module tidy/verify pass, and Windows cross-compilation succeeds |
+
+### Residual Risks
+
+| Risk | Status | Mitigation or next action | Claim status |
+|---|---|---|---|
+| A hostile same-user process can still swap a parent directory, lock pathname, or temporary pathname between path-based checks | accepted | Keep config directories user-owned; a stronger future implementation needs handle-relative no-follow operations such as dirfd/openat or `os.Root` once a portable design is available | repo_verified |
+| The file lock coordinates cooperating env-vault processes, not direct edits or non-cooperating programs, and remote/network filesystem lock semantics may vary | accepted | Avoid editing the config concurrently outside env-vault and keep user config on a local filesystem | repo_verified |
+| Windows code was cross-compiled but not executed on a native Windows host during this local wave | planned | Require the existing native Windows quality job before merge/release | cli_observed |
+| Remote PR verification is outside this local evidence capture | planned | Publish the reviewed branch and require the existing GitHub checks before merge or release | cli_observed |
+
 ## Task ID: `ENV-VAULT-SECURITY-AND-DISTRIBUTION-BASELINE`
 
 Timestamp UTC: `2026-07-14T21:51:07Z`

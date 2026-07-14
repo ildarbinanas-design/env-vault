@@ -5,7 +5,8 @@
 env-vault is a Go CLI with a small package boundary:
 
 - `internal/cli`: Cobra command wiring and global flags.
-- `internal/config`: YAML config schema, paths, validation, and mapping parser.
+- `internal/config`: YAML config schema, paths, validation, mapping parser, and
+  cross-platform profile transaction lock.
 - `internal/secretstore`: backend-neutral secret interface and non-secret fingerprinting.
 - `internal/secretstore/keyring`: production OS keychain backend using `github.com/99designs/keyring`.
 - `internal/secretstore/teststore`: explicitly gated insecure backend for tests only.
@@ -51,10 +52,15 @@ case-insensitive.
 
 Config saves reject a symlink target and publish a mode `0600` temporary sibling
 with `fsync` followed by atomic rename. This prevents truncation, partial reads,
-and writes through a tracked config symlink. The surrounding load-modify-save
-operation is not yet protected by an inter-process transaction lock, so two
-concurrent profile mutations can still overwrite one another's logical update
-even though each resulting file is complete.
+and writes through a tracked config symlink. Profile create/add/remove wrap the
+complete load, mutation, validation, and atomic save in an exclusive lock from
+`github.com/gofrs/flock v0.12.1`, the verified version that retains the project's
+Go 1.22 baseline. The adjacent `<config>.lock` file is created with mode `0600`,
+rechecked as a non-symlink regular file, and intentionally kept after unlock so
+all processes continue to coordinate on one inode. Acquisition retries every
+25 milliseconds for at most five seconds (or the caller's earlier deadline),
+then returns `CONFIG_LOCKED`. Dry runs do not create a lock. A requested secret
+existence check completes before the config transaction begins.
 
 ## Exec Flow
 

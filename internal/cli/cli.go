@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -369,22 +370,18 @@ func (a *App) profileCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := config.Load(path)
-			if err != nil {
-				return err
-			}
 			profile := args[0]
-			if _, exists := cfg.Profiles[profile]; exists {
-				return apperrors.New("profile_create", apperrors.CodeProfileExists, "Profile already exists: "+profile, "Choose another profile or update the existing one", apperrors.ExitUsage)
-			}
-			cfg.Profiles[profile] = config.Profile{}
-			data := map[string]any{"profile": profile, "path": path, "dry_run": a.dryRun(cmd)}
-			if a.dryRun(cmd) {
-				return a.renderer().Success("profile_create", data, nil)
-			}
-			if err := config.Save(path, cfg); err != nil {
+			dryRun := a.dryRun(cmd)
+			if err := applyConfigMutation(cmd.Context(), path, dryRun, func(cfg *config.File) (bool, error) {
+				if _, exists := cfg.Profiles[profile]; exists {
+					return false, apperrors.New("profile_create", apperrors.CodeProfileExists, "Profile already exists: "+profile, "Choose another profile or update the existing one", apperrors.ExitUsage)
+				}
+				cfg.Profiles[profile] = config.Profile{}
+				return true, nil
+			}); err != nil {
 				return err
 			}
+			data := map[string]any{"profile": profile, "path": path, "dry_run": dryRun}
 			return a.renderer().Success("profile_create", data, nil)
 		},
 	}
@@ -412,7 +409,7 @@ func (a *App) profileAddCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				exists, err := store.Exists(context.Background(), secretstore.DefaultService, mapping.Name)
+				exists, err := store.Exists(cmd.Context(), secretstore.DefaultService, mapping.Name)
 				if err != nil {
 					return backendUnavailable("profile_add", err)
 				}
@@ -420,32 +417,32 @@ func (a *App) profileAddCommand() *cobra.Command {
 					return missingSecretError("profile_add", secretstore.DefaultService, mapping.Name)
 				}
 			}
-			cfg, path, _, err := config.LoadForRead(a.configPath)
+			path, _, err := config.ResolveReadPath(a.configPath)
 			if err != nil {
 				return err
 			}
 			profileName := args[0]
-			profile, ok := cfg.Profiles[profileName]
-			if !ok {
-				return apperrors.New("profile_add", apperrors.CodeProfileNotFound, "Profile not found: "+profileName, "Run: env-vault profile create "+profileName, apperrors.ExitUsage)
-			}
-			for _, existing := range profile.Secrets {
-				if existing.Env == mapping.Env {
-					if existing.Name == mapping.Name {
-						return a.renderer().Success("profile_add", map[string]any{"profile": profileName, "name": mapping.Name, "env": mapping.Env, "path": path, "dry_run": a.dryRun(cmd)}, nil)
-					}
-					return apperrors.ConfigInvalid("profile_add", "Target env var is already mapped: "+mapping.Env, "Remove the old mapping before adding a new one", nil)
+			dryRun := a.dryRun(cmd)
+			if err := applyConfigMutation(cmd.Context(), path, dryRun, func(cfg *config.File) (bool, error) {
+				profile, ok := cfg.Profiles[profileName]
+				if !ok {
+					return false, apperrors.New("profile_add", apperrors.CodeProfileNotFound, "Profile not found: "+profileName, "Run: env-vault profile create "+profileName, apperrors.ExitUsage)
 				}
-			}
-			profile.Secrets = append(profile.Secrets, mapping)
-			cfg.Profiles[profileName] = profile
-			data := map[string]any{"profile": profileName, "name": mapping.Name, "env": mapping.Env, "path": path, "dry_run": a.dryRun(cmd)}
-			if a.dryRun(cmd) {
-				return a.renderer().Success("profile_add", data, nil)
-			}
-			if err := config.Save(path, cfg); err != nil {
+				for _, existing := range profile.Secrets {
+					if strings.EqualFold(existing.Env, mapping.Env) {
+						if existing.Env == mapping.Env && existing.Name == mapping.Name {
+							return false, nil
+						}
+						return false, apperrors.ConfigInvalid("profile_add", "Target env var is already mapped: "+existing.Env, "Remove the old mapping before adding a new one", nil)
+					}
+				}
+				profile.Secrets = append(profile.Secrets, mapping)
+				cfg.Profiles[profileName] = profile
+				return true, nil
+			}); err != nil {
 				return err
 			}
+			data := map[string]any{"profile": profileName, "name": mapping.Name, "env": mapping.Env, "path": path, "dry_run": dryRun}
 			return a.renderer().Success("profile_add", data, nil)
 		},
 	}
@@ -464,30 +461,32 @@ func (a *App) profileRemoveCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, path, _, err := config.LoadForRead(a.configPath)
+			path, _, err := config.ResolveReadPath(a.configPath)
 			if err != nil {
 				return err
 			}
 			profileName := args[0]
-			profile, ok := cfg.Profiles[profileName]
-			if !ok {
-				return apperrors.New("profile_remove", apperrors.CodeProfileNotFound, "Profile not found: "+profileName, "Run: env-vault profile create "+profileName, apperrors.ExitUsage)
-			}
-			updated, removedEnv, removed, err := config.RemoveMapping(profile, args[1])
-			if err != nil {
-				return apperrors.Usage("profile_remove", err.Error(), "Use ENV_NAME or <secret-name>:<ENV_NAME>")
-			}
-			if !removed {
-				return apperrors.New("profile_remove", apperrors.CodeConfigInvalid, "Mapping not found: "+args[1], "Run: env-vault profile show "+profileName, apperrors.ExitConfigInvalid)
-			}
-			cfg.Profiles[profileName] = updated
-			data := map[string]any{"profile": profileName, "env": removedEnv, "path": path, "dry_run": a.dryRun(cmd)}
-			if a.dryRun(cmd) {
-				return a.renderer().Success("profile_remove", data, nil)
-			}
-			if err := config.Save(path, cfg); err != nil {
+			dryRun := a.dryRun(cmd)
+			var removedEnv string
+			if err := applyConfigMutation(cmd.Context(), path, dryRun, func(cfg *config.File) (bool, error) {
+				profile, ok := cfg.Profiles[profileName]
+				if !ok {
+					return false, apperrors.New("profile_remove", apperrors.CodeProfileNotFound, "Profile not found: "+profileName, "Run: env-vault profile create "+profileName, apperrors.ExitUsage)
+				}
+				updated, removedMappingEnv, removed, err := config.RemoveMapping(profile, args[1])
+				if err != nil {
+					return false, apperrors.Usage("profile_remove", err.Error(), "Use ENV_NAME or <secret-name>:<ENV_NAME>")
+				}
+				if !removed {
+					return false, apperrors.New("profile_remove", apperrors.CodeConfigInvalid, "Mapping not found: "+args[1], "Run: env-vault profile show "+profileName, apperrors.ExitConfigInvalid)
+				}
+				removedEnv = removedMappingEnv
+				cfg.Profiles[profileName] = updated
+				return true, nil
+			}); err != nil {
 				return err
 			}
+			data := map[string]any{"profile": profileName, "env": removedEnv, "path": path, "dry_run": dryRun}
 			return a.renderer().Success("profile_remove", data, nil)
 		},
 	}
@@ -773,4 +772,22 @@ func missingSecretError(command, service, name string) *apperrors.AppError {
 
 func backendUnavailable(command string, err error) *apperrors.AppError {
 	return apperrors.BackendUnavailable(command, "Secret backend unavailable", secretstore.BackendRemediation(err), err)
+}
+
+func applyConfigMutation(ctx context.Context, path string, dryRun bool, mutate config.TransactionFunc) error {
+	if !dryRun {
+		return config.Transaction(ctx, path, mutate)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	_, err = mutate(cfg)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(cfg); err != nil {
+		return apperrors.ConfigInvalid("config", "Invalid config transaction", "Fix profile mappings before saving", err)
+	}
+	return nil
 }

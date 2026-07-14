@@ -198,6 +198,16 @@ User config defaults:
 - Linux: `$XDG_CONFIG_HOME/env-vault/config.yaml` or `~/.config/env-vault/config.yaml`
 - macOS: `~/Library/Application Support/env-vault/config.yaml`
 
+`profile create`, `profile add`, and `profile remove` serialize their complete
+read-modify-validate-save operation through a persistent adjacent
+`<config>.lock` file. The lock is private (`0600` where POSIX modes apply) and
+is intentionally not removed, because replacing it would allow two processes
+to lock different inodes. Lock waits are bounded; a timeout returns
+`CONFIG_LOCKED`. Dry runs do not create either the config or lock file, and
+`profile add --check-secret` completes its backend existence check before
+entering the config transaction. The default local `.env-vault.yaml.lock` is
+gitignored alongside `.env-vault.yaml`.
+
 Example:
 
 ```yaml

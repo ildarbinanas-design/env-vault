@@ -2,10 +2,27 @@ package tests
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestLocalConfigAndTransactionLockAreIgnored(t *testing.T) {
+	data, err := os.ReadFile("../.gitignore")
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	lines := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		lines[strings.TrimSpace(line)] = true
+	}
+	for _, path := range []string{".env-vault.yaml", ".env-vault.yaml.lock"} {
+		if !lines[path] {
+			t.Fatalf(".gitignore must contain exact local runtime path %q", path)
+		}
+	}
+}
 
 type dependabotConfig struct {
 	Version int `yaml:"version"`

@@ -10,6 +10,7 @@ const (
 	CodeCommandNotExecutable = "COMMAND_NOT_EXECUTABLE"
 	CodeCommandNotFound      = "COMMAND_NOT_FOUND"
 	CodeConfigInvalid        = "CONFIG_INVALID"
+	CodeConfigLocked         = "CONFIG_LOCKED"
 	CodeConfirmationRequired = "CONFIRMATION_REQUIRED"
 	CodeEnvCollision         = "ENV_COLLISION"
 	CodeProfileExists        = "PROFILE_EXISTS"
