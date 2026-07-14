@@ -194,7 +194,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service = defaultService(service)
 			if err := validateService(service); err != nil {
-				return apperrors.Usage("secret_set", err.Error(), "Use a non-empty service name without control characters")
+				return apperrors.Usage("secret_set", err.Error(), "Use a safe relative slash-separated service name")
 			}
 			name := args[0]
 			data := map[string]any{
@@ -240,7 +240,7 @@ func (a *App) secretCheckCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service = defaultService(service)
 			if err := validateService(service); err != nil {
-				return apperrors.Usage("secret_check", err.Error(), "Use a non-empty service name without control characters")
+				return apperrors.Usage("secret_check", err.Error(), "Use a safe relative slash-separated service name")
 			}
 			store, err := a.store("secret_check")
 			if err != nil {
@@ -279,7 +279,7 @@ func (a *App) secretDeleteCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service = defaultService(service)
 			if err := validateService(service); err != nil {
-				return apperrors.Usage("secret_delete", err.Error(), "Use a non-empty service name without control characters")
+				return apperrors.Usage("secret_delete", err.Error(), "Use a safe relative slash-separated service name")
 			}
 			name := args[0]
 			if confirm != name {
@@ -760,15 +760,7 @@ func defaultService(service string) string {
 }
 
 func validateService(service string) error {
-	if service == "" {
-		return fmt.Errorf("service name is empty")
-	}
-	for _, r := range service {
-		if r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
-			return fmt.Errorf("service name contains a control character")
-		}
-	}
-	return nil
+	return secretstore.ValidateServiceName(service)
 }
 
 func missingSecretError(command, service, name string) *apperrors.AppError {

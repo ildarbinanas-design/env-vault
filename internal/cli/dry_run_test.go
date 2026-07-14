@@ -47,6 +47,25 @@ func TestSecretSetDryRunDoesNotStore(t *testing.T) {
 	testutil.AssertNotContains(t, "secret set dry-run stderr", stderr.String(), secretValue)
 }
 
+func TestSecretSetRejectsUnsafeServiceBeforeBackendAccess(t *testing.T) {
+	storePath := setupTestBackend(t)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--dry-run", "--json", "secret", "set", "nexus-token", "--service", "../outside"}, strings.NewReader(""), &stdout, &stderr)
+	if code != apperrors.ExitUsage {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(storePath); !os.IsNotExist(err) {
+		t.Fatalf("backend was accessed for unsafe service: %v", err)
+	}
+	var env output.Envelope
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if env.OK || env.Error == nil || env.Error.Code != apperrors.CodeUsage {
+		t.Fatalf("expected structured usage error: %#v", env)
+	}
+}
+
 func TestSecretSetOutputModesDoNotLeakGeneratedValue(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -120,6 +120,43 @@ func TestResolveEnvCollision(t *testing.T) {
 	}
 }
 
+func TestResolveEnvCollisionIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
+	secretName := "nexus-token"
+	value := testutil.EphemeralValue(t)
+	_, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+		[]config.SecretMapping{{Name: secretName, Env: "PATH", Required: true}}, nil,
+		ResolveOptions{CurrentEnv: []string{"Path=/windows/system32"}})
+	if err == nil {
+		t.Fatal("expected case-insensitive collision")
+	}
+	var appErr *apperrors.AppError
+	if !stderrors.As(err, &appErr) || appErr.Code != apperrors.CodeEnvCollision {
+		t.Fatalf("unexpected error: %T %v", err, err)
+	}
+}
+
+func TestResolveRejectsCaseInsensitiveDuplicateMappings(t *testing.T) {
+	t.Parallel()
+	firstName := "first-token"
+	secondName := "second-token"
+	store := fakeStore{values: map[string][]byte{
+		firstName:  []byte(testutil.EphemeralValue(t)),
+		secondName: []byte(testutil.EphemeralValue(t)),
+	}}
+	_, err := Resolve(context.Background(), store,
+		[]config.SecretMapping{{Name: firstName, Env: "TOKEN", Required: true}},
+		[]config.SecretMapping{{Name: secondName, Env: "token", Required: true}},
+		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}})
+	if err == nil {
+		t.Fatal("expected case-insensitive duplicate mapping failure")
+	}
+	var appErr *apperrors.AppError
+	if !stderrors.As(err, &appErr) || appErr.Code != apperrors.CodeConfigInvalid {
+		t.Fatalf("unexpected error: %T %v", err, err)
+	}
+}
+
 func TestResolveOverrideEnv(t *testing.T) {
 	t.Parallel()
 	secretName := "nexus-token"
@@ -133,6 +170,34 @@ func TestResolveOverrideEnv(t *testing.T) {
 	}
 	if !containsEnvValue(result.Env, value) {
 		t.Fatalf("override missing generated value")
+	}
+}
+
+func TestResolveOverrideReplacesAllCaseVariants(t *testing.T) {
+	t.Parallel()
+	secretName := "nexus-token"
+	value := testutil.EphemeralValue(t)
+	result, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+		[]config.SecretMapping{{Name: secretName, Env: "PATH", Required: true}}, nil,
+		ResolveOptions{
+			CurrentEnv:  []string{"Path=/windows/system32", "PATH=/bin", "HOME=/home/test"},
+			OverrideEnv: true,
+		})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	pathEntries := 0
+	for _, item := range result.Env {
+		name, gotValue, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(name, "PATH") {
+			pathEntries++
+			if gotValue != value {
+				t.Fatalf("PATH value was not replaced")
+			}
+		}
+	}
+	if pathEntries != 1 {
+		t.Fatalf("case-variant PATH entries=%d, want 1: %v", pathEntries, result.Env)
 	}
 }
 

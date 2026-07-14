@@ -14,6 +14,8 @@ import (
 type Store struct {
 	allowedBackends []keyring.BackendType
 	unavailableErr  error
+	passCmd         string
+	passDir         string
 }
 
 func New() Store {
@@ -31,6 +33,9 @@ func NewPass() Store {
 }
 
 func (s Store) Set(_ context.Context, service, name string, value []byte) error {
+	if err := secretstore.ValidateSecretName(name); err != nil {
+		return fmt.Errorf("invalid secret name: %w", err)
+	}
 	kr, err := s.open(service)
 	if err != nil {
 		return err
@@ -47,6 +52,9 @@ func (s Store) Set(_ context.Context, service, name string, value []byte) error 
 }
 
 func (s Store) Get(_ context.Context, service, name string) ([]byte, error) {
+	if err := secretstore.ValidateSecretName(name); err != nil {
+		return nil, fmt.Errorf("invalid secret name: %w", err)
+	}
 	kr, err := s.open(service)
 	if err != nil {
 		return nil, err
@@ -70,6 +78,9 @@ func (s Store) Exists(ctx context.Context, service, name string) (bool, error) {
 }
 
 func (s Store) Delete(_ context.Context, service, name string) error {
+	if err := secretstore.ValidateSecretName(name); err != nil {
+		return fmt.Errorf("invalid secret name: %w", err)
+	}
 	kr, err := s.open(service)
 	if err != nil {
 		return err
@@ -114,6 +125,9 @@ func productionAllowedBackends() []keyring.BackendType {
 }
 
 func (s Store) open(service string) (keyring.Keyring, error) {
+	if err := secretstore.ValidateServiceName(service); err != nil {
+		return nil, fmt.Errorf("invalid service name: %w", err)
+	}
 	allowed := append([]keyring.BackendType(nil), s.allowedBackends...)
 	if len(allowed) == 0 {
 		allowed = productionAllowedBackends()
@@ -122,6 +136,8 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 		ServiceName:            service,
 		AllowedBackends:        allowed,
 		KeychainSynchronizable: false,
+		PassCmd:                s.passCmd,
+		PassDir:                s.passDir,
 		// The pass backend ignores ServiceName and keys entries by PassPrefix.
 		// Without an explicit prefix it operates on the user's entire
 		// ~/.password-store, so List/Delete would enumerate and destroy

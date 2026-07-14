@@ -56,7 +56,7 @@ func Resolve(ctx context.Context, store secretstore.Store, profileMappings, dire
 		DryRun: opts.DryRun,
 	}
 	for _, mapping := range mappings {
-		if _, exists := envMap[mapping.Env]; exists && !opts.OverrideEnv {
+		if _, exists := envMap[platform.CanonicalEnvKey(mapping.Env)]; exists && !opts.OverrideEnv {
 			return ResolveResult{}, apperrors.New(opts.Command, apperrors.CodeEnvCollision, "Environment variable already exists: "+mapping.Env, "Use --override-env or choose a different target env var", apperrors.ExitUsage)
 		}
 		exists, err := store.Exists(ctx, opts.Service, mapping.Name)
@@ -99,10 +99,11 @@ func validateMappings(mappings []config.SecretMapping, command string) error {
 		if err := config.ValidateEnvName(mapping.Env); err != nil {
 			return apperrors.ConfigInvalid(command, "Invalid secret mapping", "Use <secret-name>:<ENV_NAME>", err)
 		}
-		if prior, ok := seenEnv[mapping.Env]; ok {
+		canonicalEnv := platform.CanonicalEnvKey(mapping.Env)
+		if prior, ok := seenEnv[canonicalEnv]; ok {
 			return apperrors.ConfigInvalid(command, "Duplicate target env var: "+mapping.Env, fmt.Sprintf("Remove duplicate mappings for %s and %s", prior, mapping.Name), nil)
 		}
-		seenEnv[mapping.Env] = mapping.Name
+		seenEnv[canonicalEnv] = mapping.Name
 	}
 	return nil
 }
@@ -112,23 +113,33 @@ func envSliceToMap(env []string) map[string]string {
 	for _, item := range env {
 		key, value, ok := strings.Cut(item, "=")
 		if ok {
-			m[key] = value
+			m[platform.CanonicalEnvKey(key)] = value
 		}
 	}
 	return m
 }
 
 func setEnv(env *[]string, envMap map[string]string, key, value string) {
-	prefix := key + "="
-	for i, item := range *env {
-		if strings.HasPrefix(item, prefix) {
-			(*env)[i] = prefix + value
-			envMap[key] = value
-			return
+	canonicalKey := platform.CanonicalEnvKey(key)
+	replacement := key + "=" + value
+	out := (*env)[:0]
+	replaced := false
+	for _, item := range *env {
+		name, _, ok := strings.Cut(item, "=")
+		if ok && platform.CanonicalEnvKey(name) == canonicalKey {
+			if !replaced {
+				out = append(out, replacement)
+				replaced = true
+			}
+			continue
 		}
+		out = append(out, item)
 	}
-	*env = append(*env, prefix+value)
-	envMap[key] = value
+	if !replaced {
+		out = append(out, replacement)
+	}
+	*env = out
+	envMap[canonicalKey] = value
 }
 
 func missingSecretError(command, service, name string) *apperrors.AppError {

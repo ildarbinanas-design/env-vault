@@ -8,10 +8,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/platform"
+	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,10 +20,7 @@ const (
 	LocalFile = ".env-vault.yaml"
 )
 
-var (
-	secretNameRE = regexp.MustCompile(`^[A-Za-z0-9._/@-]+$`)
-	envNameRE    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-)
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 type File struct {
 	Version  int                `yaml:"version"`
@@ -63,21 +60,7 @@ func ParseMapping(spec string) (SecretMapping, error) {
 }
 
 func ValidateSecretName(name string) error {
-	if name == "" {
-		return fmt.Errorf("secret name is empty")
-	}
-	if strings.Contains(name, ":") {
-		return fmt.Errorf("secret name must not contain ':'")
-	}
-	for _, r := range name {
-		if r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
-			return fmt.Errorf("secret name contains a control character")
-		}
-	}
-	if !utf8.ValidString(name) || !secretNameRE.MatchString(name) {
-		return fmt.Errorf("secret name contains unsupported characters")
-	}
-	return nil
+	return secretstore.ValidateSecretName(name)
 }
 
 func ValidateEnvName(name string) error {
@@ -138,17 +121,69 @@ func Save(path string, cfg *File) error {
 	if err := Validate(cfg); err != nil {
 		return apperrors.ConfigInvalid("config", "Invalid config", "Fix profile mappings before saving", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to create config directory", "Check directory permissions", err)
+	}
+	if err := validateSaveTarget(path); err != nil {
+		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to encode config", "Report this bug with no secret values", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to create temporary config", "Check directory permissions", err)
+	}
+	temporaryPath := temporary.Name()
+	committed := false
+	defer func() {
+		_ = temporary.Close()
+		if !committed {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0o600); err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to secure temporary config", "Check filesystem permissions", err)
+	}
+	if _, err := temporary.Write(data); err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to write config", "Check the config path and permissions", err)
 	}
-	return os.Chmod(path, 0o600)
+	if err := temporary.Sync(); err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to sync config", "Check filesystem health and permissions", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to close config", "Check filesystem health and permissions", err)
+	}
+	// Recheck immediately before rename. Rename replaces a raced-in symlink
+	// itself instead of following it, while this check gives callers a clear
+	// failure for a symlink that was already present.
+	if err := validateSaveTarget(path); err != nil {
+		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to replace config atomically", "Check the config path and permissions", err)
+	}
+	committed = true
+	return nil
+}
+
+func validateSaveTarget(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("config path is a symlink")
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("config path is not a regular file")
+	}
+	return nil
 }
 
 func Validate(cfg *File) error {
@@ -159,7 +194,7 @@ func Validate(cfg *File) error {
 		if profileName == "" {
 			return fmt.Errorf("profile name is empty")
 		}
-		seenEnv := map[string]struct{}{}
+		seenEnv := map[string]string{}
 		for _, mapping := range profile.Secrets {
 			if err := ValidateSecretName(mapping.Name); err != nil {
 				return fmt.Errorf("profile %s: %w", profileName, err)
@@ -167,10 +202,11 @@ func Validate(cfg *File) error {
 			if err := ValidateEnvName(mapping.Env); err != nil {
 				return fmt.Errorf("profile %s: %w", profileName, err)
 			}
-			if _, ok := seenEnv[mapping.Env]; ok {
-				return fmt.Errorf("profile %s: duplicate env var %s", profileName, mapping.Env)
+			canonicalEnv := platform.CanonicalEnvKey(mapping.Env)
+			if prior, ok := seenEnv[canonicalEnv]; ok {
+				return fmt.Errorf("profile %s: duplicate env vars %s and %s differ only by case", profileName, prior, mapping.Env)
 			}
-			seenEnv[mapping.Env] = struct{}{}
+			seenEnv[canonicalEnv] = mapping.Env
 		}
 	}
 	return nil
