@@ -22,12 +22,13 @@ does not touch a platform keyring.
 | Functional matrix | 22/22 critical scenario IDs passed; 0 failed, 0 skipped, 0 missing; critical feature coverage 100% | cli_observed |
 | Subprocess statement coverage | 71.1% from a separately built `-cover -coverpkg=./...` CLI binary and `GOCOVERDIR`; not test-harness coverage | cli_observed |
 | Stability | three shuffled full-suite passes plus five shuffled concurrency/locking passes succeeded with distinct recorded seeds | cli_observed |
-| Suite identity | `ef16e094d2f13b6dbee37bbba015b4f58c7f8bb33e4682ae8256919ac7c2861c` | cli_observed |
-| Subject binary SHA-256 | `d7d4d4bda245b5cf7019fedc318be0179658023293a01f14ba296135f4ad2e64` | cli_observed |
-| Native archive SHA-256 | `5c78323dfc44a9bbdf53009c001eef8df7db9d1ff10026fe9a3b8b09327e41a2`; sidecar checksum verified before extraction | cli_observed |
+| Suite identity | `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf` | cli_observed |
+| Subject binary SHA-256 | `4585e5ceedef1b52bb61bc04c0fa969240534cb5a5ec5e205ea7d8ed681a6412` | cli_observed |
+| Native archive SHA-256 | `e913e5d5b093727bce5300950d07fe3726060e90d03404dd25c089b55f1dfe5c`; sidecar checksum verified before extraction | cli_observed |
 | Reporting | JUnit, raw JSONL, summaries, feature trace, normalized contracts, coverage profile/text/HTML, burn-in logs, metadata, leak result, and sanitized failure bundle generated and cross-validated | cli_observed |
 | Secret safety | 125 hash-only sentinel registry records; recursive report/artifact leak scan passed with zero findings | cli_observed |
 | Report integrity | immutable evidence digests, exact human-report regeneration, exact Go-version coverage regeneration, schema/count/seed checks, and current-checkout suite-hash anchoring passed | cli_observed |
+| Archive-path static boundary | raw tar and ZIP entry names are rejected on any double-dot sequence directly at the archive source before a path or filesystem helper; this mirrors the existing CodeQL-approved release extractor pattern | repo_verified |
 
 ### Verification
 
