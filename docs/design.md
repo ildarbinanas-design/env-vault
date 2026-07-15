@@ -123,9 +123,19 @@ second recursive tag workflow.
 
 Both pull-request CI and releases call `reusable-quality.yml`. Every release
 waits for unit tests, vet, race tests, smoke tests, a pinned native
-`go-licenses` matrix on Linux, macOS, and Windows, and all platform builds. It
-publishes exactly five archives and five matching SHA-256 files. The version is
-injected into each binary through Go linker flags.
+`go-licenses` matrix on Linux, macOS, and Windows, all platform builds, and a
+binary-only native E2E matrix. It publishes exactly five archives and five
+matching SHA-256 files. The version is injected into each binary through Go
+linker flags.
+
+The E2E matrix runs the unpacked release-like artifacts on Linux amd64/arm64,
+Darwin amd64/arm64, and Windows amd64. Tests invoke only the public executable
+through `os/exec` with an isolated, explicitly gated test backend. A separate
+coverage-instrumented binary produces subprocess coverage. A fail-closed
+aggregate gate requires all native reports, 100% critical scenario coverage,
+only declared platform skips, valid report formats, and a clean sentinel leak
+scan. The full architecture and feature trace are documented in
+[`docs/e2e.md`](e2e.md).
 
 Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
 runners with `CGO_ENABLED=1` because the macOS Keychain backend requires

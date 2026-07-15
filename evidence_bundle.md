@@ -1,5 +1,65 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-E2E-GO122-BASELINE-LOCAL`
+
+Timestamp UTC: `2026-07-15T18:00:07Z`
+
+### Scope
+
+Establish the Phase 1 black-box compatibility baseline before any Go toolchain
+or production-dependency migration. The branch starts at `origin/main`
+`4fbae380747e75a1f59498adbd76ccf5791e0480`; `go.mod` remains `go 1.22`, and
+`go.mod` plus `go.sum` remain byte-for-byte equal to that source commit. The
+suite invokes only a real native `env-vault` executable through `os/exec`, uses
+the explicitly gated disposable test backend, performs no network access, and
+does not touch a platform keyring.
+
+### Local Baseline Evidence
+
+| Item | Result | Claim status |
+|---|---|---|
+| Native subject | release-like Darwin arm64 archive built with `go1.22.12` and `go build -trimpath`; embedded compiler and target verified with `go version -m` | cli_observed |
+| Functional matrix | 22/22 critical scenario IDs passed; 0 failed, 0 skipped, 0 missing; critical feature coverage 100% | cli_observed |
+| Subprocess statement coverage | 71.1% from a separately built `-cover -coverpkg=./...` CLI binary and `GOCOVERDIR`; not test-harness coverage | cli_observed |
+| Stability | three shuffled full-suite passes plus five shuffled concurrency/locking passes succeeded with distinct recorded seeds | cli_observed |
+| Suite identity | `ef16e094d2f13b6dbee37bbba015b4f58c7f8bb33e4682ae8256919ac7c2861c` | cli_observed |
+| Subject binary SHA-256 | `d7d4d4bda245b5cf7019fedc318be0179658023293a01f14ba296135f4ad2e64` | cli_observed |
+| Native archive SHA-256 | `5c78323dfc44a9bbdf53009c001eef8df7db9d1ff10026fe9a3b8b09327e41a2`; sidecar checksum verified before extraction | cli_observed |
+| Reporting | JUnit, raw JSONL, summaries, feature trace, normalized contracts, coverage profile/text/HTML, burn-in logs, metadata, leak result, and sanitized failure bundle generated and cross-validated | cli_observed |
+| Secret safety | 125 hash-only sentinel registry records; recursive report/artifact leak scan passed with zero findings | cli_observed |
+| Report integrity | immutable evidence digests, exact human-report regeneration, exact Go-version coverage regeneration, schema/count/seed checks, and current-checkout suite-hash anchoring passed | cli_observed |
+
+### Verification
+
+| Command or check | Result | Claim status |
+|---|---|---|
+| `GOTOOLCHAIN=go1.22.12 go test ./...` | passed | cli_observed |
+| `GOTOOLCHAIN=go1.22.12 go vet ./...` | passed | cli_observed |
+| `GOTOOLCHAIN=go1.22.12 go test -race ./...` | passed | cli_observed |
+| `GOTOOLCHAIN=go1.22.12 go mod tidy` twice plus clean diff and `go mod verify` | passed; module files unchanged | cli_observed |
+| `GOTOOLCHAIN=go1.22.12 scripts/smoke.sh` | passed against a real binary | cli_observed |
+| Pinned `go-licenses v2.0.1` license check | passed with its isolated Go 1.23 tool runtime; production baseline remained Go 1.22 | cli_observed |
+| Native/cross build contract | production binary, E2E runner, subprocess helper, and test binary built for all five declared OS/architecture targets | cli_observed |
+| Independent security/report audit | no remaining concrete leak, report-forgery, archive-extraction, or cross-platform implementation finding | repo_verified |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| The Phase 1 changes do not migrate Go or production dependencies | repo_verified | `go.mod` and `go.sum` are byte-identical to `origin/main`; the directive remains `go 1.22` |
+| The compatibility boundary is the shipped CLI, not `internal/cli.Run` | repo_verified | the harness accepts `ENV_VAULT_E2E_BINARY` or a verified native archive and launches every CLI action with `os/exec`; no production package is imported by `e2e` |
+| Every required public feature has an explicit stable scenario trace | repo_verified | `e2e/scenarios.json` maps each critical requirement to scenario ID, Go test, platforms, expected result, and the two explicit Windows skips |
+| Passing reports cannot silently omit failures, platforms, evidence, or leaks | repo_verified | matrix validation fails closed on malformed/missing reports, unexpected skips, sentinel/redaction markers, mismatched identities, inconsistent derived coverage, stale suite hashes, or coverage below the gate |
+
+### Residual Risks And Next Gate
+
+| Risk or pending evidence | Status | Mitigation or next action | Claim status |
+|---|---|---|---|
+| This local evidence is Darwin arm64 only and is not the canonical remote baseline | planned | Require the PR matrix on Linux amd64/arm64, macOS amd64/arm64, and Windows amd64; merge only after all checks and repeated burn-in passes are green, then preserve the exact main SHA/run URL/run ID and uploaded reports | cli_observed |
+| The final-config and lock symlink checks do not eliminate a hostile parent-directory swap | accepted | Keep the existing documented trust boundary; a future portable hardening needs handle-relative no-follow filesystem APIs | repo_verified |
+| Exact Go coverage HTML validation needs the report's patch toolchain | accepted | Metadata pins the exact patch version and validation uses that recorded `GOTOOLCHAIN`; CI must fail rather than silently validate with a different template | repo_verified |
+
 ## Task ID: `ENV-VAULT-CONFIG-TRANSACTION-WAVE-2`
 
 Timestamp UTC: `2026-07-14T22:33:44Z`

@@ -118,7 +118,8 @@ go build -o env-vault ./cmd/env-vault
 
 Binary archives are built by the `build-binaries` GitHub Actions workflow.
 Both release builds and pull-request CI call the same `reusable-quality.yml`
-workflow, including native license scans on Linux, macOS, and Windows.
+workflow, including native license scans and binary-only E2E verification on
+Linux, macOS, and Windows.
 
 - Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
   leave the optional version input blank.
@@ -138,6 +139,14 @@ they are deliberately not added to the immutable ten-asset Release contract.
 macOS 15+ release artifacts are built on macOS runners with `CGO_ENABLED=1`;
 the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux
 and Windows release targets keep `CGO_ENABLED=0`.
+
+Every native CI runner executes the same public CLI scenarios against the
+unpacked release-like artifact. The suite also builds a separate
+coverage-instrumented subprocess binary, performs shuffled full and locking
+burn-ins, scans all retained evidence for runtime-generated sentinel values,
+and uploads JUnit, raw JSONL, feature coverage, normalized CLI contracts, and
+HTML/text statement coverage for 30 days. See [docs/e2e.md](docs/e2e.md) for the
+complete requirement matrix and local commands.
 
 ## Basic Usage
 
@@ -165,7 +174,7 @@ env-vault exec dev -- bash -lc 'make test'
 
 ```sh
 env-vault --json secret check nexus-token
-env-vault --json --output env-vault-meta.json exec dev -- make test
+env-vault --quiet --output env-vault-meta.json exec dev -- make test
 env-vault --dry-run exec dev -- make test
 env-vault --dry-run secret set nexus-token
 ```
@@ -178,7 +187,7 @@ Successful JSON output follows this shape:
 
 Errors are structured with `code`, `message`, and `remediation`.
 
-For `exec`, child stdout and stderr are inherited by default and may break machine-readable stdout. Prefer `--json --output file` for exec metadata.
+For `exec`, child stdout and stderr are inherited by default and may break machine-readable stdout. Prefer `--quiet --output file` for exec metadata without an additional envelope on stdout.
 
 ## Doctor
 

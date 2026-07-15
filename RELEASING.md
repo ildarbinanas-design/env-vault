@@ -88,6 +88,7 @@ Before a new release:
    go test ./...
    go vet ./...
    go test -race ./...
+   go run ./e2e/cmd/e2e-runner run --phase baseline
    scripts/smoke.sh
    scripts/license-check.sh
    ```
@@ -128,8 +129,10 @@ Before a new release:
 ## Build-only validation
 
 A build-only run exercises tests, vet, race, smoke, the license gate, all five
-builds, and native version smoke jobs. It uploads Actions artifacts for 14 days
-but does not publish anything.
+builds, native version smoke jobs, and the full binary-only E2E matrix. Build
+artifacts are retained for 14 days and E2E reports for 30 days. A build-only run
+does not publish anything. The E2E matrix and report contracts are documented
+in [`docs/e2e.md`](docs/e2e.md).
 
 From the Actions UI, run `build-binaries`, leave `version` empty, and select
 `repair=none`. The equivalent CLI command on the current branch is:
