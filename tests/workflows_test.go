@@ -720,6 +720,15 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 	if setup.With["go-version-file"] != "go.mod" {
 		t.Fatalf("compare setup-go inputs=%v", setup.With)
 	}
+	preload := namedStep(t, compare, "Preload recorded comparison toolchains")
+	if preload.Shell != "bash" {
+		t.Fatalf("comparison toolchain preload shell=%q", preload.Shell)
+	}
+	for _, snippet := range []string{"GOTOOLCHAIN=go1.22.12 go version", "GOTOOLCHAIN=go1.26.5 go version"} {
+		if !strings.Contains(preload.Run, snippet) {
+			t.Fatalf("comparison toolchain preload missing %q in %q", snippet, preload.Run)
+		}
+	}
 	candidateDownload := namedStep(t, compare, "Download candidate E2E reports")
 	if !candidateDownload.ContinueOnError || candidateDownload.With["pattern"] != "env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}" || candidateDownload.With["path"] != "candidate-download" || candidateDownload.With["merge-multiple"] != "true" {
 		t.Fatalf("candidate report download=%+v", candidateDownload)

@@ -426,6 +426,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Preload recorded comparison toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOTOOLCHAIN=go1.22.12 go version
+          GOTOOLCHAIN=go1.26.5 go version
+
       - name: Download candidate E2E reports
         continue-on-error: true
         uses: actions/download-artifact@v8
