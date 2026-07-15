@@ -1389,23 +1389,60 @@ changed by this run.
 | Official v17.6.0 JSON schema + temporary pinned `ajv-cli@5.0.0` | `release-please-config.json valid`; only the schema's unsupported `uri-reference` format was ignored | cli_observed |
 | `git diff --check`; `gofmt`; `bash -n`; `shellcheck -x` | passed after final documentation, workflow, test, and helper edits | cli_observed |
 | Independent security, API/source, action-pin, and test audits | identified and drove fixes for Release Please merged-PR defaults, component/title rendering, version rendering, proposal-base TOCTOU, future generated-PR CI, explicit human authorization, lifecycle races, API pagination, App identity, rulesets, action pinning, and capability overclaims | cli_observed |
-| Read-only live repository settings gate | failed closed as expected because current GitHub merge settings are not yet the required squash-only contract | cli_observed |
+| Read-only live repository settings gate | passed after the authorized squash-only merge settings and exact active main/tag rulesets were applied | cli_observed |
+
+## Authorized Remote Setup Update — 2026-07-15T22:39:50Z
+
+The user explicitly authorized the infrastructure commit, push, pull request,
+repository settings, GitHub App, and environment configuration. Infrastructure
+PR [#17](https://github.com/ildarbinanas-design/env-vault/pull/17) was opened
+from `agent/automated-release` at
+`62dea01afaf1de2e66e347abba0996e8e8523907`. Its first complete CI run
+[29454761680](https://github.com/ildarbinanas-design/env-vault/actions/runs/29454761680),
+CodeQL run
+[29454759495](https://github.com/ildarbinanas-design/env-vault/actions/runs/29454759495),
+and dependency-review run
+[29454761485](https://github.com/ildarbinanas-design/env-vault/actions/runs/29454761485)
+all passed, including the five-platform native E2E matrix and stable
+`quality-gate`.
+
+Authorized external state now matches the documented contract:
+
+- repository merge settings allow squash only, with pull-request title and
+  body as the squash title/body;
+- active main ruleset `18792628` requires the exact strict checks, resolved
+  conversations, and squash-only pull requests, with an empty bypass list;
+- active tag ruleset `19015306` protects `refs/tags/v*` from updates and
+  deletion, with an empty bypass list while allowing initial creation;
+- `release-planning` permits only branch `main`, has no reviewers or wait
+  timer, contains public variable `RELEASE_APP_CLIENT_ID`, and contains secret
+  `RELEASE_APP_PRIVATE_KEY`;
+- App `env-vault-release-planning` (App ID `4309657`, installation
+  `146851190`) is installed only on `env-vault`, with Administration and
+  Metadata read plus Contents, Issues, and Pull requests read/write; and
+- `scripts/release/verify-repository-release-settings.sh` passes against the
+  live repository.
+
+The private key was validated before upload without printing its contents,
+stored through `gh secret set` on standard input, and removed from the local
+filesystem. The inaccessible bootstrap key was revoked; exactly the newly
+uploaded key remains active. Secret values were not read back or recorded.
 
 ## Risks And Pending Evidence
 
 | Risk or pending evidence | Status | Mitigation or required action | Claim status |
 |---|---|---|---|
-| Dedicated `env-vault-release-planning` GitHub App and `release-planning` environment are external state | open | Create them with the exact least-privilege settings in `docs/release-external-settings.md`, then run the read-only scope/settings audit | unknown |
-| Current repository merge settings allow rebase and use `COMMIT_OR_PR_TITLE` plus `COMMIT_MESSAGES` | open | Change to squash-only `PR_TITLE` plus `PR_BODY`; the planning workflow fails closed until this external contract is satisfied | cli_observed |
-| Current main ruleset allows rebase, and no immutable release-tag ruleset exists | open | Restrict the main ruleset to squash only; add active `Protect env-vault release tags` for `refs/tags/v*` with update/deletion restrictions | cli_observed |
-| Global ruleset bypass actors are visible only to a ruleset writer | open | Do not grant Administration write to the App; an administrator must record empty main/tag bypass lists during setup and rotation | source_verified |
+| Dedicated `env-vault-release-planning` GitHub App and `release-planning` environment are external state | configured | Exact least-privilege installation, environment branch policy, variable, and secret were configured; dispatch the committed read-only App audit after infrastructure merge | remote_observed |
+| Repository merge settings | configured | Squash-only `PR_TITLE` plus `PR_BODY` is active and the live settings verifier passes | remote_observed |
+| Main and immutable release-tag rulesets | configured | Exact active main and `refs/tags/v*` rulesets are present and the live settings verifier passes | remote_observed |
+| Global ruleset bypass actors are visible only to a ruleset writer | resolved_for_setup | Administrator inspection recorded empty main/tag bypass lists; repeat during App/key rotation | remote_observed |
 | Release Please lifecycle labels are currently absent in the repository | mitigated_in_code | The scoped planning App idempotently creates and verifies both definitions before the first proposal | cli_observed |
 | Exact App bot login/branch/body/label contract has not yet been observed in this repository | open | The implementation pins the upstream version and tests fixtures; confirm the first generated PR before merge | source_verified |
 | No real tag-triggered automated release has run | open | Merge the infrastructure PR only after green CI, inspect the generated release PR, then record the first planning and publisher run URLs | unknown |
 | Release Please reads the remote branch and cannot lock `main` during its API call | mitigated_in_code | Post-action validation requires the proposal to be one exact commit over a main SHA with successful push CI; shared concurrency and repeated exact-SHA publication checks fail closed | repo_verified |
 | Planning App `Contents: write` also technically permits Release API calls, and PR/contents write could merge a green PR | accepted | GitHub permission granularity cannot split these operations; exact action pins and workflow contract tests prove no Release/asset/merge endpoint exists in the planning path | source_verified |
 | Published `v0.0.1`–`v0.0.7` predate Release Please metadata | accepted | A bounded manual-only compatibility path requires their existing stable GitHub Release, immutable exact tag, and ancestry; it cannot create a tag or authorize `v0.0.8+` | repo_verified |
-| Remote publication requires explicit approval under `AGENTS.md` | blocked_by_policy | Obtain explicit approval before commit, push, PR creation, tag, or release; no remote mutation was performed | cli_observed |
+| Remote publication requires exact approval under `AGENTS.md` | pending_exact_release | Infrastructure mutation was explicitly authorized. Do not merge the generated release PR or create its exact tag until the user reviews and approves that version and SHA | cli_observed |
 | Expected next version is `v0.0.8`, but Release Please is authoritative | pending | Do not edit the manifest manually; verify the generated release PR's computed version | source_verified |
 
 ## Claim Status Summary
@@ -1416,5 +1453,5 @@ changed by this run.
 | Automatic PR-only version/changelog preparation implemented | repo_verified | release config, planning workflow, workflow tests |
 | Exact generated-PR and CI authorization implemented | repo_verified | authorization helper, tag gate, publisher entry gate, fail-closed tests |
 | Public release remains single-owner | repo_verified | Release Please skip setting and `build-binaries` publication step |
-| Remote release automation operational | unknown | external App/environment, branch/tag ruleset and merge-setting changes, admin bypass audit, and first real workflow run still required |
-| No remote mutation performed | cli_observed | local status/diff only; no commit, push, tag, release, or PR command |
+| Remote release automation operational | partially_verified | external settings and PR #17 CI are green; the committed App audit and first Release Please proposal still require post-merge execution |
+| Authorized infrastructure mutation recorded | remote_observed | PR #17, exact commit/run URLs, ruleset IDs, environment, App installation, and key-handling evidence are recorded above |
