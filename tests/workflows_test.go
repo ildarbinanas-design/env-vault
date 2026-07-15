@@ -1022,6 +1022,12 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	if nativeConfig.Run != "go test ./internal/config -count=1" || nativeConfig.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
 		t.Fatalf("native platform config test=%+v", nativeConfig)
 	}
+	windowsConfigBurnIn := namedStep(t, e2e, "Burn in Windows config concurrency")
+	if windowsConfigBurnIn.If != "matrix.goos == 'windows'" ||
+		windowsConfigBurnIn.Run != "go test ./internal/config -run '^TestConcurrentSavePublishesOnlyCompleteConfigs$' -count=10" ||
+		windowsConfigBurnIn.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
+		t.Fatalf("Windows config concurrency burn-in=%+v", windowsConfigBurnIn)
+	}
 	download := namedStep(t, e2e, "Download release-like artifact")
 	if download.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
 		t.Fatalf("e2e download action=%q", download.Uses)

@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	configReplaceRetryTimeout = time.Second
-	configReplaceRetryDelay   = 25 * time.Millisecond
+	configFilesystemRetryTimeout = time.Second
+	configFilesystemRetryDelay   = 25 * time.Millisecond
 )
 
 var e2eCoverageBuildIdentity struct {
@@ -52,8 +52,8 @@ func replaceConfigFileForBuild(temporaryPath, path string, coverageBuild bool) (
 	}
 	injected := false
 	err = retryConfigFilesystemOperation(
-		configReplaceRetryTimeout,
-		configReplaceRetryDelay,
+		configFilesystemRetryTimeout,
+		configFilesystemRetryDelay,
 		operations,
 		func() error {
 			if err := operations.validate(path); err != nil {
@@ -69,11 +69,41 @@ func replaceConfigFileForBuild(temporaryPath, path string, coverageBuild bool) (
 	return operations.unsafe(err), err
 }
 
+func readConfigFile(path string) ([]byte, error) {
+	return readConfigFileWithRetry(
+		path,
+		configFilesystemRetryTimeout,
+		configFilesystemRetryDelay,
+		defaultConfigReplaceOperations(),
+		os.ReadFile,
+	)
+}
+
+func readConfigFileWithRetry(
+	path string,
+	retryTimeout, retryDelay time.Duration,
+	operations configReplaceOperations,
+	readFile func(string) ([]byte, error),
+) ([]byte, error) {
+	var data []byte
+	err := retryConfigFilesystemOperation(
+		retryTimeout,
+		retryDelay,
+		operations,
+		func() error {
+			var err error
+			data, err = readFile(path)
+			return err
+		},
+	)
+	return data, err
+}
+
 func validateConfigTarget(path string) error {
 	operations := defaultConfigReplaceOperations()
 	return retryConfigFilesystemOperation(
-		configReplaceRetryTimeout,
-		configReplaceRetryDelay,
+		configFilesystemRetryTimeout,
+		configFilesystemRetryDelay,
 		operations,
 		func() error { return operations.validate(path) },
 	)

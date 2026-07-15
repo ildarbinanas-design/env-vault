@@ -4,6 +4,10 @@ package config
 
 import "os"
 
+func readConfigFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
 func replaceConfigFile(temporaryPath, path string) (unsafeTarget bool, err error) {
 	if err := validateSaveTarget(path); err != nil {
 		return isUnsafeConfigTargetError(err), err

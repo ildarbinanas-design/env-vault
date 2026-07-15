@@ -17,6 +17,7 @@ func TestTransientConfigFilesystemErrorsOnWindows(t *testing.T) {
 		windows.ERROR_ACCESS_DENIED,
 		windows.ERROR_SHARING_VIOLATION,
 		windows.ERROR_LOCK_VIOLATION,
+		&os.PathError{Op: "open", Path: "target", Err: windows.ERROR_SHARING_VIOLATION},
 		&os.LinkError{Op: "rename", Old: "temporary", New: "target", Err: windows.ERROR_SHARING_VIOLATION},
 	} {
 		if !isTransientConfigFilesystemError(err) {

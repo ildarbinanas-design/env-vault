@@ -86,7 +86,7 @@ func LoadForRead(explicitPath string) (*File, string, bool, error) {
 }
 
 func Load(path string) (*File, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Empty(), nil

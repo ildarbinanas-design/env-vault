@@ -53,9 +53,10 @@ case-insensitive.
 Config saves reject a symlink target and publish a mode `0600` temporary sibling
 with `fsync` followed by a same-directory replace. The replace is atomic on Unix;
 on Windows, where the Go standard library does not promise rename atomicity,
-env-vault retries only transient sharing/access violations within a fixed
-deadline and never removes the prior file first. This prevents truncation,
-partial reads, and writes through a tracked config symlink. Profile
+env-vault retries only transient sharing/access violations on reads and
+replacement within a fixed deadline and never removes the prior file first.
+This prevents truncation, partial reads, and writes through a tracked config
+symlink. Profile
 create/add/remove wrap the
 complete load, mutation, validation, and same-directory save in an exclusive
 lock from

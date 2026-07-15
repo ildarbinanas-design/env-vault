@@ -24,8 +24,8 @@ Config files are created with mode `0600` where applicable. Mutations reject a
 config symlink and use a synced temporary sibling plus same-directory
 replacement, so a checkout cannot redirect a profile mutation through
 `.env-vault.yaml` and readers do not observe a truncated file. On Windows,
-transient sharing/access violations receive bounded retries without deleting
-the prior config first.
+transient sharing/access violations on reads and replacement receive bounded
+retries without deleting the prior config first.
 
 The Windows coverage E2E pass injects one sharing violation before replacing an
 existing regular test config. This path additionally requires the complete

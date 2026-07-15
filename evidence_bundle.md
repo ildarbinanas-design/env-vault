@@ -1521,3 +1521,50 @@ atomicity guarantee.
 | Permanent ACL or read-only failure | preserved | narrow retries expire after one second and return the last error without changing permissions or deleting the destination | repo_verified |
 | Unix behavior and E2E coverage | preserved | platform build tags retain the single-attempt path; final subprocess coverage is 71.3%, above the 71.1% Darwin baseline | cli_observed |
 | Secret handling | preserved | no real secret or sentinel appears in code, reports, downloaded artifacts, or this evidence | cli_observed |
+
+## PR #17 Windows Concurrent Read Resilience — 2026-07-16T04:50:19+05:00
+
+### Scope
+
+Updated full CI run
+[29459242684](https://github.com/ildarbinanas-design/env-vault/actions/runs/29459242684)
+failed its native Windows config-test step in job
+[87499276143](https://github.com/ildarbinanas-design/env-vault/actions/runs/29459242684/job/87499276143).
+`TestConcurrentSavePublishesOnlyCompleteConfigs` observed
+`CONFIG_INVALID: Unable to read config` while twelve writers replaced the same
+config. This was an open/read failure, not an invalid-YAML failure; the exact
+wrapped Win32 errno is intentionally absent from the public error string and is
+not claimed here. The E2E steps did not start, and the missing-artifact error
+was secondary to that prerequisite failure.
+
+Windows `Load` now uses the same one-second, 25-millisecond bounded retry helper
+as replacement, and retries only `ERROR_ACCESS_DENIED`,
+`ERROR_SHARING_VIOLATION`, and `ERROR_LOCK_VIOLATION`. Unix still calls
+`os.ReadFile` exactly once. Missing files retain the existing empty-config
+behavior, YAML/schema failures are not retried, non-whitelisted errors return
+immediately, and a persistent whitelisted error is returned after the deadline.
+The concurrency assertion remains unchanged.
+
+### Commands And Checks
+
+| Command or evidence | Result | Claim status |
+|---|---|---|
+| Native Windows job log inspection | isolated the primary failure to `go test ./internal/config -count=1`; the failure was a concurrent open/read error before E2E startup | remote_observed |
+| Deterministic Windows read tests | cover transient success, permanent failure, and the wrapped `os.PathError` shape returned by `os.ReadFile` | repo_verified |
+| `go test ./internal/config -count=1`; `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed locally after the read retry | cli_observed |
+| Windows config test cross-compile and `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/config` | passed | cli_observed |
+| `go test ./tests -count=1`; pinned actionlint v1.7.12 on `reusable-quality.yml` | passed with the Windows-only ten-repetition concurrency burn-in contract | cli_observed |
+| Release-like cross-builds for linux amd64/arm64, darwin amd64/arm64, and windows amd64; Windows coverage cross-build | passed with Go 1.26.5 and `CGO_ENABLED=0` | cli_observed |
+| `go mod tidy -diff`; `scripts/smoke.sh`; `scripts/license-check.sh`; `git diff --check` | passed; license check used pinned go-licenses v2.0.1 with only the expected x/sys assembly warning | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate` | Darwin arm64 pass: 22 passed, 0 failed/skipped/missing, 100% critical feature coverage, 71.4% statement coverage, unchanged suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf` | cli_observed |
+| Final leak scan | 18 report files and 125 sentinel-registry records scanned; zero findings | cli_observed |
+| Two independent read-only audits | both returned green with no P0-P2 findings; confirmed bounded/whitelisted retry, unchanged Unix and missing-file semantics, and no assertion weakening | cli_observed |
+
+### Risks And Claim Status
+
+| Risk or claim | Status | Mitigation or required evidence | Claim status |
+|---|---|---|---|
+| Exact underlying Win32 errno | unavailable by design | public structured errors omit causes; implementation covers only the three documented transient contention classes and preserves every other error | cli_observed |
+| Native Windows concurrency test after the read fix | pending updated PR CI | the Windows E2E job now requires the package once plus ten sequential focused concurrency runs before the unchanged full E2E/burn-in/coverage job | repo_verified |
+| Permanent access failure latency | bounded | a whitelisted but persistent Windows access error adds at most one second and then returns the last error | repo_verified |
+| Unix behavior | unchanged | build-tagged implementation performs one `os.ReadFile` call and the existing single replacement attempt | repo_verified |

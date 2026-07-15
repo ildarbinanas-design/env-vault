@@ -248,3 +248,64 @@ func TestValidateConfigTargetRetriesTransientInspectionFailure(t *testing.T) {
 		t.Fatalf("validations=%d, want 3", validations)
 	}
 }
+
+func TestReadConfigFileRetriesTransientFailure(t *testing.T) {
+	transientErr := errors.New("transient read failure")
+	attempts := 0
+	data, err := readConfigFileWithRetry(
+		"target",
+		time.Second,
+		0,
+		configReplaceOperations{
+			retryable: func(err error) bool { return errors.Is(err, transientErr) },
+			unsafe:    func(error) bool { return false },
+			now:       time.Now,
+			wait:      func(time.Duration) {},
+		},
+		func(string) ([]byte, error) {
+			attempts++
+			if attempts < 3 {
+				return nil, transientErr
+			}
+			return []byte("complete config"), nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("read attempts=%d, want 3", attempts)
+	}
+	if string(data) != "complete config" {
+		t.Fatalf("read data=%q, want complete config", data)
+	}
+}
+
+func TestReadConfigFileDoesNotRetryPermanentFailure(t *testing.T) {
+	permanentErr := errors.New("permanent read failure")
+	attempts := 0
+	data, err := readConfigFileWithRetry(
+		"target",
+		time.Second,
+		0,
+		configReplaceOperations{
+			retryable: func(error) bool { return false },
+			unsafe:    func(error) bool { return false },
+			now:       time.Now,
+			wait:      func(time.Duration) {},
+		},
+		func(string) ([]byte, error) {
+			attempts++
+			return nil, permanentErr
+		},
+	)
+	if !errors.Is(err, permanentErr) {
+		t.Fatalf("read error=%v, want permanent failure", err)
+	}
+	if data != nil {
+		t.Fatalf("read data=%q, want nil", data)
+	}
+	if attempts != 1 {
+		t.Fatalf("read attempts=%d, want 1", attempts)
+	}
+}
