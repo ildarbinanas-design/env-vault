@@ -15,7 +15,7 @@ const (
 )
 
 // runE2ESaveCrashHook exposes one deterministic crash window after a temporary
-// config has been synced and closed but before it is atomically renamed. It is
+// config has been synced and closed but before it replaces the prior file. It is
 // unreachable unless the full insecure test-backend gate is also active, both
 // hook paths are explicitly supplied, and every supplied path is below the
 // child process's own temporary directory. Normal production environments take

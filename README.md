@@ -24,7 +24,7 @@ On Linux, process environment variables may be visible to the same user through 
 - `--stdin` trims exactly one trailing newline byte.
 - Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
 - Secret and service identifiers may use safe slash-separated hierarchy, but absolute paths and empty, `.` or `..` components are rejected before backend access.
-- Config mutations reject symlink targets and replace a synced mode-`0600` temporary file atomically.
+- Config mutations reject symlink targets and use a synced mode-`0600` temporary sibling for same-directory replacement.
 - Environment target names are compared case-insensitively so a profile remains unambiguous when moved to Windows.
 - The `file`/plaintext keyring backend is not production-enabled.
 - The test backend is insecure and enabled only when all three env vars are set: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and `ENV_VAULT_TEST_STORE=/tmp/...`.

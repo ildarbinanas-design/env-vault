@@ -240,7 +240,7 @@ directive and existing `golang.org/x/sys v0.30.0` selection.
 
 | Area | Purpose |
 |---|---|
-| `internal/config/transaction.go` | Serialize Load→mutate→Validate→atomic Save through a bounded exclusive lock on persistent adjacent `<config>.lock` |
+| `internal/config/transaction.go` | Serialize Load→mutate→Validate→same-directory Save through a bounded exclusive lock on persistent adjacent `<config>.lock` |
 | Lock target boundary | Create with `flock.SetPermissions(0600)`, correct existing POSIX permissions, reject symlink/non-regular targets before acquisition and recheck after acquisition/chmod, and never remove the stable lock file |
 | `internal/cli/cli.go` | Route real profile create/add/remove operations through `config.Transaction`; keep dry runs non-mutating and complete `--check-secret` backend access before the config lock |
 | Structured errors | Add `CONFIG_LOCKED` with config-invalid exit status, preserved context deadline/cancellation cause, bounded five-second maximum wait, and retry remediation |
@@ -309,7 +309,7 @@ generator; this env-vault wave did not edit any `homebrew-tap` file.
 |---|---|
 | `internal/secretstore`, `internal/config`, `internal/cli` | Centralize secret/service validation; preserve safe slash hierarchy while rejecting absolute, backslash, empty, `.` and `..` path forms |
 | `internal/secretstore/keyring` | Repeat identifier validation immediately before backend access; fake-pass regression proves the exact safe prefix and proves unsafe input cannot invoke the backend |
-| `internal/config` | Reject existing and dangling config symlinks; publish a synced mode-`0600` temporary sibling with atomic rename instead of truncating the target |
+| `internal/config` | Reject existing and dangling config symlinks; publish a synced mode-`0600` temporary sibling with same-directory replacement instead of truncating the target |
 | `internal/platform`, `internal/runner` | Use one case-insensitive portable environment key for mapping duplicates, inherited collisions, override replacement, and `--clean-env`, including Windows `Path`/`PATH` |
 | Go regression tests | Cover traversal/service variants, safe slash names, fake-pass argv, symlink targets, concurrent complete-file visibility, case-only mapping duplicates, override deduplication, and Windows-style minimal env |
 | `scripts/release/generate-homebrew-formula.sh` | Emit Homebrew-native `on_macos`/`on_linux` plus `on_arm`/`on_intel` blocks, declare macOS Sequoia as the minimum, and install the three archived documentation files without changing version, URL, or checksum inputs |
@@ -343,7 +343,7 @@ generator; this env-vault wave did not edit any `homebrew-tap` file.
 | `pass` operations cannot use a secret or service traversal to leave the `env-vault` prefix | repo_verified | shared component validation plus adapter-level validation; fake-pass tests verify safe argv and zero calls for unsafe identifiers |
 | Existing safe slash-separated secret and service names remain supported | repo_verified | validator and fake-pass positive regression cases |
 | A config target symlink is not followed, created through, or replaced | cli_observed | existing-target and dangling-target tests preserve the symlink and outside target state |
-| Readers see a complete old or new config during concurrent saves | cli_observed | concurrent writer/reader regression plus atomic temporary-file replacement and race test |
+| Readers do not see a truncated config during concurrent saves | cli_observed | concurrent writer/reader regression plus same-directory temporary-file replacement and race test |
 | Environment mapping identity is portable to Windows | repo_verified | canonical key is used for config duplicate, runtime collision, replacement, and minimal-env selection; Windows-style tests and Windows cross-compilation pass |
 | The next generated formula cannot silently return to `Hardware::CPU.arm?` or omit the macOS minimum/documentation contract without failing the workflow regression suite | repo_verified | generated-fixture test requires exact DSL counts, Sequoia dependency, documentation installation, archived documentation inputs, and absence of `Hardware::CPU` |
 | Each generated architecture URL retains the SHA-256 of its matching archive | cli_observed | the regression creates four distinct archive bytes/checksums, requires each exact platform/selector URL/checksum block, and runs the project's exact formula verifier |
@@ -355,7 +355,7 @@ generator; this env-vault wave did not edit any `homebrew-tap` file.
 
 | Risk | Status | Mitigation or next action | Claim status |
 |---|---|---|---|
-| Profile commands still perform load-modify-save outside one inter-process lock, so concurrent successful commands can logically lose an update | open | Introduce a cross-platform locked config transaction API and move profile create/add/remove into it; current atomic save prevents truncation/corruption only | repo_verified |
+| Profile commands still perform load-modify-save outside one inter-process lock, so concurrent successful commands can logically lose an update | open | Introduce a cross-platform locked config transaction API and move profile create/add/remove into it; current replacement save prevents truncation/corruption only | repo_verified |
 | A hostile same-user process that can swap a parent directory or replace the temporary filename after close remains outside the target-symlink fix | accepted | Keep config directories user-owned; a stronger future implementation should use dirfd/openat or `os.Root` no-follow operations | repo_verified |
 | Windows behavior was cross-compiled but not executed on a native Windows host in this local run | planned | Require the existing Windows CI runner to execute focused runtime tests before release | cli_observed |
 | Real Keychain, Secret Service, WinCred, KWallet, and `pass` stores were not exercised | accepted | Run separately with disposable identifiers only after review; fake-pass tests cover the namespace boundary without touching user data | cli_observed |
@@ -1455,3 +1455,69 @@ uploaded key remains active. Secret values were not read back or recorded.
 | Public release remains single-owner | repo_verified | Release Please skip setting and `build-binaries` publication step |
 | Remote release automation operational | partially_verified | external settings and PR #17 CI are green; the committed App audit and first Release Please proposal still require post-merge execution |
 | Authorized infrastructure mutation recorded | remote_observed | PR #17, exact commit/run URLs, ruleset IDs, environment, App installation, and key-handling evidence are recorded above |
+
+## PR #17 Windows Replacement Resilience — 2026-07-15T23:17:48Z
+
+### Scope
+
+Full CI run
+[29456774217](https://github.com/ildarbinanas-design/env-vault/actions/runs/29456774217)
+failed only the Windows E2E burn-in job
+[87491786025](https://github.com/ildarbinanas-design/env-vault/actions/runs/29456774217/job/87491786025):
+one of three shuffled full-suite repetitions reported
+`CONCURRENCY_PROFILE_MUTATIONS` exit `5` / `CONFIG_INVALID` while replacing the
+existing config. The release-like and coverage passes, the other two shuffled
+full-suite repetitions, and all five locking-only repetitions passed. The
+sanitized failure bundle contained no secret sentinel.
+
+The fix keeps the Unix path at one target validation and one `os.Rename`. On
+Windows only, config-target inspection and same-directory replacement retry
+`ERROR_ACCESS_DENIED`, `ERROR_SHARING_VIOLATION`, and
+`ERROR_LOCK_VIOLATION` for at most one second with 25 millisecond polling.
+Every replacement attempt revalidates the target; typed symlink/non-regular
+errors fail immediately, permanent filesystem errors remain failures, the
+prior config is never removed first, and the existing deferred cleanup removes
+an uncommitted temporary sibling. No E2E scenario, golden contract, or
+baseline identity changed.
+
+The instrumented Windows E2E binary deterministically returns one native
+sharing errno before replacing an existing regular test config, but only when
+the full insecure test-backend gate, E2E child marker, and `GOCOVERDIR` are
+present, `runtime/coverage` confirms the binary was built with `-cover`, and
+store/config paths remain inside the isolated scenario root. Existing mutation
+and concurrency assertions therefore exercise the retry path without changing
+public contracts or the suite hash. The native E2E
+matrix also runs the Windows-only deterministic config tests before the binary
+suite. A fully requested hook with a missing coverage build identity fails
+closed, so a regression in runtime detection cannot silently skip this
+exercise in the Windows coverage pass.
+
+The canonical manifest's legacy `atomic` labels remain byte-for-byte unchanged
+to preserve the reviewed Go 1.22 suite hash. Current documentation explicitly
+limits the Windows assertion to complete readable YAML, preservation before
+replacement, and cleanup of temporary siblings; it does not claim an OS-level
+atomicity guarantee.
+
+### Commands And Checks
+
+| Command or evidence | Result | Claim status |
+|---|---|---|
+| Context7 `/golang/go/go1.26.0` official `os.Rename` documentation and Go Windows source | confirmed non-Unix atomicity limitation, `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`, and known antivirus-induced `ERROR_ACCESS_DENIED` behavior | source_verified |
+| Official `runtime/coverage.WriteMeta(io.Discard)` probe in plain and `go build -cover` executables | returned `false` for the release-like build and `true` for the instrumented build, establishing a non-env build-identity gate | cli_observed |
+| Sanitized Windows run artifact inspection | isolated the failure to config replacement during one burn-in repetition; 19 files and 125 registry records scanned with zero sentinel findings | cli_observed |
+| Deterministic Windows retry tests | cover retryable vs permanent errors, positive deadline `25+25+20 ms`, last-error return, target revalidation, typed unsafe target rejection, transient inspection retry, wrapped Windows errno classification, coverage build identity, isolated-path enforcement, and complete E2E injection gating without wall-clock sleeps | repo_verified |
+| `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=/usr/bin/true ./...` | all Windows packages and tests compile | cli_observed |
+| `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed after the final platform split, fail-fast unsafe-target fix, native Windows test gate, and coverage-only injection gate | cli_observed |
+| `go mod tidy`; repeated `go mod tidy -diff`; `git diff --check` | clean; existing `golang.org/x/sys v0.47.0` is now a direct dependency of the Windows implementation | cli_observed |
+| Pinned actionlint on `reusable-quality.yml`; workflow contract tests | passed with the native platform config-test step required before E2E | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate` | final Darwin arm64 pass: 22 passed, 0 failed/skipped/missing, 100% critical feature coverage, 71.3% statement coverage, suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf` | cli_observed |
+
+### Risks And Claim Status
+
+| Risk or claim | Status | Mitigation or required evidence | Claim status |
+|---|---|---|---|
+| Exact native Windows errno from the failed process | unavailable by design | sanitized public error contracts omit internal causes; failure point and subsequent success establish a transient replacement-error class, not a claim about a specific scanner process | cli_observed |
+| Native Windows retry execution | pending updated PR CI | The native E2E matrix now runs `go test ./internal/config -count=1`; Windows-only deterministic tests and the unchanged E2E burn-in must pass on `windows-latest` before merge | repo_verified |
+| Permanent ACL or read-only failure | preserved | narrow retries expire after one second and return the last error without changing permissions or deleting the destination | repo_verified |
+| Unix behavior and E2E coverage | preserved | platform build tags retain the single-attempt path; final subprocess coverage is 71.3%, above the 71.1% Darwin baseline | cli_observed |
+| Secret handling | preserved | no real secret or sentinel appears in code, reports, downloaded artifacts, or this evidence | cli_observed |

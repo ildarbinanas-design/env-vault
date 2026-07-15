@@ -51,9 +51,14 @@ are treated as the same portable target because Windows environment names are
 case-insensitive.
 
 Config saves reject a symlink target and publish a mode `0600` temporary sibling
-with `fsync` followed by atomic rename. This prevents truncation, partial reads,
-and writes through a tracked config symlink. Profile create/add/remove wrap the
-complete load, mutation, validation, and atomic save in an exclusive lock from
+with `fsync` followed by a same-directory replace. The replace is atomic on Unix;
+on Windows, where the Go standard library does not promise rename atomicity,
+env-vault retries only transient sharing/access violations within a fixed
+deadline and never removes the prior file first. This prevents truncation,
+partial reads, and writes through a tracked config symlink. Profile
+create/add/remove wrap the
+complete load, mutation, validation, and same-directory save in an exclusive
+lock from
 `github.com/gofrs/flock v0.13.0`, verified by the unchanged cross-platform E2E
 contract on Go 1.26.5. The adjacent `<config>.lock` file is created with mode `0600`,
 rechecked as a non-symlink regular file, and intentionally kept after unlock so

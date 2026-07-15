@@ -125,8 +125,8 @@ func Save(path string, cfg *File) error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to create config directory", "Check directory permissions", err)
 	}
-	if err := validateSaveTarget(path); err != nil {
-		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
+	if err := validateConfigTarget(path); err != nil {
+		return configTargetValidationError(err)
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -159,14 +159,18 @@ func Save(path string, cfg *File) error {
 	if err := runE2ESaveCrashHook(); err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to complete gated E2E save hook", "Use the E2E runner or unset E2E hook variables", err)
 	}
-	// Recheck immediately before rename. Rename replaces a raced-in symlink
-	// itself instead of following it, while this check gives callers a clear
-	// failure for a symlink that was already present.
-	if err := validateSaveTarget(path); err != nil {
+	// Recheck immediately before every replacement attempt. Replacement
+	// replaces a raced-in symlink itself instead of following it, while this
+	// check gives callers a clear failure for a symlink that was already
+	// present. Windows may briefly deny replacement while a scanner holds the
+	// target, so only known transient Windows filesystem errors receive bounded
+	// retries.
+	unsafeTarget, err := replaceConfigFile(temporaryPath, path)
+	if unsafeTarget {
 		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return apperrors.ConfigInvalid("config", "Unable to replace config atomically", "Check the config path and permissions", err)
+	if err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to replace config safely", "Check the config path and permissions", err)
 	}
 	committed = true
 	return nil
@@ -181,12 +185,19 @@ func validateSaveTarget(path string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("config path is a symlink")
+		return &unsafeConfigTargetError{reason: "config path is a symlink"}
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("config path is not a regular file")
+		return &unsafeConfigTargetError{reason: "config path is not a regular file"}
 	}
 	return nil
+}
+
+func configTargetValidationError(err error) error {
+	if isUnsafeConfigTargetError(err) {
+		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
+	}
+	return apperrors.ConfigInvalid("config", "Unable to inspect config target", "Check the config path and permissions", err)
 }
 
 func Validate(cfg *File) error {

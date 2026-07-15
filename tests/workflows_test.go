@@ -1018,6 +1018,10 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
 		t.Fatalf("e2e setup-go inputs=%v, want project Go baseline", setup.With)
 	}
+	nativeConfig := namedStep(t, e2e, "Run native platform config tests")
+	if nativeConfig.Run != "go test ./internal/config -count=1" || nativeConfig.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
+		t.Fatalf("native platform config test=%+v", nativeConfig)
+	}
 	download := namedStep(t, e2e, "Download release-like artifact")
 	if download.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
 		t.Fatalf("e2e download action=%q", download.Uses)
