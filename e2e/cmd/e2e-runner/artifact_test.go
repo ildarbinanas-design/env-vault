@@ -34,6 +34,7 @@ func TestArchiveExtractRejectsUnsafePaths(t *testing.T) {
 	}{
 		{name: "parent traversal", path: "../escape"},
 		{name: "root traversal", path: root + "/../escape"},
+		{name: "double dot filename", path: root + "/env..vault"},
 		{name: "absolute", path: "/absolute"},
 		{name: "backslash", path: root + `\escape`},
 		{name: "wrong root", path: "other-root/env-vault"},

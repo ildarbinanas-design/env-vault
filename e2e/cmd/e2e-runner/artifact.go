@@ -262,6 +262,13 @@ func extractTarGzArtifact(filename, outputDir, root string) error {
 		if err != nil {
 			return fmt.Errorf("read tar entry: %w", err)
 		}
+		// Keep this source-local guard in addition to safeArchiveName's
+		// canonical checks. It conservatively rejects every traversal-like
+		// spelling and makes the archive-to-filesystem boundary explicit to
+		// static data-flow analysis before the entry reaches any path helper.
+		if strings.Contains(header.Name, "..") {
+			return fmt.Errorf("artifact entry %q contains a forbidden double-dot sequence", header.Name)
+		}
 		entries++
 		if entries > maxArtifactEntries {
 			return fmt.Errorf("artifact contains more than %d entries", maxArtifactEntries)
@@ -302,6 +309,11 @@ func extractZipArtifact(filename, outputDir, root string) error {
 	}
 	var total int64
 	for _, entry := range reader.File {
+		// See the equivalent tar guard above. This must remain before the entry
+		// name is propagated to any filesystem helper.
+		if strings.Contains(entry.Name, "..") {
+			return fmt.Errorf("artifact entry %q contains a forbidden double-dot sequence", entry.Name)
+		}
 		name, err := safeArchiveName(entry.Name, root)
 		if err != nil {
 			return err
@@ -338,7 +350,7 @@ func extractZipArtifact(filename, outputDir, root string) error {
 }
 
 func safeArchiveName(name, root string) (string, error) {
-	if strings.Contains(name, "\\") || strings.ContainsRune(name, '\x00') || path.IsAbs(name) {
+	if strings.Contains(name, "..") || strings.Contains(name, "\\") || strings.ContainsRune(name, '\x00') || path.IsAbs(name) {
 		return "", fmt.Errorf("artifact entry has unsafe path %q", name)
 	}
 	cleaned := path.Clean(name)
