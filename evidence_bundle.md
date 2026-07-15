@@ -2,7 +2,7 @@
 
 ## Task ID: `ENV-VAULT-GO1265-MIGRATION-CANDIDATE`
 
-Timestamp UTC: `2026-07-15T19:08:01Z`
+Timestamp UTC: `2026-07-15T20:14:01Z`
 
 ### Scope
 
@@ -40,7 +40,9 @@ remains the latest stable license tool and builds with Go 1.26.5.
 
 ### Local Candidate Evidence
 
-Candidate commit: `22fe5438bae2719885283a6e720f3c8070146f57`.
+Initial local candidate artifact commit:
+`22fe5438bae2719885283a6e720f3c8070146f57`. Green candidate code head:
+`7496fd77e4d3a566b614344e18540657363cdf88`.
 
 | Item | Result | Claim status |
 |---|---|---|
@@ -50,7 +52,7 @@ Candidate commit: `22fe5438bae2719885283a6e720f3c8070146f57`.
 | Statement coverage | 71.1% from the separately instrumented subprocess binary; equal to Darwin arm64 baseline | cli_observed |
 | Suite identity | `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`, exactly equal to canonical baseline | cli_observed |
 | Reporter | gotestsum `v1.13.0`, binary built by `go1.26.5` | cli_observed |
-| Stability | two consecutive full candidate executions passed; each includes three shuffled full-suite and five shuffled locking/concurrency burn-ins | cli_observed |
+| Stability | two initial complete candidate executions passed; after the signal-forwarding fix, 200 focused signal scenarios, three additional shuffled full suites, the coverage suite, and all locking/concurrency burn-ins passed | cli_observed |
 | Public contracts | normalized Darwin arm64 `contracts.json`, critical scenario IDs/results, and exit-code/stream contracts byte-equal to baseline | cli_observed |
 | Secret safety | 125 hash-only sentinel records; zero leak findings across reports and artifacts | cli_observed |
 | Release-like artifact | checksum verified; SHA-256 `5f036b8e135b92544a7e4b37bec832e26a73c0bd1a7e5b399d89cd16ace107e5` | cli_observed |
@@ -70,6 +72,7 @@ Candidate commit: `22fe5438bae2719885283a6e720f3c8070146f57`.
 | Native/cross production builds | Darwin arm64/amd64 with CGO, Linux arm64/amd64, and Windows amd64 built with embedded `go1.26.5` | cli_observed |
 | Workflow contracts and changed-workflow `actionlint` | passed | cli_observed |
 | Independent reviews | no migration correctness, security, report integrity, or CI blocker found | repo_verified |
+| Cross-source comparator hardening | exact-source validation outcomes, fresh matrix attestations, bounded non-symlink reads, finite zero tolerance, and fail-closed unit cases passed; independently audited twice | repo_verified |
 | `git diff --check` and clean tracked worktree after report generation | passed | cli_observed |
 
 The first local artifact attempt was rejected before functional execution
@@ -78,15 +81,66 @@ because macOS `tar` injected an AppleDouble `._` entry. Repacking with
 complete E2E suite was then run twice and passed. No assertion, scenario,
 golden contract, retry policy, or coverage tolerance was weakened.
 
+The first macOS amd64 CI execution exposed a real startup race in Unix signal
+forwarding: the helper could become ready just before the parent installed its
+signal subscription. Commit `8b5c729762bae7f27f25ef8200711b3e9e6b53b7`
+subscribes before child start and safely queues an early signal. The scenario,
+golden contract, and timeout were unchanged. The focused scenario then passed
+200 consecutive local executions, the full candidate runner passed with
+coverage and burn-ins, and all four Unix native jobs passed remotely.
+
 ### Remote Candidate Gate
 
-The pull request and final post-merge `main` run must supply the authoritative
-Linux amd64/arm64, Darwin amd64/arm64, and Windows amd64 evidence. CI downloads
-only the exact canonical baseline run `29441160687`, validates the candidate
-matrix, and compares suite hash, critical results, normalized contracts,
-platform set, leak status, and statement coverage with zero tolerance. Record
-the final run IDs, URLs, candidate SHA, artifact digests, and comparison result
-here after GitHub Actions completes.
+The authoritative code-bearing pull-request candidate is
+[Actions run 29446986126](https://github.com/ildarbinanas-design/env-vault/actions/runs/29446986126),
+attempt `1`, at reviewed branch head
+`7496fd77e4d3a566b614344e18540657363cdf88` and synthetic pull-request merge commit
+`0c17678dc3e8bf3a9fa60b32581d9e4ca164a90a`. Every required build, smoke,
+test, vet, race, module, license, native artifact E2E, matrix, comparison, and
+`quality-gate` job passed. [CodeQL run 29446982881](https://github.com/ildarbinanas-design/env-vault/actions/runs/29446982881)
+and [dependency review run 29446985920](https://github.com/ildarbinanas-design/env-vault/actions/runs/29446985920)
+also passed.
+
+| Platform | Passed / failed / skipped | Statement coverage | Expected skips | E2E artifact ID and SHA-256 digest |
+|---|---:|---:|---|---|
+| Darwin amd64 | 22 / 0 / 0 | 71.1% | none | `8355950775`, `7d135a8dc283239973c8a98aafe6d62687ee9c2e844104ea0f8ad30070720478` |
+| Darwin arm64 | 22 / 0 / 0 | 71.1% | none | `8355929146`, `b7f379b3ca16eb9b62d4daa7554dca79533b9dc207a42c96031bce21b6fed41f` |
+| Linux amd64 | 22 / 0 / 0 | 71.2% | none | `8355921541`, `ab767cd3832ba73b4d0df98ef10fea69f0ffe31b318bb7a5798af5c9d9957f7d` |
+| Linux arm64 | 22 / 0 / 0 | 71.2% | none | `8355917517`, `bc3243156b199917da23ac8ada3775b4c4a513b722066f652f6fd0663f9da703` |
+| Windows amd64 | 20 / 0 / 2 | 70.7% | `EXEC_SIGNAL_FORWARDING`, `PROFILE_SYMLINK_REJECTED` | `8355969824`, `1943f2e6a87eaa15caa4d46468ec85257e40a5fead8ff05c894e555e408da24a` |
+
+All five reports use `go1.26.5`, gotestsum `v1.13.0`, subject kind
+`artifact`, and unchanged semantic suite hash
+`ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`.
+Each platform records 100% critical feature coverage, no failed or missing
+scenario, 125 hash-only sentinel registry entries, and zero leak findings.
+The candidate matrix artifact is ID `8355983138`, digest
+`c73e205a682878f49e64a9a0789cb29924094c6b17aca2236c4f7826fad308fc`.
+The comparison artifact is ID `8355998341`, digest
+`ff3c4722edc564ef65ce2337e98197086402956f623d1e99266920687d5b1898`.
+All seven E2E evidence artifacts are retained through at least
+`2026-08-14T20:08:16Z`.
+
+The comparison independently revalidated the canonical Go 1.22.12 baseline
+against baseline commit `7a044bdbf73aa592016bbb3a02d81f314f08fe63`
+and the Go 1.26.5 candidate against its own source. Both source-validation
+outcomes were `success`. All ten comparison checks passed: both matrices and
+report sets, exact five-platform set and suite/run identities, critical
+scenario results, normalized public CLI contracts, zero-tolerance statement
+coverage non-regression, and secret leak gates. The downloaded artifacts were
+then revalidated locally with the pinned candidate toolchain; all derived
+evidence digests and coverage reports reproduced, the comparison passed again,
+and a recursive sentinel-prefix scan returned no matches.
+
+Earlier CI runs were retained as diagnostic evidence rather than rerun away.
+Run `29443527036` revealed first-use toolchain download output contaminating a
+coverage comparison and led to explicit exact-toolchain preload. Run
+`29444212459` exposed the Unix signal startup race fixed above. Run
+`29445326644` proved all native E2E jobs green, then correctly rejected
+regenerating a baseline coverage profile against candidate production source;
+that finding led to separate exact-source validation plus the source-neutral,
+fail-closed comparator. No E2E assertion, scenario, golden contract, expected
+skip, retry policy, or coverage tolerance changed across these fixes.
 
 ## Task ID: `ENV-VAULT-E2E-GO122-BASELINE-LOCAL`
 
