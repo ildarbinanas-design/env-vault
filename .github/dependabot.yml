@@ -9,10 +9,19 @@ updates:
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # Raise go.mod only when an update actually requires it. Dependencies that
+    # commonly raise the minimum Go version stay out of the broad group so
+    # their toolchain impact is reviewed in an isolated PR.
+    versioning-strategy: "increase-if-necessary"
     groups:
       go-modules-minor-patch:
+        applies-to: "version-updates"
         patterns:
           - "*"
+        exclude-patterns:
+          - "github.com/gofrs/flock"
+          - "golang.org/x/term"
+          - "golang.org/x/sys"
         update-types:
           - "minor"
           - "patch"

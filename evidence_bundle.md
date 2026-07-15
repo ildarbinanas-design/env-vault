@@ -14,6 +14,19 @@ suite invokes only a real native `env-vault` executable through `os/exec`, uses
 the explicitly gated disposable test backend, performs no network access, and
 does not touch a platform keyring.
 
+### Canonical Remote Baseline
+
+The Phase 1 pull request was squash-merged before the Go migration. The
+canonical post-merge `main` run is
+[29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687)
+at commit `7a044bdbf73aa592016bbb3a02d81f314f08fe63`, attempt `1`, using
+`go1.22.12` and gotestsum `v1.12.2`. All five native jobs, the matrix gate, and
+the stable `quality-gate` passed with suite hash
+`ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`.
+Linux/Darwin each passed 22 scenarios at 71.1% statement coverage; Windows
+passed 20 plus the two declared platform skips at 70.7%. Exact artifact and
+binary digests are preserved in `docs/e2e-baseline.json`.
+
 ### Local Baseline Evidence
 
 | Item | Result | Claim status |
@@ -57,7 +70,7 @@ does not touch a platform keyring.
 
 | Risk or pending evidence | Status | Mitigation or next action | Claim status |
 |---|---|---|---|
-| This local evidence is Darwin arm64 only and is not the canonical remote baseline | planned | Require the PR matrix on Linux amd64/arm64, macOS amd64/arm64, and Windows amd64; merge only after all checks and repeated burn-in passes are green, then preserve the exact main SHA/run URL/run ID and uploaded reports | cli_observed |
+| This local evidence is Darwin arm64 only and is not the canonical remote baseline | resolved | Canonical `main` run `29441160687` passed on Linux amd64/arm64, macOS amd64/arm64, and Windows amd64; its exact SHA, identity, reports, and digests are preserved above and in `docs/e2e-baseline.json` | remote_observed |
 | The final-config and lock symlink checks do not eliminate a hostile parent-directory swap | accepted | Keep the existing documented trust boundary; a future portable hardening needs handle-relative no-follow filesystem APIs | repo_verified |
 | Exact Go coverage HTML validation needs the report's patch toolchain | accepted | Metadata pins the exact patch version and validation uses that recorded `GOTOOLCHAIN`; CI must fail rather than silently validate with a different template | repo_verified |
 

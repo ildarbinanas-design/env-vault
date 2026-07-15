@@ -405,6 +405,9 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if ciQuality.With["source_sha"] != "${{ github.sha }}" || ciQuality.With["version"] != "ci-${{ github.sha }}" {
 		t.Fatalf("CI quality inputs=%v", ciQuality.With)
 	}
+	if len(ciQuality.Permissions) != 2 || ciQuality.Permissions["contents"] != "read" || ciQuality.Permissions["actions"] != "read" {
+		t.Fatalf("CI reusable quality permissions=%v, want contents/actions read", ciQuality.Permissions)
+	}
 	gate := ci.Jobs["quality-gate"]
 	if gate.If != "always()" || !slices.Equal(gate.Needs, []string{"quality"}) || gate.RunsOn != "ubuntu-latest" {
 		t.Fatalf("quality gate if=%q needs=%v runner=%q", gate.If, gate.Needs, gate.RunsOn)
@@ -424,6 +427,9 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	}
 	if quality.With["source_sha"] != "${{ needs.metadata.outputs.source_sha }}" || quality.With["version"] != "${{ needs.metadata.outputs.version }}" {
 		t.Fatalf("release quality inputs=%v", quality.With)
+	}
+	if len(quality.Permissions) != 2 || quality.Permissions["contents"] != "read" || quality.Permissions["actions"] != "read" {
+		t.Fatalf("release reusable quality permissions=%v, want contents/actions read", quality.Permissions)
 	}
 	for _, removed := range []string{"verify", "license", "build", "smoke"} {
 		if _, ok := release.Jobs[removed]; ok {
@@ -453,8 +459,8 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 		t.Fatalf("license matrix missing native platforms: %v", wantPlatforms)
 	}
 	setup := usesStep(t, license, "actions/setup-go@v6")
-	if setup.With["go-version"] != "1.23.x" || setup.With["go-version-file"] != "" {
-		t.Fatalf("license toolchain inputs=%v, want explicit Go 1.23.x", setup.With)
+	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
+		t.Fatalf("license toolchain inputs=%v, want exact project Go version", setup.With)
 	}
 	step := namedStep(t, license, "Check dependency licenses")
 	if step.Run != "scripts/license-check.sh" || step.Shell != "bash" {
@@ -476,6 +482,27 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("license script missing platform-aware case %q", snippet)
 		}
+	}
+}
+
+func TestReusableQualityRequiresTidyVerifiedModules(t *testing.T) {
+	module := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "module")
+	if module.RunsOn != "ubuntu-latest" || module.Env["GOTOOLCHAIN"] != "local" {
+		t.Fatalf("module job runner=%q env=%v", module.RunsOn, module.Env)
+	}
+	checkout := usesStep(t, module, "actions/checkout@v7")
+	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
+		t.Fatalf("module checkout ref=%q", checkout.With["ref"])
+	}
+	setup := usesStep(t, module, "actions/setup-go@v6")
+	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
+		t.Fatalf("module setup-go inputs=%v", setup.With)
+	}
+	if namedStep(t, module, "Require tidy module files").Run != "go mod tidy -diff" {
+		t.Fatal("module job must fail on a non-idempotent go mod tidy")
+	}
+	if namedStep(t, module, "Verify module cache").Run != "go mod verify" {
+		t.Fatal("module job must verify downloaded modules")
 	}
 }
 
@@ -550,7 +577,7 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	run := namedStep(t, e2e, "Run E2E and finalize reports")
 	for _, snippet := range []string{
 		"go run ./e2e/cmd/e2e-runner run",
-		"--phase baseline",
+		"--phase candidate",
 		"--coverage-floor 60",
 		"--command-timeout 3m",
 		"--test-timeout 5m",
@@ -581,8 +608,8 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 		t.Fatalf("e2e upload if=%q uses=%q", upload.If, upload.Uses)
 	}
 	for key, want := range map[string]string{
-		"name":              "env-vault-e2e-baseline-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}",
-		"path":              "reports/e2e/baseline",
+		"name":              "env-vault-e2e-candidate-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}",
+		"path":              "reports/e2e/candidate",
 		"if-no-files-found": "error",
 		"retention-days":    "30",
 	} {
@@ -592,11 +619,11 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	}
 }
 
-func TestReusableQualityPinsGo122CompatibleE2EReporter(t *testing.T) {
+func TestReusableQualityPinsGo126CompatibleE2EReporter(t *testing.T) {
 	e2e := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e")
 	install := namedStep(t, e2e, "Install pinned E2E reporter")
-	if install.Run != "go install gotest.tools/gotestsum@v1.12.2" {
-		t.Fatalf("E2E reporter install=%q, want Go-1.22-compatible gotestsum v1.12.2", install.Run)
+	if install.Run != "go install gotest.tools/gotestsum@v1.13.0" {
+		t.Fatalf("E2E reporter install=%q, want Go-1.26-compatible gotestsum v1.13.0", install.Run)
 	}
 	if !install.ContinueOnError {
 		t.Fatal("reporter pre-install must allow the runner's pinned fallback to finalize failure reports")
@@ -630,7 +657,7 @@ func TestReusableQualityE2EGateFailsClosed(t *testing.T) {
 		t.Fatalf("e2e gate download action=%q", download.Uses)
 	}
 	for key, want := range map[string]string{
-		"pattern":        "env-vault-e2e-baseline-*-attempt-${{ github.run_attempt }}",
+		"pattern":        "env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}",
 		"path":           "reports-download",
 		"merge-multiple": "true",
 	} {
@@ -645,17 +672,109 @@ func TestReusableQualityE2EGateFailsClosed(t *testing.T) {
 	for _, snippet := range []string{
 		"go run ./e2e/cmd/e2e-runner validate-matrix",
 		"--reports reports-download",
-		"--phase baseline",
+		"--phase candidate",
 		`--expected-commit "${{ inputs.source_sha }}"`,
 		`--expected-run-id "${{ github.run_id }}"`,
 		`--expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"`,
 		`--expected-run-attempt "${{ github.run_attempt }}"`,
 		`--expected-repository "${{ github.repository }}"`,
-		`--expected-reporter "v1.12.2"`,
+		`--expected-reporter "v1.13.0"`,
 	} {
 		if !strings.Contains(validate.Run, snippet) {
 			t.Fatalf("e2e matrix validation missing %q in %q", snippet, validate.Run)
 		}
+	}
+	upload := namedStep(t, gate, "Upload matrix validation")
+	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@v7" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
+		t.Fatalf("matrix validation upload=%+v", upload)
+	}
+}
+
+func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
+	compare := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e-compare")
+	if compare.If != "always()" || !slices.Equal(compare.Needs, []string{"e2e", "e2e-gate"}) || compare.RunsOn != "ubuntu-latest" || compare.TimeoutMinutes != 20 {
+		t.Fatalf("compare job if=%q needs=%v runner=%q timeout=%d", compare.If, compare.Needs, compare.RunsOn, compare.TimeoutMinutes)
+	}
+	if len(compare.Permissions) != 2 || compare.Permissions["contents"] != "read" || compare.Permissions["actions"] != "read" {
+		t.Fatalf("compare permissions=%v, want contents/actions read", compare.Permissions)
+	}
+	if compare.Env["GOTOOLCHAIN"] != "local" {
+		t.Fatalf("compare GOTOOLCHAIN=%q", compare.Env["GOTOOLCHAIN"])
+	}
+	candidateCheckout := namedStep(t, compare, "Check out candidate source")
+	if candidateCheckout.Uses != "actions/checkout@v7" || candidateCheckout.With["ref"] != "${{ inputs.source_sha }}" {
+		t.Fatalf("candidate checkout=%+v", candidateCheckout)
+	}
+	baselineCheckout := namedStep(t, compare, "Check out canonical baseline source")
+	for key, want := range map[string]string{
+		"repository":          "ildarbinanas-design/env-vault",
+		"ref":                 "7a044bdbf73aa592016bbb3a02d81f314f08fe63",
+		"path":                "baseline-source",
+		"persist-credentials": "false",
+	} {
+		if baselineCheckout.With[key] != want {
+			t.Fatalf("baseline checkout %s=%q, want %q", key, baselineCheckout.With[key], want)
+		}
+	}
+	setup := usesStep(t, compare, "actions/setup-go@v6")
+	if setup.With["go-version-file"] != "go.mod" {
+		t.Fatalf("compare setup-go inputs=%v", setup.With)
+	}
+	candidateDownload := namedStep(t, compare, "Download candidate E2E reports")
+	if !candidateDownload.ContinueOnError || candidateDownload.With["pattern"] != "env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}" || candidateDownload.With["path"] != "candidate-download" || candidateDownload.With["merge-multiple"] != "true" {
+		t.Fatalf("candidate report download=%+v", candidateDownload)
+	}
+	baselineDownload := namedStep(t, compare, "Download canonical baseline E2E reports")
+	if !baselineDownload.ContinueOnError || baselineDownload.Uses != "actions/download-artifact@v8" {
+		t.Fatalf("baseline report download=%+v", baselineDownload)
+	}
+	for key, want := range map[string]string{
+		"github-token":   "${{ github.token }}",
+		"repository":     "ildarbinanas-design/env-vault",
+		"run-id":         "29441160687",
+		"pattern":        "env-vault-e2e-baseline-*-attempt-1",
+		"path":           "baseline-download",
+		"merge-multiple": "true",
+	} {
+		if baselineDownload.With[key] != want {
+			t.Fatalf("baseline report download %s=%q, want %q", key, baselineDownload.With[key], want)
+		}
+	}
+	run := namedStep(t, compare, "Compare candidate with canonical baseline")
+	if run.If != "always()" || run.Shell != "bash" {
+		t.Fatalf("comparison execution if=%q shell=%q", run.If, run.Shell)
+	}
+	for _, snippet := range []string{
+		"cd baseline-source",
+		"go run ./e2e/cmd/e2e-runner compare",
+		`--baseline "$GITHUB_WORKSPACE/baseline-download"`,
+		`--candidate "$GITHUB_WORKSPACE/candidate-download"`,
+		"--coverage-tolerance 0",
+		`--baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63"`,
+		`--baseline-run-id "29441160687"`,
+		`--baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687"`,
+		`--baseline-run-attempt "1"`,
+		`--baseline-repository "ildarbinanas-design/env-vault"`,
+		`--baseline-reporter "v1.12.2"`,
+		`--candidate-reporter "v1.13.0"`,
+	} {
+		if !strings.Contains(run.Run, snippet) {
+			t.Fatalf("comparison command missing %q in %q", snippet, run.Run)
+		}
+	}
+	identity := namedStep(t, compare, "Verify exact migration identity")
+	for _, snippet := range []string{"ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf", `"go1.22.12"`, `"go1.26.5"`} {
+		if identity.If != "always()" || !strings.Contains(identity.Run, snippet) {
+			t.Fatalf("exact migration identity missing %q in %+v", snippet, identity)
+		}
+	}
+	summary := namedStep(t, compare, "Add comparison to job summary")
+	if summary.If != "always()" || !strings.Contains(summary.Run, "GITHUB_STEP_SUMMARY") {
+		t.Fatalf("comparison summary=%+v", summary)
+	}
+	upload := namedStep(t, compare, "Upload baseline comparison")
+	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@v7" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
+		t.Fatalf("comparison upload=%+v", upload)
 	}
 }
 
@@ -857,7 +976,7 @@ func TestRepairBuildsUseTheResolvedTagCommit(t *testing.T) {
 	}
 
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	for _, jobName := range []string{"test", "race", "smoke", "license", "build", "e2e", "e2e-gate"} {
+	for _, jobName := range []string{"module", "test", "race", "smoke", "license", "build", "e2e", "e2e-gate", "e2e-compare"} {
 		job := reusable.Jobs[jobName]
 		checkout := usesStep(t, job, "actions/checkout@v7")
 		if checkout.With["ref"] != "${{ inputs.source_sha }}" {

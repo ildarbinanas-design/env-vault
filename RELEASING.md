@@ -85,12 +85,14 @@ Before a new release:
    ```sh
    gofmt -w $(git ls-files '*.go')
    git diff --check
-   go test ./...
-   go vet ./...
-   go test -race ./...
-   go run ./e2e/cmd/e2e-runner run --phase baseline
-   scripts/smoke.sh
-   scripts/license-check.sh
+   GOTOOLCHAIN=go1.26.5 go mod tidy -diff
+   GOTOOLCHAIN=go1.26.5 go mod verify
+   GOTOOLCHAIN=go1.26.5 go test ./...
+   GOTOOLCHAIN=go1.26.5 go vet ./...
+   GOTOOLCHAIN=go1.26.5 go test -race ./...
+   GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate
+   GOTOOLCHAIN=go1.26.5 scripts/smoke.sh
+   GOTOOLCHAIN=go1.26.5 scripts/license-check.sh
    ```
 
    Review any `gofmt` diff before proceeding. Platform-specific smoke and

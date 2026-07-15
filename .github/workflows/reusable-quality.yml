@@ -16,6 +16,25 @@ permissions:
   contents: read
 
 jobs:
+  module:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Require tidy module files
+        run: go mod tidy -diff
+
+      - name: Verify module cache
+        run: go mod verify
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -76,9 +95,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          # go-licenses v2.0.1 requires Go 1.23 or newer. Keep the project
-          # compatibility jobs on go.mod while pinning the tool runtime here.
-          go-version: "1.23.x"
+          go-version-file: go.mod
 
       - name: Check dependency licenses
         shell: bash
@@ -307,7 +324,7 @@ jobs:
 
       - name: Install pinned E2E reporter
         continue-on-error: true
-        run: go install gotest.tools/gotestsum@v1.12.2
+        run: go install gotest.tools/gotestsum@v1.13.0
 
       - name: Run E2E and finalize reports
         env:
@@ -318,7 +335,7 @@ jobs:
           ENV_VAULT_E2E_COMMIT_SHA: ${{ inputs.source_sha }}
         run: >-
           go run ./e2e/cmd/e2e-runner run
-          --phase baseline
+          --phase candidate
           --coverage-floor 60
           --command-timeout 3m
           --test-timeout 5m
@@ -329,8 +346,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: env-vault-e2e-baseline-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
-          path: reports/e2e/baseline
+          name: env-vault-e2e-candidate-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
+          path: reports/e2e/candidate
           if-no-files-found: error
           retention-days: 30
 
@@ -353,7 +370,7 @@ jobs:
       - name: Download E2E report artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: env-vault-e2e-baseline-*-attempt-${{ github.run_attempt }}
+          pattern: env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}
           path: reports-download
           merge-multiple: true
 
@@ -362,10 +379,120 @@ jobs:
         run: >-
           go run ./e2e/cmd/e2e-runner validate-matrix
           --reports reports-download
-          --phase baseline
+          --phase candidate
           --expected-commit "${{ inputs.source_sha }}"
           --expected-run-id "${{ github.run_id }}"
           --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --expected-run-attempt "${{ github.run_attempt }}"
           --expected-repository "${{ github.repository }}"
-          --expected-reporter "v1.12.2"
+          --expected-reporter "v1.13.0"
+
+      - name: Upload matrix validation
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: env-vault-e2e-candidate-matrix-attempt-${{ github.run_attempt }}
+          path: |
+            reports-download/matrix-validation.json
+            reports-download/matrix-validation.md
+          if-no-files-found: error
+          retention-days: 30
+
+  e2e-compare:
+    if: always()
+    needs: [e2e, e2e-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - name: Check out canonical baseline source
+        uses: actions/checkout@v7
+        with:
+          repository: ildarbinanas-design/env-vault
+          ref: 7a044bdbf73aa592016bbb3a02d81f314f08fe63
+          path: baseline-source
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download candidate E2E reports
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}
+          path: candidate-download
+          merge-multiple: true
+
+      - name: Download canonical baseline E2E reports
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ildarbinanas-design/env-vault
+          run-id: "29441160687"
+          pattern: env-vault-e2e-baseline-*-attempt-1
+          path: baseline-download
+          merge-multiple: true
+
+      - name: Compare candidate with canonical baseline
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd baseline-source
+          go run ./e2e/cmd/e2e-runner compare \
+            --baseline "$GITHUB_WORKSPACE/baseline-download" \
+            --candidate "$GITHUB_WORKSPACE/candidate-download" \
+            --output "$GITHUB_WORKSPACE/comparison-report" \
+            --coverage-tolerance 0 \
+            --baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
+            --baseline-run-id "29441160687" \
+            --baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
+            --baseline-run-attempt "1" \
+            --baseline-repository "ildarbinanas-design/env-vault" \
+            --baseline-reporter "v1.12.2" \
+            --candidate-commit "${{ inputs.source_sha }}" \
+            --candidate-run-id "${{ github.run_id }}" \
+            --candidate-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --candidate-run-attempt "${{ github.run_attempt }}" \
+            --candidate-repository "${{ github.repository }}" \
+            --candidate-reporter "v1.13.0"
+
+      - name: Verify exact migration identity
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            .status == "pass" and
+            .suite_hash == "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" and
+            .baseline_go_version == "go1.22.12" and
+            .candidate_go_version == "go1.26.5"
+          ' comparison-report/comparison.json >/dev/null
+
+      - name: Add comparison to job summary
+        if: always()
+        shell: bash
+        run: cat comparison-report/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload baseline comparison
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: env-vault-e2e-candidate-comparison-attempt-${{ github.run_attempt }}
+          path: |
+            comparison-report/comparison.json
+            comparison-report/comparison.md
+          if-no-files-found: error
+          retention-days: 30

@@ -54,8 +54,8 @@ Config saves reject a symlink target and publish a mode `0600` temporary sibling
 with `fsync` followed by atomic rename. This prevents truncation, partial reads,
 and writes through a tracked config symlink. Profile create/add/remove wrap the
 complete load, mutation, validation, and atomic save in an exclusive lock from
-`github.com/gofrs/flock v0.12.1`, the verified version that retains the project's
-Go 1.22 baseline. The adjacent `<config>.lock` file is created with mode `0600`,
+`github.com/gofrs/flock v0.13.0`, verified by the unchanged cross-platform E2E
+contract on Go 1.26.5. The adjacent `<config>.lock` file is created with mode `0600`,
 rechecked as a non-symlink regular file, and intentionally kept after unlock so
 all processes continue to coordinate on one inode. Acquisition retries every
 25 milliseconds for at most five seconds (or the caller's earlier deadline),
@@ -113,6 +113,12 @@ The public module path is:
 github.com/ildarbinanas-design/env-vault
 ```
 
+The module requires the exact stable Go 1.26.5 patch. That version was selected
+from the official [Go release history](https://go.dev/doc/devel/release), and
+the migration follows the [Go 1.26 release notes](https://go.dev/doc/go1.26).
+CI reads the version from `go.mod`, so the compiler recorded in every artifact
+is the compiler that actually ran its checks.
+
 ## Release Artifact Builds
 
 Release publication is owned by `build-binaries`. A strict `vX.Y.Z` tag push
@@ -136,6 +142,11 @@ aggregate gate requires all native reports, 100% critical scenario coverage,
 only declared platform skips, valid report formats, and a clean sentinel leak
 scan. The full architecture and feature trace are documented in
 [`docs/e2e.md`](e2e.md).
+
+Every candidate matrix is also compared with the immutable Go 1.22.12 baseline
+identity in [`docs/e2e-baseline.json`](e2e-baseline.json). The gate requires the
+same semantic suite hash, critical scenarios, normalized public contracts and
+exit codes, platform set, and non-decreasing statement coverage.
 
 Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
 runners with `CGO_ENABLED=1` because the macOS Keychain backend requires

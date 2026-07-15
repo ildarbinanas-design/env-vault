@@ -109,8 +109,12 @@ path above avoids this entirely.
 
 ## Install From Source
 
+Source builds require Go 1.26.5 or newer. CI and release artifacts use the
+exact stable patch declared in `go.mod`.
+
 ```sh
-go build -o env-vault ./cmd/env-vault
+GOTOOLCHAIN=go1.26.5 go version
+GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
 ./env-vault version
 ```
 
@@ -119,7 +123,9 @@ go build -o env-vault ./cmd/env-vault
 Binary archives are built by the `build-binaries` GitHub Actions workflow.
 Both release builds and pull-request CI call the same `reusable-quality.yml`
 workflow, including native license scans and binary-only E2E verification on
-Linux, macOS, and Windows.
+Linux, macOS, and Windows. Candidate reports are compared without coverage or
+contract tolerance to the preserved Go 1.22.12 baseline from
+[run 29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687).
 
 - Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
   leave the optional version input blank.

@@ -137,29 +137,49 @@ skip instead of silently dropping the platform.
 | Unique sentinel per scenario and no output/artifact leakage | all scenarios | `TestE2E/*` plus runner leak gate | P5 |
 | Real user keyrings remain untouched | all scenarios | isolated triple-gated harness | P5 |
 
+## Canonical Go 1.22 baseline
+
+Phase 1 was merged before any toolchain or production dependency change. Its
+canonical `main` evidence is [Actions run 29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687)
+at commit `7a044bdbf73aa592016bbb3a02d81f314f08fe63`, run attempt `1`, with
+Go `go1.22.12`, gotestsum `v1.12.2`, and semantic suite hash
+`ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`.
+Linux and Darwin passed all 22 scenarios at 71.1% statement coverage; Windows
+passed 20 with only the two declared skips at 70.7%. The exact artifact IDs,
+SHA-256 values, binary digests, and expiry are pinned in
+[`docs/e2e-baseline.json`](e2e-baseline.json).
+
+Candidate CI downloads reports from that exact run and compares them with the
+current five-platform matrix at zero coverage tolerance. Comparison executes
+from the baseline source checkout so regeneration with recorded Go 1.22.12
+does not try to load the candidate's Go 1.26.5 module. The report artifacts are
+retained for 30 days; establish and pin a new canonical baseline before their
+documented expiry instead of silently regenerating the old identity.
+
 ## Running locally
 
 Install the pinned reporting tool outside the module; it is not a production
-dependency. `v1.12.2` is the newest stable gotestsum release compatible with
-the Go 1.22 baseline:
+dependency. The baseline retains `v1.12.2`; candidates use stable `v1.13.0`,
+whose newer `x/tools` graph builds with Go 1.26.5 while preserving JSONL, JUnit,
+and test exit-code behavior:
 
 ```sh
-GOTOOLCHAIN=go1.22.12 go install gotest.tools/gotestsum@v1.12.2
+GOTOOLCHAIN=go1.26.5 go install gotest.tools/gotestsum@v1.13.0
 ```
 
 Run every functional, coverage, full burn-in, and locking burn-in pass. With no
 binary option, the runner builds the release-like binary itself:
 
 ```sh
-GOTOOLCHAIN=go1.22.12 go run ./e2e/cmd/e2e-runner run --phase baseline
+GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate
 ```
 
 Use an already built native binary or release archive without changing the
 suite:
 
 ```sh
-go run ./e2e/cmd/e2e-runner run --phase baseline --binary ./env-vault
-go run ./e2e/cmd/e2e-runner run --phase baseline \
+go run ./e2e/cmd/e2e-runner run --phase candidate --binary ./env-vault
+go run ./e2e/cmd/e2e-runner run --phase candidate \
   --artifact ./dist/env-vault-darwin-arm64.tar.gz \
   --checksum ./dist/env-vault-darwin-arm64.tar.gz.sha256
 ```
@@ -224,27 +244,33 @@ Validate a downloaded five-platform set with:
 
 ```sh
 go run ./e2e/cmd/e2e-runner validate-matrix \
-  --reports reports-download --phase baseline \
+  --reports reports-download --phase candidate \
   --expected-commit "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
   --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
   --expected-run-attempt "$GITHUB_RUN_ATTEMPT" \
   --expected-repository "$GITHUB_REPOSITORY" \
-  --expected-reporter "v1.12.2"
+  --expected-reporter "v1.13.0"
 ```
 
 Compare a migration candidate to the preserved baseline with no coverage
 tolerance:
 
 ```sh
-go run ./e2e/cmd/e2e-runner compare \
-  --baseline baseline-download --candidate candidate-download \
-  --baseline-commit "$BASELINE_SHA" --baseline-run-id "$BASELINE_RUN_ID" \
-  --baseline-run-url "$BASELINE_RUN_URL" --baseline-run-attempt "$BASELINE_RUN_ATTEMPT" \
-  --baseline-repository "$GITHUB_REPOSITORY" --baseline-reporter "$BASELINE_REPORTER" \
-  --candidate-commit "$GITHUB_SHA" --candidate-run-id "$GITHUB_RUN_ID" \
-  --candidate-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --candidate-run-attempt "$GITHUB_RUN_ATTEMPT" \
-  --candidate-repository "$GITHUB_REPOSITORY" --candidate-reporter "$CANDIDATE_REPORTER"
+workspace="$PWD"
+(
+  cd baseline-source
+  go run ./e2e/cmd/e2e-runner compare \
+    --baseline "$workspace/baseline-download" --candidate "$workspace/candidate-download" \
+    --baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
+    --baseline-run-id "29441160687" \
+    --baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
+    --baseline-run-attempt "1" \
+    --baseline-repository "ildarbinanas-design/env-vault" --baseline-reporter "v1.12.2" \
+    --candidate-commit "$GITHUB_SHA" --candidate-run-id "$GITHUB_RUN_ID" \
+    --candidate-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+    --candidate-run-attempt "$GITHUB_RUN_ATTEMPT" \
+    --candidate-repository "$GITHUB_REPOSITORY" --candidate-reporter "v1.13.0"
+)
 ```
 
 The comparison requires the same platform set and suite hash, the same

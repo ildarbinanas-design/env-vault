@@ -5,6 +5,6 @@ package main
 // compatibility; that must not pretend the scenarios, normalization, report
 // validation, or comparison logic changed.
 const (
-	gotestsumModuleVersion = "gotest.tools/gotestsum@v1.12.2"
-	gotestsumVersion       = "v1.12.2"
+	gotestsumModuleVersion = "gotest.tools/gotestsum@v1.13.0"
+	gotestsumVersion       = "v1.13.0"
 )
