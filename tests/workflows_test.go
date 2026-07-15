@@ -89,6 +89,7 @@ type workflowTarget struct {
 
 type workflowStep struct {
 	Name            string            `yaml:"name"`
+	ID              string            `yaml:"id"`
 	Uses            string            `yaml:"uses"`
 	If              string            `yaml:"if"`
 	Shell           string            `yaml:"shell"`
@@ -749,16 +750,60 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 			t.Fatalf("baseline report download %s=%q, want %q", key, baselineDownload.With[key], want)
 		}
 	}
+	baselineValidate := namedStep(t, compare, "Validate canonical baseline against baseline source")
+	if baselineValidate.ID != "baseline_source_validation" || baselineValidate.If != "always()" || !baselineValidate.ContinueOnError || baselineValidate.Shell != "bash" {
+		t.Fatalf("baseline source validation=%+v", baselineValidate)
+	}
+	for _, snippet := range []string{
+		"cd baseline-source",
+		`rm -f -- \`,
+		`"$GITHUB_WORKSPACE/baseline-download/matrix-validation.json"`,
+		"GOTOOLCHAIN=go1.22.12 go run ./e2e/cmd/e2e-runner validate-matrix",
+		`--reports "$GITHUB_WORKSPACE/baseline-download"`,
+		"--phase baseline",
+		`--expected-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63"`,
+		`--expected-run-id "29441160687"`,
+		`--expected-reporter "v1.12.2"`,
+	} {
+		if !strings.Contains(baselineValidate.Run, snippet) {
+			t.Fatalf("baseline source validation missing %q in %q", snippet, baselineValidate.Run)
+		}
+	}
+	if strings.Index(baselineValidate.Run, "matrix-validation.json") >= strings.Index(baselineValidate.Run, "go run ./e2e/cmd/e2e-runner validate-matrix") {
+		t.Fatal("baseline stale matrix validation must be removed before source validation")
+	}
+	candidateValidate := namedStep(t, compare, "Validate candidate against candidate source")
+	if candidateValidate.ID != "candidate_source_validation" || candidateValidate.If != "always()" || !candidateValidate.ContinueOnError || candidateValidate.Shell != "bash" {
+		t.Fatalf("candidate source validation=%+v", candidateValidate)
+	}
+	for _, snippet := range []string{
+		"GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix",
+		`"$GITHUB_WORKSPACE/candidate-download/matrix-validation.json"`,
+		`--reports "$GITHUB_WORKSPACE/candidate-download"`,
+		"--phase candidate",
+		`--expected-commit "${{ inputs.source_sha }}"`,
+		`--expected-run-id "${{ github.run_id }}"`,
+		`--expected-reporter "v1.13.0"`,
+	} {
+		if !strings.Contains(candidateValidate.Run, snippet) {
+			t.Fatalf("candidate source validation missing %q in %q", snippet, candidateValidate.Run)
+		}
+	}
+	if strings.Index(candidateValidate.Run, "matrix-validation.json") >= strings.Index(candidateValidate.Run, "go run ./e2e/cmd/e2e-runner validate-matrix") {
+		t.Fatal("candidate stale matrix validation must be removed before source validation")
+	}
 	run := namedStep(t, compare, "Compare candidate with canonical baseline")
 	if run.If != "always()" || run.Shell != "bash" {
 		t.Fatalf("comparison execution if=%q shell=%q", run.If, run.Shell)
 	}
 	for _, snippet := range []string{
-		"cd baseline-source",
-		"go run ./e2e/cmd/e2e-runner compare",
+		"GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare",
 		`--baseline "$GITHUB_WORKSPACE/baseline-download"`,
 		`--candidate "$GITHUB_WORKSPACE/candidate-download"`,
 		"--coverage-tolerance 0",
+		`--expected-suite-hash "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf"`,
+		`--baseline-validation-outcome "${{ steps.baseline_source_validation.outcome }}"`,
+		`--candidate-validation-outcome "${{ steps.candidate_source_validation.outcome }}"`,
 		`--baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63"`,
 		`--baseline-run-id "29441160687"`,
 		`--baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687"`,
@@ -769,6 +814,21 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 	} {
 		if !strings.Contains(run.Run, snippet) {
 			t.Fatalf("comparison command missing %q in %q", snippet, run.Run)
+		}
+	}
+	positions := make(map[string]int)
+	for index, step := range compare.Steps {
+		positions[step.Name] = index
+	}
+	for before, after := range map[string]string{
+		"Preload recorded comparison toolchains":              "Validate canonical baseline against baseline source",
+		"Download canonical baseline E2E reports":             "Validate canonical baseline against baseline source",
+		"Download candidate E2E reports":                      "Validate candidate against candidate source",
+		"Validate canonical baseline against baseline source": "Compare candidate with canonical baseline",
+		"Validate candidate against candidate source":         "Compare candidate with canonical baseline",
+	} {
+		if positions[before] >= positions[after] {
+			t.Fatalf("comparison step %q must precede %q", before, after)
 		}
 	}
 	identity := namedStep(t, compare, "Verify exact migration identity")

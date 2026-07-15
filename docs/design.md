@@ -146,7 +146,12 @@ scan. The full architecture and feature trace are documented in
 Every candidate matrix is also compared with the immutable Go 1.22.12 baseline
 identity in [`docs/e2e-baseline.json`](e2e-baseline.json). The gate requires the
 same semantic suite hash, critical scenarios, normalized public contracts and
-exit codes, platform set, and non-decreasing statement coverage.
+exit codes, platform set, and non-decreasing statement coverage. Before the
+cross-source comparison, baseline reports are revalidated (including derived
+coverage regeneration) against the canonical baseline checkout/toolchain while
+candidate reports are revalidated against the candidate checkout/toolchain; a
+production fix cannot make either coverage profile appear invalid merely
+because it belongs to a different source revision.
 
 Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
 runners with `CGO_ENABLED=1` because the macOS Keychain backend requires

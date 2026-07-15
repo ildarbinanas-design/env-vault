@@ -452,17 +452,60 @@ jobs:
           path: baseline-download
           merge-multiple: true
 
+      - name: Validate canonical baseline against baseline source
+        id: baseline_source_validation
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- \
+            "$GITHUB_WORKSPACE/baseline-download/matrix-validation.json" \
+            "$GITHUB_WORKSPACE/baseline-download/matrix-validation.md"
+          cd baseline-source
+          GOTOOLCHAIN=go1.22.12 go run ./e2e/cmd/e2e-runner validate-matrix \
+            --reports "$GITHUB_WORKSPACE/baseline-download" \
+            --phase baseline \
+            --expected-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
+            --expected-run-id "29441160687" \
+            --expected-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
+            --expected-run-attempt "1" \
+            --expected-repository "ildarbinanas-design/env-vault" \
+            --expected-reporter "v1.12.2"
+
+      - name: Validate candidate against candidate source
+        id: candidate_source_validation
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- \
+            "$GITHUB_WORKSPACE/candidate-download/matrix-validation.json" \
+            "$GITHUB_WORKSPACE/candidate-download/matrix-validation.md"
+          GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
+            --reports "$GITHUB_WORKSPACE/candidate-download" \
+            --phase candidate \
+            --expected-commit "${{ inputs.source_sha }}" \
+            --expected-run-id "${{ github.run_id }}" \
+            --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --expected-run-attempt "${{ github.run_attempt }}" \
+            --expected-repository "${{ github.repository }}" \
+            --expected-reporter "v1.13.0"
+
       - name: Compare candidate with canonical baseline
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          cd baseline-source
-          go run ./e2e/cmd/e2e-runner compare \
+          GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare \
             --baseline "$GITHUB_WORKSPACE/baseline-download" \
             --candidate "$GITHUB_WORKSPACE/candidate-download" \
             --output "$GITHUB_WORKSPACE/comparison-report" \
             --coverage-tolerance 0 \
+            --expected-suite-hash "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" \
+            --baseline-validation-outcome "${{ steps.baseline_source_validation.outcome }}" \
+            --candidate-validation-outcome "${{ steps.candidate_source_validation.outcome }}" \
             --baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
             --baseline-run-id "29441160687" \
             --baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
