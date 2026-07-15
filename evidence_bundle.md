@@ -1320,3 +1320,101 @@ Remove stable hardcoded secret payload fixtures from tests, smoke checks, docs, 
 ## Next Step
 
 Repeat AI-PDLC D0.20 acceptance with the registry update gate.
+
+---
+
+# Automated Release Planning Evidence — 2026-07-15T21:23:05Z
+
+## Scope
+
+This implementation run adds reviewed SemVer planning and exact-tag handoff
+without creating a tag or public release locally or remotely. The source base
+is `a4e9a5169959666a50f5022194d0b802cf3edac8` on local branch
+`agent/automated-release`.
+
+The changed scope is limited to:
+
+- Release Please manifest/configuration and the bootstrapped `CHANGELOG.md`;
+- protected release-planning, App-scope-audit, CI title, and existing publisher
+  workflows;
+- fail-closed release commit, generated-PR authorization, changelog extraction,
+  and lifecycle-label helpers;
+- workflow/release-script regression tests; and
+- contributor, architecture, external-settings, release, and user
+  documentation.
+
+No CLI secret behavior, production secret backend, product dependency, Go
+toolchain directive, release tag, GitHub Release, or Homebrew formula was
+changed by this run.
+
+## Implemented Controls
+
+| Control | Result | Claim status |
+|---|---|---|
+| Version ownership | `.release-please-manifest.json` bootstraps the published `0.0.7`; no manual bump is included in this infrastructure branch | repo_verified |
+| Documentation/version boundary | A generated PR updates the manifest, exact `CHANGELOG.md` section, and the single README version marker together | repo_verified |
+| Release Please strategy | Go strategy, manifest mode, PR-only, separate component PRs, literal project name in the title, and pinned v17.6.0 schema preserve the exact reviewed branch/title contract while keeping tags component-free | repo_verified |
+| Publication authorization | Merge of the generated release PR plus successful exact-SHA `ci` push run is required | repo_verified |
+| Generated PR provenance | Expected App bot, branch, title, stable footer, lifecycle label, base repo/branch, and merge SHA are checked | repo_verified |
+| Stale/detached protection | Current manifest equality, current-main ancestry, and exact successful CI are checked before tag/publication; every open proposal is one exact three-file commit on a green main base | repo_verified |
+| Tag-trigger protection | `build-binaries` repeats deterministic commit and generated-PR authorization before any public mutation | repo_verified |
+| Manual recovery boundary | Publisher dispatches can only resolve an existing tag; `v0.0.8+` repeats generated-PR authorization, while published `v0.0.1`–`v0.0.7` require an existing stable Release and tag ancestry | repo_verified |
+| Release Please lifecycle | Exact tag verification is followed by idempotent `pending` to `tagged` reconciliation; the serialized publisher requires tagged-only state with a bounded deadline | repo_verified |
+| Lifecycle label bootstrap | Planning idempotently creates/normalizes both Release Please repository labels before opening a proposal | repo_verified |
+| Merge-message integrity | Planning and the manual audit require squash-only `PR_TITLE` plus `PR_BODY`, strict checks, immutable `v*` tags, and no App bypass; rebase/merge commits fail closed | repo_verified |
+| Publisher ownership | `build-binaries` remains the sole GitHub Release/assets/attestation/Homebrew publisher | repo_verified |
+| Release notes | The public Release body is the reviewed, non-empty version section fetched from `CHANGELOG.md` at the exact tag source SHA | repo_verified |
+| External Actions | Checkout, setup, artifact, attestation, SBOM, dependency review, Release Please v5.0.0, and App-token v3.2.0 are pinned to verified full commit SHAs | source_verified |
+| PR title integrity | CI handles `pull_request.edited`, so a post-check title change reruns the Conventional Commit gate | repo_verified |
+| Human publication authorization | The generated PR has a stable body header stating that merge authorizes its exact release; proposal and merged-PR gates require the marker | repo_verified |
+| Release serialization | Planning and publication share non-cancelling `env-vault-release` concurrency, preventing label/tag handoff and successive-version races | repo_verified |
+| Future generated-PR CI | Workflow tests derive strict SemVer from the manifest rather than pinning `0.0.7`, so the generated version-only PR remains testable | repo_verified |
+| Secrets | No credential value was read, printed, persisted, or added to evidence | cli_observed |
+
+## Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 plus official Release Please/GitHub documentation review | confirmed manifest mode, generic marker, title tokens, workflow recursion, App token, action inputs, and current stable action releases | source_verified |
+| GitHub API release/tag and signature reads for privileged actions | `release-please-action` v5.0.0 commit and `create-github-app-token` v3.2.0 commit are verified | source_verified |
+| `go test ./tests` | passed after release workflow, script, authorization, and Windows portability tests | cli_observed |
+| `go test ./... -count=1` | passed on the release-automation tree, including E2E runner and workflow contracts | cli_observed |
+| `go vet ./...` | passed on the release-automation tree | cli_observed |
+| `go test -race ./... -count=1` | passed; current release/workflow tests were repeated under race after the final ruleset changes | cli_observed |
+| `scripts/smoke.sh` | clean unrestricted rerun passed: `smoke ok` | cli_observed |
+| `scripts/license-check.sh` | unrestricted rerun passed with pinned go-licenses v2.0.1; expected non-Go assembly warning only | cli_observed |
+| `go mod tidy -diff`; `go mod verify` | no diff; all modules verified | cli_observed |
+| `shellcheck -x` on all new release helpers | passed | cli_observed |
+| `bash -n` on all new release helpers | passed | cli_observed |
+| Official v17.6.0 JSON schema + temporary pinned `ajv-cli@5.0.0` | `release-please-config.json valid`; only the schema's unsupported `uri-reference` format was ignored | cli_observed |
+| `git diff --check`; `gofmt`; `bash -n`; `shellcheck -x` | passed after final documentation, workflow, test, and helper edits | cli_observed |
+| Independent security, API/source, action-pin, and test audits | identified and drove fixes for Release Please merged-PR defaults, component/title rendering, version rendering, proposal-base TOCTOU, future generated-PR CI, explicit human authorization, lifecycle races, API pagination, App identity, rulesets, action pinning, and capability overclaims | cli_observed |
+| Read-only live repository settings gate | failed closed as expected because current GitHub merge settings are not yet the required squash-only contract | cli_observed |
+
+## Risks And Pending Evidence
+
+| Risk or pending evidence | Status | Mitigation or required action | Claim status |
+|---|---|---|---|
+| Dedicated `env-vault-release-planning` GitHub App and `release-planning` environment are external state | open | Create them with the exact least-privilege settings in `docs/release-external-settings.md`, then run the read-only scope/settings audit | unknown |
+| Current repository merge settings allow rebase and use `COMMIT_OR_PR_TITLE` plus `COMMIT_MESSAGES` | open | Change to squash-only `PR_TITLE` plus `PR_BODY`; the planning workflow fails closed until this external contract is satisfied | cli_observed |
+| Current main ruleset allows rebase, and no immutable release-tag ruleset exists | open | Restrict the main ruleset to squash only; add active `Protect env-vault release tags` for `refs/tags/v*` with update/deletion restrictions | cli_observed |
+| Global ruleset bypass actors are visible only to a ruleset writer | open | Do not grant Administration write to the App; an administrator must record empty main/tag bypass lists during setup and rotation | source_verified |
+| Release Please lifecycle labels are currently absent in the repository | mitigated_in_code | The scoped planning App idempotently creates and verifies both definitions before the first proposal | cli_observed |
+| Exact App bot login/branch/body/label contract has not yet been observed in this repository | open | The implementation pins the upstream version and tests fixtures; confirm the first generated PR before merge | source_verified |
+| No real tag-triggered automated release has run | open | Merge the infrastructure PR only after green CI, inspect the generated release PR, then record the first planning and publisher run URLs | unknown |
+| Release Please reads the remote branch and cannot lock `main` during its API call | mitigated_in_code | Post-action validation requires the proposal to be one exact commit over a main SHA with successful push CI; shared concurrency and repeated exact-SHA publication checks fail closed | repo_verified |
+| Planning App `Contents: write` also technically permits Release API calls, and PR/contents write could merge a green PR | accepted | GitHub permission granularity cannot split these operations; exact action pins and workflow contract tests prove no Release/asset/merge endpoint exists in the planning path | source_verified |
+| Published `v0.0.1`–`v0.0.7` predate Release Please metadata | accepted | A bounded manual-only compatibility path requires their existing stable GitHub Release, immutable exact tag, and ancestry; it cannot create a tag or authorize `v0.0.8+` | repo_verified |
+| Remote publication requires explicit approval under `AGENTS.md` | blocked_by_policy | Obtain explicit approval before commit, push, PR creation, tag, or release; no remote mutation was performed | cli_observed |
+| Expected next version is `v0.0.8`, but Release Please is authoritative | pending | Do not edit the manifest manually; verify the generated release PR's computed version | source_verified |
+
+## Claim Status Summary
+
+| Claim | Status | Evidence |
+|---|---|---|
+| No manual version bump in implementation branch | repo_verified | manifest remains `0.0.7`; README marker remains `v0.0.7` |
+| Automatic PR-only version/changelog preparation implemented | repo_verified | release config, planning workflow, workflow tests |
+| Exact generated-PR and CI authorization implemented | repo_verified | authorization helper, tag gate, publisher entry gate, fail-closed tests |
+| Public release remains single-owner | repo_verified | Release Please skip setting and `build-binaries` publication step |
+| Remote release automation operational | unknown | external App/environment, branch/tag ruleset and merge-setting changes, admin bypass audit, and first real workflow run still required |
+| No remote mutation performed | cli_observed | local status/diff only; no commit, push, tag, release, or PR command |

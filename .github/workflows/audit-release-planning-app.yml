@@ -1,0 +1,70 @@
+name: audit-release-planning-app
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: env-vault-release-planning-app-audit
+  cancel-in-progress: false
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: release-planning
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          persist-credentials: "false"
+
+      - id: app-token
+        name: Mint read-only installation audit token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-administration: read
+          permission-metadata: read
+
+      - name: Require the exact release planning App identity
+        env:
+          ACTUAL_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$ACTUAL_APP_SLUG" != "env-vault-release-planning" ]]; then
+            echo "unexpected release planning App identity" >&2
+            exit 1
+          fi
+
+      - name: Verify repository release settings and bypass policy
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: scripts/release/verify-repository-release-settings.sh
+
+      - name: Require a single-repository installation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t repositories < <(
+            gh api --paginate installation/repositories \
+              --jq '.repositories[].full_name'
+          )
+          if [[ "${#repositories[@]}" != "1" || "${repositories[0]:-}" != "ildarbinanas-design/env-vault" ]]; then
+            echo "release planning App installation scope must contain only env-vault" >&2
+            exit 1
+          fi
+          {
+            printf '## Release planning App scope audit\n\n'
+            printf -- '- Installation contains only `ildarbinanas-design/env-vault`.\n'
+            printf -- '- Audit token permissions: metadata read and administration read.\n'
+            printf -- '- The token is revoked by the action post-step.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

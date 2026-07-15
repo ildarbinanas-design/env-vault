@@ -1,0 +1,213 @@
+name: release-please
+
+on:
+  workflow_run:
+    workflows:
+      - ci
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: env-vault-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  plan:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release-planning
+    outputs:
+      publish: ${{ steps.classify.outputs.publish }}
+      source_sha: ${{ steps.classify.outputs.source_sha }}
+      version: ${{ steps.classify.outputs.version }}
+    steps:
+      - name: Check out the exact green main commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          fetch-tags: true
+          persist-credentials: "false"
+
+      - id: classify
+        name: Classify the exact green main commit
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "checked out ${actual_sha}, expected ${EXPECTED_SHA}" >&2
+            exit 1
+          fi
+          scripts/release/classify-release-commit.sh "$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+
+      - id: current
+        name: Require the planning commit to remain current
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_sha="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq '.object.sha')"
+          if [[ "$current_sha" == "$EXPECTED_SHA" ]]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'current=false' >> "$GITHUB_OUTPUT"
+            echo "skipping stale planning run for ${EXPECTED_SHA}; current main is ${current_sha}"
+          fi
+
+      - id: release-token
+        name: Mint repository-scoped release planning token
+        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: env-vault
+          permission-administration: read
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Require the exact release planning App identity
+        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        env:
+          ACTUAL_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$ACTUAL_APP_SLUG" != "env-vault-release-planning" ]]; then
+            echo "unexpected release planning App identity" >&2
+            exit 1
+          fi
+
+      - name: Verify repository release settings and bypass policy
+        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+        shell: bash
+        run: scripts/release/verify-repository-release-settings.sh
+
+      - name: Ensure release lifecycle labels
+        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+        shell: bash
+        run: scripts/release/ensure-release-labels.sh
+
+      - id: authorize
+        name: Verify generated release pull request authorization
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
+          SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          VERSION: ${{ steps.classify.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="$(scripts/release/verify-release-authorization.sh "$VERSION" "$SOURCE_SHA" prepublish)"
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
+
+      - id: release-please
+        name: Create or update the reviewed release pull request
+        if: steps.classify.outputs.publish != 'true' && steps.current.outputs.current == 'true'
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.release-token.outputs.token }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+
+      - name: Verify the proposal is based on a green main commit
+        if: steps.classify.outputs.publish != 'true' && steps.current.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
+        shell: bash
+        run: scripts/release/verify-release-proposal.sh
+
+      - name: Create or verify the exact release tag
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          PR_NUMBER: ${{ steps.authorize.outputs.pr_number }}
+          SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          VERSION: ${{ steps.classify.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          existing_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
+          tag_status=$?
+          set -e
+          if [[ "$tag_status" == "0" ]]; then
+            if [[ "$existing_sha" != "$SOURCE_SHA" ]]; then
+              echo "tag ${VERSION} points to ${existing_sha}, expected ${SOURCE_SHA}" >&2
+              exit 1
+            fi
+            echo "tag ${VERSION} already points to the exact green commit; no-op"
+          elif [[ "$tag_status" == "4" ]]; then
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --raw-field "ref=refs/tags/${VERSION}" \
+              --raw-field "sha=${SOURCE_SHA}" \
+              --silent
+          else
+            echo "failed to resolve existing tag ${VERSION}" >&2
+            exit "$tag_status"
+          fi
+
+          verified_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
+          if [[ "$verified_sha" != "$SOURCE_SHA" ]]; then
+            echo "tag ${VERSION} points to ${verified_sha}, expected ${SOURCE_SHA}" >&2
+            exit 1
+          fi
+          # The tag-triggered publisher polls for this exact final state. If a
+          # label API call fails, it cannot publish and this step is retryable.
+          scripts/release/mark-release-pr-tagged.sh "$PR_NUMBER"
+
+      - name: Record release planning result
+        if: always()
+        env:
+          PR_CREATED: ${{ steps.release-please.outputs.prs_created }}
+          CURRENT: ${{ steps.current.outputs.current }}
+          PUBLISH: ${{ steps.classify.outputs.publish }}
+          SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          VERSION: ${{ steps.classify.outputs.version }}
+        shell: bash
+        run: |
+          {
+            printf '## Release planning\n\n'
+            printf -- '- Exact green source: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Source was current when planning was checked: `%s`\n' "${CURRENT:-false}"
+            printf -- '- Release PR created or updated: `%s`\n' "${PR_CREATED:-false}"
+            printf -- '- Exact release tag requested: `%s`\n' "${PUBLISH:-false}"
+            if [[ "${PUBLISH:-false}" == "true" ]]; then
+              printf -- '- Version: `%s`\n' "$VERSION"
+            fi
+            printf -- '- Public GitHub Release creation remains owned by `build-binaries`.\n'
+          } >> "$GITHUB_STEP_SUMMARY"

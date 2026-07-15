@@ -93,8 +93,10 @@ Download the archive for your platform from the
 [latest release](https://github.com/ildarbinanas-design/env-vault/releases/latest),
 verify its checksum, and unpack (substitute the version, OS, and architecture):
 
+Current stable release: `v0.0.7`. <!-- x-release-please-version -->
+
 ```sh
-VERSION=v0.0.5 TARGET=darwin-arm64
+VERSION=vX.Y.Z TARGET=darwin-arm64
 curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz"
 curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz.sha256"
 shasum -a 256 -c "env-vault-${TARGET}.tar.gz.sha256"
@@ -127,14 +129,39 @@ Linux, macOS, and Windows. Candidate reports are compared without coverage or
 contract tolerance to the preserved Go 1.22.12 baseline from
 [run 29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687).
 
+- Release planning: after `ci` succeeds for a current `main` push, Release
+  Please v5 opens or updates a release pull request. Stale completed runs are
+  skipped, and the resulting single proposal commit is independently required
+  to start from a `main` SHA with a successful push CI run. That pull request
+  contains the proposed semantic version and matching `CHANGELOG.md` update;
+  Release Please is PR-only and does not create tags or GitHub Releases.
+- Release authorization: merging the reviewed release pull request is the
+  explicit approval to publish that exact version. The merge commit must pass
+  `ci` on `main` before publication begins.
+- Release handoff: after that green run, the release-planning workflow verifies
+  the deterministic release commit, generated-PR provenance, current manifest,
+  `main` ancestry, and exact successful CI run before creating the `vX.Y.Z` tag
+  at that SHA. It then marks the merged proposal `autorelease: tagged`. The
+  PR-only Release Please action itself never creates a tag or Release.
+- Release publication: the tag starts `build-binaries`, the only workflow
+  allowed to create the public GitHub Release. The tag entry point repeats the
+  same release-authorization checks, then reruns the complete quality and native
+  artifact gates before publishing archives, attestations, and the Homebrew
+  update.
+- Planning and publication share one non-cancelling concurrency group, so the
+  publisher starts only after lifecycle-label reconciliation and a later
+  proposal waits until the active release finishes.
 - Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
   leave the optional version input blank.
-- Manual release: run the workflow from the default branch with an explicit
-  `vX.Y.Z` version. The workflow validates the version, runs tests and the
-  pinned license gate, builds all archives, creates the tag and GitHub Release,
-  then updates the Homebrew tap.
-- Tag release: pushing a strict `vX.Y.Z` tag remains supported and runs the same
-  verification, build, release, and Homebrew jobs.
+- Manual dispatch can retry only an existing authorized tag; it cannot create
+  or select a new version. Historical `v0.0.1`–`v0.0.7` repairs use an explicit
+  legacy existing-Release boundary, while `v0.0.8+` requires generated-PR
+  authorization.
+
+Pull request titles follow Conventional Commits because the squash title is
+the input to version and changelog generation. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the accepted types and [RELEASING.md](RELEASING.md) for the complete
+planning, publication, and repair contracts.
 
 Supported targets are Linux amd64/arm64, macOS 15+ amd64/arm64, and Windows amd64.
 Each release contains exactly five archives and five matching SHA-256 files.

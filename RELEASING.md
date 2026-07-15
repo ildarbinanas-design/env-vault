@@ -1,10 +1,17 @@
 # Releasing env-vault
 
-This is the operator runbook for build-only runs, new releases, repairs, and
-release incidents. Homebrew publication uses a version-specific pull request,
-an exact-head squash merge, and an exact post-merge CI gate. The automated
-health job repeats the immutable release and tap checks before the workflow can
-finish successfully.
+This is the operator runbook for release planning, build-only runs,
+publication, repairs, and release incidents. Release Please v5 prepares the
+version and `CHANGELOG.md` in a pull request but is not a publisher. Merging
+that reviewed release pull request is the explicit authorization to publish
+its exact version after the merge commit passes `ci` on `main`.
+
+The release-planning workflow owns only the exact tag handoff after green CI.
+`build-binaries` is the only public publisher: it owns the GitHub Release,
+archives, checksums, attestations, and Homebrew handoff. Homebrew publication
+uses a separate version-specific pull request, an exact-head squash merge, and
+an exact post-merge CI gate. The automated health job repeats the immutable
+release and tap checks before the workflow can finish successfully.
 
 Do not publish from an unreviewed working tree. Do not move an existing tag,
 replace an existing release asset, or lower the Homebrew version.
@@ -14,15 +21,52 @@ replace an existing release asset, or lower the Homebrew version.
 - A publishing version is exactly `vMAJOR.MINOR.PATCH`. The leading `v` is part
   of the version and of the output from both `env-vault --version` and
   `env-vault version`.
+- Release Please runs in manifest, PR-only mode. It may open or update the
+  release pull request; it must not create a tag or GitHub Release.
+- `.release-please-manifest.json`, the checked-in Release Please configuration,
+  and `CHANGELOG.md` form the reviewed version-documentation boundary. The
+  generated release pull request must keep them consistent.
+- Pull request titles use Conventional Commits and become the squash commit
+  subject. The generated release pull request is also squash-merged. Rebase
+  merges are outside the release contract.
+- The release-planning GitHub App is installed only on `env-vault`; its
+  short-lived token is available only in the `release-planning` environment.
+  It may prepare the release pull request and create only the classified exact
+  release tag. GitHub's `Contents: write` permission also technically covers
+  Releases, so the enforced workflow contract—not permission granularity—is
+  what prevents this token from calling the Release or asset APIs.
+- Merging a generated release pull request is an explicit publication
+  authorization for its exact manifest version and merge SHA. Merely opening,
+  updating, approving, or closing the pull request is not authorization.
+- Automatic handoff starts only after the `ci` workflow succeeds for the exact
+  release merge SHA on `main`. A failed, cancelled, foreign-repository,
+  non-push, or non-default-branch run must not create the tag.
+- The release-planning workflow creates or verifies the exact `vX.Y.Z` tag only
+  when the green commit is a deterministic Release Please merge that changes
+  exactly the manifest, `CHANGELOG.md`, and marked README version line. It also
+  requires the single associated PR to have the expected App author, release
+  branch, title, generated body marker, lifecycle label, merge SHA, and base.
+- The proposed version must equal the manifest on current `main`; the release
+  SHA must remain in `main` and have a successful `ci` push run. A stale
+  replay, detached branch tag, or hand-written lookalike PR fails closed.
+- After verifying the exact tag, the planning workflow replaces
+  `autorelease: pending` with `autorelease: tagged`. This idempotent handoff is
+  required before Release Please can plan a later version.
+- The tag starts `build-binaries`, the sole workflow that calls the GitHub
+  Release and asset write APIs.
+  Its tag-triggered entry point repeats the commit and generated-PR
+  authorization checks before running release quality and creating the public
+  Release; the PR-only Release Please action never performs that mutation.
 - A manual publishing run must be dispatched from the repository default
-  branch. The current default branch is `main`; the workflow checks GitHub's
-  configured default branch rather than trusting a hard-coded name.
+  branch and can only retry an existing exact tag. It cannot choose a new
+  version or create its tag.
 - A dispatch without a version is build-only. It must use `repair=none` and
   cannot create a tag, Release, or Homebrew change.
-- The global `env-vault-release` concurrency group serializes release runs.
-  `cancel-in-progress: false` prevents a running release from being cancelled,
-  and `queue: max` retains pending release runs. Do not intentionally dispatch
-  competing releases: inspect the active run before starting another one.
+- The global `env-vault-release` concurrency group serializes both release
+  planning and publication. A tag-triggered publisher waits until its planning
+  job finishes label reconciliation, and a later proposal waits for an active
+  publication. `cancel-in-progress: false` and `queue: max` retain every handoff.
+  Do not intentionally dispatch competing repairs: inspect the active run first.
 - A version lower than the version in the current Homebrew formula is refused.
   An equal version is a repair or idempotent retry only: existing remote state
   must not conflict. Missing archive/checksum pairs and supply-chain evidence
@@ -34,72 +78,51 @@ replace an existing release asset, or lower the Homebrew version.
   four macOS/Linux architecture archives through `on_arm`/`on_intel`, and
   installs `README.md`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` as documentation.
 
-## Prepare a release
+## Version and changelog policy
 
-Set the intended version and repositories once. Keep the values in the current
-shell; do not put credentials in these variables.
+Release Please v5 reads the Conventional Commit squash subjects on `main` and
+the checked-in manifest. The pull request title policy is documented in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The checked-in Release Please
+configuration is authoritative for the exact bump and changelog sections;
+operators must not imitate its calculation by guessing a version or creating a
+tag.
 
-```sh
-export VERSION=vX.Y.Z
-export REPOSITORY=ildarbinanas-design/env-vault
-export TAP_REPOSITORY=ildarbinanas-design/homebrew-tap
-```
+Review the generated release pull request as a release artifact:
 
-Before a new release:
+Its checked-in header states that merging authorizes publication of that exact
+version after green `main` CI. If that marker is missing or changed, stop; both
+the proposal and publication gates reject the PR.
 
-1. Confirm that `$VERSION` matches `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`.
-2. Read the changes since the previous release and confirm that the selected
-   version follows the project's compatibility policy.
-3. Confirm that both repositories are clean and that `env-vault` is on the
-   current default branch:
+1. Confirm that its base is the current `main` and that it changes only the
+   expected version documentation, manifest, and `CHANGELOG.md` paths.
+2. Confirm that the proposed version is strict SemVer without a prerelease or
+   build suffix and is greater than the current published version.
+3. Read every changelog entry against the actual merged changes. No secret,
+   credential, temporary path, test sentinel, or unsupported claim may appear.
+4. Confirm that required pull request checks are successful, conversations are
+   resolved, and the head has not changed since review.
+5. Squash-merge the release pull request. That merge action is the explicit
+   approval to publish the exact proposed version; do not separately create the
+   tag or Release.
 
-   ```sh
-   git status --short --branch
-   git -C ../homebrew-tap status --short --branch
-   git fetch --tags origin
-   test "$(git branch --show-current)" = "$(gh repo view "$REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
-   ```
+The release-planning workflow waits for `ci` to succeed on the resulting exact
+`main` SHA. It verifies the deterministic release subject, version increase,
+three-path diff, regular-file modes, README marker, non-empty changelog section,
+generated PR provenance, current manifest, `main` ancestry, and the exact CI
+run. Only then may it create the exact tag at that SHA and reconcile the PR to
+`autorelease: tagged`. That tag starts `build-binaries`, whose tag entry point
+repeats the authorization checks before publication.
 
-4. Record the source commit. This is the immutable expected SHA for every later
-   tag and repair check:
+## Prepare external publication
 
-   ```sh
-   export SOURCE_SHA="$(git rev-parse HEAD)"
-   printf '%s  %s\n' "$VERSION" "$SOURCE_SHA"
-   ```
+Before merging a release pull request:
 
-5. If this is the first attempt for the version, probe both the tag and Release:
-
-   ```sh
-   GITHUB_REPOSITORY="$REPOSITORY" scripts/release/resolve-tag-sha.sh "$VERSION"
-   GITHUB_REPOSITORY="$REPOSITORY" scripts/release/get-release-state.sh "$VERSION"
-   ```
-
-   An explicit not-found result (exit status 4) is expected for each on a new
-   version. If either exists, stop first-release preparation and follow the
-   retry rules below. Authentication, API, transport, and parsing failures are
-   never evidence that the remote object is absent.
-
-6. Run the local gates that are available on the current platform:
-
-   ```sh
-   gofmt -w $(git ls-files '*.go')
-   git diff --check
-   GOTOOLCHAIN=go1.26.5 go mod tidy -diff
-   GOTOOLCHAIN=go1.26.5 go mod verify
-   GOTOOLCHAIN=go1.26.5 go test ./...
-   GOTOOLCHAIN=go1.26.5 go vet ./...
-   GOTOOLCHAIN=go1.26.5 go test -race ./...
-   GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate
-   GOTOOLCHAIN=go1.26.5 scripts/smoke.sh
-   GOTOOLCHAIN=go1.26.5 scripts/license-check.sh
-   ```
-
-   Review any `gofmt` diff before proceeding. Platform-specific smoke and
-   license jobs in GitHub Actions remain authoritative for platforms that are
-   not represented locally.
-
-7. Inspect the published Homebrew boundary:
+1. Confirm that the release-planning App/environment, Homebrew App/environment,
+   `env-vault` ruleset, and tap ruleset match
+   [`docs/release-external-settings.md`](docs/release-external-settings.md).
+   Rebase merging must be disabled, and squash commits must use `PR_TITLE` plus
+   `PR_BODY`; planning verifies this before any write token is used.
+2. Inspect the current Homebrew version. The proposed version must be higher:
 
    ```sh
    git -C ../homebrew-tap fetch origin main
@@ -107,26 +130,22 @@ Before a new release:
      sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p'
    ```
 
-   A new version must be higher. The guard compares only with the version in
-   the current tap formula; it is not a complete audit of every historical tag
-   or Release. Inspect GitHub separately if the release history is uncertain.
-
-8. Check Actions for an active or queued release. Do not race it with another
-   dispatch:
+3. Ensure that no publication is active or queued:
 
    ```sh
-   gh run list --repo "$REPOSITORY" --workflow build-binaries.yml \
-     --limit 10 --json databaseId,status,conclusion,headSha,url
+   gh run list --repo ildarbinanas-design/env-vault \
+     --workflow build-binaries.yml --limit 10 \
+     --json databaseId,status,conclusion,headSha,url
    ```
 
-9. Confirm that the required GitHub App installation, `release` environment,
-   and tap ruleset still match
-   [`docs/release-external-settings.md`](docs/release-external-settings.md).
-   The `homebrew` job is the only job allowed to read the App client ID and
-   private key during a release; build-only and `health` runs must not receive
-   them. After any App installation or key change, dispatch
-   `audit-release-app.yml` and require it to prove that the installation
-   contains only `homebrew-tap` before publishing.
+4. After any planning-App installation or key change, dispatch
+   `audit-release-planning-app.yml` and require it to prove that the
+   installation contains only `env-vault`. After any tap-App installation or
+   key change, dispatch `audit-release-app.yml` and require it to prove that
+   the installation contains only `homebrew-tap`.
+
+Authentication, API, transport, and parsing failures are never evidence that a
+tag, Release, pull request, or workflow run is absent.
 
 ## Build-only validation
 
@@ -140,7 +159,7 @@ From the Actions UI, run `build-binaries`, leave `version` empty, and select
 `repair=none`. The equivalent CLI command on the current branch is:
 
 ```sh
-gh workflow run build-binaries.yml --repo "$REPOSITORY" \
+gh workflow run build-binaries.yml --repo ildarbinanas-design/env-vault \
   --ref "$(git branch --show-current)" \
   -f version= \
   -f repair=none
@@ -149,8 +168,9 @@ gh workflow run build-binaries.yml --repo "$REPOSITORY" \
 Watch the run and inspect every matrix result:
 
 ```sh
-gh run list --repo "$REPOSITORY" --workflow build-binaries.yml --limit 1
-gh run watch RUN_ID --repo "$REPOSITORY" --exit-status
+gh run list --repo ildarbinanas-design/env-vault \
+  --workflow build-binaries.yml --limit 1
+gh run watch RUN_ID --repo ildarbinanas-design/env-vault --exit-status
 ```
 
 The branch or ref name is used as the embedded version label for build-only
@@ -158,20 +178,46 @@ runs. Strict `vMAJOR.MINOR.PATCH` validation applies only when publishing.
 
 ## Publish a new release
 
-The preferred entry point is a manual dispatch from the default branch. It
-lets the workflow create the tag with its scoped `GITHUB_TOKEN`; that tag does
-not recursively start a second release workflow.
+The normal entry point is the merge of the generated Release Please pull
+request. Do not dispatch `build-binaries` for a proposed version while that
+pull request is open. After the merge:
+
+1. `ci` checks the exact release merge SHA on `main`.
+2. `release-please` accepts only a successful push run from this repository for
+   the default branch, checks out that exact SHA, and skips stale planning-only
+   runs whose SHA is no longer the current head.
+3. For a release merge it validates the deterministic commit and generated PR,
+   then creates or verifies the exact tag and marks the PR
+   `autorelease: tagged`. The tag push starts `build-binaries`.
+4. `build-binaries` repeats release quality, checks Homebrew monotonicity, and
+   only then creates the GitHub Release. Its notes are the non-empty exact
+   version section extracted from the reviewed `CHANGELOG.md`, not regenerated
+   from mutable GitHub metadata.
+5. The same run publishes attestations, updates Homebrew through its protected
+   pull request, and finishes with the health verification.
+
+Record the release-planning run and `build-binaries` run URLs. The source SHA
+embedded in the dispatch, tag, artifacts, attestations, formula marker, and
+health evidence must remain identical.
+
+If planning fails before creating the tag, rerun that exact `release-please`
+workflow after fixing the cause; `build-binaries` cannot replace the tag
+handoff. After the authorized tag exists and the PR is `autorelease: tagged`, a
+manual full retry may be dispatched from the repository default branch:
 
 ```sh
+export VERSION=vX.Y.Z
+export REPOSITORY=ildarbinanas-design/env-vault
 gh workflow run build-binaries.yml --repo "$REPOSITORY" \
   --ref main \
   -f version="$VERSION" \
   -f repair=none
 ```
 
-Use GitHub's actual default branch in place of `main` if it changes. A strict
-`vX.Y.Z` tag push remains supported, but it is not the preferred operator path
-because the tag must already have been created correctly.
+Use GitHub's actual default branch in place of `main` if it changes. The
+dispatch resolves the existing tag, repeats deterministic release-PR
+authorization for `v0.0.8` and later, and never creates or moves a tag. A tag
+push is an event trigger, not an authorization mechanism.
 
 Record the workflow URL and wait for it to finish. A failed run is a partial
 release until remote state has been inspected; do not immediately create a new
@@ -182,9 +228,16 @@ tag or upload replacement files.
 Every repair is a manual dispatch from the default branch and requires the
 exact existing version. The workflow resolves the source SHA from that tag.
 
+Releases `v0.0.1` through `v0.0.7` predate the Release Please manifest. Their
+manual repair compatibility path requires an existing stable GitHub Release,
+an exact tag contained in current `main`, and never creates a tag. Starting at
+`v0.0.8`, every retry additionally requires the deterministic generated-PR and
+`autorelease: tagged` authorization. This legacy boundary exists only for
+already published versions; it cannot authorize a new release.
+
 | Mode | Rebuilds | Release assets | Homebrew | Health check | Use when |
 | --- | --- | --- | --- | --- | --- |
-| `none` | yes | reconcile | PR/update or exact no-op | yes | first attempt, or a complete idempotent retry |
+| `none` | yes | reconcile | PR/update or exact no-op | yes | complete idempotent retry after the authorized tag exists |
 | `release-assets` | yes | reconcile | PR/update or exact no-op | yes | the tag is correct but the Release, assets, or attestations are incomplete |
 | `homebrew` | no | verify/download | resume PR or exact no-op | yes | Release assets and attestations are complete and the tap stage must be resumed |
 | `health` | no | verify/download | read-only verification | yes | publication is complete and only health evidence must be repeated |
@@ -192,6 +245,8 @@ exact existing version. The workflow resolves the source SHA from that tag.
 Dispatch a repair with:
 
 ```sh
+export VERSION=vX.Y.Z
+export REPOSITORY=ildarbinanas-design/env-vault
 gh workflow run build-binaries.yml --repo "$REPOSITORY" \
   --ref main \
   -f version="$VERSION" \
@@ -322,6 +377,10 @@ Authenticate `gh`, then run the repository helpers from a clean `env-vault`
 checkout and a fresh temporary directory:
 
 ```sh
+export VERSION=vX.Y.Z
+export SOURCE_SHA=0123456789abcdef0123456789abcdef01234567
+export REPOSITORY=ildarbinanas-design/env-vault
+export TAP_REPOSITORY=ildarbinanas-design/homebrew-tap
 export GITHUB_REPOSITORY=$REPOSITORY
 scripts/release/resolve-tag-sha.sh "$VERSION"
 scripts/release/get-release-state.sh "$VERSION"
