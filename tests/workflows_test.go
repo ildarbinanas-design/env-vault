@@ -53,11 +53,13 @@ type workflowInput struct {
 }
 
 type workflowJob struct {
+	Name           string            `yaml:"name"`
 	If             string            `yaml:"if"`
 	Needs          []string          `yaml:"needs"`
 	RunsOn         string            `yaml:"runs-on"`
 	Uses           string            `yaml:"uses"`
 	With           map[string]string `yaml:"with"`
+	Env            map[string]string `yaml:"env"`
 	Permissions    map[string]string `yaml:"permissions"`
 	Outputs        map[string]string `yaml:"outputs"`
 	Environment    string            `yaml:"environment"`
@@ -67,7 +69,8 @@ type workflowJob struct {
 }
 
 type workflowStrategy struct {
-	Matrix workflowMatrix `yaml:"matrix"`
+	FailFast *bool          `yaml:"fail-fast"`
+	Matrix   workflowMatrix `yaml:"matrix"`
 }
 
 type workflowMatrix struct {
@@ -85,13 +88,14 @@ type workflowTarget struct {
 }
 
 type workflowStep struct {
-	Name  string            `yaml:"name"`
-	Uses  string            `yaml:"uses"`
-	If    string            `yaml:"if"`
-	Shell string            `yaml:"shell"`
-	Run   string            `yaml:"run"`
-	Env   map[string]string `yaml:"env"`
-	With  map[string]string `yaml:"with"`
+	Name            string            `yaml:"name"`
+	Uses            string            `yaml:"uses"`
+	If              string            `yaml:"if"`
+	Shell           string            `yaml:"shell"`
+	Run             string            `yaml:"run"`
+	ContinueOnError bool              `yaml:"continue-on-error"`
+	Env             map[string]string `yaml:"env"`
+	With            map[string]string `yaml:"with"`
 }
 
 func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
@@ -475,6 +479,186 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 	}
 }
 
+func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	e2e, ok := reusable.Jobs["e2e"]
+	if !ok {
+		t.Fatal("reusable quality workflow is missing e2e job")
+	}
+	if e2e.Name != "e2e-${{ matrix.goos }}-${{ matrix.goarch }}" {
+		t.Fatalf("e2e name=%q", e2e.Name)
+	}
+	if !slices.Equal(e2e.Needs, []string{"build"}) {
+		t.Fatalf("e2e needs=%v, want build artifacts", e2e.Needs)
+	}
+	if e2e.RunsOn != "${{ matrix.runner }}" || e2e.TimeoutMinutes != 90 {
+		t.Fatalf("e2e runner=%q timeout=%d", e2e.RunsOn, e2e.TimeoutMinutes)
+	}
+	if e2e.Env["GOTOOLCHAIN"] != "local" {
+		t.Fatalf("e2e GOTOOLCHAIN=%q, want local", e2e.Env["GOTOOLCHAIN"])
+	}
+	if e2e.Strategy.FailFast == nil || *e2e.Strategy.FailFast {
+		t.Fatalf("e2e fail-fast=%v, want explicit false", e2e.Strategy.FailFast)
+	}
+
+	type targetContract struct {
+		runner  string
+		cgo     string
+		archive string
+	}
+	wantTargets := map[string]targetContract{
+		"linux/amd64":   {runner: "ubuntu-latest", cgo: "0", archive: "tar.gz"},
+		"linux/arm64":   {runner: "ubuntu-24.04-arm", cgo: "0", archive: "tar.gz"},
+		"darwin/amd64":  {runner: "macos-15-intel", cgo: "1", archive: "tar.gz"},
+		"darwin/arm64":  {runner: "macos-15", cgo: "1", archive: "tar.gz"},
+		"windows/amd64": {runner: "windows-latest", cgo: "0", archive: "zip"},
+	}
+	if len(e2e.Strategy.Matrix.Include) != len(wantTargets) {
+		t.Fatalf("e2e targets=%d, want %d", len(e2e.Strategy.Matrix.Include), len(wantTargets))
+	}
+	for _, target := range e2e.Strategy.Matrix.Include {
+		key := target.GOOS + "/" + target.GOARCH
+		want, ok := wantTargets[key]
+		if !ok {
+			t.Fatalf("unexpected or duplicate e2e target %q", key)
+		}
+		if target.Runner != want.runner || target.CGO != want.cgo || target.Archive != want.archive {
+			t.Fatalf("e2e %s=%+v, want runner=%q cgo=%q archive=%q", key, target, want.runner, want.cgo, want.archive)
+		}
+		delete(wantTargets, key)
+	}
+	if len(wantTargets) != 0 {
+		t.Fatalf("e2e matrix missing native targets: %v", wantTargets)
+	}
+
+	checkout := usesStep(t, e2e, "actions/checkout@v7")
+	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
+		t.Fatalf("e2e checkout ref=%q", checkout.With["ref"])
+	}
+	setup := usesStep(t, e2e, "actions/setup-go@v6")
+	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
+		t.Fatalf("e2e setup-go inputs=%v, want project Go baseline", setup.With)
+	}
+	download := namedStep(t, e2e, "Download release-like artifact")
+	if download.Uses != "actions/download-artifact@v8" {
+		t.Fatalf("e2e download action=%q", download.Uses)
+	}
+	if download.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" || download.With["path"] != "dist" {
+		t.Fatalf("e2e artifact download inputs=%v", download.With)
+	}
+
+	run := namedStep(t, e2e, "Run E2E and finalize reports")
+	for _, snippet := range []string{
+		"go run ./e2e/cmd/e2e-runner run",
+		"--phase baseline",
+		"--coverage-floor 60",
+		"--command-timeout 3m",
+		"--test-timeout 5m",
+		`--artifact "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}"`,
+		`--checksum "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"`,
+	} {
+		if !strings.Contains(run.Run, snippet) {
+			t.Fatalf("e2e runner missing %q in %q", snippet, run.Run)
+		}
+	}
+	for key, want := range map[string]string{
+		"CGO_ENABLED":              "${{ matrix.cgo }}",
+		"ENV_VAULT_E2E_GOOS":       "${{ matrix.goos }}",
+		"ENV_VAULT_E2E_GOARCH":     "${{ matrix.goarch }}",
+		"ENV_VAULT_E2E_VERSION":    "${{ inputs.version }}",
+		"ENV_VAULT_E2E_COMMIT_SHA": "${{ inputs.source_sha }}",
+	} {
+		if got := run.Env[key]; got != want {
+			t.Fatalf("e2e runner env %s=%q, want %q", key, got, want)
+		}
+	}
+	if strings.Contains(run.Run, "internal/cli.Run") {
+		t.Fatal("E2E workflow must execute only the built public CLI binary")
+	}
+
+	upload := namedStep(t, e2e, "Upload E2E reports")
+	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@v7" {
+		t.Fatalf("e2e upload if=%q uses=%q", upload.If, upload.Uses)
+	}
+	for key, want := range map[string]string{
+		"name":              "env-vault-e2e-baseline-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}",
+		"path":              "reports/e2e/baseline",
+		"if-no-files-found": "error",
+		"retention-days":    "30",
+	} {
+		if got := upload.With[key]; got != want {
+			t.Fatalf("e2e upload %s=%q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestReusableQualityPinsGo122CompatibleE2EReporter(t *testing.T) {
+	e2e := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e")
+	install := namedStep(t, e2e, "Install pinned E2E reporter")
+	if install.Run != "go install gotest.tools/gotestsum@v1.12.2" {
+		t.Fatalf("E2E reporter install=%q, want Go-1.22-compatible gotestsum v1.12.2", install.Run)
+	}
+	if !install.ContinueOnError {
+		t.Fatal("reporter pre-install must allow the runner's pinned fallback to finalize failure reports")
+	}
+	allSteps := fmt.Sprintf("%v", e2e.Steps)
+	for _, forbidden := range []string{"gotestsum@latest", "--rerun-fails"} {
+		if strings.Contains(allSteps, forbidden) {
+			t.Fatalf("E2E workflow contains forbidden reporter option %q", forbidden)
+		}
+	}
+}
+
+func TestReusableQualityE2EGateFailsClosed(t *testing.T) {
+	gate := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e-gate")
+	if gate.If != "always()" || !slices.Equal(gate.Needs, []string{"e2e"}) {
+		t.Fatalf("e2e gate if=%q needs=%v", gate.If, gate.Needs)
+	}
+	if gate.RunsOn != "ubuntu-latest" || gate.TimeoutMinutes != 10 || gate.Env["GOTOOLCHAIN"] != "local" {
+		t.Fatalf("e2e gate runner=%q timeout=%d env=%v", gate.RunsOn, gate.TimeoutMinutes, gate.Env)
+	}
+	checkout := usesStep(t, gate, "actions/checkout@v7")
+	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
+		t.Fatalf("e2e gate checkout ref=%q", checkout.With["ref"])
+	}
+	setup := usesStep(t, gate, "actions/setup-go@v6")
+	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
+		t.Fatalf("e2e gate setup-go inputs=%v", setup.With)
+	}
+	download := namedStep(t, gate, "Download E2E report artifacts")
+	if download.Uses != "actions/download-artifact@v8" {
+		t.Fatalf("e2e gate download action=%q", download.Uses)
+	}
+	for key, want := range map[string]string{
+		"pattern":        "env-vault-e2e-baseline-*-attempt-${{ github.run_attempt }}",
+		"path":           "reports-download",
+		"merge-multiple": "true",
+	} {
+		if got := download.With[key]; got != want {
+			t.Fatalf("e2e gate download %s=%q, want %q", key, got, want)
+		}
+	}
+	validate := namedStep(t, gate, "Validate complete E2E report matrix")
+	if validate.If != "always()" {
+		t.Fatalf("e2e matrix validation if=%q, want always()", validate.If)
+	}
+	for _, snippet := range []string{
+		"go run ./e2e/cmd/e2e-runner validate-matrix",
+		"--reports reports-download",
+		"--phase baseline",
+		`--expected-commit "${{ inputs.source_sha }}"`,
+		`--expected-run-id "${{ github.run_id }}"`,
+		`--expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"`,
+		`--expected-run-attempt "${{ github.run_attempt }}"`,
+		`--expected-repository "${{ github.repository }}"`,
+		`--expected-reporter "v1.12.2"`,
+	} {
+		if !strings.Contains(validate.Run, snippet) {
+			t.Fatalf("e2e matrix validation missing %q in %q", snippet, validate.Run)
+		}
+	}
+}
+
 func TestGeneratedHomebrewFormulaPreservesDistributionContract(t *testing.T) {
 	homebrew := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "homebrew")
 	generate := namedStep(t, homebrew, "Generate formula")
@@ -673,7 +857,7 @@ func TestRepairBuildsUseTheResolvedTagCommit(t *testing.T) {
 	}
 
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	for _, jobName := range []string{"test", "race", "smoke", "license", "build"} {
+	for _, jobName := range []string{"test", "race", "smoke", "license", "build", "e2e", "e2e-gate"} {
 		job := reusable.Jobs[jobName]
 		checkout := usesStep(t, job, "actions/checkout@v7")
 		if checkout.With["ref"] != "${{ inputs.source_sha }}" {

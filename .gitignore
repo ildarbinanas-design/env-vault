@@ -2,6 +2,7 @@
 bin/
 dist/
 coverage.out
+reports/e2e/
 *.test
 
 # Local editor and OS noise

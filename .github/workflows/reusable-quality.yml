@@ -253,3 +253,119 @@ jobs:
           if ($commandExit -ne 0 -or $commandOutput.Count -ne 1 -or $commandOutput[0] -cne $env:VERSION) {
             throw "version output '$($commandOutput -join '\n')', want '$env:VERSION'"
           }
+
+  e2e:
+    needs: [build]
+    name: e2e-${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      GOTOOLCHAIN: local
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            cgo: "0"
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            cgo: "0"
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            cgo: "1"
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+            cgo: "1"
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            cgo: "0"
+            archive: zip
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download release-like artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist
+
+      - name: Install pinned E2E reporter
+        continue-on-error: true
+        run: go install gotest.tools/gotestsum@v1.12.2
+
+      - name: Run E2E and finalize reports
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          ENV_VAULT_E2E_GOOS: ${{ matrix.goos }}
+          ENV_VAULT_E2E_GOARCH: ${{ matrix.goarch }}
+          ENV_VAULT_E2E_VERSION: ${{ inputs.version }}
+          ENV_VAULT_E2E_COMMIT_SHA: ${{ inputs.source_sha }}
+        run: >-
+          go run ./e2e/cmd/e2e-runner run
+          --phase baseline
+          --coverage-floor 60
+          --command-timeout 3m
+          --test-timeout 5m
+          --artifact "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}"
+          --checksum "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"
+
+      - name: Upload E2E reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: env-vault-e2e-baseline-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
+          path: reports/e2e/baseline
+          if-no-files-found: error
+          retention-days: 30
+
+  e2e-gate:
+    if: always()
+    needs: [e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Download E2E report artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: env-vault-e2e-baseline-*-attempt-${{ github.run_attempt }}
+          path: reports-download
+          merge-multiple: true
+
+      - name: Validate complete E2E report matrix
+        if: always()
+        run: >-
+          go run ./e2e/cmd/e2e-runner validate-matrix
+          --reports reports-download
+          --phase baseline
+          --expected-commit "${{ inputs.source_sha }}"
+          --expected-run-id "${{ github.run_id }}"
+          --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --expected-run-attempt "${{ github.run_attempt }}"
+          --expected-repository "${{ github.repository }}"
+          --expected-reporter "v1.12.2"

@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "sentinel_prefix": "ENV_VAULT_E2E_SENTINEL_",
+  "scenarios": [
+    {
+      "id": "CLI_HELP_ROOT",
+      "feature": "cli.help.root",
+      "requirement": "Root help documents commands and global flags on stdout with a zero exit status.",
+      "go_test": "TestE2E/CLI_HELP_ROOT",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "CLI_HELP_SUBCOMMANDS",
+      "feature": "cli.help.subcommands",
+      "requirement": "Every public subcommand has working help and secret set exposes stdin but no value flag.",
+      "go_test": "TestE2E/CLI_HELP_SUBCOMMANDS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "CLI_VERSION_FORMS",
+      "feature": "cli.version",
+      "requirement": "The --version flag, version command, and JSON version contract agree.",
+      "go_test": "TestE2E/CLI_VERSION_FORMS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "CLI_ARGUMENT_ERRORS",
+      "feature": "cli.arguments-and-exit-codes",
+      "requirement": "Missing commands, invalid flags, and malformed invocations return stable usage exits and structured errors.",
+      "go_test": "TestE2E/CLI_ARGUMENT_ERRORS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "TEXT_OUTPUT_CONTRACTS",
+      "feature": "output.human-text-contracts",
+      "requirement": "Human-readable secret set, check, list, and delete plus profile create, add, show, and remove emit exact non-secret stdout contracts with empty stderr.",
+      "go_test": "TestE2E/TEXT_OUTPUT_CONTRACTS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "SECRET_LIFECYCLE",
+      "feature": "secret.lifecycle",
+      "requirement": "Secret set via stdin, check, missing check, list, confirmed delete, and repeated delete work without revealing values.",
+      "go_test": "TestE2E/SECRET_LIFECYCLE",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "SECRET_VALIDATION_SECURITY",
+      "feature": "secret.input-security",
+      "requirement": "Unsafe secret and service names and an insecure value flag are rejected before backend access.",
+      "go_test": "TestE2E/SECRET_VALIDATION_SECURITY",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "PROFILE_LIFECYCLE",
+      "feature": "profile.lifecycle",
+      "requirement": "Profile create, duplicate create, multiple adds, show, removes, and missing remove persist across processes.",
+      "go_test": "TestE2E/PROFILE_LIFECYCLE",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "PROFILE_TARGETS_CHECK_SECRET",
+      "feature": "profile.targets-and-secret-check",
+      "requirement": "Default, local, global, and explicit config targets preserve precedence and --check-secret validates before locking without unintended mutation.",
+      "go_test": "TestE2E/PROFILE_TARGETS_CHECK_SECRET",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "PROFILE_COLLISIONS_PERSISTENCE",
+      "feature": "profile.collisions-and-persistence",
+      "requirement": "Exact and case-insensitive ENV_NAME collisions are rejected and persisted profiles remain readable by new processes.",
+      "go_test": "TestE2E/PROFILE_COLLISIONS_PERSISTENCE",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "PROFILE_ATOMIC_PERMISSIONS",
+      "feature": "profile.atomic-save-and-permissions",
+      "requirement": "Config and lock files are private regular files, atomic temporary files are removed, and saved YAML stays readable.",
+      "go_test": "TestE2E/PROFILE_ATOMIC_PERMISSIONS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "PROFILE_SYMLINK_REJECTED",
+      "feature": "profile.symlink-defense",
+      "requirement": "Symlink config and lock targets are rejected without modifying their targets.",
+      "go_test": "TestE2E/PROFILE_SYMLINK_REJECTED",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true,
+      "expected_platform_skips": ["windows-amd64"]
+    },
+    {
+      "id": "EXEC_PROFILE_DIRECT_MULTI",
+      "feature": "exec.secret-resolution",
+      "requirement": "Exec resolves profiles, direct secrets, multiple secrets, and combined mappings into a portable child process.",
+      "go_test": "TestE2E/EXEC_PROFILE_DIRECT_MULTI",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "EXEC_ENV_MODES",
+      "feature": "exec.environment-modes",
+      "requirement": "Inherited environment, collision rejection, override-env, and clean-env preserve the documented semantics.",
+      "go_test": "TestE2E/EXEC_ENV_MODES",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "EXEC_ARG_STREAM_EXIT",
+      "feature": "exec.process-contract",
+      "requirement": "Exec preserves argv, stdin, stdout, stderr, CRLF bytes, and exact child exit status without a shell.",
+      "go_test": "TestE2E/EXEC_ARG_STREAM_EXIT",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "EXEC_MISSING_SECRET_NO_CHILD",
+      "feature": "exec.failure-safety",
+      "requirement": "Missing secrets prevent child startup and missing or non-executable commands return stable public exit codes.",
+      "go_test": "TestE2E/EXEC_MISSING_SECRET_NO_CHILD",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "EXEC_SIGNAL_FORWARDING",
+      "feature": "exec.signal-forwarding",
+      "requirement": "Unix termination signals are forwarded to the child after an explicit readiness marker.",
+      "go_test": "TestE2E/EXEC_SIGNAL_FORWARDING",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true,
+      "expected_platform_skips": ["windows-amd64"]
+    },
+    {
+      "id": "DRY_RUN_NO_SIDE_EFFECTS",
+      "feature": "dry-run.side-effects-and-metadata",
+      "requirement": "Secret, profile, and exec dry runs create no forbidden state or child and emit non-secret structured metadata.",
+      "go_test": "TestE2E/DRY_RUN_NO_SIDE_EFFECTS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "OUTPUT_JSON_JSONL_FILE",
+      "feature": "output.text-json-jsonl-file",
+      "requirement": "JSON, JSONL, quiet output files, structured errors, stream separation, schema fields, permissions, and runtime output-write failures remain stable.",
+      "go_test": "TestE2E/OUTPUT_JSON_JSONL_FILE",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "DOCTOR_BACKENDS",
+      "feature": "doctor.backend-health",
+      "requirement": "Doctor reports healthy and warning states, while an explicitly requested but incompletely gated test backend fails secret access with BACKEND_UNAVAILABLE and exit 4 without native-keyring fallback.",
+      "go_test": "TestE2E/DOCTOR_BACKENDS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "CONCURRENCY_PROFILE_MUTATIONS",
+      "feature": "locking.concurrent-profile-mutations",
+      "requirement": "Concurrent profile mutations from distinct binary processes retain every update and leave valid atomic YAML.",
+      "go_test": "TestE2E/CONCURRENCY_PROFILE_MUTATIONS",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "LOCK_TIMEOUT_CRASH_INTEGRITY",
+      "feature": "locking.timeout-and-crash-recovery",
+      "requirement": "A real cross-process lock produces CONFIG_LOCKED, a deliberately killed active config writer preserves the prior YAML, and lock release permits recovery.",
+      "go_test": "TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    }
+  ]
+}

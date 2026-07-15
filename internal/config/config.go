@@ -156,6 +156,9 @@ func Save(path string, cfg *File) error {
 	if err := temporary.Close(); err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to close config", "Check filesystem health and permissions", err)
 	}
+	if err := runE2ESaveCrashHook(); err != nil {
+		return apperrors.ConfigInvalid("config", "Unable to complete gated E2E save hook", "Use the E2E runner or unset E2E hook variables", err)
+	}
 	// Recheck immediately before rename. Rename replaces a raced-in symlink
 	// itself instead of following it, while this check gives callers a clear
 	// failure for a symlink that was already present.
