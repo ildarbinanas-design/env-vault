@@ -137,6 +137,7 @@ func TestWorkflowsPinExternalActionsToReviewedCommits(t *testing.T) {
 		"../.github/workflows/build-binaries.yml",
 		"../.github/workflows/ci.yml",
 		"../.github/workflows/dependency-review.yml",
+		"../.github/workflows/pr-title.yml",
 		"../.github/workflows/release-please.yml",
 		"../.github/workflows/reusable-quality.yml",
 	} {
@@ -807,21 +808,44 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if !slices.Equal(ci.On.Push.Branches, []string{"main"}) {
 		t.Fatalf("CI push branches=%v, want main only to avoid duplicate PR branch runs", ci.On.Push.Branches)
 	}
-	if !slices.Equal(ci.On.PullRequest.Types, []string{"opened", "synchronize", "reopened", "edited"}) {
-		t.Fatalf("CI pull_request types=%v, want title edits to invalidate the title check", ci.On.PullRequest.Types)
+	if !slices.Equal(ci.On.PullRequest.Types, []string{"opened", "synchronize", "reopened"}) {
+		t.Fatalf("CI pull_request types=%v, want code-bearing events only", ci.On.PullRequest.Types)
 	}
-	if len(ci.Jobs) != 3 {
-		t.Fatalf("CI has %d jobs, want PR-title check, reusable quality caller, and stable gate", len(ci.Jobs))
+	if ci.Concurrency.Group != "ci-${{ github.event.pull_request.number || github.ref }}" || !ci.Concurrency.CancelInProgress {
+		t.Fatalf("CI concurrency=%+v, want stale full runs cancelled per pull request or branch", ci.Concurrency)
 	}
-	prTitle := ci.Jobs["pr-title"]
+	if len(ci.Jobs) != 2 {
+		t.Fatalf("CI has %d jobs, want reusable quality caller and stable gate", len(ci.Jobs))
+	}
+	if _, ok := ci.Jobs["pr-title"]; ok {
+		t.Fatal("full CI must not own the metadata-only PR title check")
+	}
+
+	prTitleWorkflow := readWorkflow(t, "../.github/workflows/pr-title.yml")
+	if !slices.Equal(prTitleWorkflow.On.PullRequest.Types, []string{"opened", "synchronize", "reopened", "edited"}) {
+		t.Fatalf("PR-title pull_request types=%v, want code and metadata changes", prTitleWorkflow.On.PullRequest.Types)
+	}
+	if len(prTitleWorkflow.Jobs) != 1 {
+		t.Fatalf("PR-title workflow has %d jobs, want one lightweight check", len(prTitleWorkflow.Jobs))
+	}
+	if len(prTitleWorkflow.Permissions) != 0 {
+		t.Fatalf("PR-title workflow permissions=%v, want no token permissions", prTitleWorkflow.Permissions)
+	}
+	if prTitleWorkflow.Concurrency.Group != "pr-title-${{ github.event.pull_request.number }}" || !prTitleWorkflow.Concurrency.CancelInProgress {
+		t.Fatalf("PR-title concurrency=%+v", prTitleWorkflow.Concurrency)
+	}
+	prTitle := prTitleWorkflow.Jobs["pr-title"]
 	if prTitle.RunsOn != "ubuntu-latest" {
 		t.Fatalf("PR title runner=%q", prTitle.RunsOn)
 	}
 	titleCheck := namedStep(t, prTitle, "Require a Conventional Commit pull request title")
-	if titleCheck.Env["EVENT_NAME"] != "${{ github.event_name }}" || titleCheck.Env["PR_TITLE"] != "${{ github.event.pull_request.title }}" {
+	if titleCheck.Uses != "" {
+		t.Fatalf("PR title check uses external action %q, want shell-only validation", titleCheck.Uses)
+	}
+	if len(titleCheck.Env) != 1 || titleCheck.Env["PR_TITLE"] != "${{ github.event.pull_request.title }}" {
 		t.Fatalf("PR title check env=%v", titleCheck.Env)
 	}
-	for _, snippet := range []string{"pull_request", "Conventional Commits", "feat|fix|perf|refactor|build|ci|docs|test|chore|revert"} {
+	for _, snippet := range []string{"Conventional Commits", "feat|fix|perf|refactor|build|ci|docs|test|chore|revert"} {
 		if !strings.Contains(titleCheck.Run, snippet) {
 			t.Fatalf("PR title check missing %q", snippet)
 		}
@@ -837,11 +861,11 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 		t.Fatalf("CI reusable quality permissions=%v, want contents/actions read", ciQuality.Permissions)
 	}
 	gate := ci.Jobs["quality-gate"]
-	if gate.If != "always()" || !slices.Equal(gate.Needs, []string{"pr-title", "quality"}) || gate.RunsOn != "ubuntu-latest" {
+	if gate.If != "always()" || !slices.Equal(gate.Needs, []string{"quality"}) || gate.RunsOn != "ubuntu-latest" {
 		t.Fatalf("quality gate if=%q needs=%v runner=%q", gate.If, gate.Needs, gate.RunsOn)
 	}
 	require := namedStep(t, gate, "Require every reusable quality job")
-	if require.Env["PR_TITLE_RESULT"] != "${{ needs.pr-title.result }}" || require.Env["QUALITY_RESULT"] != "${{ needs.quality.result }}" || !strings.Contains(require.Run, `"$PR_TITLE_RESULT" != "success"`) || !strings.Contains(require.Run, `"$QUALITY_RESULT" != "success"`) {
+	if len(require.Env) != 1 || require.Env["QUALITY_RESULT"] != "${{ needs.quality.result }}" || !strings.Contains(require.Run, `"$QUALITY_RESULT" != "success"`) || strings.Contains(require.Run, "PR_TITLE_RESULT") {
 		t.Fatalf("quality gate step env=%v run=%q", require.Env, require.Run)
 	}
 

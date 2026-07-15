@@ -1365,7 +1365,7 @@ changed by this run.
 | Publisher ownership | `build-binaries` remains the sole GitHub Release/assets/attestation/Homebrew publisher | repo_verified |
 | Release notes | The public Release body is the reviewed, non-empty version section fetched from `CHANGELOG.md` at the exact tag source SHA | repo_verified |
 | External Actions | Checkout, setup, artifact, attestation, SBOM, dependency review, Release Please v5.0.0, and App-token v3.2.0 are pinned to verified full commit SHAs | source_verified |
-| PR title integrity | CI handles `pull_request.edited`, so a post-check title change reruns the Conventional Commit gate | repo_verified |
+| PR title integrity | a separately required lightweight `pr-title` workflow handles `pull_request.edited`; metadata edits cannot rerun or replace the code-bearing `quality-gate` | repo_verified |
 | Human publication authorization | The generated PR has a stable body header stating that merge authorizes its exact release; proposal and merged-PR gates require the marker | repo_verified |
 | Release serialization | Planning and publication share non-cancelling `env-vault-release` concurrency, preventing label/tag handoff and successive-version races | repo_verified |
 | Future generated-PR CI | Workflow tests derive strict SemVer from the manifest rather than pinning `0.0.7`, so the generated version-only PR remains testable | repo_verified |

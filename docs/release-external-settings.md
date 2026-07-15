@@ -225,7 +225,7 @@ Apply an active ruleset to `refs/heads/main` with these rules:
 
 - changes must arrive through a pull request;
 - required status checks include the exact observed contexts for
-  `quality-gate`, dependency review, CodeQL Go, and CodeQL Actions;
+  `quality-gate`, `pr-title`, dependency review, CodeQL Go, and CodeQL Actions;
 - required checks are strict so the head must include the current `main`;
 - conversations must be resolved;
 - only squash merge is allowed;
@@ -239,9 +239,11 @@ planning App create one new exact tag but prevents any actor from moving or
 deleting a published version through the normal repository path.
 
 Observe each real check context from a pull request before adding it to the
-ruleset. Do not guess from a display label. `quality-gate` depends on the
-Conventional pull-request-title job, which accepts the forms documented in
-`CONTRIBUTING.md` and reruns when a pull request title changes.
+ruleset. Do not guess from a display label. The dedicated lightweight
+`pr-title` workflow accepts the forms documented in `CONTRIBUTING.md` and
+reruns when pull-request metadata changes. The full cross-platform `ci`
+workflow does not run for metadata-only edits; its independent `quality-gate`
+remains bound to the last code-bearing pull-request head.
 
 The Release Please pull request is not auto-merged. Opening, updating,
 approving, or closing it does not authorize publication. A maintainer's

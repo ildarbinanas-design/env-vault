@@ -9,35 +9,16 @@ on:
       - opened
       - synchronize
       - reopened
-      - edited
   workflow_dispatch:
 
 permissions:
   contents: read
 
-jobs:
-  pr-title:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require a Conventional Commit pull request title
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" != "pull_request" ]]; then
-            echo "pull request title check is not applicable to ${EVENT_NAME}"
-            exit 0
-          fi
-          pattern='^(feat|fix|perf|refactor|build|ci|docs|test|chore|revert)(\([a-z0-9][a-z0-9._/-]*\))?!?: [^ ].+$'
-          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
-            echo "pull request title must follow Conventional Commits" >&2
-            echo "examples: fix(cli): preserve exit code; feat: add command; feat!: change contract" >&2
-            exit 1
-          fi
-          echo "conventional pull request title accepted: ${PR_TITLE}"
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
+jobs:
   quality:
     uses: ./.github/workflows/reusable-quality.yml
     permissions:
@@ -49,18 +30,13 @@ jobs:
 
   quality-gate:
     if: always()
-    needs: [pr-title, quality]
+    needs: [quality]
     runs-on: ubuntu-latest
     steps:
       - name: Require every reusable quality job
         env:
-          PR_TITLE_RESULT: ${{ needs.pr-title.result }}
           QUALITY_RESULT: ${{ needs.quality.result }}
         run: |
-          if [[ "$PR_TITLE_RESULT" != "success" ]]; then
-            echo "pull request title result: $PR_TITLE_RESULT" >&2
-            exit 1
-          fi
           if [[ "$QUALITY_RESULT" != "success" ]]; then
             echo "reusable quality workflow result: $QUALITY_RESULT" >&2
             exit 1

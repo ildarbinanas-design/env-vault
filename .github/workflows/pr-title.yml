@@ -1,0 +1,33 @@
+name: pr-title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a Conventional Commit pull request title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='^(feat|fix|perf|refactor|build|ci|docs|test|chore|revert)(\([a-z0-9][a-z0-9._/-]*\))?!?: [^ ].+$'
+          if [[ ! "$PR_TITLE" =~ $pattern ]]; then
+            echo "pull request title must follow Conventional Commits" >&2
+            echo "examples: fix(cli): preserve exit code; feat: add command; feat!: change contract" >&2
+            exit 1
+          fi
+          echo "conventional pull request title accepted: ${PR_TITLE}"

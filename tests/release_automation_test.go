@@ -267,6 +267,12 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 		t.Fatalf("unsafe main ruleset unexpectedly succeeded: %s", output)
 	}
 
+	missingTitleCheckEnv := append([]string{}, baseEnv...)
+	missingTitleCheckEnv = append(missingTitleCheckEnv, "FAKE_RULESET_OMIT_PR_TITLE=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), missingTitleCheckEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("main ruleset without required pr-title unexpectedly succeeded: %s", output)
+	}
+
 	badAppBypassEnv := append([]string{}, baseEnv...)
 	badAppBypassEnv = append(badAppBypassEnv, "FAKE_RULESET_BYPASS=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badAppBypassEnv, "verify-repository-release-settings.sh"); err == nil {
@@ -458,7 +464,12 @@ case "$args" in
       bypass='[]'
       can_bypass='never'
     fi
-    printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods"
+    if [[ "${FAKE_RULESET_OMIT_PR_TITLE:-false}" == "true" ]]; then
+      pr_title_integration_id=0
+    else
+      pr_title_integration_id=15368
+    fi
+    printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":%s},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods" "$pr_title_integration_id"
     ;;
   *"rulesets/8"*)
     if [[ "${FAKE_TAG_RULESET_ALLOW_UPDATE:-false}" == "true" ]]; then

@@ -77,13 +77,14 @@ jq -e --arg repository "$repository" '
         .integration_id == 15368 and
         (
           .context == "quality-gate" or
+          .context == "pr-title" or
           .context == "Dependency review" or
           .context == "Analyze (go)" or
           .context == "Analyze (actions)"
         )
       ) |
       .context
-    ] | unique | length == 4)
+    ] | unique | length == 5)
   )
 ' "$ruleset_detail" >/dev/null ||
   release_die "main ruleset does not preserve the reviewed release contract"
