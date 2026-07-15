@@ -59,9 +59,11 @@ Tests and smoke checks generate ephemeral secret fixture values at runtime. Stab
 - A child process receives secret values through environment variables and can leak them if it prints or forwards its environment.
 - On Linux, process environment variables may be visible to the same user through `/proc` in some environments.
 - OS keychain availability depends on the platform session and keyring daemon.
-- A hostile same-user process that can replace a parent directory, lock path, or
-  temporary filename during a checked filesystem operation remains outside the
-  cooperative transaction guarantee. Keep config directories user-owned.
+- Any process or principal with write access through ownership, group mode, or
+  ACLs can replace a parent directory, lock path, or temporary filename during
+  a checked filesystem operation. This remains outside the cooperative
+  transaction guarantee. Keep config directories non-writable by untrusted
+  principals and processes.
 - env-vault does not rotate credentials by itself.
 
 ## Bug Reports

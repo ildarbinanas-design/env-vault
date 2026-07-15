@@ -31,7 +31,7 @@ directive and existing `golang.org/x/sys v0.30.0` selection.
 | Regression tests | Cover interprocess serialization and retained updates, concurrent CLI adds, timeout semantics, stable inode/mode, permission repair, unsafe lock targets, all three profile mutations, dry-run behavior, and backend-before-lock ordering |
 | `.gitignore`, process regression | Ignore exact default local `.env-vault.yaml.lock` alongside `.env-vault.yaml` without hiding unrelated `*.lock` files |
 | Dependency and notices | Pin `github.com/gofrs/flock v0.12.1`, retain Go 1.22/x/sys 0.30.0, record BSD-3-Clause in `THIRD_PARTY_NOTICES.md`, and keep a tidy module graph |
-| `README.md`, `docs/design.md`, `docs/security.md` | Document the implemented transaction, persistent lock rationale, timeout contract, non-locking dry-run/backend behavior, and remaining hostile same-user filesystem race |
+| `README.md`, `docs/design.md`, `docs/security.md` | Document the implemented transaction, persistent lock rationale, timeout contract, non-locking dry-run/backend behavior, and remaining untrusted-writer filesystem race |
 
 ### Commands And Results
 
@@ -66,7 +66,7 @@ directive and existing `golang.org/x/sys v0.30.0` selection.
 
 | Risk | Status | Mitigation or next action | Claim status |
 |---|---|---|---|
-| A hostile same-user process can still swap a parent directory, lock pathname, or temporary pathname between path-based checks | accepted | Keep config directories user-owned; a stronger future implementation needs handle-relative no-follow operations such as dirfd/openat or `os.Root` once a portable design is available | repo_verified |
+| Any untrusted process or principal with parent-directory write access through ownership, group mode, or ACLs can still swap a directory, lock pathname, or temporary pathname between path-based checks | accepted | Keep config directories non-writable by untrusted principals/processes; a stronger future implementation needs handle-relative no-follow operations such as dirfd/openat or `os.Root` once a portable design is available | repo_verified |
 | The file lock coordinates cooperating env-vault processes, not direct edits or non-cooperating programs, and remote/network filesystem lock semantics may vary | accepted | Avoid editing the config concurrently outside env-vault and keep user config on a local filesystem | repo_verified |
 | Windows code was cross-compiled but not executed on a native Windows host during this local wave | planned | Require the existing native Windows quality job before merge/release | cli_observed |
 | Remote PR verification is outside this local evidence capture | planned | Publish the reviewed branch and require the existing GitHub checks before merge or release | cli_observed |
