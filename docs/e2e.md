@@ -178,8 +178,8 @@ Use an already built native binary or release archive without changing the
 suite:
 
 ```sh
-go run ./e2e/cmd/e2e-runner run --phase candidate --binary ./env-vault
-go run ./e2e/cmd/e2e-runner run --phase candidate \
+GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate --binary ./env-vault
+GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate \
   --artifact ./dist/env-vault-darwin-arm64.tar.gz \
   --checksum ./dist/env-vault-darwin-arm64.tar.gz.sha256
 ```
@@ -187,7 +187,8 @@ go run ./e2e/cmd/e2e-runner run --phase candidate \
 The raw Go suite also deliberately accepts a prebuilt binary directly:
 
 ```sh
-ENV_VAULT_E2E_BINARY="$PWD/env-vault" go test -json -run '^TestE2E$' ./e2e
+ENV_VAULT_E2E_BINARY="$PWD/env-vault" GOTOOLCHAIN=go1.26.5 \
+  go test -json -run '^TestE2E$' ./e2e
 ```
 
 The runner defaults to three shuffled full-suite iterations and five shuffled
@@ -243,7 +244,7 @@ set agrees with every other one.
 Validate a downloaded five-platform set with:
 
 ```sh
-go run ./e2e/cmd/e2e-runner validate-matrix \
+GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
   --reports reports-download --phase candidate \
   --expected-commit "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
   --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -259,7 +260,7 @@ tolerance:
 workspace="$PWD"
 (
   cd baseline-source
-  go run ./e2e/cmd/e2e-runner compare \
+  GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner compare \
     --baseline "$workspace/baseline-download" --candidate "$workspace/candidate-download" \
     --baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
     --baseline-run-id "29441160687" \

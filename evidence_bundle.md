@@ -1,5 +1,93 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-GO1265-MIGRATION-CANDIDATE`
+
+Timestamp UTC: `2026-07-15T19:08:01Z`
+
+### Scope
+
+Migrate the Phase 1 E2E-protected `main` at
+`7a044bdbf73aa592016bbb3a02d81f314f08fe63` from Go 1.22 to the latest stable
+Go release without changing the public CLI scenarios or golden contracts. The
+official [Go release history](https://go.dev/doc/devel/release) identifies
+Go 1.26.5, released 2026-07-07, as the current stable patch; beta, RC, and
+development versions were excluded. The migration also follows the official
+[Go 1.26 release notes](https://go.dev/doc/go1.26).
+
+### Dependency Compatibility
+
+Published module files establish these minimum Go requirements:
+
+| Direct module | Candidate version | Minimum Go | Migration action |
+|---|---:|---:|---|
+| `github.com/99designs/keyring` | `v1.2.2` | 1.19 | already current; unchanged |
+| `github.com/gofrs/flock` | `v0.13.0` | 1.24.0 | controlled update from `v0.12.1` |
+| `github.com/spf13/cobra` | `v1.10.2` | 1.15 | already current; unchanged |
+| `golang.org/x/term` | `v0.45.0` | 1.25.0 | controlled update from `v0.29.0` |
+| `gopkg.in/yaml.v3` | `v3.0.1` | no directive | already current; unchanged |
+
+`golang.org/x/term v0.45.0` requires indirect `golang.org/x/sys v0.47.0`, whose
+module requires Go 1.25.0. Go 1.26.5 therefore satisfies every selected module.
+The exact updates from superseded Dependabot PR #14 were recreated on the
+post-baseline branch rather than merging its pre-baseline history.
+
+The E2E reporting tool is not a production dependency. Baseline reports retain
+gotestsum `v1.12.2`; the Go 1.26.5 candidate uses latest stable `v1.13.0`
+(minimum Go 1.24.0) because `v1.12.2` carries an `x/tools` version that does not
+compile with Go 1.26.5. Context7 and source inspection confirm that JSONL,
+JUnit, and test exit-code behavior remain available. `go-licenses v2.0.1`
+remains the latest stable license tool and builds with Go 1.26.5.
+
+### Local Candidate Evidence
+
+Candidate commit: `22fe5438bae2719885283a6e720f3c8070146f57`.
+
+| Item | Result | Claim status |
+|---|---|---|
+| Exact toolchain | `go1.26.5 darwin/arm64`; release-like binary embeds `go1.26.5` | cli_observed |
+| Functional matrix | 22/22 critical scenarios passed; 0 failed, skipped, or missing | cli_observed |
+| Feature coverage | 100% critical scenario coverage | cli_observed |
+| Statement coverage | 71.1% from the separately instrumented subprocess binary; equal to Darwin arm64 baseline | cli_observed |
+| Suite identity | `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`, exactly equal to canonical baseline | cli_observed |
+| Reporter | gotestsum `v1.13.0`, binary built by `go1.26.5` | cli_observed |
+| Stability | two consecutive full candidate executions passed; each includes three shuffled full-suite and five shuffled locking/concurrency burn-ins | cli_observed |
+| Public contracts | normalized Darwin arm64 `contracts.json`, critical scenario IDs/results, and exit-code/stream contracts byte-equal to baseline | cli_observed |
+| Secret safety | 125 hash-only sentinel records; zero leak findings across reports and artifacts | cli_observed |
+| Release-like artifact | checksum verified; SHA-256 `5f036b8e135b92544a7e4b37bec832e26a73c0bd1a7e5b399d89cd16ace107e5` | cli_observed |
+| Subject binary | SHA-256 `1c72bb7e20126c130af8bcc9c55a9bda8896bd5921a180733a8a0dfa656b2e9a` | cli_observed |
+
+### Local Verification
+
+| Command or check | Result | Claim status |
+|---|---|---|
+| `GOTOOLCHAIN=go1.26.5 go mod tidy` twice with before/after SHA-256 | passed; second run produced identical `go.mod` and `go.sum` | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go mod tidy -diff` and `go mod verify` | passed | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go test ./...` on a clean build cache | passed | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go vet ./...` | passed | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go test -race ./...` | passed | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 scripts/smoke.sh` | passed against a real binary | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 scripts/license-check.sh` | passed with pinned `go-licenses v2.0.1` | cli_observed |
+| Native/cross production builds | Darwin arm64/amd64 with CGO, Linux arm64/amd64, and Windows amd64 built with embedded `go1.26.5` | cli_observed |
+| Workflow contracts and changed-workflow `actionlint` | passed | cli_observed |
+| Independent reviews | no migration correctness, security, report integrity, or CI blocker found | repo_verified |
+| `git diff --check` and clean tracked worktree after report generation | passed | cli_observed |
+
+The first local artifact attempt was rejected before functional execution
+because macOS `tar` injected an AppleDouble `._` entry. Repacking with
+`COPYFILE_DISABLE=1` produced the release-compatible archive listed above; the
+complete E2E suite was then run twice and passed. No assertion, scenario,
+golden contract, retry policy, or coverage tolerance was weakened.
+
+### Remote Candidate Gate
+
+The pull request and final post-merge `main` run must supply the authoritative
+Linux amd64/arm64, Darwin amd64/arm64, and Windows amd64 evidence. CI downloads
+only the exact canonical baseline run `29441160687`, validates the candidate
+matrix, and compares suite hash, critical results, normalized contracts,
+platform set, leak status, and statement coverage with zero tolerance. Record
+the final run IDs, URLs, candidate SHA, artifact digests, and comparison result
+here after GitHub Actions completes.
+
 ## Task ID: `ENV-VAULT-E2E-GO122-BASELINE-LOCAL`
 
 Timestamp UTC: `2026-07-15T18:00:07Z`
