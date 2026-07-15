@@ -30,6 +30,9 @@ replace an existing release asset, or lower the Homebrew version.
   replaced.
 - A GitHub Release is not healthy until its exact Homebrew formula has passed
   the tap CI for the commit on the tap default branch.
+- The generated formula declares macOS 15 (Sequoia) as its minimum, selects all
+  four macOS/Linux architecture archives through `on_arm`/`on_intel`, and
+  installs `README.md`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` as documentation.
 
 ## Prepare a release
 
@@ -281,7 +284,9 @@ A release is healthy only when all of the following are true for the same
    that both version commands print exactly `$VERSION`.
 4. `homebrew-tap/Formula/env-vault.rb` is byte-for-byte the formula generated
    from those published assets. Its version, tag URLs, and four platform
-   checksums are exact, and its test asserts the exact output `v#{version}`.
+   checksums are exact. It declares macOS Sequoia as the minimum, uses
+   `on_arm`/`on_intel` blocks, installs the three archived documentation files,
+   and its test asserts the exact output `v#{version}`.
 5. The `test-formula` workflow has succeeded for the formula commit on the tap
    default branch. A successful PR check alone is not enough if the merged
    commit differs.

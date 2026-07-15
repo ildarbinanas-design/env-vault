@@ -1,5 +1,151 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-CONFIG-TRANSACTION-WAVE-2`
+
+Timestamp UTC: `2026-07-14T22:33:44Z`
+
+### Scope
+
+Close the cooperative lost-update risk for profile mutations on local PR branch
+`codex/security-baseline-env-vault`, starting from
+`76290585b93e16f62ab1aedee1b04bae2a80cd0d`. This wave changed only the local
+`env-vault` worktree. It did not commit, push, publish a release, change a remote
+setting, edit `homebrew-tap` or `observability-stack`, or access a production
+secret backend.
+
+`github.com/gofrs/flock v0.13.0` was evaluated but not selected because its
+official module file requires Go 1.24. The verified compatible
+`github.com/gofrs/flock v0.12.1` module requires Go 1.21 and provides the needed
+`New`, `SetPermissions`, `TryLockContext`, and `Unlock`/`Close` API with Darwin,
+Linux, and Windows implementations. The project therefore retains its Go 1.22
+directive and existing `golang.org/x/sys v0.30.0` selection.
+
+### Changes
+
+| Area | Purpose |
+|---|---|
+| `internal/config/transaction.go` | Serialize Load→mutate→Validate→atomic Save through a bounded exclusive lock on persistent adjacent `<config>.lock` |
+| Lock target boundary | Create with `flock.SetPermissions(0600)`, correct existing POSIX permissions, reject symlink/non-regular targets before acquisition and recheck after acquisition/chmod, and never remove the stable lock file |
+| `internal/cli/cli.go` | Route real profile create/add/remove operations through `config.Transaction`; keep dry runs non-mutating and complete `--check-secret` backend access before the config lock |
+| Structured errors | Add `CONFIG_LOCKED` with config-invalid exit status, preserved context deadline/cancellation cause, bounded five-second maximum wait, and retry remediation |
+| Regression tests | Cover interprocess serialization and retained updates, concurrent CLI adds, timeout semantics, stable inode/mode, permission repair, unsafe lock targets, all three profile mutations, dry-run behavior, and backend-before-lock ordering |
+| `.gitignore`, process regression | Ignore exact default local `.env-vault.yaml.lock` alongside `.env-vault.yaml` without hiding unrelated `*.lock` files |
+| Dependency and notices | Pin `github.com/gofrs/flock v0.12.1`, retain Go 1.22/x/sys 0.30.0, record BSD-3-Clause in `THIRD_PARTY_NOTICES.md`, and keep a tidy module graph |
+| `README.md`, `docs/design.md`, `docs/security.md` | Document the implemented transaction, persistent lock rationale, timeout contract, non-locking dry-run/backend behavior, and remaining untrusted-writer filesystem race |
+
+### Commands And Results
+
+| Command | Result | Claim status |
+|---|---|---|
+| Official module-file/source inspection for `gofrs/flock` v0.13.0 and v0.12.1 | v0.13.0 requires Go 1.24; v0.12.1 requires Go 1.21 and contains the required cross-platform API | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-target-cache-5 go test -count=3 ./internal/config ./internal/cli -run 'TestTransaction\|TestProfile\|TestConcurrentProfile'` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-ignore-cache go test ./tests -run '^TestLocalConfigAndTransactionLockAreIgnored$' -v` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-full-cache go test ./...` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-race-cache go test -race ./...` | passed, including subprocess and concurrent CLI transaction regressions | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-vet-cache go vet ./...` | passed | cli_observed |
+| `go mod verify` | passed; all modules verified | cli_observed |
+| `go mod tidy -diff -go=1.22` with sandbox-local `GOCACHE` | passed with no diff | cli_observed |
+| Windows amd64 `go test -c` for config and CLI plus `go build ./cmd/env-vault` | passed with `CGO_ENABLED=0` | cli_observed |
+| `GOCACHE=/tmp/env-vault-transaction-license-cache scripts/license-check.sh` | passed with pinned `go-licenses v2.0.1`; flock resolved as an allowed BSD dependency | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Cooperating profile commands no longer lose a successful concurrent update to the same config | cli_observed | two subprocesses are coordinated so the second cannot enter while the first holds the transaction; final config retains both updates, and 12 concurrent CLI adds retain all mappings |
+| Profile create/add/remove use the same complete transaction boundary | repo_verified | all three commands call `applyConfigMutation`, which delegates real mutations to `config.Transaction`; command regression creates, adds, and removes through one persistent lock |
+| A contended transaction fails predictably instead of waiting forever | cli_observed | held-lock test observes `context.DeadlineExceeded`, `CONFIG_LOCKED`, exit 5, retry remediation, no callback, and sub-second completion under an 80 ms caller deadline |
+| The cooperative lock identity remains stable between commands | cli_observed | the lock is not removed and sequential transactions observe the same file identity; interprocess and race tests pass |
+| Unsafe lock targets are rejected before mutation | cli_observed | symlink and directory targets prevent callback execution; the symlink target sentinel remains unchanged |
+| Secret backend existence checks do not wait inside the config transaction | cli_observed | with the config lock held elsewhere, `profile add --check-secret` returns `MISSING_SECRET` before the one-second bound rather than `CONFIG_LOCKED` |
+| Dry-run remains non-mutating and the default local lock cannot be accidentally tracked | repo_verified | dry-run test observes neither config nor lock; process regression requires exact `.gitignore` entries for both local paths |
+| Go 1.22 compatibility was preserved | repo_verified | `go.mod` remains `go 1.22`, flock v0.12.1 declares Go 1.21, module tidy/verify pass, and Windows cross-compilation succeeds |
+
+### Residual Risks
+
+| Risk | Status | Mitigation or next action | Claim status |
+|---|---|---|---|
+| Any untrusted process or principal with parent-directory write access through ownership, group mode, or ACLs can still swap a directory, lock pathname, or temporary pathname between path-based checks | accepted | Keep config directories non-writable by untrusted principals/processes; a stronger future implementation needs handle-relative no-follow operations such as dirfd/openat or `os.Root` once a portable design is available | repo_verified |
+| The file lock coordinates cooperating env-vault processes, not direct edits or non-cooperating programs, and remote/network filesystem lock semantics may vary | accepted | Avoid editing the config concurrently outside env-vault and keep user config on a local filesystem | repo_verified |
+| Windows code was cross-compiled but not executed on a native Windows host during this local wave | planned | Require the existing native Windows quality job before merge/release | cli_observed |
+| Remote PR verification is outside this local evidence capture | planned | Publish the reviewed branch and require the existing GitHub checks before merge or release | cli_observed |
+
+## Task ID: `ENV-VAULT-SECURITY-AND-DISTRIBUTION-BASELINE`
+
+Timestamp UTC: `2026-07-14T21:51:07Z`
+
+### Scope
+
+Harden local runtime identifier, config-write, environment-collision, and
+Homebrew-generation boundaries on local branch
+`codex/security-baseline-env-vault` from clean `main` at
+`859cbfebf6b6b3ed84408100741ea5bcf5df0ee1`. No real secret value, keychain
+item, password-store entry, remote ref, commit, tag, release, or remote setting
+was changed. The coordinated local tap branch
+`codex/distribution-hardening-tap` at base
+`f8f9897595914a21e657c7f6a1ce106e47867dfb` was read to align the upstream
+generator; this env-vault wave did not edit any `homebrew-tap` file.
+
+### Changes
+
+| Area | Purpose |
+|---|---|
+| `internal/secretstore`, `internal/config`, `internal/cli` | Centralize secret/service validation; preserve safe slash hierarchy while rejecting absolute, backslash, empty, `.` and `..` path forms |
+| `internal/secretstore/keyring` | Repeat identifier validation immediately before backend access; fake-pass regression proves the exact safe prefix and proves unsafe input cannot invoke the backend |
+| `internal/config` | Reject existing and dangling config symlinks; publish a synced mode-`0600` temporary sibling with atomic rename instead of truncating the target |
+| `internal/platform`, `internal/runner` | Use one case-insensitive portable environment key for mapping duplicates, inherited collisions, override replacement, and `--clean-env`, including Windows `Path`/`PATH` |
+| Go regression tests | Cover traversal/service variants, safe slash names, fake-pass argv, symlink targets, concurrent complete-file visibility, case-only mapping duplicates, override deduplication, and Windows-style minimal env |
+| `scripts/release/generate-homebrew-formula.sh` | Emit Homebrew-native `on_macos`/`on_linux` plus `on_arm`/`on_intel` blocks, declare macOS Sequoia as the minimum, and install the three archived documentation files without changing version, URL, or checksum inputs |
+| `tests/workflows_test.go` | Require the release build to archive all three documentation files; generate four fake archive/checksum pairs; verify exact platform/architecture URL/checksum placement; reject `Hardware::CPU` branching; require minimum/docs/exact-version behavior; and pass the generated result through `verify-homebrew-formula.sh` |
+| `README.md`, `RELEASING.md`, `docs/design.md`, `docs/security.md` | Document the implemented runtime boundaries, macOS 15+ support floor, generated-formula contract, and remaining transaction-lock limitation |
+
+### Commands And Results
+
+| Command | Result | Claim status |
+|---|---|---|
+| `git switch -c codex/security-baseline-env-vault` | passed from clean `main` at the recorded source SHA | cli_observed |
+| `gofmt -w` on changed Go files | passed | cli_observed |
+| targeted modified-package `go test` with sandbox-local `GOCACHE` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-security-full-cache go test ./...` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-security-race-cache go test -race ./...` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-security-vet-cache go vet ./...` | passed | cli_observed |
+| `go test -count=10 ./internal/config ./internal/runner ./internal/secretstore/keyring` with sandbox-local `GOCACHE` | passed | cli_observed |
+| Windows amd64 `go test -c` for platform, secretstore, keyring, config, runner, and CLI packages | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-homebrew-target-cache-2 go test ./tests -run '^TestGeneratedHomebrewFormulaPreservesDistributionContract$' -v` | passed; verified the workflow docs-copy contract, generated four temporary archive/checksum fixtures and the formula, then passed `verify-homebrew-formula.sh` | cli_observed |
+| `gh release download v0.0.6`, regenerate from all ten published assets, then `cmp` with the coordinated tap formula | passed; both formula files have SHA-256 `fb3d7c888f758379a2ebc6b119ccdc49b079066fcf30b75ea2044bc764f3ca52` | remote_observed |
+| List the published Darwin arm64 and Linux amd64 archive members | passed; both contain `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, and the binary | remote_observed |
+| `shellcheck -x scripts/release/generate-homebrew-formula.sh scripts/release/verify-homebrew-formula.sh` | passed | cli_observed |
+| `GOCACHE=/tmp/env-vault-homebrew-full-cache-2 go test ./...` | passed after the final generator/test synchronization | cli_observed |
+| `GOCACHE=/tmp/env-vault-homebrew-vet-cache-2 go vet ./...` | passed after the final generator/test synchronization | cli_observed |
+| `git diff --check` | passed | cli_observed |
+
+### Claims
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `pass` operations cannot use a secret or service traversal to leave the `env-vault` prefix | repo_verified | shared component validation plus adapter-level validation; fake-pass tests verify safe argv and zero calls for unsafe identifiers |
+| Existing safe slash-separated secret and service names remain supported | repo_verified | validator and fake-pass positive regression cases |
+| A config target symlink is not followed, created through, or replaced | cli_observed | existing-target and dangling-target tests preserve the symlink and outside target state |
+| Readers see a complete old or new config during concurrent saves | cli_observed | concurrent writer/reader regression plus atomic temporary-file replacement and race test |
+| Environment mapping identity is portable to Windows | repo_verified | canonical key is used for config duplicate, runtime collision, replacement, and minimal-env selection; Windows-style tests and Windows cross-compilation pass |
+| The next generated formula cannot silently return to `Hardware::CPU.arm?` or omit the macOS minimum/documentation contract without failing the workflow regression suite | repo_verified | generated-fixture test requires exact DSL counts, Sequoia dependency, documentation installation, archived documentation inputs, and absence of `Hardware::CPU` |
+| Each generated architecture URL retains the SHA-256 of its matching archive | cli_observed | the regression creates four distinct archive bytes/checksums, requires each exact platform/selector URL/checksum block, and runs the project's exact formula verifier |
+| The published `v0.0.6` assets regenerate the coordinated local tap formula byte-for-byte | remote_observed | all ten release assets were downloaded read-only into a temporary directory; regenerated and tap formula SHA-256 values both equal `fb3d7c888f758379a2ebc6b119ccdc49b079066fcf30b75ea2044bc764f3ca52` |
+| The formula's documentation install inputs exist in the published archives | remote_observed | member listings for Darwin arm64 and Linux amd64 contain all three documentation files; the release workflow uses the same packaging step for every target |
+| No remote or production secret-store mutation occurred | cli_observed | only local Git/file commands, fake pass, generated non-secret fixtures, and local test processes were used |
+
+### Residual Risks
+
+| Risk | Status | Mitigation or next action | Claim status |
+|---|---|---|---|
+| Profile commands still perform load-modify-save outside one inter-process lock, so concurrent successful commands can logically lose an update | open | Introduce a cross-platform locked config transaction API and move profile create/add/remove into it; current atomic save prevents truncation/corruption only | repo_verified |
+| A hostile same-user process that can swap a parent directory or replace the temporary filename after close remains outside the target-symlink fix | accepted | Keep config directories user-owned; a stronger future implementation should use dirfd/openat or `os.Root` no-follow operations | repo_verified |
+| Windows behavior was cross-compiled but not executed on a native Windows host in this local run | planned | Require the existing Windows CI runner to execute focused runtime tests before release | cli_observed |
+| Real Keychain, Secret Service, WinCred, KWallet, and `pass` stores were not exercised | accepted | Run separately with disposable identifiers only after review; fake-pass tests cover the namespace boundary without touching user data | cli_observed |
+| Generator synchronization and the coordinated tap hardening exist only on local, uncommitted branches; no formula was published and no release was created | planned | Review both local diffs together, then use the normal PR and release gates only after explicit authorization | cli_observed |
+| This env-vault run did not execute `brew style`, install, or test against a live tap checkout | planned | The coordinated `homebrew-tap` wave owns those platform checks; upstream protects the generator contract with fake archives, ShellCheck, Go regression tests, and the exact formula verifier | cli_observed |
+
 ## Task ID: `ENV-VAULT-RELEASE-APP-CUTOVER-COMPLETE`
 
 Timestamp UTC: `2026-07-10T22:46:27Z`

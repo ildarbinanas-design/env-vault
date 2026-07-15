@@ -23,6 +23,9 @@ On Linux, process environment variables may be visible to the same user through 
 - Secret input is accepted only through a hidden prompt or `--stdin`.
 - `--stdin` trims exactly one trailing newline byte.
 - Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
+- Secret and service identifiers may use safe slash-separated hierarchy, but absolute paths and empty, `.` or `..` components are rejected before backend access.
+- Config mutations reject symlink targets and replace a synced mode-`0600` temporary file atomically.
+- Environment target names are compared case-insensitively so a profile remains unambiguous when moved to Windows.
 - The `file`/plaintext keyring backend is not production-enabled.
 - The test backend is insecure and enabled only when all three env vars are set: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and `ENV_VAULT_TEST_STORE=/tmp/...`.
 - Tests and smoke checks use generated ephemeral fixtures; stable secret payload fixtures are not stored in the repo.
@@ -35,7 +38,7 @@ On Linux, process environment variables may be visible to the same user through 
 brew install ildarbinanas-design/tap/env-vault
 ```
 
-Supported platforms: macOS arm64/amd64 and Linux arm64/amd64. Homebrew
+Supported platforms: macOS 15+ arm64/amd64 and Linux arm64/amd64. Homebrew
 downloads do not receive the Gatekeeper quarantine attribute, so no
 `xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
 [ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
@@ -126,13 +129,15 @@ workflow, including native license scans on Linux, macOS, and Windows.
 - Tag release: pushing a strict `vX.Y.Z` tag remains supported and runs the same
   verification, build, release, and Homebrew jobs.
 
-Supported targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+Supported targets are Linux amd64/arm64, macOS 15+ amd64/arm64, and Windows amd64.
 Each release contains exactly five archives and five matching SHA-256 files.
 The combined SPDX SBOM is a 14-day workflow artifact, and GitHub build
 provenance and SBOM attestations are stored separately for all five archives;
 they are deliberately not added to the immutable ten-asset Release contract.
 
-macOS release artifacts are built on macOS runners with `CGO_ENABLED=1`; the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux and Windows release targets keep `CGO_ENABLED=0`.
+macOS 15+ release artifacts are built on macOS runners with `CGO_ENABLED=1`;
+the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux
+and Windows release targets keep `CGO_ENABLED=0`.
 
 ## Basic Usage
 
@@ -192,6 +197,16 @@ User config defaults:
 
 - Linux: `$XDG_CONFIG_HOME/env-vault/config.yaml` or `~/.config/env-vault/config.yaml`
 - macOS: `~/Library/Application Support/env-vault/config.yaml`
+
+`profile create`, `profile add`, and `profile remove` serialize their complete
+read-modify-validate-save operation through a persistent adjacent
+`<config>.lock` file. The lock is private (`0600` where POSIX modes apply) and
+is intentionally not removed, because replacing it would allow two processes
+to lock different inodes. Lock waits are bounded; a timeout returns
+`CONFIG_LOCKED`. Dry runs do not create either the config or lock file, and
+`profile add --check-secret` completes its backend existence check before
+entering the config transaction. The default local `.env-vault.yaml.lock` is
+gitignored alongside `.env-vault.yaml`.
 
 Example:
 

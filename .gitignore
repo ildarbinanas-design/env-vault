@@ -13,6 +13,7 @@ coverage.out
 .env
 .env.*
 .env-vault.yaml
+.env-vault.yaml.lock
 *.key
 *.pem
 *.p12

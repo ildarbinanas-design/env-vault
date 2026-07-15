@@ -48,20 +48,26 @@ class EnvVault < Formula
   license "MIT"
 
   on_macos do
-    if Hardware::CPU.arm?
+    depends_on macos: :sequoia
+
+    on_arm do
       url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-darwin-arm64.tar.gz"
       sha256 "$darwin_arm64"
-    else
+    end
+
+    on_intel do
       url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-darwin-amd64.tar.gz"
       sha256 "$darwin_amd64"
     end
   end
 
   on_linux do
-    if Hardware::CPU.arm?
+    on_arm do
       url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-linux-arm64.tar.gz"
       sha256 "$linux_arm64"
-    else
+    end
+
+    on_intel do
       url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-linux-amd64.tar.gz"
       sha256 "$linux_amd64"
     end
@@ -69,6 +75,7 @@ class EnvVault < Formula
 
   def install
     bin.install "env-vault"
+    doc.install %w[README.md LICENSE THIRD_PARTY_NOTICES.md]
   end
 
   test do

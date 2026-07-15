@@ -20,11 +20,23 @@ Config files store only profile mappings:
 - required flag;
 - optional profile description.
 
-Config files are created with mode `0600` where applicable.
+Config files are created with mode `0600` where applicable. Mutations reject a
+config symlink and use a synced temporary sibling plus atomic replacement, so a
+checkout cannot redirect a profile mutation through `.env-vault.yaml` and
+readers do not observe a truncated file.
+
+Profile create/add/remove also serialize their complete
+load-mutate-validate-save sequence through a persistent adjacent lock file. The
+lock is created with mode `0600` where POSIX modes apply, rejected when it is a
+symlink or non-regular target, and intentionally retained after unlock to avoid
+an inode-replacement race between cooperating processes. Waiting is bounded to
+five seconds or the caller's earlier deadline; contention returns the structured
+code `CONFIG_LOCKED`. Secret backend checks are performed before entering this
+transaction, and dry runs do not create a config or lock file.
 
 ## Backend Assumptions
 
-Production secret storage uses OS keychain-style backends through `github.com/99designs/keyring`: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. `pass` requires the `pass` command and an initialized password store.
+Production secret storage uses OS keychain-style backends through `github.com/99designs/keyring`: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. `pass` requires the `pass` command and an initialized password store. Secret and service identifiers are validated as relative slash-separated names before backend access; absolute, empty, `.` and `..` path components are rejected so `pass` operations remain below the `env-vault` prefix.
 
 If `pass` is explicitly selected and unavailable, commands return structured error code `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
 
@@ -47,6 +59,11 @@ Tests and smoke checks generate ephemeral secret fixture values at runtime. Stab
 - A child process receives secret values through environment variables and can leak them if it prints or forwards its environment.
 - On Linux, process environment variables may be visible to the same user through `/proc` in some environments.
 - OS keychain availability depends on the platform session and keyring daemon.
+- Any process or principal with write access through ownership, group mode, or
+  ACLs can replace a parent directory, lock path, or temporary filename during
+  a checked filesystem operation. This remains outside the cooperative
+  transaction guarantee. Keep config directories non-writable by untrusted
+  principals and processes.
 - env-vault does not rotate credentials by itself.
 
 ## Bug Reports

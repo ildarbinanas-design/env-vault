@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+// CanonicalEnvKey defines the portable environment-variable identity used by
+// configs and child-process construction. Windows treats environment names as
+// case-insensitive, so using the same rule on every host prevents a config that
+// is valid on Unix from becoming ambiguous when moved to Windows.
+func CanonicalEnvKey(name string) string {
+	return strings.ToUpper(name)
+}
+
 func UserConfigPath() (string, error) {
 	if runtime.GOOS == "darwin" {
 		home, err := os.UserHomeDir()
@@ -46,19 +54,27 @@ func MinimalEnv(current []string) []string {
 		"TMPDIR":     true,
 		"TMP":        true,
 		"TEMP":       true,
-		"SystemRoot": true,
+		"SYSTEMROOT": true,
 		"WINDIR":     true,
-		"ComSpec":    true,
+		"COMSPEC":    true,
 	}
 	out := make([]string, 0, len(keep))
+	positions := make(map[string]int, len(keep))
 	for _, item := range current {
 		name, _, ok := strings.Cut(item, "=")
 		if !ok {
 			continue
 		}
-		if keep[name] {
-			out = append(out, item)
+		canonical := CanonicalEnvKey(name)
+		if !keep[canonical] {
+			continue
 		}
+		if position, exists := positions[canonical]; exists {
+			out[position] = item
+			continue
+		}
+		positions[canonical] = len(out)
+		out = append(out, item)
 	}
 	return out
 }
