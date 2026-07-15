@@ -8,9 +8,18 @@ import (
 	"syscall"
 )
 
-func forwardSignals(process *os.Process) func() {
+func signalNotifications() chan os.Signal {
 	ch := make(chan os.Signal, 4)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	return ch
+}
+
+func stopSignalNotifications(ch chan os.Signal) {
+	signal.Stop(ch)
+	close(ch)
+}
+
+func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -19,8 +28,7 @@ func forwardSignals(process *os.Process) func() {
 		}
 	}()
 	return func() {
-		signal.Stop(ch)
-		close(ch)
+		stopSignalNotifications(ch)
 		<-done
 	}
 }

@@ -35,13 +35,17 @@ func (r CommandRunner) Run(ctx context.Context, argv []string, env []string) (in
 	cmd.Stdin = r.Stdin
 	cmd.Stdout = r.Stdout
 	cmd.Stderr = r.Stderr
+	// Subscribe before Start so a fast child cannot become ready while the
+	// parent still has the default signal disposition.
+	signals := signalNotifications()
 	if err := cmd.Start(); err != nil {
+		stopSignalNotifications(signals)
 		if stderrors.Is(err, exec.ErrNotFound) {
 			return apperrors.ExitCommandNotFound, apperrors.New("exec", apperrors.CodeCommandNotFound, "Command not found: "+argv[0], "Check the command name or PATH", apperrors.ExitCommandNotFound)
 		}
 		return apperrors.ExitRuntimeError, apperrors.Wrap("exec", apperrors.CodeRuntimeError, "Unable to start command", "Check command permissions and arguments", apperrors.ExitRuntimeError, err)
 	}
-	stop := forwardSignals(cmd.Process)
+	stop := forwardSignals(cmd.Process, signals)
 	defer stop()
 	if err := cmd.Wait(); err != nil {
 		var exitErr *exec.ExitError
