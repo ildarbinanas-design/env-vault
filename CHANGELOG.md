@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.9](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.8...v0.0.9) (2026-07-16)
+
+
+### Bug Fixes
+
+* **e2e:** seal release-version contract normalization ([#24](https://github.com/ildarbinanas-design/env-vault/issues/24)) ([e298cd0](https://github.com/ildarbinanas-design/env-vault/commit/e298cd0d473c41654fb6464f16f11ee477e60547))
+* **release:** add deterministic release diagnostics ([#20](https://github.com/ildarbinanas-design/env-vault/issues/20)) ([0eef845](https://github.com/ildarbinanas-design/env-vault/commit/0eef84548b802a89f98c08744b5b51aac3d543ad))
+* **release:** promote exact CI artifacts ([#22](https://github.com/ildarbinanas-design/env-vault/issues/22)) ([d0c6a32](https://github.com/ildarbinanas-design/env-vault/commit/d0c6a320bade9d09b77ecfcca89d23daded57da6))
+* **release:** verify read-only bypass state ([#23](https://github.com/ildarbinanas-design/env-vault/issues/23)) ([0b21e66](https://github.com/ildarbinanas-design/env-vault/commit/0b21e66664137a2944049633078a9658b4703625))
+
 ## [0.0.8](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.7...v0.0.8) (2026-07-16)
 
 
