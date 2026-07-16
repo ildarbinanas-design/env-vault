@@ -95,7 +95,7 @@ Download the archive for your platform from the
 [latest release](https://github.com/ildarbinanas-design/env-vault/releases/latest),
 verify its checksum, and unpack (substitute the version, OS, and architecture):
 
-Current stable release: `v0.0.9`. <!-- x-release-please-version -->
+Current stable release: `v0.0.10`. <!-- x-release-please-version -->
 
 The line above is managed by Release Please. `v0.0.8` and `v0.0.9` are
 preserved failed immutable tags and intentionally have no GitHub Release; use the
