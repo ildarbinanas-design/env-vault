@@ -16,14 +16,36 @@ release_require_repository "$repository"
 release_require_command gh
 release_require_command jq
 
-settings=$(gh api "repos/$repository")
+repository_owner=${repository%%/*}
+repository_name=${repository#*/}
+# GraphQL variable references must reach GitHub literally.
+# shellcheck disable=SC2016
+settings=$(gh api graphql \
+  -f owner="$repository_owner" \
+  -f name="$repository_name" \
+  -f query='
+    query RepositoryReleaseSettings($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        defaultBranchRef {
+          name
+        }
+        mergeCommitAllowed
+        rebaseMergeAllowed
+        squashMergeAllowed
+        squashMergeCommitTitle
+        squashMergeCommitMessage
+      }
+    }
+  ') || release_die "unable to read repository merge settings"
 jq -e '
-  .default_branch == "main" and
-  .allow_squash_merge == true and
-  .allow_merge_commit == false and
-  .allow_rebase_merge == false and
-  .squash_merge_commit_title == "PR_TITLE" and
-  .squash_merge_commit_message == "PR_BODY"
+  .errors == null and
+  (.data.repository | type == "object") and
+  .data.repository.defaultBranchRef.name == "main" and
+  .data.repository.squashMergeAllowed == true and
+  .data.repository.mergeCommitAllowed == false and
+  .data.repository.rebaseMergeAllowed == false and
+  .data.repository.squashMergeCommitTitle == "PR_TITLE" and
+  .data.repository.squashMergeCommitMessage == "PR_BODY"
 ' <<< "$settings" >/dev/null ||
   release_die "repository merge settings do not preserve the reviewed release contract"
 

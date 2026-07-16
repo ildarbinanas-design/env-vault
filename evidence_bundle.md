@@ -1584,3 +1584,47 @@ and exact `0600` only where POSIX mode bits apply.
 | Native Windows concurrency test after the read and test-portability fixes | pending updated PR CI | the Windows E2E job requires the package once plus ten sequential focused concurrency runs before the unchanged full E2E/burn-in/coverage job | repo_verified |
 | Permanent access failure latency | bounded | a whitelisted but persistent Windows access error adds at most one second and then returns the last error | repo_verified |
 | Unix behavior | unchanged | build-tagged implementation performs one `os.ReadFile` call and the existing single replacement attempt | repo_verified |
+
+## Post-merge read-only release App audit — 2026-07-16
+
+### Scope
+
+The merged `main` CI run
+[29460867618](https://github.com/ildarbinanas-design/env-vault/actions/runs/29460867618)
+completed successfully, including all five native E2E jobs, report validation,
+baseline comparison, and `quality-gate`. The first manual planning-App audit
+[29460920983](https://github.com/ildarbinanas-design/env-vault/actions/runs/29460920983)
+minted the expected `env-vault-release-planning` installation token and then
+failed before ruleset inspection. The token intentionally has only Metadata
+read and Administration read. GitHub's REST repository response omitted the
+merge-policy fields for that non-pushing caller, so the fail-closed verifier
+correctly rejected an incomplete response even though an administrator
+independently observed the configured squash-only `PR_TITLE`/`PR_BODY` policy.
+
+The verifier now requests the same policy through the typed GitHub GraphQL
+`Repository` fields. The merge-policy booleans and enums are non-null in the
+current schema; nullable `defaultBranchRef` must still contain the exact `main`
+name. The manual audit retains its read-only App permissions; missing repository
+data, malformed or non-empty GraphQL errors, unsafe values, and transport
+failures all remain hard failures. The full release-planning token uses the
+same verifier, so proposal planning and manual auditing continue to enforce one
+repository-settings contract.
+
+### Evidence and status
+
+| Evidence | Result | Claim status |
+|---|---|---|
+| Main push CI run `29460867618` | green through `quality-gate` | remote_observed |
+| Manual App audit run `29460920983`, job `87503977775` | exact App identity passed; REST merge-settings read failed before ruleset checks | remote_observed |
+| GitHub GraphQL schema introspection | required merge-policy fields are present and non-null; live administrator query returned the configured squash-only values | cli_observed |
+| Release automation tests | cover safe settings, unsafe rebase, missing GraphQL repository, transport failure, partial data with GraphQL errors, malformed error envelopes, and unsafe main/tag rulesets | repo_verified |
+| App permission contract | remains Metadata read plus Administration read, with no Contents, Issues, or Pull requests permission in the audit workflow | repo_verified |
+| `GITHUB_REPOSITORY=ildarbinanas-design/env-vault scripts/release/verify-repository-release-settings.sh` | corrected GraphQL plus unchanged REST ruleset verifier passed against live settings | cli_observed |
+| `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed after restoring the unrelated REST fixture used by release-authorization tests | cli_observed |
+| Focused release/workflow tests; `shellcheck -x` on the changed verifier; `scripts/smoke.sh`; `scripts/license-check.sh` | passed; license check used pinned go-licenses v2.0.1 with only the expected x/sys assembly warning | cli_observed |
+| `go mod tidy`; repeated `go mod tidy -diff`; `git diff --check` | clean with no module-file change | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate` | 22 passed, 0 failed/skipped/missing, 100% critical feature coverage, 71.4% statement coverage, unchanged suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`; 18 report files and 125 registry records scanned with zero leak findings | cli_observed |
+
+The corrected workflow must pass its pull-request CI, merge through the normal
+protected path, and then pass a fresh manual App audit on `main` before the
+release proposal is eligible for reviewed publication.
