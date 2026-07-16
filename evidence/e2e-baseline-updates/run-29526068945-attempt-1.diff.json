@@ -1,0 +1,33 @@
+{
+  "schema_id": "env-vault.e2e-baseline-diff.v1",
+  "schema_version": 1,
+  "previous_digest": "b947ac75fb5db6e1515c4204a0fc9fa19a04a4aa0bd4e59e01c404427ab9a10b",
+  "updated_digest": "f4b22f4df0f134f192b2c987a3f1dd777f5bfab1154b00715e8d839d27f7cdcc",
+  "changes": [
+    {
+      "path": "$.provenance.commit_sha",
+      "before": "62b3d25fcbc0a960c2eba03f98d7026cd2be8421",
+      "after": "054d7b1c3f1c3a63e8a2ed162f72f3ad2f28a9b9"
+    },
+    {
+      "path": "$.provenance.run_id",
+      "before": "29519762171",
+      "after": "29526068945"
+    },
+    {
+      "path": "$.provenance.run_url",
+      "before": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29519762171",
+      "after": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29526068945"
+    },
+    {
+      "path": "$.semantic_suite.hash",
+      "before": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8",
+      "after": "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1"
+    },
+    {
+      "path": "$.semantic_suite.source_report_hash",
+      "before": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8",
+      "after": "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1"
+    }
+  ]
+}

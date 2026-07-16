@@ -3,8 +3,8 @@
   "schema_version": 2,
   "semantic_suite": {
     "algorithm": "env-vault.e2e-semantic-suite.v1",
-    "hash": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8",
-    "source_report_hash": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8"
+    "hash": "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1",
+    "source_report_hash": "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1"
   },
   "toolchain": {
     "go_version": "go1.26.5",
@@ -12,9 +12,9 @@
   },
   "provenance": {
     "repository": "ildarbinanas-design/env-vault",
-    "commit_sha": "62b3d25fcbc0a960c2eba03f98d7026cd2be8421",
-    "run_id": "29519762171",
-    "run_url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29519762171",
+    "commit_sha": "054d7b1c3f1c3a63e8a2ed162f72f3ad2f28a9b9",
+    "run_id": "29526068945",
+    "run_url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29526068945",
     "run_attempt": "1",
     "phase": "candidate"
   },

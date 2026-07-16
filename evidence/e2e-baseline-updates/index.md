@@ -1,5 +1,37 @@
 # Durable E2E baseline update
 
+## Release-version contract normalization
+
+The baseline was updated from the sealed five-platform candidate matrix
+produced by workflow run
+[`29526068945`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29526068945),
+attempt `1`, source `054d7b1c3f1c3a63e8a2ed162f72f3ad2f28a9b9`.
+
+The matrix proof passed schema, platform-set, exact-run, semantic-suite,
+toolchain, normalized-evidence, public-contract, coverage, critical-scenario,
+and leak validation. The reviewable diff changes only the suite hash and its
+exact run provenance. All five public contract hashes, coverage floors,
+scenario results, expected skips, tool versions, and leak expectations remain
+unchanged.
+
+Machine bindings:
+
+- matrix proof semantic digest:
+  `2cd97028543ea0b3301a1cdd77f205e0629f0b7fb81358b750620ead93526a97`;
+- matrix proof file SHA-256:
+  `f3bb1f23fb7c15fa17a0c256c43731f91be573bdcda561b2c6601fdc4e23b8b0`;
+- updated baseline semantic digest:
+  `f4b22f4df0f134f192b2c987a3f1dd777f5bfab1154b00715e8d839d27f7cdcc`;
+- updated baseline file SHA-256:
+  `338c6283db974b796ef1b7733ebd70f889ee5f2d5a0a5c25c292d263bdb018c0`;
+- reviewable diff file SHA-256:
+  `61ae11595e4482e255b4264603c9d8c80dec43fac6b82c3180c457b52dc3563f`.
+
+The deterministic update is recorded in
+`run-29526068945-attempt-1.diff.json`.
+
+## Independent-sentinel transition
+
 The checked-in baseline was updated from the sealed five-platform candidate
 matrix produced by workflow run
 [`29519762171`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29519762171),
