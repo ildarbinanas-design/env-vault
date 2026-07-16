@@ -1,0 +1,27 @@
+{
+  "schema_id": "env-vault.e2e-baseline-migration.v1",
+  "schema_version": 1,
+  "status": "pass",
+  "comparator": {
+    "path": "evidence/e2e-baseline-migration/comparison.json",
+    "sha256": "84a9f5f9d2e6b129f7dc1338db3c5d0b7fabd6577b62d6d2048a02a01dbcf293",
+    "name": "env-vault-e2e-candidate-comparison-attempt-1",
+    "run_id": "29479484474",
+    "run_attempt": "1"
+  },
+  "transition": {
+    "code": "independent_second_secret_sentinel",
+    "source_algorithm": "env-vault.e2e-whole-tree.v1",
+    "source_suite_hash": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
+    "target_algorithm": "env-vault.e2e-semantic-suite.v1",
+    "target_suite_hash": "e68d4611233e1993938630b97c8b862eb744661c7660f22c0a651285e0afeedb",
+    "changed_file": "e2e/scenarios_test.go",
+    "before_sha256": "24ee61fc5cca1a31d5bddfd237f74903f1e42f554d5259a81d809c9f5cd54a73",
+    "after_sha256": "f27a81295dfb0420a4894268ad539ec03cb8ebad0a2602db3c9708aa37ac2db8",
+    "before_fragment": "second := first",
+    "after_fragment": "second := sc.sentinels[1]",
+    "review_patch_path": "evidence/e2e-baseline-migration/independent-sentinel.patch",
+    "review_patch_sha256": "e30f9971580b8d77c5182b2ee906a0b15e132bd651acd269984071dd64e1eccb"
+  },
+  "baseline_facts_sha256": "ca7c48c1b84a635064b924a2c023d24e13f60c8c15328985c48d5686c23b3da0"
+}

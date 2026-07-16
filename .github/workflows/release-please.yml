@@ -21,13 +21,263 @@ concurrency:
   queue: max
 
 jobs:
-  plan:
+  inspect:
+    permissions:
+      actions: read
+      contents: read
     if: >-
       ${{
-        github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'main' &&
         github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      publish: ${{ steps.classify.outputs.publish }}
+      source_sha: ${{ steps.classify.outputs.source_sha }}
+      version: ${{ steps.classify.outputs.version }}
+      attempt_action: ${{ steps.attempt.outputs.action_code }}
+      attempt_reason: ${{ steps.attempt.outputs.reason_code }}
+      attempt: ${{ steps.attempt.outputs.attempt }}
+    steps:
+      - name: Check out the exact completed main commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          fetch-tags: true
+          persist-credentials: "false"
+
+      - id: classify
+        name: Classify the exact completed main commit
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          [[ "$actual_sha" == "$EXPECTED_SHA" ]] || {
+            echo "checked out ${actual_sha}, expected ${EXPECTED_SHA}" >&2
+            exit 1
+          }
+          scripts/release/classify-release-commit.sh "$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go for release-attempt inspection
+        if: steps.classify.outputs.publish == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - id: attempt
+        name: Classify the exact completed release-candidate attempt offline
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EXPECTED_SHA: ${{ steps.classify.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SNAPSHOT_DIR: ${{ runner.temp }}/attempt-inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$SNAPSHOT_DIR"
+          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          "$RELEASECHECK" validate-contract --json > "$SNAPSHOT_DIR/contract-validation.json"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
+            > "$SNAPSHOT_DIR/ci-artifacts.json"
+
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .id == $run_id and
+              .run_attempt == $attempt and
+              .repository.full_name == $repository and
+              .head_repository.full_name == $repository and
+              .head_sha == $sha and
+              .head_branch == "main" and
+              .event == "push" and
+              .name == "ci" and
+              .path == ".github/workflows/ci.yml" and
+              .status == "completed" and
+              (.conclusion | type == "string")
+            ' "$SNAPSHOT_DIR/ci-run.json" >/dev/null
+
+          set +e
+          "$RELEASECHECK" classify-attempt \
+            --run "$SNAPSHOT_DIR/ci-run.json" \
+            --artifacts "$SNAPSHOT_DIR/ci-artifacts.json" \
+            --json > "$SNAPSHOT_DIR/attempt-classification.json"
+          classifier_status=$?
+          set -e
+          [[ "$classifier_status" == "0" || "$classifier_status" == "4" ]] || {
+            echo "offline attempt classifier failed closed with status ${classifier_status}" >&2
+            exit 1
+          }
+
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .schema_id == "env-vault.attempt-classification.v1" and
+              .schema_version == 1 and
+              .run_id == $run_id and
+              .attempt == $attempt and
+              .source_sha == $sha and
+              .repository == $repository and
+              .head_repository == $repository and
+              .event == "push" and
+              .head_branch == "main" and
+              .workflow_id == "ci" and
+              .workflow_name == "ci" and
+              .workflow_path == ".github/workflows/ci.yml" and
+              .run_status == "completed" and
+              .rerun_failed_jobs_allowed == false and
+              (.prohibited_actions | index("rerun_failed_jobs") != null) and
+              (
+                (.ok == true and .matrix_complete == true and .run_conclusion == "success" and .action_code == "none" and .reason_code == "ATTEMPT_MATRIX_COMPLETE") or
+                (.ok == false and .matrix_complete == false and .action_code == "rerun_all_jobs" and .reason_code == "ATTEMPT_MATRIX_INCOMPLETE") or
+                (.ok == false and .matrix_complete == true and .run_conclusion != "success" and .action_code == "inspect_failure" and .reason_code == "CI_ATTEMPT_FAILED")
+              )
+            ' "$SNAPSHOT_DIR/attempt-classification.json" >/dev/null
+
+          {
+            printf 'action_code=%s\n' "$(jq -er '.action_code' "$SNAPSHOT_DIR/attempt-classification.json")"
+            printf 'reason_code=%s\n' "$(jq -er '.reason_code' "$SNAPSHOT_DIR/attempt-classification.json")"
+            printf 'attempt=%s\n' "$CI_RUN_ATTEMPT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload machine-readable attempt classification
+        if: always() && !cancelled() && steps.classify.outputs.publish == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-attempt-classification-ci-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-planning-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/attempt-inspection/contract-validation.json
+            ${{ runner.temp }}/attempt-inspection/ci-run.json
+            ${{ runner.temp }}/attempt-inspection/ci-artifacts.json
+            ${{ runner.temp }}/attempt-inspection/attempt-classification.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stop planning on a non-promotable release attempt
+        if: steps.classify.outputs.publish == 'true' && steps.attempt.outputs.action_code != 'none'
+        env:
+          ACTION_CODE: ${{ steps.attempt.outputs.action_code }}
+          ATTEMPT: ${{ steps.attempt.outputs.attempt }}
+          REASON_CODE: ${{ steps.attempt.outputs.reason_code }}
+        shell: bash
+        run: |
+          echo "release candidate attempt ${ATTEMPT}: action=${ACTION_CODE} reason=${REASON_CODE}" >&2
+          exit 1
+
+  rerun-incomplete-attempt:
+    needs: [inspect]
+    if: >-
+      ${{
+        always() &&
+        needs.inspect.outputs.publish == 'true' &&
+        needs.inspect.outputs.attempt_action == 'rerun_all_jobs' &&
+        needs.inspect.outputs.attempt == '1'
+      }}
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact release candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.inspect.outputs.source_sha }}
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Reclassify current remote state and rerun the whole attempt
+        env:
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EXPECTED_SHA: ${{ needs.inspect.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SNAPSHOT_DIR: ${{ runner.temp }}/attempt-rerun
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$SNAPSHOT_DIR"
+          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current_sha" != "$EXPECTED_SHA" ]]; then
+            printf 'Skipped stale incomplete attempt for `%s`; current main is `%s`.\n' \
+              "$EXPECTED_SHA" "$current_sha" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
+            > "$SNAPSHOT_DIR/ci-artifacts.json"
+
+          set +e
+          "$RELEASECHECK" classify-attempt \
+            --run "$SNAPSHOT_DIR/ci-run.json" \
+            --artifacts "$SNAPSHOT_DIR/ci-artifacts.json" \
+            --json > "$SNAPSHOT_DIR/attempt-classification.json"
+          classifier_status=$?
+          set -e
+          [[ "$classifier_status" == "4" ]] || {
+            echo "attempt changed before rerun; classifier status=${classifier_status}" >&2
+            exit 1
+          }
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .repository == $repository and
+              .head_repository == $repository and
+              .source_sha == $sha and
+              .run_id == $run_id and
+              .attempt == $attempt and
+              .action_code == "rerun_all_jobs" and
+              .reason_code == "ATTEMPT_MATRIX_INCOMPLETE"
+            ' "$SNAPSHOT_DIR/attempt-classification.json" >/dev/null
+          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_sha" == "$EXPECTED_SHA" ]] || {
+            echo "main advanced before the full rerun mutation" >&2
+            exit 1
+          }
+          scripts/release/rerun-classified-attempt.sh \
+            "$SNAPSHOT_DIR/attempt-classification.json" "$GITHUB_REPOSITORY"
+          printf 'Full rerun requested for run `%s`, incomplete attempt `%s`.\n' \
+            "$CI_RUN_ID" "$CI_RUN_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"
+
+  plan:
+    needs: [inspect]
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    if: >-
+      ${{
+        needs.inspect.result == 'success' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        (needs.inspect.outputs.publish != 'true' || needs.inspect.outputs.attempt_action == 'none')
       }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -49,6 +299,9 @@ jobs:
         name: Classify the exact green main commit
         env:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_PUBLISH: ${{ needs.inspect.outputs.publish }}
+          EXPECTED_SOURCE_SHA: ${{ needs.inspect.outputs.source_sha }}
+          EXPECTED_VERSION: ${{ needs.inspect.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -57,7 +310,17 @@ jobs:
             echo "checked out ${actual_sha}, expected ${EXPECTED_SHA}" >&2
             exit 1
           fi
-          scripts/release/classify-release-commit.sh "$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+          classification="$(scripts/release/classify-release-commit.sh "$EXPECTED_SHA")"
+          actual_publish="$(sed -n 's/^publish=//p' <<< "$classification")"
+          actual_source_sha="$(sed -n 's/^source_sha=//p' <<< "$classification")"
+          actual_version="$(sed -n 's/^version=//p' <<< "$classification")"
+          [[ "$actual_publish" == "$EXPECTED_PUBLISH" &&
+             "$actual_source_sha" == "$EXPECTED_SOURCE_SHA" &&
+             "$actual_version" == "$EXPECTED_VERSION" ]] || {
+            echo "release classification changed between inspection and planning" >&2
+            exit 1
+          }
+          printf '%s\n' "$classification" >> "$GITHUB_OUTPUT"
 
       - id: current
         name: Require the planning commit to remain current
@@ -77,6 +340,233 @@ jobs:
             echo "skipping stale planning run for ${EXPECTED_SHA}; current main is ${current_sha}"
           fi
 
+      - name: Set up Go for the offline release checker
+        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - id: release-contract
+        name: Build the offline checker and validate the release contract
+        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        env:
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          "$RELEASECHECK" validate-contract --json > "${RUNNER_TEMP}/release-contract-validation.json"
+
+          release_app_slug="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
+            [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
+            select(length == 1) | .[0].slug |
+            select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
+          ' release/contract.v1.json)"
+          release_repository_name="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
+            [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
+            select(length == 1) | .[0].repository |
+            split("/") | select(length == 2) | .[1] |
+            select(type == "string" and test("^[A-Za-z0-9._-]+$"))
+          ' release/contract.v1.json)"
+          platform_artifact_template="$(jq -er '
+            .naming.platform_artifact_template |
+            select(type == "string" and test("^[a-z0-9{}._-]+$"))
+          ' release/contract.v1.json)"
+          promotion_manifest_template="$(jq -er '
+            .naming.promotion_manifest_template |
+            select(type == "string" and test("^[a-z0-9{}._-]+$"))
+          ' release/contract.v1.json)"
+
+          {
+            printf 'release_app_slug=%s\n' "$release_app_slug"
+            printf 'release_repository_name=%s\n' "$release_repository_name"
+            printf 'platform_artifact_template=%s\n' "$platform_artifact_template"
+            printf 'promotion_manifest_template=%s\n' "$promotion_manifest_template"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: attempt
+        name: Snapshot and classify the exact triggering CI attempt
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EXPECTED_SHA: ${{ steps.classify.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM_ARTIFACT_TEMPLATE: ${{ steps.release-contract.outputs.platform_artifact_template }}
+          PROMOTION_MANIFEST_TEMPLATE: ${{ steps.release-contract.outputs.promotion_manifest_template }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SNAPSHOT_DIR: ${{ runner.temp }}/pretag
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$SNAPSHOT_DIR"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
+            > "$SNAPSHOT_DIR/ci-artifacts.json"
+
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .id == $run_id and
+              .run_attempt == $attempt and
+              .repository.full_name == $repository and
+              .head_repository.full_name == $repository and
+              .head_sha == $sha and
+              .head_branch == "main" and
+              .event == "push" and
+              .name == "ci" and
+              .status == "completed" and
+              .conclusion == "success" and
+              .path == ".github/workflows/ci.yml"
+            ' "$SNAPSHOT_DIR/ci-run.json" >/dev/null
+
+          "$RELEASECHECK" classify-attempt \
+            --run "$SNAPSHOT_DIR/ci-run.json" \
+            --artifacts "$SNAPSHOT_DIR/ci-artifacts.json" \
+            --json > "$SNAPSHOT_DIR/attempt-classification.json"
+
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .schema_id == "env-vault.attempt-classification.v1" and
+              .schema_version == 1 and
+              .ok == true and
+              .run_id == $run_id and
+              .attempt == $attempt and
+              .source_sha == $sha and
+              .repository == $repository and
+              .head_repository == $repository and
+              .event == "push" and
+              .head_branch == "main" and
+              .workflow_id == "ci" and
+              .workflow_name == "ci" and
+              .workflow_path == ".github/workflows/ci.yml" and
+              .run_status == "completed" and
+              .run_conclusion == "success" and
+              .matrix_complete == true and
+              .action_code == "none" and
+              .reason_code == "ATTEMPT_MATRIX_COMPLETE" and
+              .rerun_failed_jobs_allowed == false and
+              (.expected_targets | length) == 5 and
+              (.observed_targets | length) == 5 and
+              (.missing_targets | length) == 0 and
+              (.expected_artifacts | length) == 10 and
+              (.observed_artifacts | length) == 10 and
+              (.missing_artifacts | length) == 0
+            ' "$SNAPSHOT_DIR/attempt-classification.json" >/dev/null
+
+          platform_pattern="$(jq -nr \
+            --arg template "$PLATFORM_ARTIFACT_TEMPLATE" \
+            --arg attempt "$CI_RUN_ATTEMPT" '
+              $template |
+              gsub("\\{platform\\}"; "*") |
+              gsub("\\{attempt\\}"; $attempt) |
+              select(test("^[a-z0-9*._-]+$"))
+            ')"
+          promotion_name="$(jq -nr \
+            --arg template "$PROMOTION_MANIFEST_TEMPLATE" \
+            --arg source_sha "$EXPECTED_SHA" \
+            --arg attempt "$CI_RUN_ATTEMPT" '
+              $template |
+              gsub("\\{source_sha\\}"; $source_sha) |
+              gsub("\\{attempt\\}"; $attempt) |
+              select(test("^[a-z0-9._-]+$"))
+            ')"
+
+          promotion_artifact_id="$(jq -L scripts/release -er \
+            --arg name "$promotion_name" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" '
+              include "artifact-pages";
+              env_vault_exact_artifact($name; $run_id; $sha) | .id |
+              select(type == "number" and . > 0 and floor == .)
+            ' "$SNAPSHOT_DIR/ci-artifacts.json")"
+
+          jq -L scripts/release -S '
+            include "artifact-pages";
+            env_vault_artifacts | map({id, name, expired, workflow_run}) | sort_by(.id)
+          ' \
+            "$SNAPSHOT_DIR/ci-artifacts.json" > "$SNAPSHOT_DIR/artifact-identities.json"
+          jq -S '{id, run_attempt, status, conclusion, head_sha, head_branch, event, name, path, repository: .repository.full_name, head_repository: .head_repository.full_name}' \
+            "$SNAPSHOT_DIR/ci-run.json" > "$SNAPSHOT_DIR/run-identity.json"
+
+          {
+            printf 'platform_pattern=%s\n' "$platform_pattern"
+            printf 'promotion_name=%s\n' "$promotion_name"
+            printf 'promotion_artifact_id=%s\n' "$promotion_artifact_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact promotion manifest artifact
+        if: steps.classify.outputs.publish == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.attempt.outputs.promotion_name }}
+          path: ${{ runner.temp }}/pretag/promotion
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Download all five exact-attempt native release artifacts
+        if: steps.classify.outputs.publish == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ steps.attempt.outputs.platform_pattern }}
+          path: ${{ runner.temp }}/pretag/assets
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify exact manifest and ten packaged assets offline
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          VERSION: ${{ steps.classify.outputs.version }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SNAPSHOT_DIR: ${{ runner.temp }}/pretag
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t manifests < <(find "$SNAPSHOT_DIR/promotion" -type f -name promotion-manifest.json -print | LC_ALL=C sort)
+          [[ ${#manifests[@]} -eq 1 ]] || {
+            echo "promotion manifest file count=${#manifests[@]}, want 1" >&2
+            exit 1
+          }
+
+          "$RELEASECHECK" promotion verify \
+            --source-sha "$SOURCE_SHA" \
+            --release-version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --manifest "${manifests[0]}" \
+            --artifacts-root "$SNAPSHOT_DIR/assets" \
+            --json > "$SNAPSHOT_DIR/promotion-verification.json"
+
+          jq -e \
+            --arg sha "$SOURCE_SHA" \
+            --arg version "$VERSION" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .ok == true and
+              .source_sha == $sha and
+              .release_version == $version and
+              .repository == $repository and
+              .run_id == $run_id and
+              .run_attempt == $attempt and
+              .result == "pass"
+            ' "$SNAPSHOT_DIR/promotion-verification.json" >/dev/null
+
       - id: release-token
         name: Mint repository-scoped release planning token
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
@@ -85,7 +575,7 @@ jobs:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: env-vault
+          repositories: ${{ steps.release-contract.outputs.release_repository_name }}
           permission-administration: read
           permission-contents: write
           permission-issues: write
@@ -95,10 +585,11 @@ jobs:
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
         env:
           ACTUAL_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
+          EXPECTED_APP_SLUG: ${{ steps.release-contract.outputs.release_app_slug }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$ACTUAL_APP_SLUG" != "env-vault-release-planning" ]]; then
+          if [[ "$ACTUAL_APP_SLUG" != "$EXPECTED_APP_SLUG" ]]; then
             echo "unexpected release planning App identity" >&2
             exit 1
           fi
@@ -107,8 +598,23 @@ jobs:
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          RELEASE_SETTINGS_PROOF_OUTPUT: ${{ steps.classify.outputs.publish == 'true' && format('{0}/repository-release-settings-proof.json', runner.temp) || '' }}
+          RELEASE_SETTINGS_SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          RELEASE_SETTINGS_VERSION: ${{ steps.classify.outputs.version }}
+          RELEASE_SETTINGS_PLANNING_RUN_ID: ${{ github.run_id }}
+          RELEASE_SETTINGS_PLANNING_RUN_ATTEMPT: ${{ github.run_attempt }}
         shell: bash
         run: scripts/release/verify-repository-release-settings.sh
+
+      - name: Upload exact pre-tag repository settings proof
+        if: steps.classify.outputs.publish == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-release-settings-${{ steps.classify.outputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/repository-release-settings-proof.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Ensure release lifecycle labels
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
@@ -149,6 +655,68 @@ jobs:
           RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
         shell: bash
         run: scripts/release/verify-release-proposal.sh
+
+      - name: Recheck the exact CI attempt immediately before tag creation
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EXPECTED_SHA: ${{ steps.classify.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_NAME: ${{ steps.attempt.outputs.promotion_name }}
+          PROMOTION_ARTIFACT_ID: ${{ steps.attempt.outputs.promotion_artifact_id }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SNAPSHOT_DIR: ${{ runner.temp }}/pretag
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run-final.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
+            > "$SNAPSHOT_DIR/ci-artifacts-final.json"
+
+          "$RELEASECHECK" classify-attempt \
+            --run "$SNAPSHOT_DIR/ci-run-final.json" \
+            --artifacts "$SNAPSHOT_DIR/ci-artifacts-final.json" \
+            --json > "$SNAPSHOT_DIR/attempt-classification-final.json"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson run_id "$CI_RUN_ID" \
+            --argjson attempt "$CI_RUN_ATTEMPT" '
+              .ok == true and
+              .source_sha == $sha and
+              .repository == $repository and
+              .head_repository == $repository and
+              .event == "push" and
+              .head_branch == "main" and
+              .workflow_name == "ci" and
+              .workflow_path == ".github/workflows/ci.yml" and
+              .run_id == $run_id and
+              .attempt == $attempt and
+              .matrix_complete == true and
+              .action_code == "none" and
+              .reason_code == "ATTEMPT_MATRIX_COMPLETE"
+            ' "$SNAPSHOT_DIR/attempt-classification-final.json" >/dev/null
+
+          jq -L scripts/release -e \
+            --arg name "$PROMOTION_NAME" \
+            --arg sha "$EXPECTED_SHA" \
+            --argjson artifact_id "$PROMOTION_ARTIFACT_ID" \
+            --argjson run_id "$CI_RUN_ID" '
+              include "artifact-pages";
+              env_vault_exact_artifact($name; $run_id; $sha) | .id == $artifact_id
+            ' "$SNAPSHOT_DIR/ci-artifacts-final.json" >/dev/null
+
+          jq -L scripts/release -S '
+            include "artifact-pages";
+            env_vault_artifacts | map({id, name, expired, workflow_run}) | sort_by(.id)
+          ' \
+            "$SNAPSHOT_DIR/ci-artifacts-final.json" > "$SNAPSHOT_DIR/artifact-identities-final.json"
+          jq -S '{id, run_attempt, status, conclusion, head_sha, head_branch, event, name, path, repository: .repository.full_name, head_repository: .head_repository.full_name}' \
+            "$SNAPSHOT_DIR/ci-run-final.json" > "$SNAPSHOT_DIR/run-identity-final.json"
+          cmp "$SNAPSHOT_DIR/run-identity.json" "$SNAPSHOT_DIR/run-identity-final.json"
+          cmp "$SNAPSHOT_DIR/artifact-identities.json" "$SNAPSHOT_DIR/artifact-identities-final.json"
 
       - name: Create or verify the exact release tag
         if: steps.classify.outputs.publish == 'true'

@@ -2,6 +2,10 @@
 set -euo pipefail
 export LC_ALL=C
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scripts/release/lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
 usage() {
   printf 'usage: %s MAJOR.MINOR.PATCH MAJOR.MINOR.PATCH\n' "$(basename "$0")" >&2
   exit 2
@@ -10,7 +14,7 @@ usage() {
 [[ $# -eq 2 ]] || usage
 left=$1
 right=$2
-semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+semver_pattern="^${RELEASE_VERSION_PATTERN#^v}"
 [[ "$left" =~ $semver_pattern && "$right" =~ $semver_pattern ]] || {
   printf 'release: versions must match MAJOR.MINOR.PATCH\n' >&2
   exit 1

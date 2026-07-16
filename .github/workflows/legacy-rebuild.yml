@@ -1,0 +1,178 @@
+name: legacy-rebuild
+run-name: diagnostic-only legacy rebuild ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Immutable legacy tag to rebuild for diagnostics only. Results can never be published."
+        required: true
+        type: choice
+        options:
+          - v0.0.1
+          - v0.0.2
+          - v0.0.3
+          - v0.0.4
+          - v0.0.5
+          - v0.0.6
+          - v0.0.7
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legacy-rebuild-${{ inputs.version }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      tag_sha: ${{ steps.resolve.outputs.tag_sha }}
+      go_version: ${{ steps.resolve.outputs.go_version }}
+      literal_version_supported: ${{ steps.resolve.outputs.literal_version_supported }}
+    steps:
+      - name: Require dispatch from the current default branch
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
+            echo "legacy diagnostics must be dispatched from refs/heads/${DEFAULT_BRANCH}" >&2
+            exit 1
+          }
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - id: resolve
+        name: Resolve immutable diagnostic contract
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          go run ./cmd/releasecheck legacy --version "$VERSION" --json > legacy.json
+          jq -e '
+            .ok == true and
+            .version == env.VERSION and
+            .publication_eligible == false and
+            .action_code == "dispatch_legacy_rebuild"
+          ' legacy.json >/dev/null
+          matrix="$(go run ./cmd/releasecheck contract matrix --json | jq -c .)"
+          jq -e '.include | type == "array" and length == 5' <<< "$matrix" >/dev/null
+          {
+            printf 'matrix=%s\n' "$matrix"
+            printf 'tag_sha=%s\n' "$(jq -er '.tag_sha' legacy.json)"
+            printf 'go_version=%s\n' "$(jq -er '.go_version' legacy.json)"
+            printf 'literal_version_supported=%s\n' "$(jq -er '.literal_version_supported' legacy.json)"
+          } >> "$GITHUB_OUTPUT"
+
+  diagnostic:
+    needs: [resolve]
+    name: diagnostic-${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.resolve.outputs.tag_sha }}
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ needs.resolve.outputs.go_version }}
+
+      - name: Verify exact immutable legacy source
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.resolve.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]] || {
+            echo "legacy checkout differs from immutable contract" >&2
+            exit 1
+          }
+
+      - name: Build diagnostic binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          VERSION: ${{ inputs.version }}
+          BINARY: ${{ matrix.binary }}
+          LITERAL_VERSION_SUPPORTED: ${{ needs.resolve.outputs.literal_version_supported }}
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostic
+          if [[ "$LITERAL_VERSION_SUPPORTED" == "true" ]]; then
+            go build \
+              -trimpath \
+              -ldflags="-X github.com/ildarbinanas-design/env-vault/internal/cli.Version=${VERSION}" \
+              -o "diagnostic/$BINARY" \
+              ./cmd/env-vault
+          else
+            go build -trimpath -o "diagnostic/$BINARY" ./cmd/env-vault
+          fi
+
+      - name: Check literal legacy version when supported
+        if: needs.resolve.outputs.literal_version_supported == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$VERSION" > diagnostic/expected-version.txt
+          "diagnostic/$BINARY" --version > diagnostic/version-flag.txt
+          "diagnostic/$BINARY" version > diagnostic/version-command.txt
+          diff -u diagnostic/expected-version.txt diagnostic/version-flag.txt
+          diff -u diagnostic/expected-version.txt diagnostic/version-command.txt
+
+      - name: Record non-publication evidence
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.tag_sha }}
+          PLATFORM: ${{ matrix.id }}
+          LITERAL_VERSION_SUPPORTED: ${{ needs.resolve.outputs.literal_version_supported }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg version "$VERSION" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg platform "$PLATFORM" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson literal_version_supported "$LITERAL_VERSION_SUPPORTED" \
+            '{
+              schema_id: "env-vault.legacy-rebuild-diagnostic.v1",
+              schema_version: 1,
+              result: "pass",
+              publication_eligible: false,
+              version: $version,
+              source_sha: $source_sha,
+              platform: $platform,
+              run_id: ($run_id | tonumber),
+              run_attempt: ($run_attempt | tonumber),
+              literal_version_supported: $literal_version_supported
+            }' > diagnostic/evidence.json
+
+      - name: Upload diagnostic-only result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-legacy-diagnostic-${{ inputs.version }}-${{ matrix.id }}-run-${{ github.run_id }}
+          path: diagnostic
+          if-no-files-found: error
+          retention-days: 7

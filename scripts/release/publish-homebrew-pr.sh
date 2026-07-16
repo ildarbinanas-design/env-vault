@@ -10,7 +10,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: %s [--verify-only] vMAJOR.MINOR.PATCH FORMULA OWNER/REPO [WORK_DIR]\n' "$(basename "$0")" >&2
+  printf 'usage: %s [--verify-only|--verify-published-pr] vMAJOR.MINOR.PATCH FORMULA OWNER/REPO [WORK_DIR]\n' "$(basename "$0")" >&2
   exit 2
 }
 
@@ -30,6 +30,7 @@ emit_outputs() {
   printf 'head_sha=%s\n' "$head_sha"
   printf 'merge_sha=%s\n' "$merge_sha"
   printf 'tap_sha=%s\n' "$tap_sha"
+  printf 'merge_is_ancestor_of_tap=%s\n' "$merge_is_ancestor_of_tap"
   printf 'state=%s\n' "$state"
   printf 'already_merged=%s\n' "$already_merged"
   printf 'no_op=%s\n' "$no_op"
@@ -44,7 +45,8 @@ parse_formula_version() {
   line_count=$(printf '%s\n' "$parsed" | awk 'NF { count++ } END { print count + 0 }')
   [[ "$line_count" == "1" ]] ||
     release_die "Homebrew formula must contain exactly one version declaration"
-  [[ "$parsed" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+  local version_pattern="^${RELEASE_VERSION_PATTERN#^v}"
+  [[ "$parsed" =~ $version_pattern ]] ||
     release_die "Homebrew formula contains an invalid version"
   printf '%s\n' "$parsed"
 }
@@ -197,13 +199,20 @@ verify_remote_branch() {
   remote_branch_sha=$remote_sha
 }
 
-verify_only=false
-if [[ ${1:-} == "--verify-only" ]]; then
-  verify_only=true
-  shift
-elif [[ ${1:-} == --* ]]; then
-  usage
-fi
+operation=publish
+case ${1:-} in
+  --verify-only)
+    operation=verify_only
+    shift
+    ;;
+  --verify-published-pr)
+    operation=verify_published_pr
+    shift
+    ;;
+  --*)
+    usage
+    ;;
+esac
 
 [[ $# -ge 3 && $# -le 4 ]] || usage
 version=$1
@@ -243,10 +252,12 @@ else
   work_dir="$scratch_dir/tap"
 fi
 
-if [[ "$verify_only" == "false" ]]; then
+if [[ "$operation" == "publish" ]]; then
   release_require_command gh
   [[ -n ${GH_TOKEN:-} ]] || release_die "GH_TOKEN is required to publish a Homebrew pull request"
   gh auth setup-git >/dev/null || release_die "cannot configure Git authentication"
+elif [[ "$operation" == "verify_published_pr" ]]; then
+  release_require_command gh
 fi
 
 git clone --no-tags "https://github.com/${tap_repository}.git" "$work_dir" >&2 ||
@@ -276,11 +287,12 @@ pr_url=''
 head_sha=''
 merge_sha=''
 tap_sha=''
+merge_is_ancestor_of_tap=false
 state=''
 already_merged=false
 no_op=false
 
-if [[ "$verify_only" == "true" ]]; then
+if [[ "$operation" == "verify_only" ]]; then
   [[ "$comparison" == "0" ]] ||
     release_die "tap default version is $published_version, expected $target_version"
   cmp -s "$formula" "$scratch_dir/published-formula.rb" ||
@@ -302,6 +314,31 @@ expected_title="env-vault $version"
 expected_body=$(printf 'Automated Homebrew formula update for env-vault %s.\n\nSource release: https://github.com/ildarbinanas-design/env-vault/releases/tag/%s\n\n%s' "$version" "$version" "$expected_marker")
 load_pr
 
+if [[ "$operation" == "verify_published_pr" ]]; then
+  [[ "$comparison" == "0" ]] ||
+    release_die "tap default version is $published_version, expected $target_version"
+  cmp -s "$formula" "$scratch_dir/published-formula.rb" ||
+    release_die "tap default formula does not exactly match $version"
+  [[ -n "$pr_number" ]] ||
+    release_die "tap default formula is current but the deterministic release pull request is missing"
+  validate_pr
+  [[ "$pr_state" == "MERGED" ]] ||
+    release_die "deterministic release pull request is not merged"
+  git -C "$work_dir" merge-base --is-ancestor "$pr_merge_sha" "refs/remotes/origin/$base_branch" ||
+    release_die "pull request merge SHA is not on the tap default branch"
+  validate_formula_at_commit "$pr_merge_sha" "$scratch_dir/merge-formula.rb"
+
+  head_sha=$pr_head_sha
+  merge_sha=$pr_merge_sha
+  tap_sha=$base_sha
+  merge_is_ancestor_of_tap=true
+  state=MERGED
+  already_merged=true
+  no_op=true
+  emit_outputs
+  exit 0
+fi
+
 if [[ "$comparison" == "0" ]]; then
   cmp -s "$formula" "$scratch_dir/published-formula.rb" ||
     release_die "published Homebrew formula for $version differs from the generated formula"
@@ -311,12 +348,13 @@ if [[ "$comparison" == "0" ]]; then
       release_die "tap default formula is current but its release pull request is not merged"
     git -C "$work_dir" merge-base --is-ancestor "$pr_merge_sha" "refs/remotes/origin/$base_branch" ||
       release_die "pull request merge SHA is not on the tap default branch"
+    validate_formula_at_commit "$pr_merge_sha" "$scratch_dir/merge-formula.rb"
     head_sha=$pr_head_sha
     merge_sha=$pr_merge_sha
+    merge_is_ancestor_of_tap=true
     state=MERGED
   else
-    head_sha=$base_sha
-    state=PUBLISHED
+    release_die "tap default formula is current but the deterministic release pull request is missing"
   fi
   tap_sha=$base_sha
   already_merged=true

@@ -19,10 +19,14 @@ output=${3:-${HOMEBREW_FORMULA_OUTPUT:-tap-out/env-vault.rb}}
 release_require_version "$version"
 [[ -d "$asset_dir" && ! -L "$asset_dir" ]] || release_die "asset directory not found: $asset_dir"
 
-darwin_arm64_archive="$asset_dir/env-vault-darwin-arm64.tar.gz"
-darwin_amd64_archive="$asset_dir/env-vault-darwin-amd64.tar.gz"
-linux_arm64_archive="$asset_dir/env-vault-linux-arm64.tar.gz"
-linux_amd64_archive="$asset_dir/env-vault-linux-amd64.tar.gz"
+darwin_arm64_name=$(release_archive_for_platform darwin-arm64)
+darwin_amd64_name=$(release_archive_for_platform darwin-amd64)
+linux_arm64_name=$(release_archive_for_platform linux-arm64)
+linux_amd64_name=$(release_archive_for_platform linux-amd64)
+darwin_arm64_archive="$asset_dir/$darwin_arm64_name"
+darwin_amd64_archive="$asset_dir/$darwin_amd64_name"
+linux_arm64_archive="$asset_dir/$linux_arm64_name"
+linux_amd64_archive="$asset_dir/$linux_amd64_name"
 
 release_verify_checksum_pair "$darwin_arm64_archive" "$darwin_arm64_archive.sha256"
 release_verify_checksum_pair "$darwin_amd64_archive" "$darwin_amd64_archive.sha256"
@@ -51,24 +55,24 @@ class EnvVault < Formula
     depends_on macos: :sequoia
 
     on_arm do
-      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-darwin-arm64.tar.gz"
+      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/$darwin_arm64_name"
       sha256 "$darwin_arm64"
     end
 
     on_intel do
-      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-darwin-amd64.tar.gz"
+      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/$darwin_amd64_name"
       sha256 "$darwin_amd64"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-linux-arm64.tar.gz"
+      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/$linux_arm64_name"
       sha256 "$linux_arm64"
     end
 
     on_intel do
-      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/env-vault-linux-amd64.tar.gz"
+      url "https://github.com/ildarbinanas-design/env-vault/releases/download/$version/$linux_amd64_name"
       sha256 "$linux_amd64"
     end
   end

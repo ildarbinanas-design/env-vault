@@ -2,27 +2,6 @@
 # Shared release helpers. This file is intended to be sourced by the other
 # scripts in this directory.
 
-readonly -a RELEASE_ARCHIVES=(
-  "env-vault-linux-amd64.tar.gz"
-  "env-vault-linux-arm64.tar.gz"
-  "env-vault-darwin-amd64.tar.gz"
-  "env-vault-darwin-arm64.tar.gz"
-  "env-vault-windows-amd64.zip"
-)
-
-readonly -a RELEASE_ASSETS=(
-  "env-vault-linux-amd64.tar.gz"
-  "env-vault-linux-amd64.tar.gz.sha256"
-  "env-vault-linux-arm64.tar.gz"
-  "env-vault-linux-arm64.tar.gz.sha256"
-  "env-vault-darwin-amd64.tar.gz"
-  "env-vault-darwin-amd64.tar.gz.sha256"
-  "env-vault-darwin-arm64.tar.gz"
-  "env-vault-darwin-arm64.tar.gz.sha256"
-  "env-vault-windows-amd64.zip"
-  "env-vault-windows-amd64.zip.sha256"
-)
-
 release_die() {
   printf 'release: %s\n' "$*" >&2
   exit 1
@@ -34,7 +13,7 @@ release_require_command() {
 
 release_require_version() {
   local version=$1
-  [[ "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+  [[ "$version" =~ $RELEASE_VERSION_PATTERN ]] ||
     release_die "version must match vMAJOR.MINOR.PATCH"
 }
 
@@ -158,3 +137,42 @@ release_verify_asset_directory() {
     release_verify_checksum_pair "$directory/$archive" "$directory/$archive.sha256"
   done
 }
+
+release_archive_for_platform() {
+  local platform=$1
+  local archive
+  archive=$(jq -er --arg platform "$platform" \
+    '[.platforms[] | select(.id == $platform)] | select(length == 1) | .[0].archive' \
+    "$RELEASE_CONTRACT_PATH") || release_die "release contract has no platform: $platform"
+  printf '%s\n' "$archive"
+}
+
+_release_load_contract() {
+  local library_dir archives assets
+  library_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  RELEASE_CONTRACT_PATH="$library_dir/../../release/contract.v1.json"
+  [[ -f "$RELEASE_CONTRACT_PATH" && ! -L "$RELEASE_CONTRACT_PATH" ]] ||
+    release_die "validated release contract not found"
+  release_require_command jq
+  RELEASE_VERSION_PATTERN=$(jq -er '.version_policy.pattern | select(type == "string" and length > 0)' "$RELEASE_CONTRACT_PATH") ||
+    release_die "release contract version policy is invalid"
+  archives=$(jq -er '.platforms | map(.archive) | select(length == 5) | .[]' "$RELEASE_CONTRACT_PATH") ||
+    release_die "release contract platform archives are invalid"
+  assets=$(jq -er '.assets | select(length == 10) | .[]' "$RELEASE_CONTRACT_PATH") ||
+    release_die "release contract asset list is invalid"
+  RELEASE_ARCHIVES=()
+  while IFS= read -r archive; do
+    RELEASE_ARCHIVES+=("$archive")
+  done <<< "$archives"
+  RELEASE_ASSETS=()
+  while IFS= read -r asset; do
+    RELEASE_ASSETS+=("$asset")
+  done <<< "$assets"
+  [[ ${#RELEASE_ARCHIVES[@]} -eq 5 && ${#RELEASE_ASSETS[@]} -eq 10 ]] ||
+    release_die "release contract matrix is incomplete"
+  readonly RELEASE_CONTRACT_PATH RELEASE_VERSION_PATTERN
+  readonly -a RELEASE_ARCHIVES RELEASE_ASSETS
+}
+
+_release_load_contract
+unset -f _release_load_contract

@@ -11,7 +11,7 @@
       "include-v-in-tag": true,
       "include-component-in-tag": false,
       "pull-request-title-pattern": "chore${scope}: release env-vault v${version}",
-      "pull-request-header": "Merging this reviewed pull request authorizes publication of this exact version after the merge commit passes main CI.",
+      "pull-request-header": "Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.",
       "pull-request-footer": "This PR was generated with Release Please.",
       "changelog-sections": [
         {

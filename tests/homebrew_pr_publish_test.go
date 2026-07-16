@@ -39,18 +39,19 @@ func TestPublishHomebrewPRCreatesDeterministicBranchAndPR(t *testing.T) {
 	branch := "release/env-vault-" + releaseTestVersion
 	head := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/"+branch)
 	assertHomebrewPublishOutputs(t, values, map[string]string{
-		"branch":         branch,
-		"base_branch":    "main",
-		"base_sha":       mainBefore,
-		"source_sha":     homebrewSourceSHA,
-		"pr_number":      "42",
-		"pr_url":         "https://github.com/example/homebrew-tap/pull/42",
-		"head_sha":       head,
-		"merge_sha":      "",
-		"tap_sha":        "",
-		"state":          "OPEN",
-		"already_merged": "false",
-		"no_op":          "false",
+		"branch":                   branch,
+		"base_branch":              "main",
+		"base_sha":                 mainBefore,
+		"source_sha":               homebrewSourceSHA,
+		"pr_number":                "42",
+		"pr_url":                   "https://github.com/example/homebrew-tap/pull/42",
+		"head_sha":                 head,
+		"merge_sha":                "",
+		"tap_sha":                  "",
+		"merge_is_ancestor_of_tap": "false",
+		"state":                    "OPEN",
+		"already_merged":           "false",
+		"no_op":                    "false",
 	})
 
 	mainAfter := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main")
@@ -105,13 +106,14 @@ func TestPublishHomebrewPRReusesExactOpenPR(t *testing.T) {
 	}
 	values := parseHomebrewPublishOutputs(t, output)
 	assertHomebrewPublishOutputs(t, values, map[string]string{
-		"pr_number":      "17",
-		"head_sha":       head,
-		"state":          "OPEN",
-		"already_merged": "false",
-		"no_op":          "true",
-		"tap_sha":        "",
-		"merge_sha":      "",
+		"pr_number":                "17",
+		"head_sha":                 head,
+		"state":                    "OPEN",
+		"already_merged":           "false",
+		"no_op":                    "true",
+		"tap_sha":                  "",
+		"merge_sha":                "",
+		"merge_is_ancestor_of_tap": "false",
 	})
 	calls := readOptionalFile(t, fixture.ghLog)
 	if strings.Contains(calls, "pr create") {
@@ -138,13 +140,14 @@ func TestPublishHomebrewPRRecognizesMergedPRWithDeletedBranch(t *testing.T) {
 	}
 	values := parseHomebrewPublishOutputs(t, output)
 	assertHomebrewPublishOutputs(t, values, map[string]string{
-		"pr_number":      "23",
-		"head_sha":       head,
-		"merge_sha":      merge,
-		"tap_sha":        merge,
-		"state":          "MERGED",
-		"already_merged": "true",
-		"no_op":          "true",
+		"pr_number":                "23",
+		"head_sha":                 head,
+		"merge_sha":                merge,
+		"tap_sha":                  merge,
+		"merge_is_ancestor_of_tap": "true",
+		"state":                    "MERGED",
+		"already_merged":           "true",
+		"no_op":                    "true",
 	})
 	if fixture.refExists(t, "refs/heads/release/env-vault-"+releaseTestVersion) {
 		t.Fatal("merged fixture unexpectedly retained its remote release branch")
@@ -166,15 +169,16 @@ func TestPublishHomebrewPRVerifyOnlyChecksPublishedFormulaWithoutWrites(t *testi
 	}
 	values := parseHomebrewPublishOutputs(t, output)
 	assertHomebrewPublishOutputs(t, values, map[string]string{
-		"base_sha":       mainBefore,
-		"head_sha":       mainBefore,
-		"tap_sha":        mainBefore,
-		"pr_number":      "",
-		"pr_url":         "",
-		"merge_sha":      "",
-		"state":          "PUBLISHED",
-		"already_merged": "true",
-		"no_op":          "true",
+		"base_sha":                 mainBefore,
+		"head_sha":                 mainBefore,
+		"tap_sha":                  mainBefore,
+		"pr_number":                "",
+		"pr_url":                   "",
+		"merge_sha":                "",
+		"merge_is_ancestor_of_tap": "false",
+		"state":                    "PUBLISHED",
+		"already_merged":           "true",
+		"no_op":                    "true",
 	})
 	if calls := readOptionalFile(t, fixture.ghLog); calls != "" {
 		t.Fatalf("verify-only invoked gh:\n%s", calls)
@@ -185,27 +189,217 @@ func TestPublishHomebrewPRVerifyOnlyChecksPublishedFormulaWithoutWrites(t *testi
 	}
 }
 
-func TestPublishHomebrewPRTreatsExactPublishedFormulaAsLegacyNoOp(t *testing.T) {
+func TestPublishHomebrewPRVerifyPublishedPRIsStrictlyReadOnly(t *testing.T) {
+	fixture := newHomebrewTapFixture(t, "1.2.2")
+	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+	head, merge := fixture.mergeReleaseBranch(t, formula)
+	body := homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA)
+	refsBefore := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+	workDir := filepath.Join(fixture.root, "verify-published-pr-worktree")
+
+	output, status := fixture.runPublishMode(t, map[string]string{
+		"FAKE_PR_STATE":     "MERGED",
+		"FAKE_PR_NUMBER":    "23",
+		"FAKE_PR_HEAD_SHA":  head,
+		"FAKE_PR_MERGE_SHA": merge,
+		"FAKE_PR_BODY":      body,
+	}, []string{"--verify-published-pr", releaseTestVersion, formula, homebrewTapRepository, workDir})
+	if status != 0 {
+		t.Fatalf("verify-published-pr exit status=%d\n%s", status, output)
+	}
+	values := parseHomebrewPublishOutputs(t, output)
+	assertHomebrewPublishOutputs(t, values, map[string]string{
+		"branch":                   "release/env-vault-" + releaseTestVersion,
+		"base_branch":              "main",
+		"base_sha":                 merge,
+		"source_sha":               homebrewSourceSHA,
+		"pr_number":                "23",
+		"pr_url":                   "https://github.com/example/homebrew-tap/pull/23",
+		"head_sha":                 head,
+		"merge_sha":                merge,
+		"tap_sha":                  merge,
+		"merge_is_ancestor_of_tap": "true",
+		"state":                    "MERGED",
+		"already_merged":           "true",
+		"no_op":                    "true",
+	})
+	assertHomebrewVerifyPublishedPRDidNotMutate(t, fixture, refsBefore)
+	assertTokenNotExposed(t, output, readOptionalFile(t, fixture.ghLog))
+}
+
+func TestPublishHomebrewPRAllowsTapMainToAdvanceAfterExactReleaseMerge(t *testing.T) {
+	fixture := newHomebrewTapFixture(t, "1.2.2")
+	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+	head, merge := fixture.mergeReleaseBranch(t, formula)
+	body := homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA)
+
+	if err := os.WriteFile(filepath.Join(fixture.seed, "README.md"), []byte("unrelated later tap change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixture.gitRun(t, "-C", fixture.seed, "add", "README.md")
+	fixture.gitRun(t, "-C", fixture.seed, "commit", "-m", "later unrelated tap change")
+	fixture.gitRun(t, "-C", fixture.seed, "push", "origin", "main")
+	tap := fixture.gitOutput(t, "-C", fixture.seed, "rev-parse", "HEAD")
+	if tap == merge {
+		t.Fatal("fixture did not advance tap main")
+	}
+
+	output, status := fixture.runPublishMode(t, map[string]string{
+		"FAKE_PR_STATE":     "MERGED",
+		"FAKE_PR_NUMBER":    "23",
+		"FAKE_PR_HEAD_SHA":  head,
+		"FAKE_PR_MERGE_SHA": merge,
+		"FAKE_PR_BODY":      body,
+	}, []string{"--verify-published-pr", releaseTestVersion, formula, homebrewTapRepository})
+	if status != 0 {
+		t.Fatalf("advanced tap verification exit status=%d\n%s", status, output)
+	}
+	values := parseHomebrewPublishOutputs(t, output)
+	assertHomebrewPublishOutputs(t, values, map[string]string{
+		"head_sha":                 head,
+		"merge_sha":                merge,
+		"tap_sha":                  tap,
+		"merge_is_ancestor_of_tap": "true",
+		"state":                    "MERGED",
+		"already_merged":           "true",
+		"no_op":                    "true",
+	})
+}
+
+func TestPublishHomebrewPRVerifyPublishedPRFailsClosed(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*testing.T, *homebrewTapFixture, string, string, string) map[string]string
+		wantError string
+	}{
+		{
+			name: "wrong body marker",
+			mutate: func(t *testing.T, _ *homebrewTapFixture, formula, head, merge string) map[string]string {
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, strings.Repeat("b", 40)),
+					"FAKE_PR_HEAD_SHA":  head,
+					"FAKE_PR_MERGE_SHA": merge,
+				}
+			},
+			wantError: "release marker does not match",
+		},
+		{
+			name: "extra changed file",
+			mutate: func(t *testing.T, _ *homebrewTapFixture, formula, head, merge string) map[string]string {
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+					"FAKE_PR_FILES":     "Formula/env-vault.rb\nREADME.md",
+					"FAKE_PR_HEAD_SHA":  head,
+					"FAKE_PR_MERGE_SHA": merge,
+				}
+			},
+			wantError: "pull request must change only Formula/env-vault.rb",
+		},
+		{
+			name: "reported head differs from pull ref",
+			mutate: func(t *testing.T, _ *homebrewTapFixture, formula, _ string, merge string) map[string]string {
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+					"FAKE_PR_HEAD_SHA":  strings.Repeat("b", 40),
+					"FAKE_PR_MERGE_SHA": merge,
+				}
+			},
+			wantError: "pull request head SHA does not match its Git ref",
+		},
+		{
+			name: "formula at head differs",
+			mutate: func(t *testing.T, fixture *homebrewTapFixture, formula, _ string, merge string) map[string]string {
+				wrongHead := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", merge+"^1")
+				fixture.gitRun(t, "--git-dir="+fixture.origin, "update-ref", "refs/pull/23/head", wrongHead)
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+					"FAKE_PR_HEAD_SHA":  wrongHead,
+					"FAKE_PR_MERGE_SHA": merge,
+				}
+			},
+			wantError: "tap head formula does not exactly match the generated formula",
+		},
+		{
+			name: "reported merge formula differs even when current tap was restored",
+			mutate: func(t *testing.T, fixture *homebrewTapFixture, formula, head, _ string) map[string]string {
+				wrongFormula := fixture.writeFormula(t, "wrong-merge.rb", "1.2.3", "  # wrong merge bytes\n")
+				copyTestFile(t, wrongFormula, filepath.Join(fixture.seed, "Formula", "env-vault.rb"))
+				fixture.gitRun(t, "-C", fixture.seed, "add", "Formula/env-vault.rb")
+				fixture.gitRun(t, "-C", fixture.seed, "commit", "-m", "unexpected merge formula")
+				wrongMerge := fixture.gitOutput(t, "-C", fixture.seed, "rev-parse", "HEAD")
+				copyTestFile(t, formula, filepath.Join(fixture.seed, "Formula", "env-vault.rb"))
+				fixture.gitRun(t, "-C", fixture.seed, "add", "Formula/env-vault.rb")
+				fixture.gitRun(t, "-C", fixture.seed, "commit", "-m", "restore exact formula")
+				fixture.gitRun(t, "-C", fixture.seed, "push", "origin", "main")
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+					"FAKE_PR_HEAD_SHA":  head,
+					"FAKE_PR_MERGE_SHA": wrongMerge,
+				}
+			},
+			wantError: "tap head formula does not exactly match the generated formula",
+		},
+		{
+			name: "wrong pull request metadata",
+			mutate: func(t *testing.T, _ *homebrewTapFixture, formula, head, merge string) map[string]string {
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+					"FAKE_PR_HEAD_SHA":  head,
+					"FAKE_PR_MERGE_SHA": merge,
+					"FAKE_PR_TITLE":     "unexpected title",
+				}
+			},
+			wantError: "pull request metadata does not match the release",
+		},
+		{
+			name: "more than one deterministic pull request",
+			mutate: func(t *testing.T, _ *homebrewTapFixture, formula, head, merge string) map[string]string {
+				return map[string]string{
+					"FAKE_PR_BODY":      homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+					"FAKE_PR_HEAD_SHA":  head,
+					"FAKE_PR_MERGE_SHA": merge,
+					"FAKE_PR_DUPLICATE": "true",
+				}
+			},
+			wantError: "more than one pull request exists",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newHomebrewTapFixture(t, "1.2.2")
+			formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+			head, merge := fixture.mergeReleaseBranch(t, formula)
+			extra := test.mutate(t, fixture, formula, head, merge)
+			extra["FAKE_PR_STATE"] = "MERGED"
+			extra["FAKE_PR_NUMBER"] = "23"
+			refsBeforeVerification := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+			if refsBeforeVerification == "" {
+				t.Fatal("fixture unexpectedly has no refs")
+			}
+
+			output, status := fixture.runPublishMode(t, extra, []string{"--verify-published-pr", releaseTestVersion, formula, homebrewTapRepository})
+			if status == 0 || !strings.Contains(output, test.wantError) {
+				t.Fatalf("verify-published-pr status=%d, want error %q\n%s", status, test.wantError, output)
+			}
+			assertHomebrewVerifyPublishedPRDidNotMutate(t, fixture, refsBeforeVerification)
+			assertTokenNotExposed(t, output, readOptionalFile(t, fixture.ghLog))
+		})
+	}
+}
+
+func TestPublishHomebrewPRRejectsPublishedFormulaWithoutDeterministicPR(t *testing.T) {
 	fixture := newHomebrewTapFixture(t, "1.2.3")
 	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
 	main := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main")
 
 	output, status := fixture.runPublish(t, nil, releaseTestVersion, formula)
-	if status != 0 {
-		t.Fatalf("published no-op exit status=%d\n%s", status, output)
+	if status == 0 || !strings.Contains(output, "deterministic release pull request is missing") {
+		t.Fatalf("published formula without PR status=%d\n%s", status, output)
 	}
-	values := parseHomebrewPublishOutputs(t, output)
-	assertHomebrewPublishOutputs(t, values, map[string]string{
-		"base_sha":       main,
-		"head_sha":       main,
-		"tap_sha":        main,
-		"pr_number":      "",
-		"pr_url":         "",
-		"merge_sha":      "",
-		"state":          "PUBLISHED",
-		"already_merged": "true",
-		"no_op":          "true",
-	})
+	if got := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main"); got != main {
+		t.Fatalf("failed closed path changed main: got %s want %s", got, main)
+	}
 	calls := readOptionalFile(t, fixture.ghLog)
 	if strings.Contains(calls, "pr create") {
 		t.Fatalf("already-published formula created a PR:\n%s", calls)
@@ -493,8 +687,18 @@ if [[ ${1:-} == pr && ${2:-} == list ]]; then
     head_sha=$(git --git-dir="$FAKE_ORIGIN" rev-parse "refs/heads/release/env-vault-$FAKE_VERSION")
     printf '42\thttps://github.com/example/homebrew-tap/pull/42\tOPEN\trelease/env-vault-%s\t%s\t-\tmain\tenv-vault %s\tfalse\tfalse\n' "$FAKE_VERSION" "$head_sha" "$FAKE_VERSION"
   elif [[ ${FAKE_PR_STATE:-none} != none ]]; then
-    printf '%s\thttps://github.com/example/homebrew-tap/pull/%s\t%s\trelease/env-vault-%s\t%s\t%s\tmain\tenv-vault %s\tfalse\tfalse\n' \
-      "$FAKE_PR_NUMBER" "$FAKE_PR_NUMBER" "$FAKE_PR_STATE" "$FAKE_VERSION" "$FAKE_PR_HEAD_SHA" "${FAKE_PR_MERGE_SHA:--}" "$FAKE_VERSION"
+    pr_url=${FAKE_PR_URL:-https://github.com/example/homebrew-tap/pull/$FAKE_PR_NUMBER}
+    head_ref=${FAKE_PR_HEAD_REF:-release/env-vault-$FAKE_VERSION}
+    base_ref=${FAKE_PR_BASE_REF:-main}
+    title=${FAKE_PR_TITLE:-env-vault $FAKE_VERSION}
+    is_draft=${FAKE_PR_IS_DRAFT:-false}
+    is_cross_repository=${FAKE_PR_IS_CROSS_REPOSITORY:-false}
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$FAKE_PR_NUMBER" "$pr_url" "$FAKE_PR_STATE" "$head_ref" "$FAKE_PR_HEAD_SHA" "${FAKE_PR_MERGE_SHA:--}" "$base_ref" "$title" "$is_draft" "$is_cross_repository"
+    if [[ ${FAKE_PR_DUPLICATE:-false} == true ]]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$FAKE_PR_NUMBER" "$pr_url" "$FAKE_PR_STATE" "$head_ref" "$FAKE_PR_HEAD_SHA" "${FAKE_PR_MERGE_SHA:--}" "$base_ref" "$title" "$is_draft" "$is_cross_repository"
+    fi
   fi
   exit 0
 fi
@@ -559,7 +763,8 @@ func parseHomebrewPublishOutputs(t *testing.T, output string) map[string]string 
 	known := map[string]bool{
 		"branch": true, "base_branch": true, "base_sha": true, "source_sha": true,
 		"pr_number": true, "pr_url": true, "head_sha": true, "merge_sha": true,
-		"tap_sha": true, "state": true, "already_merged": true, "no_op": true,
+		"tap_sha": true, "merge_is_ancestor_of_tap": true,
+		"state": true, "already_merged": true, "no_op": true,
 	}
 	values := make(map[string]string, len(known))
 	for _, line := range strings.Split(output, "\n") {
@@ -592,6 +797,23 @@ func assertTokenNotExposed(t *testing.T, values ...string) {
 	for _, value := range values {
 		if strings.Contains(value, "homebrew-test-token-must-not-appear") {
 			t.Fatalf("GH_TOKEN was exposed:\n%s", value)
+		}
+	}
+}
+
+func assertHomebrewVerifyPublishedPRDidNotMutate(t *testing.T, fixture *homebrewTapFixture, refsBefore string) {
+	t.Helper()
+	refsAfter := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+	if refsAfter != refsBefore {
+		t.Fatalf("verify-published-pr changed remote refs\nbefore:\n%s\nafter:\n%s", refsBefore, refsAfter)
+	}
+	if _, err := os.Stat(fixture.createdPR); !os.IsNotExist(err) {
+		t.Fatalf("verify-published-pr created mutation sentinel %s: %v", fixture.createdPR, err)
+	}
+	calls := readOptionalFile(t, fixture.ghLog)
+	for _, forbidden := range []string{"auth setup-git", "pr create", "pr edit", "pr merge", "api --method POST", "api --method PATCH", "api --method PUT", "api --method DELETE"} {
+		if strings.Contains(calls, forbidden) {
+			t.Fatalf("verify-published-pr invoked mutation %q:\n%s", forbidden, calls)
 		}
 	}
 }

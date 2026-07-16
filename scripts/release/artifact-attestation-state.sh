@@ -89,10 +89,18 @@ predicate_state() {
     return 0
   fi
 
-  "$SCRIPT_DIR/verify-artifact-attestations.sh" \
+  # A digest/predicate match may belong to a different source or signer. Such
+  # an attestation is not publication evidence, but it also must not block the
+  # creation of the exact tuple. The API inventory calls above already proved
+  # the endpoint was reachable; final exact verification remains a mandatory
+  # fail-closed step after creation/reuse.
+  if "$SCRIPT_DIR/verify-artifact-attestations.sh" \
     "$asset_directory" "$repository" "$signer_workflow" "$source_sha" "$mode" \
-    >/dev/null
-  printf 'complete\n'
+    >/dev/null 2>"$probe_dir/verify-$mode-error"; then
+    printf 'complete\n'
+  else
+    printf 'missing\n'
+  fi
 }
 
 provenance_state=$(predicate_state https://slsa.dev/provenance/v1 provenance)

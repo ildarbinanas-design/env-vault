@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 
-ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)" || exit 1
+ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)" || exit 1
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/env-vault-smoke.XXXXXX")" || exit 1
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -54,7 +54,12 @@ assert_no_secret_file() {
 assert_no_secret_outputs() {
   assert_no_secret_file "$OUT" "captured command output"
   assert_no_secret_file "$META" "metadata output"
-  assert_no_secret_file "$ROOT_DIR/evidence_bundle.md" "evidence bundle"
+  if [ -d "$ROOT_DIR/evidence" ] &&
+    find "$ROOT_DIR/evidence" -type f -exec grep -F -l -- "$SECRET_VALUE" {} + 2>/dev/null |
+      grep -q .; then
+    printf '%s\n' "generated sensitive value leaked to machine release evidence" >&2
+    exit 1
+  fi
 }
 
 capture() {
@@ -76,6 +81,7 @@ assert_no_secret_outputs
 capture env_vault --config "$CONFIG" profile add dev nexus-token:NPM_TOKEN || exit 1
 assert_no_secret_outputs
 
+# shellcheck disable=SC2016 # Expanded by the intentionally nested shell.
 env_vault --config "$CONFIG" exec dev -- sh -c 'expected="$(cat "$1")"; test "$NPM_TOKEN" = "$expected"' sh "$EXPECTED" >"$OUT" 2>&1 || exit 1
 assert_no_secret_outputs
 

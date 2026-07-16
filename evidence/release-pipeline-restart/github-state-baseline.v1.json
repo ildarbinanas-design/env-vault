@@ -1,0 +1,86 @@
+{
+  "schema_id": "env-vault.github-state-baseline.v1",
+  "schema_version": 1,
+  "observed_at": "2026-07-16T16:36:18Z",
+  "repository": "ildarbinanas-design/env-vault",
+  "default_branch": {
+    "ref": "refs/heads/main",
+    "sha": "0eef84548b802a89f98c08744b5b51aac3d543ad"
+  },
+  "generated_release_pull_request": {
+    "number": 21,
+    "state": "open",
+    "version": "v0.0.9",
+    "base_ref": "refs/heads/main",
+    "base_sha": "0eef84548b802a89f98c08744b5b51aac3d543ad",
+    "head_ref": "refs/heads/release-please--branches--main--components--env-vault",
+    "head_sha": "f28f3bd9f498756da45a50a1778e6058a5330e83"
+  },
+  "failed_immutable_release": {
+    "version": "v0.0.8",
+    "tag_ref": "refs/tags/v0.0.8",
+    "tag_sha": "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d",
+    "github_release_present": false,
+    "github_release_query_status": 404,
+    "publisher_run_id": 29475939348,
+    "publisher_run_attempt": 1,
+    "publisher_source_sha": "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d",
+    "publisher_conclusion": "failure"
+  },
+  "required_external_settings": {
+    "observed_at": "2026-07-16T16:48:50Z",
+    "observation_method": "authenticated_github_settings_ui_and_public_rest",
+    "main_ruleset": {
+      "id": 18792628,
+      "name": "Protect env-vault main",
+      "enforcement": "active",
+      "target": "branch",
+      "include": [
+        "refs/heads/main"
+      ],
+      "rules": [
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_status_checks"
+      ],
+      "allowed_merge_methods": [
+        "squash"
+      ],
+      "required_status_checks": [
+        "Analyze (actions)",
+        "Analyze (go)",
+        "Dependency review",
+        "pr-title",
+        "quality-gate"
+      ]
+    },
+    "release_tag_ruleset": {
+      "id": 19015306,
+      "name": "Protect env-vault release tags",
+      "enforcement": "active",
+      "target": "tag",
+      "include": [
+        "refs/tags/v*"
+      ],
+      "rules": [
+        "deletion",
+        "update"
+      ]
+    },
+    "release_evidence_ruleset": {
+      "id": 19058721,
+      "name": "Protect env-vault release evidence",
+      "created_at": "2026-07-16T16:36:51.753Z",
+      "enforcement": "active",
+      "target": "branch",
+      "include": [
+        "refs/heads/release-evidence"
+      ],
+      "bypass_actors": [],
+      "restrict_deletions": true,
+      "block_force_pushes": true
+    }
+  },
+  "performance_baseline": "../../release/metrics-baseline.v1.json"
+}

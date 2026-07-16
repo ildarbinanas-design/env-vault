@@ -50,7 +50,7 @@ jq -e --arg repository "$repository" --arg branch "$branch" --arg author "${expe
     .head.ref == $branch and
     .head.repo.full_name == $repository and
     .user.login == $author and
-    ((.body // "") | contains("Merging this reviewed pull request authorizes publication of this exact version after the merge commit passes main CI.")) and
+    ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
     ((.body // "") | contains("This PR was generated with Release Please.")) and
     ([.labels[].name] | index("autorelease: pending") != null) and
     ([.labels[].name] | index("autorelease: tagged") == null)

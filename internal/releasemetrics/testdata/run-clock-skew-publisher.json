@@ -1,0 +1,25 @@
+{
+  "attempt": 1,
+  "conclusion": "failure",
+  "createdAt": "2026-07-16T06:10:31Z",
+  "databaseId": 29475939348,
+  "event": "push",
+  "headSha": "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d",
+  "jobs": [
+    {
+      "completedAt": "2026-07-16T06:10:47Z",
+      "conclusion": "success",
+      "databaseId": 87548803214,
+      "name": "metadata",
+      "startedAt": "2026-07-16T06:10:36Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29475939348/job/87548803214"
+    }
+  ],
+  "startedAt": "2026-07-16T06:10:30Z",
+  "status": "completed",
+  "updatedAt": "2026-07-16T06:17:27Z",
+  "url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29475939348/attempts/1",
+  "workflowName": "build-binaries"
+}

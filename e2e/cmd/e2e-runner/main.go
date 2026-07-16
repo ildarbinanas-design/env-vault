@@ -1,9 +1,10 @@
 // Command e2e-runner builds (or verifies) an env-vault binary, runs the
 // black-box E2E suite, and emits deterministic CI reports.
 //
-// The command intentionally uses only the Go standard library. A verified
-// preinstalled gotestsum is preferred in CI; local fallback uses a
-// version-qualified `go run`, so it never becomes a production dependency.
+// The command has no third-party runtime dependency; it uses the Go standard
+// library plus checked-in offline contract/evidence helpers. A verified
+// preinstalled gotestsum is preferred in CI, and local fallback uses a
+// version-qualified `go run` so it never becomes a production dependency.
 package main
 
 import (
@@ -15,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 const (
@@ -40,26 +43,8 @@ type runOptions struct {
 	runnerOS           string
 }
 
-type compareOptions struct {
-	baseline            string
-	candidate           string
-	output              string
-	coverageTolerance   float64
-	baselineCommit      string
-	baselineRunID       string
-	baselineRunURL      string
-	baselineRunAttempt  string
-	baselineRepository  string
-	baselineReporter    string
-	candidateCommit     string
-	candidateRunID      string
-	candidateRunURL     string
-	candidateRunAttempt string
-	candidateRepository string
-	candidateReporter   string
-}
-
 type matrixOptions struct {
+	contractPath       string
 	reportsRoot        string
 	phase              string
 	required           string
@@ -95,12 +80,6 @@ func realMain(args []string) error {
 			return err
 		}
 		return runSuite(opts)
-	case "compare":
-		opts, err := parseCompareFlags(args)
-		if err != nil {
-			return err
-		}
-		return compareReports(opts)
 	case "validate-matrix":
 		opts, err := parseMatrixFlags(args)
 		if err != nil {
@@ -111,7 +90,7 @@ func realMain(args []string) error {
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("unknown mode %q (want run, compare, or validate-matrix)", mode)
+		return fmt.Errorf("unknown mode %q (want run or validate-matrix)", mode)
 	}
 }
 
@@ -161,60 +140,13 @@ func parseRunFlags(args []string) (runOptions, error) {
 	return opts, nil
 }
 
-func parseCompareFlags(args []string) (compareOptions, error) {
-	var opts compareOptions
-	fs := flag.NewFlagSet("e2e-runner compare", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.StringVar(&opts.baseline, "baseline", "", "baseline report directory or downloaded artifact root")
-	fs.StringVar(&opts.candidate, "candidate", "", "candidate report directory or downloaded artifact root")
-	fs.StringVar(&opts.output, "output", "", "comparison output directory (defaults to candidate root)")
-	fs.Float64Var(&opts.coverageTolerance, "coverage-tolerance", 0, "explicitly allowed coverage decrease in percentage points")
-	fs.StringVar(&opts.baselineCommit, "baseline-commit", "", "exact canonical baseline commit SHA")
-	fs.StringVar(&opts.baselineRunID, "baseline-run-id", "", "exact canonical baseline GitHub Actions run ID")
-	fs.StringVar(&opts.baselineRunURL, "baseline-run-url", "", "exact canonical baseline GitHub Actions run URL")
-	fs.StringVar(&opts.baselineRunAttempt, "baseline-run-attempt", "", "exact canonical baseline GitHub Actions run attempt")
-	fs.StringVar(&opts.baselineRepository, "baseline-repository", "", "exact canonical baseline owner/repository")
-	fs.StringVar(&opts.baselineReporter, "baseline-reporter", "", "exact canonical baseline gotestsum version")
-	fs.StringVar(&opts.candidateCommit, "candidate-commit", "", "exact candidate commit SHA")
-	fs.StringVar(&opts.candidateRunID, "candidate-run-id", "", "exact candidate GitHub Actions run ID")
-	fs.StringVar(&opts.candidateRunURL, "candidate-run-url", "", "exact candidate GitHub Actions run URL")
-	fs.StringVar(&opts.candidateRunAttempt, "candidate-run-attempt", "", "exact candidate GitHub Actions run attempt")
-	fs.StringVar(&opts.candidateRepository, "candidate-repository", "", "exact candidate owner/repository")
-	fs.StringVar(&opts.candidateReporter, "candidate-reporter", gotestsumVersion, "exact candidate gotestsum version")
-	if err := fs.Parse(args); err != nil {
-		return compareOptions{}, err
-	}
-	if fs.NArg() != 0 {
-		return compareOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " "))
-	}
-	if opts.baseline == "" || opts.candidate == "" {
-		return compareOptions{}, errors.New("--baseline and --candidate are required")
-	}
-	if opts.baselineCommit == "" || opts.baselineRunID == "" || opts.baselineRunURL == "" || opts.baselineRunAttempt == "" || opts.baselineRepository == "" || opts.baselineReporter == "" || opts.candidateCommit == "" || opts.candidateRunID == "" || opts.candidateRunURL == "" || opts.candidateRunAttempt == "" || opts.candidateRepository == "" || opts.candidateReporter == "" {
-		return compareOptions{}, errors.New("baseline and candidate commit, run ID/URL/attempt, repository, and reporter flags are required")
-	}
-	if !validGitCommitSHA(opts.baselineCommit) || !validGitCommitSHA(opts.candidateCommit) {
-		return compareOptions{}, errors.New("baseline and candidate commit values must be full Git commit SHAs")
-	}
-	if !numericRunID(opts.baselineRunID) || !numericRunID(opts.candidateRunID) {
-		return compareOptions{}, errors.New("baseline and candidate run IDs must be numeric GitHub Actions run IDs")
-	}
-	if opts.coverageTolerance < 0 {
-		return compareOptions{}, errors.New("--coverage-tolerance must not be negative")
-	}
-	if opts.output == "" {
-		opts.output = opts.candidate
-	}
-	return opts, nil
-}
-
 func parseMatrixFlags(args []string) (matrixOptions, error) {
-	opts := matrixOptions{required: strings.Join(requiredPlatforms(), ",")}
+	opts := matrixOptions{contractPath: releasecontract.CanonicalPath}
 	fs := flag.NewFlagSet("e2e-runner validate-matrix", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.StringVar(&opts.contractPath, "contract", opts.contractPath, "release contract defining the exact ordered native platform matrix")
 	fs.StringVar(&opts.reportsRoot, "reports", "", "downloaded report/artifact root")
 	fs.StringVar(&opts.phase, "phase", "", "required report phase: baseline or candidate")
-	fs.StringVar(&opts.required, "required-platforms", opts.required, "comma-separated required platform IDs")
 	fs.StringVar(&opts.expectedCommit, "expected-commit", "", "exact commit SHA expected in every report")
 	fs.StringVar(&opts.expectedRunID, "expected-run-id", "", "exact GitHub Actions run ID expected in every report")
 	fs.StringVar(&opts.expectedRunURL, "expected-run-url", "", "exact GitHub Actions run URL expected in every report")
@@ -233,9 +165,6 @@ func parseMatrixFlags(args []string) (matrixOptions, error) {
 	if opts.phase != "baseline" && opts.phase != "candidate" {
 		return matrixOptions{}, errors.New("--phase must be baseline or candidate")
 	}
-	if len(parseCSV(opts.required)) == 0 {
-		return matrixOptions{}, errors.New("--required-platforms must not be empty")
-	}
 	if opts.expectedCommit == "" || opts.expectedRunID == "" || opts.expectedRunURL == "" || opts.expectedRunAttempt == "" || opts.expectedRepository == "" || opts.expectedReporter == "" {
 		return matrixOptions{}, errors.New("--expected-commit, run ID/URL/attempt, repository, and reporter are required")
 	}
@@ -248,17 +177,26 @@ func parseMatrixFlags(args []string) (matrixOptions, error) {
 	if opts.expectedRunID == "local" && (opts.expectedRunURL != "local" || opts.expectedRunAttempt != "local" || opts.expectedRepository != "local") {
 		return matrixOptions{}, errors.New("local matrix identity requires local URL, attempt, and repository")
 	}
+	contract, err := releasecontract.LoadFile(opts.contractPath)
+	if err != nil {
+		return matrixOptions{}, fmt.Errorf("load release contract: %w", err)
+	}
+	required := make([]string, 0, len(contract.Platforms))
+	for _, platform := range contract.Platforms {
+		required = append(required, platform.ID)
+	}
+	opts.required = strings.Join(required, ",")
 	return opts, nil
 }
 
 func printUsage() {
 	fmt.Fprintln(os.Stdout, `Usage:
   go run ./e2e/cmd/e2e-runner run --phase baseline [--binary PATH | --artifact PATH]
-  go run ./e2e/cmd/e2e-runner compare --baseline DIR --candidate DIR [canonical identity flags]
-  go run ./e2e/cmd/e2e-runner validate-matrix --reports DIR --phase baseline [exact run identity flags]
+  go run ./e2e/cmd/e2e-runner validate-matrix --contract release/contract.v1.json --reports DIR --phase baseline [exact run identity flags]
 
 The run mode always executes the release-like suite, a separately instrumented
-coverage suite, a shuffled full-suite burn-in, and a targeted locking burn-in.`)
+coverage suite, a shuffled full-suite burn-in, and a targeted locking burn-in.
+The validate-matrix mode derives its exact ordered platform set from the release contract.`)
 }
 
 func envInt(name string, fallback int) int {
