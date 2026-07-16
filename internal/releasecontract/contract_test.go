@@ -39,6 +39,9 @@ func TestCanonicalContract(t *testing.T) {
 	if contract.Schemas["repository_release_settings_proof"] != "env-vault.repository-release-settings-proof.v1" {
 		t.Fatal("repository release-settings proof schema is not canonical")
 	}
+	if contract.Schemas["repository_release_settings_check"] != "env-vault.repository-release-settings-check.v1" {
+		t.Fatal("repository release-settings check schema is not canonical")
+	}
 	legacy, ok := contract.LegacyVersion("v0.0.7")
 	if !ok || legacy.TagSHA != "4fbae380747e75a1f59498adbd76ccf5791e0480" || !legacy.LiteralVersionSupported || contract.VersionPolicy.LegacyRebuild.PublicationEligible {
 		t.Fatalf("legacy policy=%+v found=%v", legacy, ok)

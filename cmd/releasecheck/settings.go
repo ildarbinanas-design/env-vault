@@ -13,6 +13,8 @@ func runSettings(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	switch args[0] {
+	case "check":
+		return runSettingsCheck(args[1:], stdout, stderr)
 	case "seal":
 		return runSettingsSeal(args[1:], stdout, stderr)
 	case "verify":
@@ -23,20 +25,48 @@ func runSettings(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func runSettingsCheck(args []string, stdout, stderr io.Writer) int {
+	set := newFlagSet("settings check")
+	repository := set.String("repository", "", "exact owner/repository")
+	inputs := addSettingsInputFlags(set)
+	jsonOutput := set.Bool("json", false, "emit versioned JSON")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *repository == "" || !inputs.complete() {
+		fmt.Fprint(stderr, settingsCheckUsage())
+		return exitUsage
+	}
+	raw, err := inputs.read()
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, releasesettings.CodeInputInvalid, err, exitSnapshotInvalid)
+	}
+	result, err := releasesettings.Check(*repository, raw)
+	if err != nil {
+		return writeSettingsFailure(stdout, stderr, *jsonOutput, err)
+	}
+	if *jsonOutput {
+		encoded, err := releasesettings.MarshalJSON(result)
+		if err != nil {
+			return writeFailure(stdout, stderr, true, "OUTPUT_FAILED", err, exitInternal)
+		}
+		if _, err := stdout.Write(encoded); err != nil {
+			fmt.Fprintf(stderr, "write JSON: %v\n", err)
+			return exitInternal
+		}
+	} else {
+		fmt.Fprintf(stdout, "valid repository release settings: repository=%s result=%s\n", result.Repository, result.Result)
+	}
+	return exitOK
+}
+
 func runSettingsSeal(args []string, stdout, stderr io.Writer) int {
 	set := newFlagSet("settings seal")
 	tupleFlags := addSettingsTupleFlags(set)
-	mergeSettings := set.String("merge-settings", "", "saved GraphQL repository merge-settings JSON")
-	rulesetPages := set.String("ruleset-pages", "", "saved gh --paginate --slurp repository rulesets JSON")
-	mainRuleset := set.String("main-ruleset", "", "saved canonical main ruleset detail JSON")
-	tagRuleset := set.String("tag-ruleset", "", "saved canonical release-tag ruleset detail JSON")
-	evidenceRuleset := set.String("evidence-ruleset", "", "saved canonical release-evidence ruleset detail JSON")
+	inputs := addSettingsInputFlags(set)
 	output := set.String("output", "", "new sealed settings proof, or - for stdout")
-	if err := set.Parse(args); err != nil || set.NArg() != 0 || !tupleFlags.complete() || *mergeSettings == "" || *rulesetPages == "" || *mainRuleset == "" || *tagRuleset == "" || *evidenceRuleset == "" || *output == "" {
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || !tupleFlags.complete() || !inputs.complete() || *output == "" {
 		fmt.Fprint(stderr, settingsSealUsage())
 		return exitUsage
 	}
-	raw, err := readSettingsRawInputs(*mergeSettings, *rulesetPages, *mainRuleset, *tagRuleset, *evidenceRuleset)
+	raw, err := inputs.read()
 	if err != nil {
 		return writeFailure(stdout, stderr, *output == "-", releasesettings.CodeInputInvalid, err, exitSnapshotInvalid)
 	}
@@ -101,6 +131,14 @@ type settingsTupleFlags struct {
 	checkedAt          *string
 }
 
+type settingsInputFlags struct {
+	mergeSettings   *string
+	rulesetPages    *string
+	mainRuleset     *string
+	tagRuleset      *string
+	evidenceRuleset *string
+}
+
 type flagStringInt64Int interface {
 	String(string, string, string) *string
 	Int64(string, int64, string) *int64
@@ -118,6 +156,16 @@ func addSettingsTupleFlags(set flagStringInt64Int) settingsTupleFlags {
 	}
 }
 
+func addSettingsInputFlags(set flagStringInt64Int) settingsInputFlags {
+	return settingsInputFlags{
+		mergeSettings:   set.String("merge-settings", "", "saved GraphQL repository merge-settings JSON"),
+		rulesetPages:    set.String("ruleset-pages", "", "saved gh --paginate --slurp repository rulesets JSON"),
+		mainRuleset:     set.String("main-ruleset", "", "saved canonical main ruleset detail JSON"),
+		tagRuleset:      set.String("tag-ruleset", "", "saved canonical release-tag ruleset detail JSON"),
+		evidenceRuleset: set.String("evidence-ruleset", "", "saved canonical release-evidence ruleset detail JSON"),
+	}
+}
+
 func (flags settingsTupleFlags) complete() bool {
 	return *flags.repository != "" && *flags.sourceSHA != "" && *flags.releaseVersion != "" && *flags.planningRunID > 0 && *flags.planningRunAttempt > 0 && *flags.checkedAt != ""
 }
@@ -128,6 +176,14 @@ func (flags settingsTupleFlags) value() releasesettings.Tuple {
 		ReleaseVersion: *flags.releaseVersion, PlanningRunID: *flags.planningRunID,
 		PlanningRunAttempt: *flags.planningRunAttempt, CheckedAt: *flags.checkedAt,
 	}
+}
+
+func (flags settingsInputFlags) complete() bool {
+	return *flags.mergeSettings != "" && *flags.rulesetPages != "" && *flags.mainRuleset != "" && *flags.tagRuleset != "" && *flags.evidenceRuleset != ""
+}
+
+func (flags settingsInputFlags) read() (releasesettings.RawInputs, error) {
+	return readSettingsRawInputs(*flags.mergeSettings, *flags.rulesetPages, *flags.mainRuleset, *flags.tagRuleset, *flags.evidenceRuleset)
 }
 
 func readSettingsRawInputs(merge, pages, main, tag, evidence string) (releasesettings.RawInputs, error) {
@@ -158,9 +214,14 @@ func settingsUsage() string {
 	return `usage: releasecheck settings <command> [flags]
 
 Commands:
+  check   validate saved GitHub settings without creating a tuple proof
   seal    validate saved GitHub settings and create an exact-byte sealed proof
   verify  replay a sealed proof against an independently supplied exact tuple
 `
+}
+
+func settingsCheckUsage() string {
+	return "usage: releasecheck settings check --repository OWNER/REPO --merge-settings FILE --ruleset-pages FILE --main-ruleset FILE --tag-ruleset FILE --evidence-ruleset FILE [--json]\n"
 }
 
 func settingsSealUsage() string {

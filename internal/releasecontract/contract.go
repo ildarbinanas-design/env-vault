@@ -444,7 +444,7 @@ func (c Contract) Validate() error {
 			add("required action code %q is missing", required)
 		}
 	}
-	for _, required := range []string{"CONTRACT_INVALID", "INPUT_INVALID", "INPUT_INCOMPLETE", "SCHEMA_UNSUPPORTED", "ATTEMPT_NOT_COMPLETED", "ATTEMPT_MATRIX_INCOMPLETE", "ATTEMPT_STATE_INCONSISTENT", "CI_ATTEMPT_FAILED"} {
+	for _, required := range []string{"CONTRACT_INVALID", "INPUT_INVALID", "INPUT_INCOMPLETE", "SCHEMA_UNSUPPORTED", "ATTEMPT_NOT_COMPLETED", "ATTEMPT_MATRIX_INCOMPLETE", "ATTEMPT_STATE_INCONSISTENT", "CI_ATTEMPT_FAILED", "SETTINGS_INPUT_INVALID", "SETTINGS_POLICY_INVALID", "SETTINGS_TUPLE_MISMATCH", "SETTINGS_DIGEST_MISMATCH"} {
 		if !contains(c.ErrorCodes, required) {
 			add("required error code %q is missing", required)
 		}
@@ -477,6 +477,7 @@ func (c Contract) Validate() error {
 		"e2e_baseline_verification":         "env-vault.e2e-baseline-verification.v1",
 		"release_observation":               "env-vault.release-observation.v1",
 		"release_health_proof":              "env-vault.release-health-proof.v1",
+		"repository_release_settings_check": "env-vault.repository-release-settings-check.v1",
 		"repository_release_settings_proof": "env-vault.repository-release-settings-proof.v1",
 		"release_authorization":             "env-vault.release-authorization.v1",
 		"attestation_verification_bundle":   "env-vault.attestation-verification-bundle.v1",

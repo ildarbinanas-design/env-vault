@@ -19,14 +19,18 @@ credentials are stored only in `release`. The tap audit requests metadata read;
 the planning audit additionally requests Administration read so it can verify
 merge settings, ruleset structure, and that the planning App itself has no
 bypass. The operational pre-tag check is authoritative for the complete global
-bypass lists: it requires all three to be present and empty and seals the exact
-responses for offline health/evidence replay.
+bypass lists: the read-only App queries each canonical ruleset's GraphQL
+`bypassActors.totalCount`, requires all three counts to be zero, and seals that
+response together with the exact REST rule details for offline health/evidence
+replay. Missing GraphQL data, partial errors, pagination, or a nonzero count
+fails closed.
 
-The planning audit reads repository merge settings through the GitHub GraphQL
-`Repository` fields. GitHub's REST repository response omits those policy
-fields for this deliberately non-pushing audit token, while GraphQL exposes the
-same read-only settings without granting Contents write. Missing GraphQL data
-or an API error fails the audit closed.
+The planning audit reads repository merge settings and actor-independent
+ruleset bypass counts through GitHub GraphQL `Repository` fields. GitHub's REST
+responses omit parts of that policy for this deliberately permission-bounded
+token, while GraphQL exposes the required read-only state without granting
+Administration write. Missing GraphQL data or an API error fails the audit
+closed.
 
 ## Trust boundary
 
@@ -119,9 +123,10 @@ Verify the App installation with
 `.github/workflows/audit-release-planning-app.yml`. That manual workflow mints
 a metadata-plus-Administration-read token, succeeds only when the installation
 contains exactly `ildarbinanas-design/env-vault` and the App cannot bypass the
-main, immutable-tag, or append-only-evidence rulesets, and relies on post-step
-revocation. It verifies squash-only merge
-policy through GraphQL so the audit token does not need push capability. A
+main, immutable-tag, or append-only-evidence rulesets, all three global bypass
+actor counts are zero, and relies on post-step revocation. It verifies
+squash-only merge policy and bypass counts through GraphQL so the audit token
+does not need ruleset-write capability. A
 failed audit blocks release planning.
 
 ## 2. Homebrew tap GitHub App
@@ -289,17 +294,19 @@ accepted publication authorization.
 
 The planning workflow and the manual planning-App audit use Administration-read
 access to verify repository merge settings and the exact active
-main/tag/evidence rulesets. Before tag creation, the operational planning token
-also has the repository write access required for GitHub to return complete
-`bypass_actors` fields. The offline checker requires those fields to be present
-and empty on all three rulesets, preserves the exact raw responses and digests,
-and seals them to the source/version/planning-run tuple. The publisher's
-read-only health job downloads that attempt-qualified proof and replays it
-offline instead of querying Administration APIs. The separately dispatched
-read-only App audit cannot replace the sealed pre-tag proof. Repository merge
-settings are queried through GraphQL;
-this preserves the manual audit's read-only token because the equivalent REST
-response does not include merge-policy fields for that token. Correct the
+main/tag/evidence rulesets. GitHub deliberately omits REST `bypass_actors` from
+a caller that cannot edit rulesets, so the same read-only token obtains the
+complete actor-independent zero-bypass decision from GraphQL
+`RepositoryRuleset.bypassActors`. REST still supplies the exact rule structure
+and must report that the planning App itself can never bypass; an unexpectedly
+present REST bypass list is accepted only when it is empty. The offline checker
+preserves the exact raw GraphQL and REST responses and digests, then seals them
+to the source/version/planning-run tuple. The publisher's read-only health job
+downloads that attempt-qualified proof and replays it offline instead of
+querying Administration APIs. The separately dispatched read-only App audit
+cannot replace the sealed pre-tag proof. Repository merge settings and global
+bypass counts are queried through GraphQL, preserving the manual audit's
+read-only permission boundary. Correct the
 repository if the automated check
 reports rebase merging, `COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`, a non-squash
 ruleset merge method, a missing strict check, weakened branch protection, or a

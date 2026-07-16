@@ -845,6 +845,27 @@ func TestReleaseAppAuditWorkflowsKeepNarrowTokenScopes(t *testing.T) {
 		"permission-administration": "read",
 		"permission-metadata":       "read",
 	})
+	buildSettingsChecker := namedStep(t, planningScope, "Build the offline release settings checker")
+	if !containsAll(buildSettingsChecker.Run, "go build", "./cmd/releasecheck", "$RUNNER_TEMP/releasecheck") {
+		t.Fatalf("planning App audit does not build the offline settings checker: %q", buildSettingsChecker.Run)
+	}
+	verifySettings := namedStep(t, planningScope, "Verify repository release settings and bypass policy")
+	if verifySettings.Env["RELEASECHECK"] != "${{ runner.temp }}/releasecheck" || verifySettings.Run != "scripts/release/verify-repository-release-settings.sh" {
+		t.Fatalf("planning App audit settings verifier is not offline-checker backed: env=%v run=%q", verifySettings.Env, verifySettings.Run)
+	}
+
+	planningWorkflow := readWorkflow(t, "../.github/workflows/release-please.yml")
+	planningToken := namedStep(t, planningWorkflow.Jobs["plan"], "Mint repository-scoped release planning token")
+	assertPermissions(t, "operational planning token", planningToken.With, map[string]string{
+		"client-id":                 "${{ vars.RELEASE_APP_CLIENT_ID }}",
+		"private-key":               "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
+		"owner":                     "${{ github.repository_owner }}",
+		"repositories":              "${{ steps.release-contract.outputs.release_repository_name }}",
+		"permission-administration": "read",
+		"permission-contents":       "write",
+		"permission-issues":         "write",
+		"permission-pull-requests":  "write",
+	})
 }
 
 func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T) {
