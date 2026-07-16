@@ -49,10 +49,11 @@ func TestCanonicalContract(t *testing.T) {
 	if _, ok := contract.LegacyVersion("v0.0.8"); ok {
 		t.Fatal("failed v0.0.8 tag entered legacy rebuild policy")
 	}
-	if got := contract.VersionPolicy.BlockedVersions; len(got) != 3 ||
+	if got := contract.VersionPolicy.BlockedVersions; len(got) != 4 ||
 		got[0].Version != blockedVersion008 || got[0].TagSHA != blockedTagSHA008 ||
 		got[1].Version != blockedVersion009 || got[1].TagSHA != blockedTagSHA009 ||
-		got[2].Version != blockedVersion010 || got[2].TagSHA != blockedTagSHA010 {
+		got[2].Version != blockedVersion010 || got[2].TagSHA != blockedTagSHA010 ||
+		got[3].Version != blockedVersion011 || got[3].TagSHA != blockedTagSHA011 {
 		t.Fatalf("blocked failed-tag policy=%+v", got)
 	}
 }

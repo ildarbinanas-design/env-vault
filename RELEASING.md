@@ -286,9 +286,15 @@ deterministic orchestration defect before any publication or attestation.
 `v0.0.10` is preserved at
 `591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795`; its publisher promoted and staged
 the exact artifacts, then failed closed because the manifest shared the
-ten-asset inventory directory. No publication or attestation occurred. All
-three are blocked from steady-state publication and from the legacy diagnostic
-selector.
+ten-asset inventory directory. No publication or attestation occurred.
+`v0.0.11` is preserved at
+`95181260700afdb0bf257b69f490079d2fb6d5f0`; its exact Windows checksum sidecar
+used CRLF, which the pre-tag Go verifier accepted but the publisher shell
+verifier rejected. The failed attempt created an empty Release record before
+that deterministic mismatch surfaced; the empty record was removed without
+changing the tag or any artifact bytes. No asset, attestation, or Homebrew
+mutation occurred. All four are blocked from steady-state publication and from
+the legacy diagnostic selector.
 
 Historical published releases are immutable. If one needs correction, publish
 a higher patch version; never rebuild historical bytes for publication or
@@ -318,8 +324,8 @@ A release is healthy only when one evidence tuple proves all of the following:
 8. A pre-tag settings proof binds the exact repository merge policy, three
    rulesets, present empty bypass lists, source/version, and planning run
    attempt; health and durable evidence replay its self-digest offline.
-9. Release health passed and every blocked failed tag, currently `v0.0.8`,
-   `v0.0.9`, and `v0.0.10`, still has no GitHub Release.
+9. Release health passed and every blocked failed tag, currently `v0.0.8`
+   through `v0.0.11`, still has no GitHub Release.
 
 The Release asset set is always exactly:
 

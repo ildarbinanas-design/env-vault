@@ -175,8 +175,16 @@ func ValidatePlatformProof(proof PlatformProof, contract releasecontract.Contrac
 }
 
 func verifyChecksum(data []byte, archive FileDigest) error {
-	fields := strings.Fields(string(data))
-	if len(fields) != 2 || fields[0] != archive.SHA256 || strings.TrimPrefix(fields[1], "*") != archive.Name {
+	line := string(data)
+	switch {
+	case strings.HasSuffix(line, "\r\n"):
+		line = strings.TrimSuffix(line, "\r\n")
+	case strings.HasSuffix(line, "\n"):
+		line = strings.TrimSuffix(line, "\n")
+	}
+	wantText := archive.SHA256 + "  " + archive.Name
+	wantBinary := archive.SHA256 + " *" + archive.Name
+	if strings.ContainsAny(line, "\r\n") || (line != wantText && line != wantBinary) {
 		return coded(CodeDigestMismatch, "checksum sidecar does not bind the exact archive name and digest", nil)
 	}
 	return nil
