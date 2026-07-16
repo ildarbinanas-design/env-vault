@@ -17,6 +17,12 @@ release_require_version() {
     release_die "version must match vMAJOR.MINOR.PATCH"
 }
 
+release_readme_version_line() {
+  local version=$1
+  release_require_version "$version"
+  printf "Current version: \`%s\`. <!-- x-release-please-version -->\n" "$version"
+}
+
 release_require_repository() {
   local repository=$1
   [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
