@@ -18,7 +18,7 @@ import (
 const (
 	MigrationSchemaID           = "env-vault.e2e-baseline-migration.v1"
 	MigrationSchemaVersion      = 1
-	MigrationVerificationSchema = "env-vault.e2e-baseline-migration-verification.v1"
+	MigrationVerificationSchema = "env-vault.e2e-baseline-migration-verification.v2"
 	CanonicalMigrationPath      = "evidence/e2e-baseline-migration/migration.json"
 	CanonicalComparatorPath     = "evidence/e2e-baseline-migration/comparison.json"
 	CanonicalTransitionPatch    = "evidence/e2e-baseline-migration/independent-sentinel.patch"
@@ -114,7 +114,7 @@ type MigrationVerification struct {
 	ComparatorSHA256     string              `json:"comparator_sha256"`
 	BaselineFactsSHA256  string              `json:"baseline_facts_sha256"`
 	SourceSuiteHash      string              `json:"source_suite_hash"`
-	CurrentSemanticHash  string              `json:"current_semantic_hash"`
+	ArchivedSemanticHash string              `json:"archived_semantic_hash"`
 	Checks               []VerificationCheck `json:"checks"`
 }
 
@@ -163,7 +163,7 @@ func (proof MigrationProof) Validate() error {
 // comparator to the durable baseline without re-parsing historical raw reports
 // under newer validation rules.
 func VerifyMigration(repositoryRoot, proofPath string, baseline Baseline, contract releasecontract.Contract) (MigrationVerification, error) {
-	report := MigrationVerification{SchemaID: MigrationVerificationSchema, SchemaVersion: 1, Status: "pass"}
+	report := MigrationVerification{SchemaID: MigrationVerificationSchema, SchemaVersion: 2, Status: "pass"}
 	add := func(code string, err error) {
 		check := VerificationCheck{Code: code, Status: "pass"}
 		if err != nil {
@@ -203,16 +203,13 @@ func VerifyMigration(repositoryRoot, proofPath string, baseline Baseline, contra
 
 	transitionErr := verifyTransition(repositoryRoot, proof.Transition)
 	report.SourceSuiteHash = proof.Transition.SourceSuiteHash
-	report.CurrentSemanticHash = proof.Transition.TargetSuiteHash
+	report.ArchivedSemanticHash = proof.Transition.TargetSuiteHash
 	add("reviewed_suite_transition", transitionErr)
-	currentHash, currentErr := e2esuite.Hash(repositoryRoot)
-	if currentErr == nil && currentHash != proof.Transition.TargetSuiteHash {
-		currentErr = fmt.Errorf("current semantic suite hash=%s, want %s", currentHash, proof.Transition.TargetSuiteHash)
+	archivedErr := error(nil)
+	if baseline.SemanticSuite.Algorithm != proof.Transition.TargetAlgorithm || baseline.SemanticSuite.Hash != proof.Transition.TargetSuiteHash || baseline.SemanticSuite.SourceReportHash != proof.Transition.SourceSuiteHash || baseline.SemanticSuite.TransitionCode != proof.Transition.Code {
+		archivedErr = errors.New("archived baseline semantic suite does not match the reviewed transition")
 	}
-	if currentErr == nil && (baseline.SemanticSuite.Algorithm != proof.Transition.TargetAlgorithm || baseline.SemanticSuite.Hash != currentHash || baseline.SemanticSuite.SourceReportHash != proof.Transition.SourceSuiteHash || baseline.SemanticSuite.TransitionCode != proof.Transition.Code) {
-		currentErr = errors.New("baseline semantic suite does not match the reviewed transition")
-	}
-	add("current_semantic_suite", currentErr)
+	add("archived_semantic_suite", archivedErr)
 
 	if report.Status != "pass" {
 		return report, errors.New("durable E2E baseline migration verification failed")
@@ -291,20 +288,6 @@ func compareCandidateToBaseline(comparison LegacyComparison, baseline Baseline) 
 }
 
 func verifyTransition(repositoryRoot string, transition SuiteTransition) error {
-	changedFile, err := repositoryFile(repositoryRoot, transition.ChangedFile)
-	if err != nil {
-		return err
-	}
-	data, err := readBoundedRegular(changedFile, maxJSONBytes)
-	if err != nil {
-		return err
-	}
-	if bytesSHA256(data) != transition.AfterSHA256 {
-		return errors.New("reviewed transition target file digest differs")
-	}
-	if bytes.Count(data, []byte(transition.BeforeFragment)) != 0 || bytes.Count(data, []byte(transition.AfterFragment)) != 1 {
-		return errors.New("reviewed transition fragments are absent, duplicated, or reverted")
-	}
 	patchFile, err := repositoryFile(repositoryRoot, transition.ReviewPatchPath)
 	if err != nil {
 		return err

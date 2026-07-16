@@ -43,8 +43,10 @@ go run ./cmd/e2e-baseline update \
 Claims and risks:
 
 - **pass** — comparator bytes, run tuple, platform set, validation outcomes,
-  stable check list, tool versions, suite transition, baseline facts, and
-  current checkout hash are checked offline and fail closed.
+  stable check list, tool versions, archived suite transition, and baseline
+  facts are checked offline and fail closed. The verifier is purely archival:
+  later reviewed suites are bound independently by their current baseline and
+  matrix proof, and never rewrite this historical target hash.
 - **pass** — no secret value is stored; the evidence contains only public run
   identities, digests, scenario results, coverage floors, and leak counts.
 - **bounded risk** — GitHub's historical raw reports still expire. They are not
