@@ -415,6 +415,7 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 
 func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/release-please.yml")
+	rawWorkflow := readFile(t, "../.github/workflows/release-please.yml")
 	assertJobIDs(t, wf, "inspect", "rerun-incomplete-attempt", "plan")
 	assertGlobalReleaseConcurrency(t, "release-please", wf)
 	trigger := decodeTrigger[workflowRunTrigger](t, wf, "workflow_run")
@@ -429,7 +430,7 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 		t.Fatalf("release inspection cannot classify failed repository-owned main attempts: environment=%q if=%q", inspect.Environment, inspect.If)
 	}
 	inspectAttempt := namedStep(t, inspect, "Classify the exact completed release-candidate attempt offline")
-	if !containsAll(inspectAttempt.Run, "classify-attempt", "rerun_all_jobs", "inspect_failure", "ATTEMPT_MATRIX_INCOMPLETE", "CI_ATTEMPT_FAILED", ".head_repository == $repository") {
+	if !containsAll(inspectAttempt.Run, "gh-api-read.sh", "classify-attempt", "rerun_all_jobs", "inspect_failure", "ATTEMPT_MATRIX_INCOMPLETE", "CI_ATTEMPT_FAILED", ".head_repository == $repository") {
 		t.Fatalf("read-only attempt classifier is incomplete")
 	}
 	inspectUpload := namedStep(t, inspect, "Upload machine-readable attempt classification")
@@ -446,7 +447,7 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 		t.Fatalf("rerun mutation is not isolated and bounded: environment=%q if=%q", rerun.Environment, rerun.If)
 	}
 	rerunStep := namedStep(t, rerun, "Reclassify current remote state and rerun the whole attempt")
-	if !containsAll(rerunStep.Run, "classify-attempt", "rerun-classified-attempt.sh", "ATTEMPT_MATRIX_INCOMPLETE") || strings.Contains(rerunStep.Run, "--failed") {
+	if !containsAll(rerunStep.Run, "gh-api-read.sh", "classify-attempt", "rerun-classified-attempt.sh", "ATTEMPT_MATRIX_INCOMPLETE") || strings.Contains(rerunStep.Run, "--failed") {
 		t.Fatalf("bounded rerun does not reclassify exact state and issue only a full rerun")
 	}
 
@@ -458,9 +459,13 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 	if plan.Environment != "release-planning" || !containsAll(plan.If, "needs.inspect.result == 'success'", "conclusion == 'success'", "event == 'push'", "head_branch == 'main'", "head_repository.full_name == github.repository", "attempt_action == 'none'") {
 		t.Fatalf("release plan does not require exact green repository-owned main CI: environment=%q if=%q", plan.Environment, plan.If)
 	}
+	current := namedStep(t, plan, "Require the planning commit to remain current")
+	if !containsAll(current.Run, "gh-api-read.sh", "main-ref.json", "EXPECTED_SHA") {
+		t.Fatalf("planning current-main observation is not bounded and file-backed")
+	}
 
 	attempt := namedStep(t, plan, "Snapshot and classify the exact triggering CI attempt")
-	if !containsAll(attempt.Run, "classify-attempt", "action_code == \"none\"", "rerun_failed_jobs_allowed == false", ".repository == $repository", ".head_repository == $repository") || strings.Contains(attempt.Run, "rerun-classified-attempt.sh") {
+	if !containsAll(attempt.Run, "gh-api-read.sh", "classify-attempt", "action_code == \"none\"", "rerun_failed_jobs_allowed == false", ".repository == $repository", ".head_repository == $repository") || strings.Contains(attempt.Run, "rerun-classified-attempt.sh") {
 		t.Fatalf("pre-tag plan does not require a previously accepted exact attempt")
 	}
 	if !containsAll(attempt.Run, "include \"artifact-pages\"", "env_vault_artifacts") || strings.Contains(attempt.Run, ".[][]") {
@@ -484,11 +489,22 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 		t.Fatalf("pre-tag promotion verification does not bind exact tuple")
 	}
 	finalAttempt := namedStep(t, plan, "Recheck the exact CI attempt immediately before tag creation")
-	if !containsAll(finalAttempt.Run, "classify-attempt", "ci-run-final.json", "ci-artifacts-final.json", "cmp") {
+	if !containsAll(finalAttempt.Run, "gh-api-read.sh", "classify-attempt", "ci-run-final.json", "ci-artifacts-final.json", "cmp") {
 		t.Fatalf("final pre-tag state is not re-snapshotted and compared")
 	}
 	if !containsAll(finalAttempt.Run, "include \"artifact-pages\"", "env_vault_artifacts") || strings.Contains(finalAttempt.Run, ".[][]") {
 		t.Fatalf("final pre-tag artifact selection does not parse slurped page envelopes fail closed")
+	}
+	if strings.Count(rawWorkflow, "scripts/release/gh-api-read.sh") != 11 {
+		t.Fatalf("release planning read-helper calls=%d, want 11", strings.Count(rawWorkflow, "scripts/release/gh-api-read.sh"))
+	}
+	for _, line := range strings.Split(rawWorkflow, "\n") {
+		if strings.Contains(line, "gh api") && !strings.Contains(line, "gh api --method POST") {
+			t.Fatalf("release planning retains an unbounded direct API read: %q", strings.TrimSpace(line))
+		}
+	}
+	if strings.Count(rawWorkflow, "gh api --method POST") != 1 {
+		t.Fatalf("release planning must contain exactly one direct tag POST")
 	}
 	settings := namedStep(t, plan, "Verify repository release settings and bypass policy")
 	if !containsAll(settings.Env["RELEASE_SETTINGS_PROOF_OUTPUT"], "steps.classify.outputs.publish", "repository-release-settings-proof.json") ||
@@ -500,6 +516,10 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 	if settingsUpload.Uses != uploadArtifactAction || !containsAll(settingsUpload.With["name"], "source_sha", "github.run_attempt") ||
 		settingsUpload.With["path"] != "${{ runner.temp }}/repository-release-settings-proof.json" {
 		t.Fatalf("pre-tag settings proof artifact is not source/attempt qualified: %+v", settingsUpload.With)
+	}
+	tagMutation := namedStep(t, plan, "Create or verify the exact release tag")
+	if strings.Count(tagMutation.Run, "gh api --method POST") != 1 || strings.Contains(tagMutation.Run, "gh-api-read.sh") {
+		t.Fatalf("immutable tag mutation must remain a one-shot direct API call")
 	}
 
 	assertStepOrder(t, plan,

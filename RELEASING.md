@@ -89,6 +89,15 @@ again after merge before success is reported. The wrapper prints only the
 exact merge SHA; the independent pre-tag workflow generates and preserves the
 versioned authorization evidence.
 
+Release-planning REST observations use `scripts/release/gh-api-read.sh`. It
+accepts only explicit or implicit GET reads, publishes a response file only
+after a non-empty successful response, and retries at most five times with the
+fixed `1, 2, 4, 8` second schedule. It rejects request bodies, GraphQL, custom
+hosts, cached observations, and mutation methods before invoking `gh`, and
+pins transport to `github.com`. State-changing API calls do not use this helper
+and remain single-attempt operations with their own exact state
+reconciliation.
+
 Immediately before merge, re-read the remote PR and require the same tuple.
 Any version, PR number, or head-SHA change invalidates the authorization. There
 is no additional routine approval for tag creation, publication, Homebrew, or

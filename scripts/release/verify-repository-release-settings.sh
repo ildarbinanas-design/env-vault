@@ -75,7 +75,8 @@ if ! gh api graphql \
   release_die "unable to read repository merge settings and bypass policy"
 fi
 
-gh api --paginate --slurp "repos/$repository/rulesets?per_page=100" > "$ruleset_pages"
+"$SCRIPT_DIR/gh-api-read.sh" "$ruleset_pages" --paginate --slurp \
+  "repos/$repository/rulesets?per_page=100"
 ruleset_id=$(jq -er '
   [
     .[][] |
@@ -90,7 +91,7 @@ ruleset_id=$(jq -er '
   select(type == "number" and . > 0 and floor == .)
 ' "$ruleset_pages") || release_die "exactly one active env-vault main ruleset is required"
 
-gh api "repos/$repository/rulesets/$ruleset_id" > "$ruleset_detail"
+"$SCRIPT_DIR/gh-api-read.sh" "$ruleset_detail" "repos/$repository/rulesets/$ruleset_id"
 
 tag_ruleset_id=$(jq -er '
   [
@@ -106,7 +107,7 @@ tag_ruleset_id=$(jq -er '
   select(type == "number" and . > 0 and floor == .)
 ' "$ruleset_pages") || release_die "exactly one active env-vault release tag ruleset is required"
 
-gh api "repos/$repository/rulesets/$tag_ruleset_id" > "$tag_ruleset_detail"
+"$SCRIPT_DIR/gh-api-read.sh" "$tag_ruleset_detail" "repos/$repository/rulesets/$tag_ruleset_id"
 
 evidence_ruleset_id=$(jq -er '
   [
@@ -122,7 +123,7 @@ evidence_ruleset_id=$(jq -er '
   select(type == "number" and . > 0 and floor == .)
 ' "$ruleset_pages") || release_die "exactly one active release evidence ruleset is required"
 
-gh api "repos/$repository/rulesets/$evidence_ruleset_id" > "$evidence_ruleset_detail"
+"$SCRIPT_DIR/gh-api-read.sh" "$evidence_ruleset_detail" "repos/$repository/rulesets/$evidence_ruleset_id"
 
 proof_output=${RELEASE_SETTINGS_PROOF_OUTPUT:-}
 if [[ -n "$proof_output" ]]; then

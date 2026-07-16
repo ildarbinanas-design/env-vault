@@ -87,10 +87,13 @@ jobs:
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
           "$RELEASECHECK" validate-contract --json > "$SNAPSHOT_DIR/contract-validation.json"
 
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run.json"
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
-            > "$SNAPSHOT_DIR/ci-artifacts.json"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-run.json" \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-artifacts.json" \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
 
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -218,16 +221,23 @@ jobs:
           umask 077
           mkdir -p "$SNAPSHOT_DIR"
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
-          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/main-ref.json" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
+          current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            "$SNAPSHOT_DIR/main-ref.json")"
           if [[ "$current_sha" != "$EXPECTED_SHA" ]]; then
             printf 'Skipped stale incomplete attempt for `%s`; current main is `%s`.\n' \
               "$EXPECTED_SHA" "$current_sha" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run.json"
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
-            > "$SNAPSHOT_DIR/ci-artifacts.json"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-run.json" \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-artifacts.json" \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
 
           set +e
           "$RELEASECHECK" classify-attempt \
@@ -253,7 +263,11 @@ jobs:
               .action_code == "rerun_all_jobs" and
               .reason_code == "ATTEMPT_MATRIX_INCOMPLETE"
             ' "$SNAPSHOT_DIR/attempt-classification.json" >/dev/null
-          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/main-ref-final.json" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
+          current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            "$SNAPSHOT_DIR/main-ref-final.json")"
           [[ "$current_sha" == "$EXPECTED_SHA" ]] || {
             echo "main advanced before the full rerun mutation" >&2
             exit 1
@@ -330,9 +344,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          current_sha="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
-            --jq '.object.sha')"
+          scripts/release/gh-api-read.sh \
+            "$RUNNER_TEMP/main-ref.json" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
+          current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            "$RUNNER_TEMP/main-ref.json")"
           if [[ "$current_sha" == "$EXPECTED_SHA" ]]; then
             echo 'current=true' >> "$GITHUB_OUTPUT"
           else
@@ -402,10 +418,13 @@ jobs:
           umask 077
           mkdir -p "$SNAPSHOT_DIR"
 
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run.json"
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
-            > "$SNAPSHOT_DIR/ci-artifacts.json"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-run.json" \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-artifacts.json" \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
 
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -670,10 +689,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > "$SNAPSHOT_DIR/ci-run-final.json"
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
-            > "$SNAPSHOT_DIR/ci-artifacts-final.json"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-run-final.json" \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}"
+          scripts/release/gh-api-read.sh \
+            "$SNAPSHOT_DIR/ci-artifacts-final.json" \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
 
           "$RELEASECHECK" classify-attempt \
             --run "$SNAPSHOT_DIR/ci-run-final.json" \

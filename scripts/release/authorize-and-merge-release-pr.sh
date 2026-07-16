@@ -25,21 +25,11 @@ require_positive_integer() {
   [[ "$value" =~ ^[1-9][0-9]{0,8}$ ]] || release_die "$name must be a positive integer with at most 9 digits"
 }
 
-# Retry only read-only API observations. Content creation and merge mutations
-# are never blindly retried because a transport failure can arrive after
-# GitHub has committed the write.
+# Retry only read-only API observations through the shared atomic transport
+# helper. Content creation and merge mutations are never blindly retried
+# because a transport failure can arrive after GitHub has committed the write.
 read_gh_api() {
-  local output=$1
-  shift
-  local attempt
-
-  for attempt in 1 2 3; do
-    if gh api "$@" > "$output"; then
-      return 0
-    fi
-    [[ "$attempt" == "3" ]] || sleep 2
-  done
-  return 1
+  "$SCRIPT_DIR/gh-api-read.sh" "$@"
 }
 
 load_pull_request() {
@@ -546,7 +536,7 @@ set -e
 pr_merged="$probe_dir/pr-merged.json"
 merged=false
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
-  if ! gh api "repos/$repository/pulls/$pr_number" > "$pr_merged"; then
+  if ! read_gh_api "$pr_merged" "repos/$repository/pulls/$pr_number"; then
     sleep 2
     continue
   fi
