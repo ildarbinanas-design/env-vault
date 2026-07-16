@@ -39,7 +39,7 @@ owner=${repository%%/*}
 branch=release-please--branches--main--components--env-vault
 pull="$probe_dir/pull.json"
 if [[ -n "$exact_pr_number" ]]; then
-  gh api "repos/$repository/pulls/$exact_pr_number" > "$pull"
+  "$SCRIPT_DIR/gh-api-read.sh" "$pull" "repos/$repository/pulls/$exact_pr_number"
   jq -e \
     --arg repository "$repository" \
     --arg branch "$branch" \
@@ -75,12 +75,12 @@ if [[ -n "$exact_pr_number" ]]; then
     ' "$pull" >/dev/null || release_die "exact release proposal provenance is invalid"
 else
   pull_pages="$probe_dir/pulls.json"
-  gh api --paginate --slurp --method GET \
+  "$SCRIPT_DIR/gh-api-read.sh" "$pull_pages" --paginate --slurp --method GET \
     "repos/$repository/pulls" \
     --raw-field 'state=open' \
     --raw-field 'base=main' \
     --raw-field "head=$owner:$branch" \
-    --raw-field 'per_page=100' > "$pull_pages"
+    --raw-field 'per_page=100'
 
   pull_count=$(jq -er '[.[][]] | length' "$pull_pages") || release_die "GitHub returned malformed release pull requests"
   if [[ "$pull_count" == "0" ]]; then
@@ -113,7 +113,7 @@ version=$(jq -nr --arg title "$title" '
 head_sha=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' "$pull") || release_die "release proposal head SHA is malformed"
 
 commit="$probe_dir/commit.json"
-gh api "repos/$repository/git/commits/$head_sha" > "$commit"
+"$SCRIPT_DIR/gh-api-read.sh" "$commit" "repos/$repository/git/commits/$head_sha"
 parent_sha=$(jq -er '
   select((.parents | length) == 1) |
   .parents[0].sha |
@@ -130,7 +130,7 @@ jq -e --arg title "$title" '
 tree_sha=$(jq -er '.tree.sha' "$commit")
 
 proposal_compare="$probe_dir/proposal-compare.json"
-gh api "repos/$repository/compare/$parent_sha...$head_sha" > "$proposal_compare"
+"$SCRIPT_DIR/gh-api-read.sh" "$proposal_compare" "repos/$repository/compare/$parent_sha...$head_sha"
 jq -e '
   .status == "ahead" and
   .ahead_by == 1 and
@@ -143,7 +143,7 @@ jq -e '
 ' "$proposal_compare" >/dev/null || release_die "release proposal changed unexpected commits or paths"
 
 tree="$probe_dir/tree.json"
-gh api "repos/$repository/git/trees/$tree_sha?recursive=1" > "$tree"
+"$SCRIPT_DIR/gh-api-read.sh" "$tree" "repos/$repository/git/trees/$tree_sha?recursive=1"
 jq -e '
   [.tree[] |
     select(
@@ -160,21 +160,21 @@ jq -e '
 ' "$tree" >/dev/null || release_die "release proposal metadata files have unsafe modes"
 
 main_ref="$probe_dir/main-ref.json"
-gh api "repos/$repository/git/ref/heads/main" > "$main_ref"
+"$SCRIPT_DIR/gh-api-read.sh" "$main_ref" "repos/$repository/git/ref/heads/main"
 main_sha=$(jq -er '.object.sha | select(test("^[0-9a-f]{40}$"))' "$main_ref") || release_die "GitHub returned a malformed main SHA"
 base_compare="$probe_dir/base-compare.json"
-gh api "repos/$repository/compare/$parent_sha...$main_sha" > "$base_compare"
+"$SCRIPT_DIR/gh-api-read.sh" "$base_compare" "repos/$repository/compare/$parent_sha...$main_sha"
 jq -e '.status == "ahead" or .status == "identical"' "$base_compare" >/dev/null ||
   release_die "release proposal base is not contained in current main"
 
 workflow_runs="$probe_dir/workflow-runs.json"
-gh api --method GET \
+"$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --method GET \
   "repos/$repository/actions/workflows/ci.yml/runs" \
   --raw-field "head_sha=$parent_sha" \
   --raw-field 'branch=main' \
   --raw-field 'event=push' \
   --raw-field 'status=completed' \
-  --raw-field 'per_page=100' > "$workflow_runs"
+  --raw-field 'per_page=100'
 jq -e --arg sha "$parent_sha" '
   [.workflow_runs[] |
     select(
@@ -187,8 +187,8 @@ jq -e --arg sha "$parent_sha" '
 ' "$workflow_runs" >/dev/null || release_die "release proposal base has no successful main ci push run"
 
 manifest="$probe_dir/manifest.json"
-gh api --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/.release-please-manifest.json?ref=$head_sha" > "$manifest"
+"$SCRIPT_DIR/gh-api-read.sh" "$manifest" --header 'Accept: application/vnd.github.raw+json' \
+  "repos/$repository/contents/.release-please-manifest.json?ref=$head_sha"
 jq -e --arg version "$version" '
   type == "object" and
   keys == ["."] and
@@ -196,15 +196,15 @@ jq -e --arg version "$version" '
 ' "$manifest" >/dev/null || release_die "release proposal manifest does not match its title"
 
 readme="$probe_dir/README.md"
-gh api --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/README.md?ref=$head_sha" > "$readme"
+"$SCRIPT_DIR/gh-api-read.sh" "$readme" --header 'Accept: application/vnd.github.raw+json' \
+  "repos/$repository/contents/README.md?ref=$head_sha"
 readme_line=$(release_readme_version_line "v$version")
 grep -Fqx -- "$readme_line" "$readme" ||
   release_die "release proposal README does not match its manifest"
 
 changelog="$probe_dir/CHANGELOG.md"
-gh api --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/CHANGELOG.md?ref=$head_sha" > "$changelog"
+"$SCRIPT_DIR/gh-api-read.sh" "$changelog" --header 'Accept: application/vnd.github.raw+json' \
+  "repos/$repository/contents/CHANGELOG.md?ref=$head_sha"
 "$SCRIPT_DIR/extract-changelog-section.sh" "v$version" "$changelog" >/dev/null ||
   release_die "release proposal changelog section is missing or empty"
 

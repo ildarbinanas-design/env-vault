@@ -40,35 +40,35 @@ probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-authorization.XXXXXX")
 trap cleanup EXIT
 
 repository_json="$probe_dir/repository.json"
-gh api "repos/$repository" > "$repository_json"
+"$SCRIPT_DIR/gh-api-read.sh" "$repository_json" "repos/$repository"
 default_branch=$(jq -er '.default_branch | select(type == "string" and length > 0)' "$repository_json") ||
   release_die "GitHub returned a malformed default branch"
 [[ "$default_branch" == "main" ]] || release_die "release authorization requires main as the default branch"
 
 main_ref="$probe_dir/main-ref.json"
-gh api "repos/$repository/git/ref/heads/$default_branch" > "$main_ref"
+"$SCRIPT_DIR/gh-api-read.sh" "$main_ref" "repos/$repository/git/ref/heads/$default_branch"
 main_sha=$(jq -er '.object.sha | select(test("^[0-9a-f]{40}$"))' "$main_ref") ||
   release_die "GitHub returned a malformed main commit SHA"
 
 comparison="$probe_dir/comparison.json"
-gh api "repos/$repository/compare/$source_sha...$main_sha" > "$comparison"
+"$SCRIPT_DIR/gh-api-read.sh" "$comparison" "repos/$repository/compare/$source_sha...$main_sha"
 comparison_status=$(jq -er '.status | select(. == "ahead" or . == "identical")' "$comparison") ||
   release_die "release commit is not contained in current main"
 [[ -n "$comparison_status" ]] || release_die "release commit ancestry is unknown"
 
 source_manifest="$probe_dir/source-manifest.json"
-gh api \
+"$SCRIPT_DIR/gh-api-read.sh" "$source_manifest" \
   --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/.release-please-manifest.json?ref=$source_sha" > "$source_manifest"
+  "repos/$repository/contents/.release-please-manifest.json?ref=$source_sha"
 source_manifest_version=$(jq -er 'if type == "object" and (keys == ["."]) and ((.["."] | type) == "string") then .["."] else empty end' "$source_manifest") ||
   release_die "exact release source manifest is malformed"
 [[ "v$source_manifest_version" == "$version" ]] ||
   release_die "release version does not match the exact release source manifest"
 
 main_manifest="$probe_dir/main-manifest.json"
-gh api \
+"$SCRIPT_DIR/gh-api-read.sh" "$main_manifest" \
   --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/.release-please-manifest.json?ref=$main_sha" > "$main_manifest"
+  "repos/$repository/contents/.release-please-manifest.json?ref=$main_sha"
 main_manifest_version=$(jq -er 'if type == "object" and (keys == ["."]) and ((.["."] | type) == "string") then .["."] else empty end' "$main_manifest") ||
   release_die "current main release manifest is malformed"
 if [[ "$label_state" == "prepublish" ]]; then
@@ -81,13 +81,13 @@ else
 fi
 
 workflow_runs="$probe_dir/workflow-runs.json"
-gh api --method GET \
+"$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --method GET \
   "repos/$repository/actions/workflows/ci.yml/runs" \
   --raw-field "head_sha=$source_sha" \
   --raw-field "branch=$default_branch" \
   --raw-field 'event=push' \
   --raw-field 'status=completed' \
-  --raw-field 'per_page=100' > "$workflow_runs"
+  --raw-field 'per_page=100'
 jq -e --arg sha "$source_sha" --arg branch "$default_branch" '
   [.workflow_runs[] |
     select(
@@ -100,11 +100,11 @@ jq -e --arg sha "$source_sha" --arg branch "$default_branch" '
 ' "$workflow_runs" >/dev/null || release_die "release commit has no successful main ci push run"
 
 pulls="$probe_dir/pulls.json"
-gh api \
+"$SCRIPT_DIR/gh-api-read.sh" "$pulls" \
   --paginate \
   --slurp \
   --header 'Accept: application/vnd.github+json' \
-  "repos/$repository/commits/$source_sha/pulls?per_page=100" > "$pulls"
+  "repos/$repository/commits/$source_sha/pulls?per_page=100"
 
 expected_title="chore(main): release env-vault $version"
 expected_branch="release-please--branches--main--components--env-vault"
@@ -156,11 +156,11 @@ merged_at=$(jq -er '.merged_at | select(type == "string") | fromdateiso8601 | to
 
 canonical_body="ПОДТВЕРЖДАЮ RELEASE $version PR #$pr_number SHA $pr_head_sha"
 comments="$probe_dir/comments.json"
-gh api \
+"$SCRIPT_DIR/gh-api-read.sh" "$comments" \
   --paginate \
   --slurp \
   --header 'Accept: application/vnd.github+json' \
-  "repos/$repository/issues/$pr_number/comments?per_page=100" > "$comments"
+  "repos/$repository/issues/$pr_number/comments?per_page=100"
 
 confirmation="$probe_dir/confirmation.json"
 jq -e \
