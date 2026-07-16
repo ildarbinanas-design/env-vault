@@ -1545,11 +1545,27 @@ behavior, YAML/schema failures are not retried, non-whitelisted errors return
 immediately, and a persistent whitelisted error is returned after the deadline.
 The concurrency assertion remains unchanged.
 
+The next exact-SHA run
+[29460098566](https://github.com/ildarbinanas-design/env-vault/actions/runs/29460098566),
+job
+[87501740067](https://github.com/ildarbinanas-design/env-vault/actions/runs/29460098566/job/87501740067),
+then completed the concurrent read/write portion and failed only the final
+test assertion `config mode=0666, want 0600`. Go's Windows `FileMode` does not
+model POSIX `0600`; the E2E and lock tests already enforce that permission bit
+only outside Windows, matching the documented "where applicable" contract.
+The unit test now always requires a regular file and requires exact `0600` on
+non-Windows platforms. No production assertion or public E2E contract changed.
+An exhaustive mode-assertion scan found the same non-portable expectation in
+the E2E comparison report test; it now also requires a regular file everywhere
+and exact `0600` only where POSIX mode bits apply.
+
 ### Commands And Checks
 
 | Command or evidence | Result | Claim status |
 |---|---|---|
 | Native Windows job log inspection | isolated the primary failure to `go test ./internal/config -count=1`; the failure was a concurrent open/read error before E2E startup | remote_observed |
+| Follow-up native Windows job log inspection | read/write integrity completed; isolated the failure to a non-portable POSIX mode-bit assertion after `os.Stat` returned the normal Windows regular-file mode `0666` | remote_observed |
+| Cross-platform permission-assertion audit | found and corrected the equivalent E2E comparison-report test; all other critical mode assertions were already Windows-aware or inside an explicit Windows skip | repo_verified |
 | Deterministic Windows read tests | cover transient success, permanent failure, and the wrapped `os.PathError` shape returned by `os.ReadFile` | repo_verified |
 | `go test ./internal/config -count=1`; `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed locally after the read retry | cli_observed |
 | Windows config test cross-compile and `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/config` | passed | cli_observed |
@@ -1565,6 +1581,6 @@ The concurrency assertion remains unchanged.
 | Risk or claim | Status | Mitigation or required evidence | Claim status |
 |---|---|---|---|
 | Exact underlying Win32 errno | unavailable by design | public structured errors omit causes; implementation covers only the three documented transient contention classes and preserves every other error | cli_observed |
-| Native Windows concurrency test after the read fix | pending updated PR CI | the Windows E2E job now requires the package once plus ten sequential focused concurrency runs before the unchanged full E2E/burn-in/coverage job | repo_verified |
+| Native Windows concurrency test after the read and test-portability fixes | pending updated PR CI | the Windows E2E job requires the package once plus ten sequential focused concurrency runs before the unchanged full E2E/burn-in/coverage job | repo_verified |
 | Permanent access failure latency | bounded | a whitelisted but persistent Windows access error adds at most one second and then returns the last error | repo_verified |
 | Unix behavior | unchanged | build-tagged implementation performs one `os.ReadFile` call and the existing single replacement attempt | repo_verified |

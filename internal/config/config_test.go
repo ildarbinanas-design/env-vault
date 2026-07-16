@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -237,7 +238,10 @@ func TestConcurrentSavePublishesOnlyCompleteConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	if !info.Mode().IsRegular() {
+		t.Fatalf("config mode=%v, want regular file", info.Mode())
+	}
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("config mode=%#o, want 0600", got)
 	}
 	matches, err := filepath.Glob(filepath.Join(root, ".config.yaml.tmp-*"))
