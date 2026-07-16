@@ -10,8 +10,10 @@ The comparator records a passing equivalence check against historical run
 `29441160687` for all five native platforms.
 
 `migration.json` binds those exact bytes to the normalized facts in
-`docs/e2e-baseline.json` and to the reviewed one-line independent-sentinel
-transition. The transition also moves the suite identity to the
+`migrated-baseline.json` (file SHA-256
+`4e2711bc621e8b5f43ba663f5a53bb4d023cbf2a7d700dfc192e7f9e3c807f0d`)
+and to the reviewed one-line independent-sentinel transition. The transition
+also moves the suite identity to the
 domain-separated `env-vault.e2e-semantic-suite.v1` algorithm; runner,
 normalization, validation, and renderer source remain hashed, while generated
 reports are excluded and only the two reporter version strings are
@@ -23,7 +25,7 @@ Offline verification:
 go run ./cmd/e2e-baseline verify-migration \
   --repository-root . \
   --contract release/contract.v1.json \
-  --baseline docs/e2e-baseline.json \
+  --baseline evidence/e2e-baseline-migration/migrated-baseline.json \
   --migration evidence/e2e-baseline-migration/migration.json
 ```
 

@@ -55,7 +55,7 @@ func Generate(options GenerateOptions, contract releasecontract.Contract) (Basel
 			ContractSHA256:       actual.ContractSHA256,
 			CoverageFloorPercent: actual.StatementCoveragePercent,
 			Counts:               actual.Counts,
-			ExpectedSkips:        append([]string(nil), actual.ExpectedSkips...),
+			ExpectedSkips:        append([]string{}, actual.ExpectedSkips...),
 			CriticalScenarios:    append([]ScenarioExpectation(nil), actual.CriticalScenarios...),
 			Leak:                 actual.Leak,
 		})

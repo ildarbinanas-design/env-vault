@@ -189,9 +189,14 @@ Verify the migration proof entirely offline:
 GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline verify-migration \
   --repository-root . \
   --contract release/contract.v1.json \
-  --baseline docs/e2e-baseline.json \
+  --baseline evidence/e2e-baseline-migration/migrated-baseline.json \
   --migration evidence/e2e-baseline-migration/migration.json
 ```
+
+The migrated snapshot remains beside its proof so the historical equivalence
+can always be replayed. The active baseline now comes from the accepted current
+five-platform matrix and therefore has no runtime dependency on that one-time
+migration.
 
 Updating the baseline is an explicit reviewed change, not an automatic
 tolerance adjustment. First produce a passing current five-platform
@@ -215,6 +220,10 @@ change, per-platform contract changes, coverage-floor changes, scenario
 changes, and leak changes are intentional. CI must verify the updated baseline
 against another proof from the same exact matrix identity before it can become
 a release gate.
+
+The accepted independent-sentinel update and its exact run/attempt bindings
+are preserved under
+[`evidence/e2e-baseline-updates/`](../evidence/e2e-baseline-updates/).
 
 ## Running locally
 

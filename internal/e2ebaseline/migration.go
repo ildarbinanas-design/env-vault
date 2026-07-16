@@ -22,8 +22,10 @@ const (
 	CanonicalMigrationPath      = "evidence/e2e-baseline-migration/migration.json"
 	CanonicalComparatorPath     = "evidence/e2e-baseline-migration/comparison.json"
 	CanonicalTransitionPatch    = "evidence/e2e-baseline-migration/independent-sentinel.patch"
+	CanonicalMigratedBaseline   = "evidence/e2e-baseline-migration/migrated-baseline.json"
 	LegacySuiteAlgorithm        = "env-vault.e2e-whole-tree.v1"
 	CanonicalComparatorSHA256   = "84a9f5f9d2e6b129f7dc1338db3c5d0b7fabd6577b62d6d2048a02a01dbcf293"
+	CanonicalMigratedSHA256     = "4e2711bc621e8b5f43ba663f5a53bb4d023cbf2a7d700dfc192e7f9e3c807f0d"
 )
 
 var requiredLegacyChecks = []string{

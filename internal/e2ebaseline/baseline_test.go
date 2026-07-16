@@ -12,7 +12,7 @@ import (
 	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
-func TestCanonicalBaselineAndMigrationAreDurable(t *testing.T) {
+func TestCanonicalBaselineAndArchivedMigrationAreDurable(t *testing.T) {
 	repositoryRoot := filepath.Join("..", "..")
 	contract, err := releasecontract.LoadCanonical(repositoryRoot)
 	if err != nil {
@@ -23,27 +23,38 @@ func TestCanonicalBaselineAndMigrationAreDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if baseline.Provenance.RunID != "29479484474" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
+	if baseline.Provenance.RunID != "29519762171" || baseline.Provenance.RunAttempt != "1" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
 		t.Fatalf("baseline identity=%+v toolchain=%+v", baseline.Provenance, baseline.Toolchain)
 	}
-	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8" {
+	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8" || baseline.SemanticSuite.SourceReportHash != baseline.SemanticSuite.Hash || baseline.Migration != nil {
 		t.Fatalf("semantic suite=%+v", baseline.SemanticSuite)
 	}
-	migrationPath := filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigrationPath))
-	report, err := VerifyMigration(repositoryRoot, migrationPath, baseline, contract)
-	if err != nil || report.Status != "pass" {
-		t.Fatalf("migration status=%s err=%v checks=%+v", report.Status, err, report.Checks)
-	}
-	if report.ComparatorSHA256 != CanonicalComparatorSHA256 || report.MigrationProofSHA256 != baseline.Migration.SHA256 {
-		t.Fatalf("migration digests=%+v baseline=%+v", report, baseline.Migration)
-	}
-	data, err := os.ReadFile(baselinePath)
+	migratedBaselinePath := filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigratedBaseline))
+	migratedBaseline, err := LoadFile(migratedBaselinePath, contract)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"artifact_id", "artifact_expires_at", "minimum_artifact_expires_at"} {
-		if strings.Contains(string(data), forbidden) {
-			t.Fatalf("durable baseline contains expiring field %q", forbidden)
+	migratedSHA256, err := fileSHA256(migratedBaselinePath)
+	if err != nil || migratedSHA256 != CanonicalMigratedSHA256 {
+		t.Fatalf("migrated baseline SHA-256=%q err=%v", migratedSHA256, err)
+	}
+	migrationPath := filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigrationPath))
+	report, err := VerifyMigration(repositoryRoot, migrationPath, migratedBaseline, contract)
+	if err != nil || report.Status != "pass" {
+		t.Fatalf("migration status=%s err=%v checks=%+v", report.Status, err, report.Checks)
+	}
+	if report.ComparatorSHA256 != CanonicalComparatorSHA256 || migratedBaseline.Migration == nil || report.MigrationProofSHA256 != migratedBaseline.Migration.SHA256 {
+		t.Fatalf("migration digests=%+v baseline=%+v", report, migratedBaseline.Migration)
+	}
+	for _, path := range []string{baselinePath, migratedBaselinePath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"artifact_id", "artifact_expires_at", "minimum_artifact_expires_at"} {
+			if strings.Contains(string(data), forbidden) {
+				t.Fatalf("durable baseline %s contains expiring field %q", path, forbidden)
+			}
 		}
 	}
 }
@@ -54,7 +65,7 @@ func TestMigrationFailsClosedOnMalformedOrTamperedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline, err := LoadFile(filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalPath)), contract)
+	baseline, err := LoadFile(filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigratedBaseline)), contract)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +221,11 @@ func TestGenerateAndVerifyUseOnlySealedProof(t *testing.T) {
 	baseline, err := Generate(GenerateOptions{ProofPath: proofPath, RepositoryRoot: repositoryRoot}, contract)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, platform := range baseline.Platforms {
+		if platform.ExpectedSkips == nil {
+			t.Fatalf("generated %s expected_skips is null, want a stable JSON array", platform.ID)
+		}
 	}
 	report, err := Verify(validVerifyOptions(proofPath, repositoryRoot), baseline, contract)
 	if err != nil || report.Status != "pass" || report.MatrixProofDigest == "" {

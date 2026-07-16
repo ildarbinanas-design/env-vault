@@ -22,14 +22,13 @@ func TestCanonicalE2EBaselineIdentityIsPinned(t *testing.T) {
 	}
 	if baseline.SchemaID != e2ebaseline.SchemaID || baseline.SchemaVersion != e2ebaseline.SchemaVersion ||
 		baseline.Provenance.Repository != "ildarbinanas-design/env-vault" ||
-		baseline.Provenance.CommitSHA != "585d4d7e5a9c800debd57198ff9e0e88411630ec" ||
-		baseline.Provenance.RunID != "29479484474" ||
-		baseline.Provenance.RunURL != "https://github.com/ildarbinanas-design/env-vault/actions/runs/29479484474" ||
+		baseline.Provenance.CommitSHA != "62b3d25fcbc0a960c2eba03f98d7026cd2be8421" ||
+		baseline.Provenance.RunID != "29519762171" ||
+		baseline.Provenance.RunURL != "https://github.com/ildarbinanas-design/env-vault/actions/runs/29519762171" ||
 		baseline.Provenance.RunAttempt != "1" || baseline.Provenance.Phase != "candidate" ||
 		baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" ||
-		baseline.SemanticSuite.SourceReportHash != "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" ||
-		baseline.SemanticSuite.TransitionCode != e2ebaseline.ReviewedSuiteTransition ||
-		baseline.Migration == nil || baseline.Migration.Path != "evidence/e2e-baseline-migration/migration.json" {
+		baseline.SemanticSuite.SourceReportHash != "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8" ||
+		baseline.SemanticSuite.TransitionCode != "" || baseline.Migration != nil {
 		t.Fatalf("canonical baseline identity is incomplete or changed: %+v", baseline)
 	}
 	wantPlatforms := map[string]bool{"linux-amd64": false, "linux-arm64": false, "darwin-amd64": false, "darwin-arm64": false, "windows-amd64": false}
@@ -37,7 +36,7 @@ func TestCanonicalE2EBaselineIdentityIsPinned(t *testing.T) {
 		if _, ok := wantPlatforms[report.ID]; !ok {
 			t.Fatalf("unexpected canonical baseline platform %q", report.ID)
 		}
-		if report.Counts.Failed != 0 || report.Counts.Missing != 0 || report.Counts.Passed == 0 || report.CoverageFloorPercent < 60 || len(report.ContractSHA256) != 64 || report.Leak.Status != "pass" || report.Leak.Detected {
+		if report.Counts.Failed != 0 || report.Counts.Missing != 0 || report.Counts.Passed == 0 || report.CoverageFloorPercent < 60 || len(report.ContractSHA256) != 64 || report.Leak.Status != "pass" || report.Leak.Detected || report.Leak.RegistryRecords != 130 {
 			t.Fatalf("invalid canonical baseline report for %s: %+v", report.ID, report)
 		}
 		if report.ID == "windows-amd64" {
