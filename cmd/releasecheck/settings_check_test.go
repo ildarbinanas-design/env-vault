@@ -44,7 +44,7 @@ func TestSettingsCheckCLIFailsClosedWithStableCode(t *testing.T) {
 func settingsCheckArgs(t *testing.T, inputs releasesettings.RawInputs) []string {
 	t.Helper()
 	return []string{
-		"settings", "check", "--repository", "example/env-vault",
+		"settings", "check", "--contract", canonicalContractPath(t), "--repository", "example/env-vault",
 		"--merge-settings", writeTestFile(t, inputs.MergeSettings),
 		"--ruleset-pages", writeTestFile(t, inputs.RulesetPages),
 		"--main-ruleset", writeTestFile(t, inputs.MainRuleset),

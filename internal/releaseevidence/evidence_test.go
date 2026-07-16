@@ -699,13 +699,13 @@ func newEvidenceFixture(t *testing.T) *evidenceFixture {
 	observation := makeObservation(t, contract, manifest, publisher)
 	attestationBundle := makeAttestationVerificationBundle(t, contract, manifest, publisher, &observation)
 	authorization := makeAuthorization(t, contract, manifest)
-	observation.RepositoryReleaseSettings = makeRepositoryReleaseSettingsProof(t, authorization)
+	observation.RepositoryReleaseSettings = makeRepositoryReleaseSettingsProof(t, contract, authorization)
 	return &evidenceFixture{contract: contract, authorization: authorization, manifest: manifest, ci: ci, publisher: publisher, observation: observation, attestationBundle: attestationBundle}
 }
 
-func makeRepositoryReleaseSettingsProof(t *testing.T, authorization Authorization) releasesettings.Proof {
+func makeRepositoryReleaseSettingsProof(t *testing.T, contract releasecontract.Contract, authorization Authorization) releasesettings.Proof {
 	t.Helper()
-	proof, err := releasesettings.Seal(releasesettings.Tuple{
+	proof, err := releasesettings.Seal(contract, releasesettings.Tuple{
 		Repository:         authorization.Repository,
 		SourceSHA:          authorization.ReleaseSourceSHA,
 		ReleaseVersion:     authorization.ReleaseVersion,

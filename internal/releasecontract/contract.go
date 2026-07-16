@@ -64,6 +64,7 @@ type Contract struct {
 	Platforms            []Platform        `json:"platforms"`
 	Assets               []string          `json:"assets"`
 	Workflows            []Workflow        `json:"workflows"`
+	MainRequiredChecks   []RequiredCheck   `json:"main_required_checks"`
 	Apps                 []App             `json:"apps"`
 	ReleaseStages        []ReleaseStage    `json:"release_stages"`
 	AllowedRepairActions []RepairAction    `json:"allowed_repair_actions"`
@@ -124,6 +125,12 @@ type Workflow struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	File string `json:"file"`
+}
+
+type RequiredCheck struct {
+	Name     string `json:"name"`
+	Workflow string `json:"workflow"`
+	Event    string `json:"event"`
 }
 
 type App struct {
@@ -381,6 +388,9 @@ func (c Contract) Validate() error {
 			add("required workflow %q is missing", required)
 		}
 	}
+	if err := validateMainRequiredChecks(c.MainRequiredChecks); err != nil {
+		add("main required checks: %v", err)
+	}
 
 	appIDs, appSlugs := map[string]bool{}, map[string]bool{}
 	for index, app := range c.Apps {
@@ -517,6 +527,32 @@ func validateNaming(n Naming) error {
 		n.PlatformEvidenceTemplate != "env-vault-promotion-platform-{platform}-attempt-{attempt}" ||
 		n.PromotionManifestTemplate != "env-vault-promotion-{source_sha}-attempt-{attempt}" {
 		return errors.New("attempt-scoped artifact templates are not canonical")
+	}
+	return nil
+}
+
+func validateMainRequiredChecks(checks []RequiredCheck) error {
+	want := []RequiredCheck{
+		{Name: "Analyze (actions)", Workflow: "CodeQL", Event: "dynamic"},
+		{Name: "Analyze (go)", Workflow: "CodeQL", Event: "dynamic"},
+		{Name: "Dependency review", Workflow: "Dependency review", Event: "pull_request"},
+		{Name: "pr-title", Workflow: "pr-title", Event: "pull_request"},
+		{Name: "quality-gate", Workflow: "ci", Event: "pull_request"},
+	}
+	if len(checks) != len(want) {
+		return fmt.Errorf("entry count=%d, want %d", len(checks), len(want))
+	}
+	seenNames := make(map[string]bool, len(checks))
+	for index, check := range checks {
+		if strings.TrimSpace(check.Name) != check.Name || check.Name == "" ||
+			strings.TrimSpace(check.Workflow) != check.Workflow || check.Workflow == "" ||
+			(check.Event != "dynamic" && check.Event != "pull_request") || seenNames[check.Name] {
+			return fmt.Errorf("entry %d is empty, malformed, or duplicates a check name", index)
+		}
+		seenNames[check.Name] = true
+		if check != want[index] {
+			return fmt.Errorf("entry %d does not match the canonical name/workflow/event identity", index)
+		}
 	}
 	return nil
 }

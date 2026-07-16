@@ -136,6 +136,7 @@ if [[ -n "$proof_output" ]]; then
   [[ "$planning_run_attempt" =~ ^[1-9][0-9]*$ ]] || release_die "settings proof planning run attempt is malformed"
   checked_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   env -i "$releasecheck" settings seal \
+    --contract "$RELEASE_CONTRACT_PATH" \
     --repository "$repository" \
     --source-sha "$source_sha" \
     --release-version "$version" \
@@ -150,6 +151,7 @@ if [[ -n "$proof_output" ]]; then
     --output "$proof_output"
 else
   env -i "$releasecheck" settings check \
+    --contract "$RELEASE_CONTRACT_PATH" \
     --repository "$repository" \
     --merge-settings "$merge_settings" \
     --ruleset-pages "$ruleset_pages" \

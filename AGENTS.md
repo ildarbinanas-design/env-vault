@@ -28,7 +28,9 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
   same-second, post-merge, and post-merge-edited comments are invalid. That one
   tuple authorizes only the resulting exact merge source, immutable tag, and
   fail-closed publisher; it is not approval for any changed PR head, version,
-  or ref.
+  or ref. Use `scripts/release/authorize-and-merge-release-pr.sh` to record the
+  comment and merge; do not perform those two mutations as independent manual
+  commands.
 
 ## Project Scope
 

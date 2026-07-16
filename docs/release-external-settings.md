@@ -274,7 +274,12 @@ checkpoint combines semantic review with the exact tuple authorization
 documented in `RELEASING.md`; the version, PR number, and full head SHA must be
 re-read immediately before the squash merge and recorded as that exact
 owner/member PR comment. The comment must be created and last updated before
-the merge. The merge commit must then pass `ci` on `main`; only a successful
+the merge. The checked-in `authorize-and-merge-release-pr.sh` wrapper binds and
+offline-validates the exact base contract, verifies its required-check
+identities, and performs the comment write, GitHub-second settling, state
+rechecks, and head-guarded merge as one resumable deterministic operator
+action; separate ad-hoc comment and merge commands are not the normal path. The
+merge commit must then pass `ci` on `main`; only a successful
 push run from this repository for that exact SHA, with a complete
 single-attempt promotion manifest and ten matching artifacts, may create the
 tag.

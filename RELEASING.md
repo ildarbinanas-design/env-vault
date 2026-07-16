@@ -64,6 +64,31 @@ The user is not asked to post a second manual confirmation. Durable evidence
 binds the comment ID, URL, actor, association, timestamps, canonical-body
 SHA-256, PR number and head SHA.
 
+The operator must record and consume the confirmation with the checked-in
+transport wrapper; do not call `gh pr comment` and `gh pr merge` as separate
+steps:
+
+```sh
+GITHUB_REPOSITORY=ildarbinanas-design/env-vault \
+  scripts/release/authorize-and-merge-release-pr.sh \
+  <version> <pr-number> <full-head-sha>
+```
+
+The wrapper uses `gh` for transport and keeps no credential. Before the only
+comment write it binds the local contract byte-for-byte to the exact remote PR
+base, validates it with the offline checker, and verifies the generated
+proposal, exact base, planning App, and exact successful name/workflow/event
+identities declared by that contract. It then records or idempotently reuses
+one trusted canonical comment, observes a later GitHub server second, repeats
+the proposal/base/comment/check checks, requires the same check identities,
+and squash-merges only with `--match-head-commit`. Read-only observations have
+bounded retries. Ambiguous comment-write or merge responses are reconciled by
+reads, never by a blind second mutation; an interrupted invocation can resume
+an already exact merged tuple without another mutation. The comment is read
+again after merge before success is reported. The wrapper prints only the
+exact merge SHA; the independent pre-tag workflow generates and preserves the
+versioned authorization evidence.
+
 Immediately before merge, re-read the remote PR and require the same tuple.
 Any version, PR number, or head-SHA change invalidates the authorization. There
 is no additional routine approval for tag creation, publication, Homebrew, or
@@ -77,9 +102,10 @@ authorization. Do not create a tag or Release manually.
 1. Release Please opens or updates the generated release PR in PR-only mode.
 2. The PR's normal `ci` run verifies the exact proposed version on all five
    native targets.
-3. After the exact tuple authorization has been recorded as the exact pre-merge
-   PR comment, squash-merge that unchanged generated PR. The merge commit
-   becomes the release source SHA.
+3. Pass the confirmed tuple to
+   `scripts/release/authorize-and-merge-release-pr.sh`. It records the exact
+   pre-merge PR comment and squash-merges the unchanged head with a server-side
+   head guard. The merge commit becomes the release source SHA.
 4. The `ci` push run for that exact `main` SHA performs source quality once,
    builds the five native artifacts, runs E2E and leak gates, and verifies all
    three literal version forms on every target. A bounded native

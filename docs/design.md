@@ -145,8 +145,16 @@ subjects; squash bodies use the reviewed pull request body so an explicit
 `BREAKING CHANGE:` footer survives into `main`. Publication authorization is
 the byte-exact version/PR/full-head-SHA confirmation recorded as a pre-merge
 owner/member PR comment; merging alone is not authorization. The unchanged
-release PR may be merged only after that checkpoint. The release merge SHA must then pass
-`ci` as a push to `main`; failed, foreign-repository, non-push, or unrelated
+release PR may be merged only after that checkpoint. A thin checked-in `gh`
+operator binds the comment and merge into one fail-closed sequence: it verifies
+the proposal/base and the exact contract-declared required-check identities
+after binding that contract to the remote base and validating it offline. It
+writes or reconciles exactly one trusted comment, observes a later GitHub
+server second, rechecks the unchanged state, and uses the server-side head-SHA
+merge guard. A post-merge read verifies that the comment remained unchanged;
+an interrupted exact merge is resumable without a second mutation. The release
+merge SHA
+must then pass `ci` as a push to `main`; failed, foreign-repository, non-push, or unrelated
 successful runs do not authorize the tag handoff. The planning workflow
 classifies the exact green commit and creates or verifies the tag only when the
 manifest, changelog, README marker, commit subject, file modes, and three-path
