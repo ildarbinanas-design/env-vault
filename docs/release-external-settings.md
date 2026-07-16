@@ -19,6 +19,12 @@ merge settings, ruleset structure, and that the planning App itself has no
 bypass. An administrator separately records that the complete global bypass
 lists are empty after App installation or key changes.
 
+The planning audit reads repository merge settings through the GitHub GraphQL
+`Repository` fields. GitHub's REST repository response omits those policy
+fields for this deliberately non-pushing audit token, while GraphQL exposes the
+same read-only settings without granting Contents write. Missing GraphQL data
+or an API error fails the audit closed.
+
 ## Trust boundary
 
 Two dedicated GitHub Apps separate planning from cross-repository publication:
@@ -110,8 +116,9 @@ Verify the App installation with
 `.github/workflows/audit-release-planning-app.yml`. That manual workflow mints
 a metadata-plus-Administration-read token, succeeds only when the installation
 contains exactly `ildarbinanas-design/env-vault` and the App cannot bypass either
-ruleset, and relies on post-step revocation. A failed audit blocks release
-planning.
+ruleset, and relies on post-step revocation. It verifies squash-only merge
+policy through GraphQL so the audit token does not need push capability. A
+failed audit blocks release planning.
 
 ## 2. Homebrew tap GitHub App
 
@@ -270,7 +277,10 @@ that the App itself cannot bypass them before any mutation. GitHub returns the
 complete `bypass_actors` list only to a caller with ruleset write access; do not
 grant that power to the release App. An administrator must separately inspect
 both rulesets and record that the global bypass lists are empty during setup and
-credential rotation. Correct the repository if the automated check
+credential rotation. Repository merge settings are queried through GraphQL;
+this preserves the manual audit's read-only token because the equivalent REST
+response does not include merge-policy fields for that token. Correct the
+repository if the automated check
 reports rebase merging, `COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`, a non-squash
 ruleset merge method, a missing strict check, weakened branch protection, or a
 missing immutable `v*` tag ruleset. The workflow does not weaken the contract

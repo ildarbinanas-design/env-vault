@@ -261,6 +261,24 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 		t.Fatalf("unsafe repository settings unexpectedly succeeded: %s", output)
 	}
 
+	missingRepositoryEnv := append([]string{}, baseEnv...)
+	missingRepositoryEnv = append(missingRepositoryEnv, "FAKE_GRAPHQL_REPOSITORY_NULL=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), missingRepositoryEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("missing GraphQL repository unexpectedly succeeded: %s", output)
+	}
+
+	failedGraphQLEnv := append([]string{}, baseEnv...)
+	failedGraphQLEnv = append(failedGraphQLEnv, "FAKE_GRAPHQL_FAIL=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), failedGraphQLEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("failed GraphQL settings read unexpectedly succeeded: %s", output)
+	}
+
+	partialGraphQLEnv := append([]string{}, baseEnv...)
+	partialGraphQLEnv = append(partialGraphQLEnv, "FAKE_GRAPHQL_ERRORS=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), partialGraphQLEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("GraphQL response with errors unexpectedly succeeded: %s", output)
+	}
+
 	badRulesetEnv := append([]string{}, baseEnv...)
 	badRulesetEnv = append(badRulesetEnv, "FAKE_RULESET_ALLOW_REBASE=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badRulesetEnv, "verify-repository-release-settings.sh"); err == nil {
@@ -445,6 +463,36 @@ if [[ "$args" == *"labels/autorelease%3A%20tagged"* ]]; then
 fi
 
 case "$args" in
+  *"api graphql"*)
+    for required in \
+      '-f owner=example' \
+      '-f name=env-vault' \
+      'defaultBranchRef' \
+      'mergeCommitAllowed' \
+      'rebaseMergeAllowed' \
+      'squashMergeAllowed' \
+      'squashMergeCommitTitle' \
+      'squashMergeCommitMessage'; do
+      if [[ "$args" != *"$required"* ]]; then
+        printf 'GraphQL request missing %s\n' "$required" >&2
+        exit 1
+      fi
+    done
+    if [[ "${FAKE_GRAPHQL_FAIL:-false}" == "true" ]]; then
+      printf '%s\n' 'GraphQL request failed' >&2
+      exit 1
+    fi
+    if [[ "${FAKE_GRAPHQL_REPOSITORY_NULL:-false}" == "true" ]]; then
+      printf '%s\n' '{"data":{"repository":null}}'
+      exit 0
+    fi
+    if [[ "${FAKE_GRAPHQL_ERRORS:-false}" == "true" ]]; then
+      errors=',"errors":[{"message":"partial response"}]'
+    else
+      errors=''
+    fi
+    printf '{"data":{"repository":{"defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":%s,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY"}}%s}\n' "${FAKE_ALLOW_REBASE:-false}" "$errors"
+    ;;
   "api repos/example/env-vault")
     printf '{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":%s,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n' "${FAKE_ALLOW_REBASE:-false}"
     ;;
