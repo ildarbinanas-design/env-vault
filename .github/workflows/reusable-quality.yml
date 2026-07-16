@@ -263,7 +263,8 @@ jobs:
           $archive = Join-Path "dist" $env:ARCHIVE
           Compress-Archive -LiteralPath (Join-Path "dist" $name) -DestinationPath $archive
           $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $env:ARCHIVE" | Set-Content -LiteralPath (Join-Path "dist" $env:CHECKSUM) -Encoding ascii
+          $checksum = Join-Path "dist" $env:CHECKSUM
+          [System.IO.File]::WriteAllText($checksum, "$hash  $env:ARCHIVE`n", [System.Text.Encoding]::ASCII)
 
       - name: Upload current-attempt native release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

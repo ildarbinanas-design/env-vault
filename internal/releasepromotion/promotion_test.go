@@ -448,6 +448,39 @@ func newPromotionFixture(t *testing.T) *promotionFixture {
 	return fixture
 }
 
+func TestVerifyChecksumRequiresExactNativeRecord(t *testing.T) {
+	archive := FileDigest{
+		Name: "env-vault-windows-amd64.zip", Size: 42,
+		SHA256: strings.Repeat("a", 64),
+	}
+	valid := []string{
+		archive.SHA256 + "  " + archive.Name,
+		archive.SHA256 + "  " + archive.Name + "\n",
+		archive.SHA256 + "  " + archive.Name + "\r\n",
+		archive.SHA256 + " *" + archive.Name + "\n",
+	}
+	for _, record := range valid {
+		if err := verifyChecksum([]byte(record), archive); err != nil {
+			t.Fatalf("valid checksum record %q: %v", record, err)
+		}
+	}
+
+	invalid := []string{
+		archive.SHA256 + "\t" + archive.Name + "\n",
+		archive.SHA256 + "   " + archive.Name + "\n",
+		archive.SHA256 + "  " + archive.Name + "\r",
+		archive.SHA256 + "  " + archive.Name + "\x00\n",
+		archive.SHA256 + "  " + archive.Name + "\nextra\n",
+		strings.Repeat("b", 64) + "  " + archive.Name + "\n",
+		archive.SHA256 + "  other.zip\n",
+	}
+	for _, record := range invalid {
+		if err := verifyChecksum([]byte(record), archive); err == nil {
+			t.Fatalf("invalid checksum record accepted: %q", record)
+		}
+	}
+}
+
 func matrixProofForNativeProofs(t *testing.T, contract releasecontract.Contract, paths []string) e2ebaseline.MatrixProof {
 	t.Helper()
 	run := e2ebaseline.RunIdentity{

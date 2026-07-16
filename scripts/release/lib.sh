@@ -72,7 +72,9 @@ release_sha256_file() {
 release_verify_checksum_pair() {
   local archive=$1
   local checksum_file=$2
-  local archive_name checksum_name line_count line checksum_re expected_hash referenced_name actual_hash
+  local archive_name checksum_name line_count byte_count line line_bytes terminator_bytes
+  local checksum_re expected_hash referenced_name actual_hash
+  local LC_ALL=C
 
   release_require_regular_file "$archive"
   release_require_regular_file "$checksum_file"
@@ -86,8 +88,28 @@ release_verify_checksum_pair() {
   [[ "$line_count" == "1" ]] ||
     release_die "checksum for $archive_name must contain exactly one record"
 
+  byte_count=$(wc -c < "$checksum_file") ||
+    release_die "cannot measure checksum for $archive_name"
+  byte_count=${byte_count//[[:space:]]/}
+  [[ "$byte_count" =~ ^[1-9][0-9]*$ ]] ||
+    release_die "checksum for $archive_name has an invalid byte count"
+
   line=''
-  IFS= read -r line < "$checksum_file" || true
+  terminator_bytes=0
+  if IFS= read -r line < "$checksum_file"; then
+    terminator_bytes=1
+    # Bash read removes the LF from either native line ending but retains the
+    # terminal CR from CRLF. Normalize exactly that known terminator before
+    # applying the same checksum/name grammar.
+    if [[ "$line" == *$'\r' ]]; then
+      line=${line%$'\r'}
+      terminator_bytes=2
+    fi
+  fi
+  line_bytes=${#line}
+  [[ "$line_bytes" =~ ^[0-9]+$ && "$byte_count" -eq $((line_bytes + terminator_bytes)) ]] ||
+    release_die "checksum for $archive_name contains unsupported raw bytes"
+
   checksum_re='^([0-9a-f]{64}) ([ *])([^[:space:]]+)$'
   [[ "$line" =~ $checksum_re ]] ||
     release_die "checksum for $archive_name has an invalid format"

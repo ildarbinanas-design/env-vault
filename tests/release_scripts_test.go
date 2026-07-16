@@ -482,6 +482,51 @@ func TestReconcileReleaseAssets(t *testing.T) {
 	}
 }
 
+func TestReleaseVerifyChecksumPairAcceptsNativeLineEndings(t *testing.T) {
+	library, err := filepath.Abs("../scripts/release/lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name       string
+		lineEnding string
+		wantOK     bool
+	}{
+		{name: "no final newline", lineEnding: "", wantOK: true},
+		{name: "LF", lineEnding: "\n", wantOK: true},
+		{name: "CRLF", lineEnding: "\r\n", wantOK: true},
+		{name: "CR without LF", lineEnding: "\r", wantOK: false},
+		{name: "embedded NUL", lineEnding: "\x00\n", wantOK: false},
+		{name: "second record", lineEnding: "\nextra\n", wantOK: false},
+		{name: "double CRLF", lineEnding: "\r\n\r\n", wantOK: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			archiveName := "env-vault-windows-amd64.zip"
+			archive := filepath.Join(directory, archiveName)
+			contents := []byte("native Windows archive fixture\n")
+			if err := os.WriteFile(archive, contents, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(contents)
+			checksum := filepath.Join(directory, archiveName+".sha256")
+			checksumLine := fmt.Sprintf("%x  %s%s", digest, archiveName, test.lineEnding)
+			if err := os.WriteFile(checksum, []byte(checksumLine), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			command := exec.Command("bash", "-c", `source "$1"; release_verify_checksum_pair "$2" "$3"`, "bash", library, archive, checksum)
+			output, err := command.CombinedOutput()
+			if test.wantOK && err != nil {
+				t.Fatalf("verify %s checksum: %v\n%s", test.name, err, output)
+			}
+			if !test.wantOK && err == nil {
+				t.Fatalf("invalid %s checksum unexpectedly passed", test.name)
+			}
+		})
+	}
+}
+
 func installAPIFakeGH(t *testing.T) string {
 	t.Helper()
 	binDir := t.TempDir()

@@ -364,6 +364,10 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	if step := namedStep(t, native, "Burn in Windows config concurrency"); step.If != "matrix.goos == 'windows'" || !containsAll(step.Run, "TestConcurrentSavePublishesOnlyCompleteConfigs", "-count=10") {
 		t.Fatalf("Windows concurrency burn-in was weakened: if=%q run=%q", step.If, step.Run)
 	}
+	windowsPackage := namedStep(t, native, "Package native release artifact on Windows")
+	if windowsPackage.Shell != "pwsh" || !containsAll(windowsPackage.Run, "[System.IO.File]::WriteAllText", "`n", "[System.Text.Encoding]::ASCII") || strings.Contains(windowsPackage.Run, "`r") || strings.Contains(windowsPackage.Run, "Set-Content") {
+		t.Fatalf("Windows checksum writer does not produce deterministic LF-terminated ASCII: shell=%q run=%q", windowsPackage.Shell, windowsPackage.Run)
+	}
 	upload := namedStep(t, native, "Upload current-attempt native release artifact")
 	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "matrix.id", "github.run_attempt") {
 		t.Fatalf("native artifact is not attempt-qualified: uses=%q with=%v", upload.Uses, upload.With)
@@ -813,10 +817,10 @@ func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
 			t.Fatalf("legacy contract entry=%+v", legacy)
 		}
 	}
-	if len(contract.VersionPolicy.BlockedVersions) != 3 {
+	if len(contract.VersionPolicy.BlockedVersions) != 4 {
 		t.Fatalf("blocked version policy=%+v", contract.VersionPolicy.BlockedVersions)
 	}
-	for index, expected := range []string{"v0.0.8", "v0.0.9", "v0.0.10"} {
+	for index, expected := range []string{"v0.0.8", "v0.0.9", "v0.0.10", "v0.0.11"} {
 		blocked := contract.VersionPolicy.BlockedVersions[index]
 		if blocked.Version != expected || !blocked.TagMustRemain || !blocked.GitHubReleaseMustNotExist {
 			t.Fatalf("%s immutable failed-tag policy=%+v", expected, blocked)
