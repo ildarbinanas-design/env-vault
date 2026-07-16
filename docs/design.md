@@ -262,13 +262,14 @@ and credential rotation procedures are documented in
 Separate manually dispatched `audit-release-planning-app.yml` and
 `audit-release-app.yml` workflows request read-only tokens and fail unless their
 installations contain exactly `env-vault` and `homebrew-tap`, respectively. The
-planning audit adds Administration read to prove repository settings and
-branch/tag ruleset structure and that the App itself cannot bypass them; the tap
-audit remains metadata-only. The operational planning token's repository write
-access makes the complete bypass lists observable during the pre-tag check; the
-offline checker requires those fields to be present and empty, binds the exact
-raw responses and their digests to the release/planning tuple, and seals a
-self-digested proof. The separately dispatched read-only audit cannot substitute
-for that proof. Both audits rely on the token action's post-step revocation. Run
+planning audit adds Administration read to prove repository settings,
+branch/tag ruleset structure, actor-independent GraphQL zero-bypass counts, and
+that the App itself cannot bypass them; the tap audit remains metadata-only.
+The offline checker requires an exact three-ruleset GraphQL snapshot with zero
+bypass actors plus canonical REST rule details, binds the exact raw responses
+and their digests to the release/planning tuple, and seals a self-digested
+proof. Missing or partial GraphQL state fails closed. The separately dispatched
+read-only audit cannot substitute for that proof. Both audits rely on the token
+action's post-step revocation. Run
 the matching audit after installation or key changes and before the next
 planning or publication operation.

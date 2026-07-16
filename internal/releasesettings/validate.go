@@ -50,43 +50,32 @@ func Seal(tuple Tuple, raw RawInputs) (Proof, error) {
 	if err := validateTuple(tuple); err != nil {
 		return Proof{}, err
 	}
-	mergeSettings, err := sealDocument(raw.MergeSettings)
-	if err != nil {
-		return Proof{}, err
-	}
-	rulesetPages, err := sealDocument(raw.RulesetPages)
-	if err != nil {
-		return Proof{}, err
-	}
-	mainRuleset, err := sealDocument(raw.MainRuleset)
-	if err != nil {
-		return Proof{}, err
-	}
-	tagRuleset, err := sealDocument(raw.TagRuleset)
-	if err != nil {
-		return Proof{}, err
-	}
-	evidenceRuleset, err := sealDocument(raw.EvidenceRuleset)
+	inputs, err := validateRawInputs(tuple.Repository, raw)
 	if err != nil {
 		return Proof{}, err
 	}
 	proof := Proof{
 		SchemaID: SchemaID, SchemaVersion: SchemaVersion, Tuple: tuple,
-		Inputs: Inputs{
-			MergeSettings: mergeSettings, RulesetPages: rulesetPages,
-			MainRuleset: mainRuleset, TagRuleset: tagRuleset,
-			EvidenceRuleset: evidenceRuleset,
-		},
+		Inputs: inputs,
 		Result: ResultPass,
-	}
-	if err := validateInputs(proof.Tuple.Repository, proof.Inputs); err != nil {
-		return Proof{}, err
 	}
 	proof.ProofSHA256, err = ProofSHA256(proof)
 	if err != nil {
 		return Proof{}, fail(CodeInputInvalid, "compute repository settings proof digest", err)
 	}
 	return proof, nil
+}
+
+// Check validates the same untrusted saved observations as Seal without
+// creating a release-tuple proof. It performs no network access.
+func Check(repository string, raw RawInputs) (CheckResult, error) {
+	if _, err := validateRawInputs(repository, raw); err != nil {
+		return CheckResult{}, err
+	}
+	return CheckResult{
+		SchemaID: CheckSchemaID, SchemaVersion: SchemaVersion, OK: true,
+		Repository: repository, Result: ResultPass,
+	}, nil
 }
 
 // Verify replays the complete offline decision and requires the caller's
@@ -115,9 +104,8 @@ func Verify(proof Proof, expected Tuple) error {
 }
 
 func validateTuple(tuple Tuple) error {
-	parts := strings.Split(tuple.Repository, "/")
-	if !repositoryPattern.MatchString(tuple.Repository) || len(parts) != 2 || parts[0] == "." || parts[0] == ".." || parts[1] == "." || parts[1] == ".." || strings.HasSuffix(parts[1], ".git") {
-		return fail(CodeInputInvalid, "repository is not canonical owner/name", nil)
+	if err := validateRepository(tuple.Repository); err != nil {
+		return err
 	}
 	if !shaPattern.MatchString(tuple.SourceSHA) || !releasecontract.IsVersion(tuple.ReleaseVersion) || tuple.PlanningRunID <= 0 || tuple.PlanningRunAttempt <= 0 {
 		return fail(CodeInputInvalid, "source, version, planning run, or attempt is invalid", nil)
@@ -127,6 +115,40 @@ func validateTuple(tuple Tuple) error {
 		return fail(CodeInputInvalid, "checked_at must be canonical UTC RFC3339 without fractional seconds", err)
 	}
 	return nil
+}
+
+func validateRepository(repository string) error {
+	parts := strings.Split(repository, "/")
+	if !repositoryPattern.MatchString(repository) || len(parts) != 2 || parts[0] == "." || parts[0] == ".." || parts[1] == "." || parts[1] == ".." || strings.HasSuffix(parts[1], ".git") {
+		return fail(CodeInputInvalid, "repository is not canonical owner/name", nil)
+	}
+	return nil
+}
+
+func validateRawInputs(repository string, raw RawInputs) (Inputs, error) {
+	if err := validateRepository(repository); err != nil {
+		return Inputs{}, err
+	}
+	documents := make([]Document, 5)
+	for index, data := range [][]byte{
+		raw.MergeSettings, raw.RulesetPages, raw.MainRuleset,
+		raw.TagRuleset, raw.EvidenceRuleset,
+	} {
+		document, err := sealDocument(data)
+		if err != nil {
+			return Inputs{}, err
+		}
+		documents[index] = document
+	}
+	inputs := Inputs{
+		MergeSettings: documents[0], RulesetPages: documents[1],
+		MainRuleset: documents[2], TagRuleset: documents[3],
+		EvidenceRuleset: documents[4],
+	}
+	if err := validateInputs(repository, inputs); err != nil {
+		return Inputs{}, err
+	}
+	return inputs, nil
 }
 
 func validateInputs(repository string, inputs Inputs) error {
@@ -145,20 +167,24 @@ func validateInputs(repository string, inputs Inputs) error {
 			return err
 		}
 	}
-	if err := validateMergeSettings([]byte(inputs.MergeSettings.DocumentJSON)); err != nil {
-		return err
-	}
-	ids, err := validateRulesetPages([]byte(inputs.RulesetPages.DocumentJSON), repository)
+	graphqlIDs, err := validateMergeSettings([]byte(inputs.MergeSettings.DocumentJSON), repository)
 	if err != nil {
 		return err
 	}
-	if err := validateMainRuleset([]byte(inputs.MainRuleset.DocumentJSON), repository, ids[canonicalRulesets[0].Name]); err != nil {
+	restIDs, err := validateRulesetPages([]byte(inputs.RulesetPages.DocumentJSON), repository)
+	if err != nil {
 		return err
 	}
-	if err := validateTagRuleset([]byte(inputs.TagRuleset.DocumentJSON), repository, ids[canonicalRulesets[1].Name]); err != nil {
+	if !reflect.DeepEqual(graphqlIDs, restIDs) {
+		return fail(CodePolicyInvalid, "GraphQL and REST canonical ruleset IDs differ", nil)
+	}
+	if err := validateMainRuleset([]byte(inputs.MainRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[0].Name]); err != nil {
 		return err
 	}
-	if err := validateEvidenceRuleset([]byte(inputs.EvidenceRuleset.DocumentJSON), repository, ids[canonicalRulesets[2].Name]); err != nil {
+	if err := validateTagRuleset([]byte(inputs.TagRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[1].Name]); err != nil {
+		return err
+	}
+	if err := validateEvidenceRuleset([]byte(inputs.EvidenceRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[2].Name]); err != nil {
 		return err
 	}
 	return nil
@@ -192,19 +218,48 @@ type mergeSettingsRepository struct {
 	SquashMergeAllowed       *bool             `json:"squashMergeAllowed"`
 	SquashMergeCommitTitle   *string           `json:"squashMergeCommitTitle"`
 	SquashMergeCommitMessage *string           `json:"squashMergeCommitMessage"`
+	Rulesets                 *graphqlRulesets  `json:"rulesets"`
 }
 
 type defaultBranchRef struct {
 	Name *string `json:"name"`
 }
 
-func validateMergeSettings(data []byte) error {
+type graphqlRulesets struct {
+	TotalCount *int                   `json:"totalCount"`
+	Nodes      *[]*graphqlRulesetNode `json:"nodes"`
+	PageInfo   *graphqlPageInfo       `json:"pageInfo"`
+}
+
+type graphqlRulesetNode struct {
+	DatabaseID   *int64                        `json:"databaseId"`
+	Name         *string                       `json:"name"`
+	Target       *string                       `json:"target"`
+	Enforcement  *string                       `json:"enforcement"`
+	Source       *graphqlRulesetSource         `json:"source"`
+	BypassActors *graphqlBypassActorConnection `json:"bypassActors"`
+}
+
+type graphqlRulesetSource struct {
+	TypeName      *string `json:"__typename"`
+	NameWithOwner *string `json:"nameWithOwner"`
+}
+
+type graphqlBypassActorConnection struct {
+	TotalCount *int `json:"totalCount"`
+}
+
+type graphqlPageInfo struct {
+	HasNextPage *bool `json:"hasNextPage"`
+}
+
+func validateMergeSettings(data []byte, repositoryName string) (map[string]int64, error) {
 	var response mergeSettingsResponse
 	if err := strictjson.Decode(data, maxJSONBytes, &response); err != nil {
-		return fail(CodeInputInvalid, "strictly decode merge settings", err)
+		return nil, fail(CodeInputInvalid, "strictly decode merge settings", err)
 	}
 	if len(response.Errors) != 0 && !bytes.Equal(bytes.TrimSpace(response.Errors), []byte("null")) {
-		return fail(CodePolicyInvalid, "GraphQL merge settings response contains errors", nil)
+		return nil, fail(CodePolicyInvalid, "GraphQL merge settings response contains errors", nil)
 	}
 	repository := response.Data.Repository
 	if repository == nil || repository.DefaultBranchRef == nil || repository.DefaultBranchRef.Name == nil || *repository.DefaultBranchRef.Name != "main" ||
@@ -213,9 +268,51 @@ func validateMergeSettings(data []byte) error {
 		repository.RebaseMergeAllowed == nil || *repository.RebaseMergeAllowed ||
 		repository.SquashMergeCommitTitle == nil || *repository.SquashMergeCommitTitle != "PR_TITLE" ||
 		repository.SquashMergeCommitMessage == nil || *repository.SquashMergeCommitMessage != "PR_BODY" {
-		return fail(CodePolicyInvalid, "repository merge settings do not preserve the canonical squash-only policy", nil)
+		return nil, fail(CodePolicyInvalid, "repository merge settings do not preserve the canonical squash-only policy", nil)
 	}
-	return nil
+	return validateGraphQLRulesets(repository.Rulesets, repositoryName)
+}
+
+func validateGraphQLRulesets(connection *graphqlRulesets, repository string) (map[string]int64, error) {
+	if connection == nil || connection.TotalCount == nil || *connection.TotalCount != len(canonicalRulesets) ||
+		connection.Nodes == nil || len(*connection.Nodes) != len(canonicalRulesets) ||
+		connection.PageInfo == nil || connection.PageInfo.HasNextPage == nil || *connection.PageInfo.HasNextPage {
+		return nil, fail(CodePolicyInvalid, "GraphQL ruleset inventory must be complete, unpaginated, and contain exactly three rulesets", nil)
+	}
+	ids := make(map[string]int64, len(canonicalRulesets))
+	for _, node := range *connection.Nodes {
+		if node == nil || node.DatabaseID == nil || *node.DatabaseID <= 0 || node.Name == nil || node.Target == nil || node.Enforcement == nil ||
+			node.Source == nil || node.Source.TypeName == nil || *node.Source.TypeName != "Repository" || node.Source.NameWithOwner == nil || *node.Source.NameWithOwner != repository ||
+			node.BypassActors == nil || node.BypassActors.TotalCount == nil || *node.BypassActors.TotalCount != 0 {
+			return nil, fail(CodePolicyInvalid, "GraphQL ruleset node is incomplete, foreign, or bypassable", nil)
+		}
+		var expected *rulesetIdentity
+		for index := range canonicalRulesets {
+			if canonicalRulesets[index].Name == *node.Name {
+				expected = &canonicalRulesets[index]
+				break
+			}
+		}
+		if expected == nil || *node.Target != strings.ToUpper(expected.Target) || *node.Enforcement != "ACTIVE" {
+			return nil, fail(CodePolicyInvalid, fmt.Sprintf("GraphQL ruleset %q is not canonical and active", *node.Name), nil)
+		}
+		if _, duplicate := ids[*node.Name]; duplicate {
+			return nil, fail(CodePolicyInvalid, fmt.Sprintf("GraphQL canonical ruleset %q is duplicated", *node.Name), nil)
+		}
+		ids[*node.Name] = *node.DatabaseID
+	}
+	if len(ids) != len(canonicalRulesets) {
+		return nil, fail(CodePolicyInvalid, "GraphQL ruleset inventory omits a canonical ruleset", nil)
+	}
+	seenIDs := make(map[int64]bool, len(ids))
+	for _, expected := range canonicalRulesets {
+		id, found := ids[expected.Name]
+		if !found || seenIDs[id] {
+			return nil, fail(CodePolicyInvalid, "GraphQL canonical rulesets do not have distinct positive IDs", nil)
+		}
+		seenIDs[id] = true
+	}
+	return ids, nil
 }
 
 type rulesetSummary struct {
@@ -282,20 +379,20 @@ type bypassActor struct {
 }
 
 type rulesetDetail struct {
-	ID                   int64          `json:"id"`
-	Name                 string         `json:"name"`
-	Target               string         `json:"target"`
-	SourceType           string         `json:"source_type"`
-	Source               string         `json:"source"`
-	Enforcement          string         `json:"enforcement"`
-	BypassActors         *[]bypassActor `json:"bypass_actors"`
-	CurrentUserCanBypass *string        `json:"current_user_can_bypass"`
-	Conditions           *conditions    `json:"conditions"`
-	Rules                *[]rule        `json:"rules"`
-	NodeID               string         `json:"node_id,omitempty"`
-	Links                *rulesetLinks  `json:"_links,omitempty"`
-	CreatedAt            string         `json:"created_at,omitempty"`
-	UpdatedAt            string         `json:"updated_at,omitempty"`
+	ID                   int64           `json:"id"`
+	Name                 string          `json:"name"`
+	Target               string          `json:"target"`
+	SourceType           string          `json:"source_type"`
+	Source               string          `json:"source"`
+	Enforcement          string          `json:"enforcement"`
+	BypassActors         json.RawMessage `json:"bypass_actors,omitempty"`
+	CurrentUserCanBypass *string         `json:"current_user_can_bypass"`
+	Conditions           *conditions     `json:"conditions"`
+	Rules                *[]rule         `json:"rules"`
+	NodeID               string          `json:"node_id,omitempty"`
+	Links                *rulesetLinks   `json:"_links,omitempty"`
+	CreatedAt            string          `json:"created_at,omitempty"`
+	UpdatedAt            string          `json:"updated_at,omitempty"`
 }
 
 type conditions struct {
@@ -313,14 +410,15 @@ type rule struct {
 }
 
 type pullRequestParameters struct {
-	RequiredApprovingReviewCount      *int      `json:"required_approving_review_count,omitempty"`
-	DismissStaleReviewsOnPush         *bool     `json:"dismiss_stale_reviews_on_push,omitempty"`
-	RequireCodeOwnerReview            *bool     `json:"require_code_owner_review,omitempty"`
-	RequireLastPushApproval           *bool     `json:"require_last_push_approval,omitempty"`
-	RequiredReviewThreadResolution    *bool     `json:"required_review_thread_resolution"`
-	AllowedMergeMethods               *[]string `json:"allowed_merge_methods"`
-	AutomaticCopilotCodeReviewEnabled *bool     `json:"automatic_copilot_code_review_enabled,omitempty"`
-	CopilotCodeReviewCount            *int      `json:"copilot_code_review_count,omitempty"`
+	RequiredApprovingReviewCount      *int               `json:"required_approving_review_count,omitempty"`
+	DismissStaleReviewsOnPush         *bool              `json:"dismiss_stale_reviews_on_push,omitempty"`
+	RequireCodeOwnerReview            *bool              `json:"require_code_owner_review,omitempty"`
+	RequireLastPushApproval           *bool              `json:"require_last_push_approval,omitempty"`
+	RequiredReviewThreadResolution    *bool              `json:"required_review_thread_resolution"`
+	AllowedMergeMethods               *[]string          `json:"allowed_merge_methods"`
+	RequiredReviewers                 *[]json.RawMessage `json:"required_reviewers"`
+	AutomaticCopilotCodeReviewEnabled *bool              `json:"automatic_copilot_code_review_enabled,omitempty"`
+	CopilotCodeReviewCount            *int               `json:"copilot_code_review_count,omitempty"`
 }
 
 type requiredStatusChecksParameters struct {
@@ -357,8 +455,8 @@ func validateMainRuleset(data []byte, repository string, expectedID int64) error
 	if err := strictjson.Decode(byType["pull_request"].Parameters, maxJSONBytes, &pull); err != nil {
 		return fail(CodeInputInvalid, "strictly decode pull-request rule parameters", err)
 	}
-	if pull.RequiredReviewThreadResolution == nil || !*pull.RequiredReviewThreadResolution || pull.AllowedMergeMethods == nil || !reflect.DeepEqual(*pull.AllowedMergeMethods, []string{"squash"}) {
-		return fail(CodePolicyInvalid, "main pull-request rule must resolve threads and allow only squash", nil)
+	if pull.RequiredReviewThreadResolution == nil || !*pull.RequiredReviewThreadResolution || pull.AllowedMergeMethods == nil || !reflect.DeepEqual(*pull.AllowedMergeMethods, []string{"squash"}) || pull.RequiredReviewers == nil || len(*pull.RequiredReviewers) != 0 {
+		return fail(CodePolicyInvalid, "main pull-request rule must resolve threads, allow only squash, and have an explicit empty required-reviewers list", nil)
 	}
 	var checks requiredStatusChecksParameters
 	if err := strictjson.Decode(byType["required_status_checks"].Parameters, maxJSONBytes, &checks); err != nil {
@@ -431,8 +529,17 @@ func validateDetailIdentity(detail rulesetDetail, expectedID int64, expected rul
 	if detail.ID != expectedID || detail.Name != expected.Name || detail.Target != expected.Target || detail.SourceType != "Repository" || detail.Source != repository || detail.Enforcement != "active" {
 		return fail(CodePolicyInvalid, fmt.Sprintf("ruleset %q identity is not canonical", expected.Name), nil)
 	}
-	if detail.BypassActors == nil || len(*detail.BypassActors) != 0 || detail.CurrentUserCanBypass == nil || *detail.CurrentUserCanBypass != "never" {
-		return fail(CodePolicyInvalid, fmt.Sprintf("ruleset %q bypass policy must be present, empty, and never", expected.Name), nil)
+	if len(detail.BypassActors) != 0 {
+		var actors []bypassActor
+		if err := strictjson.Decode(detail.BypassActors, maxJSONBytes, &actors); err != nil {
+			return fail(CodeInputInvalid, fmt.Sprintf("strictly decode ruleset %q bypass actors", expected.Name), err)
+		}
+		if actors == nil || len(actors) != 0 {
+			return fail(CodePolicyInvalid, fmt.Sprintf("ruleset %q bypass actors, when present, must be an empty array", expected.Name), nil)
+		}
+	}
+	if detail.CurrentUserCanBypass == nil || *detail.CurrentUserCanBypass != "never" {
+		return fail(CodePolicyInvalid, fmt.Sprintf("ruleset %q current-user bypass policy must be present and never", expected.Name), nil)
 	}
 	if detail.Conditions == nil || detail.Conditions.RefName == nil || detail.Conditions.RefName.Include == nil || detail.Conditions.RefName.Exclude == nil || !reflect.DeepEqual(*detail.Conditions.RefName.Include, include) || len(*detail.Conditions.RefName.Exclude) != 0 {
 		return fail(CodePolicyInvalid, fmt.Sprintf("ruleset %q ref condition is not exact", expected.Name), nil)

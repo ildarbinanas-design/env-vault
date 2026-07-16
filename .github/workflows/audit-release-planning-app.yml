@@ -21,6 +21,15 @@ jobs:
           ref: main
           persist-credentials: "false"
 
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build the offline release settings checker
+        shell: bash
+        run: go build -trimpath -o "$RUNNER_TEMP/releasecheck" ./cmd/releasecheck
+
       - id: app-token
         name: Mint read-only installation audit token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -45,6 +54,7 @@ jobs:
       - name: Verify repository release settings and bypass policy
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
         shell: bash
         run: scripts/release/verify-repository-release-settings.sh
 
@@ -66,5 +76,6 @@ jobs:
             printf '## Release planning App scope audit\n\n'
             printf -- '- Installation contains only `ildarbinanas-design/env-vault`.\n'
             printf -- '- Audit token permissions: metadata read and administration read.\n'
+            printf -- '- Global bypass actor counts were read through GraphQL and validated offline.\n'
             printf -- '- The token is revoked by the action post-step.\n'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -37,7 +37,7 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if document.ReleaseContractSchema != releasecontract.SchemaID || len(document.SemanticContractSHA256) != 64 {
 		t.Fatalf("contract identity=%+v", document)
 	}
-	for _, schema := range []string{"release_contract", "release_contract_matrix", "releasecheck_version", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_observation", "release_health_proof", "release_authorization", "attestation_verification_bundle", "release_evidence"} {
+	for _, schema := range []string{"release_contract", "release_contract_matrix", "releasecheck_version", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_observation", "release_health_proof", "release_authorization", "attestation_verification_bundle", "release_evidence", "repository_release_settings_check", "repository_release_settings_proof"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 1 || versions[0] != 1 {
 			t.Fatalf("supported %s versions=%v", schema, versions)
 		}

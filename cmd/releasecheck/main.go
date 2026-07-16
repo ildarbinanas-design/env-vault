@@ -163,6 +163,7 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 			"release_authorization":             {1},
 			"attestation_verification_bundle":   {1},
 			"release_evidence":                  {1},
+			"repository_release_settings_check": {1},
 			"repository_release_settings_proof": {1},
 		},
 		ReleaseContractSchema: contract.SchemaID, SemanticContractSHA256: digest,
@@ -488,7 +489,7 @@ Usage:
   releasecheck contract matrix [--contract FILE] [--json]
   releasecheck promotion <record-platform|seal-source-quality|assemble|verify> ...
   releasecheck evidence <seal-health|assemble|verify> ...
-  releasecheck settings <seal|verify> ...
+  releasecheck settings <check|seal|verify> ...
   releasecheck help
 
 classify-attempt expects one complete REST workflow-run object and either one

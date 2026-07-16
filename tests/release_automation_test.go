@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -323,8 +324,15 @@ func TestMarkReleasePullRequestTagged(t *testing.T) {
 
 func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
+	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
 	baseEnv := []string{
 		"GITHUB_REPOSITORY=example/env-vault",
+		"RELEASECHECK=" + releasecheck,
+		"GH_TOKEN=must-not-reach-offline-checker",
+		"GITHUB_TOKEN=must-not-reach-offline-checker",
+		"GH_ENTERPRISE_TOKEN=must-not-reach-offline-checker",
+		"GITHUB_ENTERPRISE_TOKEN=must-not-reach-offline-checker",
+		"OFFLINE_CHECKER_SECRET=must-not-reach-offline-checker",
 		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), baseEnv, "verify-repository-release-settings.sh"); err != nil {
@@ -376,7 +384,25 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 	badAppBypassEnv := append([]string{}, baseEnv...)
 	badAppBypassEnv = append(badAppBypassEnv, "FAKE_RULESET_BYPASS=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badAppBypassEnv, "verify-repository-release-settings.sh"); err == nil {
-		t.Fatalf("release App ruleset bypass unexpectedly succeeded: %s", output)
+		t.Fatalf("global ruleset bypass unexpectedly succeeded: %s", output)
+	}
+
+	nullGraphQLBypassEnv := append([]string{}, baseEnv...)
+	nullGraphQLBypassEnv = append(nullGraphQLBypassEnv, "FAKE_GRAPHQL_BYPASS_NULL=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), nullGraphQLBypassEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("missing GraphQL bypass state unexpectedly succeeded: %s", output)
+	}
+
+	paginatedGraphQLRulesetsEnv := append([]string{}, baseEnv...)
+	paginatedGraphQLRulesetsEnv = append(paginatedGraphQLRulesetsEnv, "FAKE_GRAPHQL_RULESETS_PAGINATED=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), paginatedGraphQLRulesetsEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("paginated GraphQL rulesets unexpectedly succeeded: %s", output)
+	}
+
+	nonemptyRESTBypassEnv := append([]string{}, baseEnv...)
+	nonemptyRESTBypassEnv = append(nonemptyRESTBypassEnv, "FAKE_REST_RULESET_BYPASS_NONEMPTY=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), nonemptyRESTBypassEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("nonempty REST bypass list unexpectedly succeeded: %s", output)
 	}
 
 	badTagRulesetEnv := append([]string{}, baseEnv...)
@@ -395,13 +421,7 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 func TestVerifyRepositoryReleaseSettingsSealsExactOfflineProof(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
 	tempDir := t.TempDir()
-	releasecheck := filepath.Join(tempDir, "releasecheck")
-	build := exec.Command("go", "build", "-trimpath", "-o", releasecheck, "./cmd/releasecheck")
-	build.Dir = ".."
-	build.Env = os.Environ()
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build releasecheck: %v\n%s", err, output)
-	}
+	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
 
 	const sourceSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	proofPath := filepath.Join(tempDir, "repository-release-settings-proof.json")
@@ -409,6 +429,11 @@ func TestVerifyRepositoryReleaseSettingsSealsExactOfflineProof(t *testing.T) {
 		"GITHUB_REPOSITORY=example/env-vault",
 		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"RELEASECHECK=" + releasecheck,
+		"GH_TOKEN=must-not-reach-offline-checker",
+		"GITHUB_TOKEN=must-not-reach-offline-checker",
+		"GH_ENTERPRISE_TOKEN=must-not-reach-offline-checker",
+		"GITHUB_ENTERPRISE_TOKEN=must-not-reach-offline-checker",
+		"OFFLINE_CHECKER_SECRET=must-not-reach-offline-checker",
 		"RELEASE_SETTINGS_PROOF_OUTPUT=" + proofPath,
 		"RELEASE_SETTINGS_SOURCE_SHA=" + sourceSHA,
 		"RELEASE_SETTINGS_VERSION=v0.0.9",
@@ -558,6 +583,37 @@ func runReleaseAutomationScriptEnv(t *testing.T, directory string, extraEnv []st
 	return string(output), runErr
 }
 
+func buildReleasecheck(t *testing.T) string {
+	t.Helper()
+	outputPath := filepath.Join(t.TempDir(), "releasecheck")
+	build := exec.Command("go", "build", "-trimpath", "-o", outputPath, "./cmd/releasecheck")
+	build.Dir = ".."
+	build.Env = os.Environ()
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build releasecheck: %v\n%s", err, output)
+	}
+	return outputPath
+}
+
+func credentialRejectingReleasecheck(t *testing.T, releasecheck string) string {
+	t.Helper()
+	wrapper := filepath.Join(t.TempDir(), "releasecheck-no-credentials")
+	contents := `#!/bin/bash
+set -euo pipefail
+for name in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN OFFLINE_CHECKER_SECRET; do
+  if [[ -n "${!name+x}" ]]; then
+    printf 'offline checker inherited %s\n' "$name" >&2
+    exit 91
+  fi
+done
+exec ` + strconv.Quote(releasecheck) + ` "$@"
+`
+	if err := os.WriteFile(wrapper, []byte(contents), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return wrapper
+}
+
 func installFakeReleaseGH(t *testing.T) string {
 	t.Helper()
 	directory := t.TempDir()
@@ -604,7 +660,11 @@ case "$args" in
       'rebaseMergeAllowed' \
       'squashMergeAllowed' \
       'squashMergeCommitTitle' \
-      'squashMergeCommitMessage'; do
+      'squashMergeCommitMessage' \
+      'rulesets' \
+      'includeParents: false' \
+      'bypassActors' \
+      'nameWithOwner'; do
       if [[ "$args" != *"$required"* ]]; then
         printf 'GraphQL request missing %s\n' "$required" >&2
         exit 1
@@ -625,7 +685,14 @@ case "$args" in
     else
       errors=''
     fi
-    printf '{"data":{"repository":{"defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":%s,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY"}}%s}\n' "${FAKE_ALLOW_REBASE:-false}" "$errors"
+    if [[ "${FAKE_RULESET_BYPASS:-false}" == "true" ]]; then
+      main_bypass='{"totalCount":1}'
+    elif [[ "${FAKE_GRAPHQL_BYPASS_NULL:-false}" == "true" ]]; then
+      main_bypass='null'
+    else
+      main_bypass='{"totalCount":0}'
+    fi
+    printf '{"data":{"repository":{"defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":%s,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY","rulesets":{"totalCount":3,"pageInfo":{"hasNextPage":%s},"nodes":[{"databaseId":7,"name":"Protect env-vault main","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":%s},{"databaseId":8,"name":"Protect env-vault release tags","enforcement":"ACTIVE","target":"TAG","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}},{"databaseId":9,"name":"Protect env-vault release evidence","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}}]}}}%s}\n' "${FAKE_ALLOW_REBASE:-false}" "${FAKE_GRAPHQL_RULESETS_PAGINATED:-false}" "$main_bypass" "$errors"
     ;;
   "api repos/example/env-vault")
     printf '{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":%s,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n' "${FAKE_ALLOW_REBASE:-false}"
@@ -640,18 +707,23 @@ case "$args" in
       merge_methods='["squash"]'
     fi
     if [[ "${FAKE_RULESET_BYPASS:-false}" == "true" ]]; then
-      bypass='[{"actor_id":1,"actor_type":"Integration","bypass_mode":"always"}]'
       can_bypass='always'
     else
-      bypass='[]'
       can_bypass='never'
+    fi
+    if [[ "${FAKE_REST_RULESET_BYPASS_NONEMPTY:-false}" == "true" ]]; then
+      bypass=',"bypass_actors":[{"actor_id":1,"actor_type":"Integration","bypass_mode":"always"}]'
+    elif [[ "${FAKE_REST_RULESET_BYPASS_EMPTY:-false}" == "true" ]]; then
+      bypass=',"bypass_actors":[]'
+    else
+      bypass=''
     fi
     if [[ "${FAKE_RULESET_OMIT_PR_TITLE:-false}" == "true" ]]; then
       pr_title_integration_id=0
     else
       pr_title_integration_id=15368
     fi
-    printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":%s},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods" "$pr_title_integration_id"
+    printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active"%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":false,"required_reviewers":[],"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":%s},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods" "$pr_title_integration_id"
     ;;
   *"rulesets/8"*)
     if [[ "${FAKE_TAG_RULESET_ALLOW_UPDATE:-false}" == "true" ]]; then
@@ -659,7 +731,7 @@ case "$args" in
     else
       tag_rules='[{"type":"deletion"},{"type":"update"}]'
     fi
-    printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_rules"
+    printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_rules"
     ;;
   *"rulesets/9"*)
     if [[ "${FAKE_EVIDENCE_RULESET_ALLOW_FORCE:-false}" == "true" ]]; then
@@ -667,7 +739,7 @@ case "$args" in
     else
       evidence_rules='[{"type":"deletion"},{"type":"non_fast_forward"}]'
     fi
-    printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
+    printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
     ;;
   *"api --paginate --slurp --method GET repos/example/env-vault/pulls"*)
     printf '[[{"number":43,"base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \

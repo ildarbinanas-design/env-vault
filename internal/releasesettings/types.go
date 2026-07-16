@@ -7,6 +7,7 @@ package releasesettings
 const (
 	SchemaID      = "env-vault.repository-release-settings-proof.v1"
 	SchemaVersion = 1
+	CheckSchemaID = "env-vault.repository-release-settings-check.v1"
 
 	ResultPass = "pass"
 )
@@ -48,6 +49,16 @@ type RawInputs struct {
 	MainRuleset     []byte
 	TagRuleset      []byte
 	EvidenceRuleset []byte
+}
+
+// CheckResult is the versioned machine result emitted after validating saved
+// repository settings without sealing them to a release tuple.
+type CheckResult struct {
+	SchemaID      string `json:"schema_id"`
+	SchemaVersion int    `json:"schema_version"`
+	OK            bool   `json:"ok"`
+	Repository    string `json:"repository"`
+	Result        string `json:"result"`
 }
 
 // Proof is a sealed, self-contained v1 repository release-settings decision.
