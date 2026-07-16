@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.10](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.9...v0.0.10) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** locate nested promotion manifests ([#25](https://github.com/ildarbinanas-design/env-vault/issues/25)) ([c9ac7cc](https://github.com/ildarbinanas-design/env-vault/commit/c9ac7cced671e537441370e0b33da46448eb1de8))
+
 ## [0.0.9](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.8...v0.0.9) (2026-07-16)
 
 
