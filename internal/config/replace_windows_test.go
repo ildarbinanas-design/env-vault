@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -169,6 +170,38 @@ func TestWindowsConfigReadHandleAllowsAtomicReplacement(t *testing.T) {
 	}
 	if _, err := os.Lstat(temporary); !os.IsNotExist(err) {
 		t.Fatalf("temporary file still exists after replacement: %v", err)
+	}
+}
+
+func TestRenameWindowsConfigFileRejectsNonSiblingTemporary(t *testing.T) {
+	root := t.TempDir()
+	targetDirectory := filepath.Join(root, "target")
+	temporaryDirectory := filepath.Join(root, "temporary")
+	if err := os.MkdirAll(targetDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(temporaryDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(targetDirectory, "config.yaml")
+	temporary := filepath.Join(temporaryDirectory, ".config.yaml.tmp-test")
+	if err := os.WriteFile(target, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(temporary, []byte("new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := renameWindowsConfigFile(temporary, target)
+	if err == nil || !strings.Contains(err.Error(), "not a direct sibling") {
+		t.Fatalf("non-sibling rename error=%v", err)
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil || string(data) != "old\n" {
+		t.Fatalf("target changed after rejected rename: data=%q err=%v", data, readErr)
+	}
+	if _, statErr := os.Stat(temporary); statErr != nil {
+		t.Fatalf("temporary source changed after rejected rename: %v", statErr)
 	}
 }
 

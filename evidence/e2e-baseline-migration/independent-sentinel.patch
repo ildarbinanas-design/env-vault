@@ -1,7 +1,7 @@
 diff --git a/e2e/scenarios_test.go b/e2e/scenarios_test.go
-index 7b5439d..ef2d363 100644
+index 7b5439d..541a011 100644
 --- a/e2e/scenarios_test.go
 +++ b/e2e/scenarios_test.go
 @@ -501 +501 @@ func testExecProfileDirectMulti(sc *scenario) {
 -	second := first
-+	second := sc.sentinels[1]
++	second := sc.newSentinel()

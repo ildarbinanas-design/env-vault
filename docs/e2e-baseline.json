@@ -3,7 +3,7 @@
   "schema_version": 2,
   "semantic_suite": {
     "algorithm": "env-vault.e2e-semantic-suite.v1",
-    "hash": "e68d4611233e1993938630b97c8b862eb744661c7660f22c0a651285e0afeedb",
+    "hash": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8",
     "source_report_hash": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
     "transition_code": "independent_second_secret_sentinel"
   },
@@ -586,6 +586,6 @@
   ],
   "migration": {
     "path": "evidence/e2e-baseline-migration/migration.json",
-    "sha256": "50a511c61c58aea3bb712ed009a70447405f3a01b6364638cded2aba1d420169"
+    "sha256": "146f7e2b5f18488cd1eaa9d96aaf32a90e151586ea2e76aa27b7bf19195d0711"
   }
 }

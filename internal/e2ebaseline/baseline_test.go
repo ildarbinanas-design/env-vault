@@ -26,7 +26,7 @@ func TestCanonicalBaselineAndMigrationAreDurable(t *testing.T) {
 	if baseline.Provenance.RunID != "29479484474" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
 		t.Fatalf("baseline identity=%+v toolchain=%+v", baseline.Provenance, baseline.Toolchain)
 	}
-	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "e68d4611233e1993938630b97c8b862eb744661c7660f22c0a651285e0afeedb" {
+	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8" {
 		t.Fatalf("semantic suite=%+v", baseline.SemanticSuite)
 	}
 	migrationPath := filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigrationPath))

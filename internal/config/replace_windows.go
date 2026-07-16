@@ -81,8 +81,8 @@ func readConfigFile(path string) ([]byte, error) {
 
 // readConfigFileOnce allows the config pathname to be atomically replaced
 // while this handle continues reading the prior complete file. os.ReadFile's
-// Windows handle omits FILE_SHARE_DELETE, which can otherwise make a
-// concurrent MoveFileEx(MOVEFILE_REPLACE_EXISTING) exhaust its bounded retry.
+// Windows handle omits FILE_SHARE_DELETE, which would force even the
+// root-relative POSIX rename path through its bounded compatibility retry.
 func readConfigFileOnce(path string) ([]byte, error) {
 	file, err := openConfigFileForRead(path)
 	if err != nil {
@@ -150,12 +150,45 @@ func validateConfigTarget(path string) error {
 func defaultConfigReplaceOperations() configReplaceOperations {
 	return configReplaceOperations{
 		validate:  validateSaveTarget,
-		rename:    os.Rename,
+		rename:    renameWindowsConfigFile,
 		retryable: isTransientConfigFilesystemError,
 		unsafe:    isUnsafeConfigTargetError,
 		now:       time.Now,
 		wait:      waitForConfigReplaceRetry,
 	}
+}
+
+// renameWindowsConfigFile keeps the temporary file and target under one
+// directory handle. On Windows, os.Root.Rename uses POSIX rename semantics
+// when the filesystem supports them, so a FILE_SHARE_DELETE reader can finish
+// reading the prior complete file while new opens observe the replacement.
+func renameWindowsConfigFile(temporaryPath, path string) error {
+	temporaryDirectory, err := filepath.Abs(filepath.Dir(temporaryPath))
+	if err != nil {
+		return &os.LinkError{Op: "rename", Old: temporaryPath, New: path, Err: err}
+	}
+	targetDirectory, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return &os.LinkError{Op: "rename", Old: temporaryPath, New: path, Err: err}
+	}
+	if !strings.EqualFold(filepath.Clean(temporaryDirectory), filepath.Clean(targetDirectory)) {
+		return &os.LinkError{
+			Op:  "rename",
+			Old: temporaryPath,
+			New: path,
+			Err: errors.New("temporary config is not a direct sibling of the target"),
+		}
+	}
+
+	root, err := os.OpenRoot(targetDirectory)
+	if err != nil {
+		return &os.LinkError{Op: "rename", Old: temporaryPath, New: path, Err: err}
+	}
+	defer root.Close()
+	if err := root.Rename(filepath.Base(temporaryPath), filepath.Base(path)); err != nil {
+		return &os.LinkError{Op: "rename", Old: temporaryPath, New: path, Err: err}
+	}
+	return nil
 }
 
 func waitForConfigReplaceRetry(delay time.Duration) {
@@ -202,7 +235,7 @@ func isTransientConfigFilesystemError(err error) bool {
 // injection is unreachable unless the insecure test backend, the E2E child
 // marker, and subprocess coverage are all explicitly enabled. It affects only
 // replacement of an existing regular test config and returns one real Windows
-// sharing errno before the unchanged os.Rename operation is attempted.
+// sharing errno before the unchanged atomic rename operation is attempted.
 func isCoverageInstrumentedBuild() bool {
 	e2eCoverageBuildIdentity.once.Do(func() {
 		e2eCoverageBuildIdentity.enabled = coverage.WriteMeta(io.Discard) == nil

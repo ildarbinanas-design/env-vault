@@ -70,7 +70,7 @@ full gate, the E2E child marker, and `GOCOVERDIR` are all present, the runtime
 confirms that the executable was built with `go build -cover`, and the
 store/config paths remain inside the isolated scenario root, replacement of an
 existing regular test config returns one synthetic
-`ERROR_SHARING_VIOLATION` before calling the unchanged `os.Rename`. Existing
+`ERROR_SHARING_VIOLATION` before calling the root-relative atomic rename. Existing
 profile/concurrency assertions therefore fail if the bounded retry stops
 working. Release-like binaries and all real keyring backends cannot activate
 this testability hook. A process that supplies every E2E request gate without
