@@ -18,6 +18,7 @@ import (
 
 type workflow struct {
 	On          workflowTriggers       `yaml:"on"`
+	RunName     string                 `yaml:"run-name"`
 	Concurrency workflowConcurrency    `yaml:"concurrency"`
 	Permissions map[string]string      `yaml:"permissions"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
@@ -587,6 +588,10 @@ func TestSemverComparisonHandlesLargeNumericComponents(t *testing.T) {
 
 func TestManualReleaseInputAndGates(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	const wantRunName = "env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }}"
+	if wf.RunName != wantRunName {
+		t.Fatalf("build-binaries run-name=%q, want %q", wf.RunName, wantRunName)
+	}
 	if len(wf.Permissions) != 4 || wf.Permissions["actions"] != "read" || wf.Permissions["contents"] != "read" || wf.Permissions["issues"] != "read" || wf.Permissions["pull-requests"] != "read" {
 		t.Fatalf("build-binaries workflow permissions=%v", wf.Permissions)
 	}

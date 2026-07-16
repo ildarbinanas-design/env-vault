@@ -1,4 +1,5 @@
 name: build-binaries
+run-name: env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }}
 
 on:
   workflow_dispatch:

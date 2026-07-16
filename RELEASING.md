@@ -147,6 +147,67 @@ Before merging a release pull request:
 Authentication, API, transport, and parsing failures are never evidence that a
 tag, Release, pull request, or workflow run is absent.
 
+## Machine-readable release status
+
+`releasectl` is a repository operator tool; it is not part of the distributed
+`env-vault` command surface. It observes the exact release chain through
+read-only `gh api --method GET` requests and emits one versioned JSON document.
+It never merges a pull request, reruns a workflow, creates or moves a tag,
+uploads an asset, or changes Homebrew state.
+
+Inspect one snapshot with the exact reviewed release identity when it is known:
+
+```sh
+go run ./cmd/releasectl release status \
+  --repo ildarbinanas-design/env-vault \
+  --version vX.Y.Z \
+  --source-sha 0123456789abcdef0123456789abcdef01234567 \
+  --json
+```
+
+The default single-snapshot deadline is two minutes. `watch` uses a three-hour
+overall deadline by default so the declared quality and Homebrew job limits fit
+inside one observation; `--timeout` overrides the applicable deadline.
+
+Omitting `--source-sha` is supported after the exact tag exists; the tool then
+resolves and freezes the source identity from that tag. Supply the SHA while
+waiting before tag creation so `main` CI and release planning can be observed
+without guessing identity. Watch until a terminal state with one final JSON
+document and no intermediate stdout:
+
+```sh
+go run ./cmd/releasectl release watch \
+  --repo ildarbinanas-design/env-vault \
+  --version vX.Y.Z \
+  --source-sha 0123456789abcdef0123456789abcdef01234567 \
+  --interval 30s \
+  --timeout 3h \
+  --json
+```
+
+The schema identifier is `env-vault.release-status.v1`. The document binds the
+tag, exact-SHA `main` CI and planning runs, tag-triggered publisher, GitHub
+Release asset set, and the publisher's `supply_chain`, `homebrew`, and `health`
+jobs. `failed_jobs[].failed_steps` identifies a deterministic failure without
+requiring log interpretation. `next_action.code` is a stable machine value;
+it is never free-form LLM guidance. Manual repair-run correlation and an
+independent reimplementation of attestation or tap verification are outside
+v1; the successful publisher jobs remain the evidence for those checks.
+
+Exit statuses are part of the operator contract:
+
+| Status | Meaning |
+| ---: | --- |
+| `0` | valid pending/running snapshot, or a successful terminal chain |
+| `1` | observed terminal failure or inconsistent remote state |
+| `2` | invalid command or identity input |
+| `3` | dependency, authentication, transport, API, or response-schema failure |
+| `4` | `watch` timed out and emitted its last valid snapshot |
+
+An explicit HTTP 404 or an empty exact-filter result may represent an absent
+stage. Authentication, rate-limit, network, server, and malformed-response
+errors produce `ok=false` and never become `not_found`.
+
 ## Build-only validation
 
 A build-only run exercises tests, vet, race, smoke, the license gate, all five
