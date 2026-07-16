@@ -38,7 +38,7 @@ settings=$(gh api graphql \
     }
   ') || release_die "unable to read repository merge settings"
 jq -e '
-  ((.errors // []) | length == 0) and
+  .errors == null and
   (.data.repository | type == "object") and
   .data.repository.defaultBranchRef.name == "main" and
   .data.repository.squashMergeAllowed == true and

@@ -1602,11 +1602,13 @@ correctly rejected an incomplete response even though an administrator
 independently observed the configured squash-only `PR_TITLE`/`PR_BODY` policy.
 
 The verifier now requests the same policy through the typed GitHub GraphQL
-`Repository` fields. Those fields are non-null in the current schema. The
-manual audit retains its read-only App permissions; missing repository data,
-unsafe values, and GraphQL transport failures all remain hard failures. The
-full release-planning token uses the same verifier, so proposal planning and
-manual auditing continue to enforce one repository-settings contract.
+`Repository` fields. The merge-policy booleans and enums are non-null in the
+current schema; nullable `defaultBranchRef` must still contain the exact `main`
+name. The manual audit retains its read-only App permissions; missing repository
+data, malformed or non-empty GraphQL errors, unsafe values, and transport
+failures all remain hard failures. The full release-planning token uses the
+same verifier, so proposal planning and manual auditing continue to enforce one
+repository-settings contract.
 
 ### Evidence and status
 
@@ -1615,7 +1617,7 @@ manual auditing continue to enforce one repository-settings contract.
 | Main push CI run `29460867618` | green through `quality-gate` | remote_observed |
 | Manual App audit run `29460920983`, job `87503977775` | exact App identity passed; REST merge-settings read failed before ruleset checks | remote_observed |
 | GitHub GraphQL schema introspection | required merge-policy fields are present and non-null; live administrator query returned the configured squash-only values | cli_observed |
-| Release automation tests | cover safe settings, unsafe rebase, missing GraphQL repository, transport failure, partial data with GraphQL errors, and unsafe main/tag rulesets | repo_verified |
+| Release automation tests | cover safe settings, unsafe rebase, missing GraphQL repository, transport failure, partial data with GraphQL errors, malformed error envelopes, and unsafe main/tag rulesets | repo_verified |
 | App permission contract | remains Metadata read plus Administration read, with no Contents, Issues, or Pull requests permission in the audit workflow | repo_verified |
 | `GITHUB_REPOSITORY=ildarbinanas-design/env-vault scripts/release/verify-repository-release-settings.sh` | corrected GraphQL plus unchanged REST ruleset verifier passed against live settings | cli_observed |
 | `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed after restoring the unrelated REST fixture used by release-authorization tests | cli_observed |

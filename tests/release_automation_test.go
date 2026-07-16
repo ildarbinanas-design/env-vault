@@ -279,6 +279,12 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 		t.Fatalf("GraphQL response with errors unexpectedly succeeded: %s", output)
 	}
 
+	malformedGraphQLEnv := append([]string{}, baseEnv...)
+	malformedGraphQLEnv = append(malformedGraphQLEnv, "FAKE_GRAPHQL_MALFORMED_ERRORS=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), malformedGraphQLEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("GraphQL response with malformed errors unexpectedly succeeded: %s", output)
+	}
+
 	badRulesetEnv := append([]string{}, baseEnv...)
 	badRulesetEnv = append(badRulesetEnv, "FAKE_RULESET_ALLOW_REBASE=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badRulesetEnv, "verify-repository-release-settings.sh"); err == nil {
@@ -486,7 +492,9 @@ case "$args" in
       printf '%s\n' '{"data":{"repository":null}}'
       exit 0
     fi
-    if [[ "${FAKE_GRAPHQL_ERRORS:-false}" == "true" ]]; then
+    if [[ "${FAKE_GRAPHQL_MALFORMED_ERRORS:-false}" == "true" ]]; then
+      errors=',"errors":{}'
+    elif [[ "${FAKE_GRAPHQL_ERRORS:-false}" == "true" ]]; then
       errors=',"errors":[{"message":"partial response"}]'
     else
       errors=''
