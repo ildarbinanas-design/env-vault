@@ -1,5 +1,86 @@
 # env-vault Evidence Bundle
 
+## Task ID: `ENV-VAULT-RELEASE-STATUS-V009`
+
+Timestamp UTC: `2026-07-16T06:46:31Z`
+
+### Scope
+
+Diagnose the first `v0.0.8` publication from exact tag commit
+`1d094f9e4a3e0343e713d4126f6118a8a9e98e2d`, preserve the existing
+exact-source attestation and immutable-tag guarantees, correct the release-only
+E2E false positive, and add a deterministic read-only operator command for the
+`v0.0.9` release. The user explicitly chose to leave `v0.0.8` as a failed tag
+without a GitHub Release rather than publish partial assets or weaken
+supply-chain identity.
+
+### Observed `v0.0.8` Failure
+
+| Evidence | Result | Claim status |
+|---|---|---|
+| Exact `main` CI | run `29475607744`, attempt 1, success at the release SHA | remote_observed |
+| Release planning | run `29475926015`, attempt 1, success; exact tag created | remote_observed |
+| Publisher | run `29475939348`, attempt 1, failed after 417 seconds; 30 jobs and 1,280 aggregate job-seconds | remote_observed |
+| Failed gate | `quality / e2e-compare`, steps `Compare candidate with canonical baseline` and `Verify exact migration identity` | remote_observed |
+| Exact difference | all five platforms differed only in the three `CLI_VERSION_FORMS` outputs: normalized baseline `<VERSION>` versus candidate `v0.0.8` | artifact_observed |
+| Unchanged guarantees | both matrices, critical scenarios, coverage non-regression, checksum validation, and leak gates passed | artifact_observed |
+| Publication state | tag retained at the exact SHA; Release, supply-chain, Homebrew, and health jobs remained skipped/blocked | remote_observed |
+
+The frozen E2E harness normalized development and CI build labels but did not
+normalize the exact release version injected through `ENV_VAULT_E2E_VERSION`.
+The correction leaves that reviewed suite and its Go 1.22 baseline hash
+unchanged. The external cross-source comparator validates the three exact
+`CLI_VERSION_FORMS` shapes and canonicalizes only the expected strict release
+version in the candidate contract. Arbitrary semantic versions in other public
+output remain observable. Native smoke continues to verify the literal release
+version on every platform before E2E comparison.
+
+### Changes
+
+- Add the repository-only `releasectl release status/watch --json` command.
+- Restrict its transport to sorted, explicit `gh api --method GET` calls pinned
+  to `github.com`; trace flags and host overrides are removed from its child
+  environment while normal GitHub authentication remains available.
+- Bind tag, exact-SHA `main` CI, release planning, tag-triggered publisher,
+  exact Release asset names, and publisher job evidence into schema
+  `env-vault.release-status.v1`.
+- Return exact failed jobs and steps plus stable `next_action.code` values.
+  API, authentication, rate-limit, transport, and malformed-response errors
+  remain distinct from absence.
+- Make watch deadline-aware, retry transient observation failures, report an
+  outage alongside the last valid snapshot, and freeze the first observed tag
+  SHA so a later ref change becomes a terminal inconsistency.
+- Add a stable non-secret `run-name` marker to `build-binaries` for future
+  release/repair correlation without changing workflow topology or permissions.
+- Preserve the frozen E2E suite identity while making the external migration
+  comparator aware of the exact candidate release version; malformed shapes or
+  wrong literal versions fail closed.
+- Document the command, one-document output contract, exit statuses, and v1
+  limitation that manual repair correlation and independent tap/attestation
+  revalidation remain future work.
+
+### Verification
+
+| Command or check | Result | Claim status |
+|---|---|---|
+| `go test ./...` | passed | cli_observed |
+| `go vet ./...` | passed | cli_observed |
+| `go test -race ./internal/releasectl -count=1` | passed | cli_observed |
+| `go test -race ./cmd/e2e-compare -count=1` | passed | cli_observed |
+| `git diff --check` | passed | cli_observed |
+| Replay the corrected comparator over the preserved Go 1.22 baseline and the five real `v0.0.8` candidate report artifacts | passed with frozen suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`, zero coverage tolerance, and all contract/leak/identity gates | artifact_observed |
+| Live `releasectl release status` for `v0.0.8` and the exact SHA | exit 1 with one JSON document; exact CI/planning/publisher IDs, failed job and steps, blocked downstream stages, and `inspect_publisher_failure` reproduced without log interpretation | remote_observed |
+| Independent read-only review | deadline/retry, host binding, rate-limit classification, downstream attribution, blocked terminal state, inaccessible-repository 404, and tag-SHA freeze findings were incorporated with regression tests | repo_verified |
+
+### Residual Scope
+
+`env-vault.release-status.v1` intentionally observes the original
+tag-triggered publisher. A later manual `workflow_dispatch` repair is not yet
+folded into the release state chain. The v1 Homebrew, supply-chain, and health
+states are the exact named publisher jobs; the command does not duplicate the
+workflow's formula, attestation, or tap-CI verification logic. Those extensions
+must preserve GET-only observation and exact version/SHA correlation.
+
 ## Task ID: `ENV-VAULT-GO1265-MIGRATION-CANDIDATE`
 
 Timestamp UTC: `2026-07-15T20:14:01Z`

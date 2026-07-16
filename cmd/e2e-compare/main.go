@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ var requiredPlatforms = []string{
 	"linux-arm64",
 	"windows-amd64",
 }
+
+var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 type options struct {
 	baseline            string
@@ -54,6 +57,7 @@ type options struct {
 	candidateRunAttempt string
 	candidateRepository string
 	candidateReporter   string
+	candidateVersion    string
 }
 
 type counts struct {
@@ -155,6 +159,7 @@ type comparisonReport struct {
 	CandidateRunAttempt string    `json:"candidate_run_attempt"`
 	CandidateRepository string    `json:"candidate_repository"`
 	CandidateReporter   string    `json:"candidate_reporter"`
+	CandidateVersion    string    `json:"candidate_version"`
 	CandidateValidation string    `json:"candidate_validation_outcome"`
 	CandidateGoVersion  string    `json:"candidate_go_version,omitempty"`
 	Checks              []check   `json:"checks"`
@@ -206,6 +211,7 @@ func parseFlags(args []string) (options, error) {
 	set.StringVar(&opts.candidateRunAttempt, "candidate-run-attempt", "", "exact candidate run attempt")
 	set.StringVar(&opts.candidateRepository, "candidate-repository", "", "exact candidate repository")
 	set.StringVar(&opts.candidateReporter, "candidate-reporter", "", "exact candidate reporter")
+	set.StringVar(&opts.candidateVersion, "candidate-version", "", "exact version embedded in candidate binaries")
 	if err := set.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -215,7 +221,7 @@ func parseFlags(args []string) (options, error) {
 	values := []string{
 		opts.baseline, opts.candidate, opts.output, opts.expectedSuiteHash, opts.baselineValidation, opts.candidateValidation,
 		opts.baselineCommit, opts.baselineRunID, opts.baselineRunURL, opts.baselineRunAttempt, opts.baselineRepository, opts.baselineReporter,
-		opts.candidateCommit, opts.candidateRunID, opts.candidateRunURL, opts.candidateRunAttempt, opts.candidateRepository, opts.candidateReporter,
+		opts.candidateCommit, opts.candidateRunID, opts.candidateRunURL, opts.candidateRunAttempt, opts.candidateRepository, opts.candidateReporter, opts.candidateVersion,
 	}
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
@@ -255,6 +261,7 @@ func compare(opts options) (comparisonReport, error) {
 		CandidateRunAttempt: opts.candidateRunAttempt,
 		CandidateRepository: opts.candidateRepository,
 		CandidateReporter:   opts.candidateReporter,
+		CandidateVersion:    opts.candidateVersion,
 		CandidateValidation: opts.candidateValidation,
 	}
 	add := func(name string, err error) {
@@ -301,7 +308,10 @@ func compare(opts options) (comparisonReport, error) {
 		if err := compareCritical(base.Coverage, cand.Coverage); err != nil {
 			scenarioErrors = append(scenarioErrors, platform+": "+err.Error())
 		}
-		if !bytes.Equal(base.Contracts, cand.Contracts) {
+		normalizedCandidateContracts, err := normalizeReleaseVersionContract(cand.Contracts, opts.candidateVersion)
+		if err != nil {
+			contractErrors = append(contractErrors, platform+": "+err.Error())
+		} else if !bytes.Equal(base.Contracts, normalizedCandidateContracts) {
 			contractErrors = append(contractErrors, platform+": normalized stdout/stderr, exit-code, or JSON contract changed")
 		}
 		if cand.Metadata.StatementCoverage+opts.coverageTolerance < base.Metadata.StatementCoverage {
@@ -446,6 +456,108 @@ func comparePlatformSet(baseline, candidate map[string]reportEntry) error {
 		return fmt.Errorf("required=%v baseline=%v candidate=%v", requiredPlatforms, base, cand)
 	}
 	return nil
+}
+
+func normalizeReleaseVersionContract(contracts []byte, candidateVersion string) ([]byte, error) {
+	if !releaseVersionPattern.MatchString(candidateVersion) {
+		return contracts, nil
+	}
+	var document map[string]any
+	if err := decodeJSON(contracts, &document); err != nil {
+		return nil, fmt.Errorf("decode candidate contracts for release-version normalization: %w", err)
+	}
+	scenarios, ok := document["scenarios"].(map[string]any)
+	if !ok {
+		return nil, errors.New("candidate contracts scenarios are missing or malformed")
+	}
+	versionScenario, ok := scenarios["CLI_VERSION_FORMS"].(map[string]any)
+	if !ok {
+		return nil, errors.New("candidate CLI_VERSION_FORMS contract is missing or malformed")
+	}
+	observations, ok := versionScenario["observations"].([]any)
+	if !ok || len(observations) != 3 {
+		return nil, errors.New("candidate CLI_VERSION_FORMS observations must contain exactly three entries")
+	}
+	seen := make(map[string]bool, 3)
+	for index, raw := range observations {
+		observation, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("candidate CLI_VERSION_FORMS observation %d is malformed", index+1)
+		}
+		arguments, ok := contractArguments(observation["args"])
+		if !ok {
+			return nil, fmt.Errorf("candidate CLI_VERSION_FORMS observation %d arguments are malformed", index+1)
+		}
+		key := strings.Join(arguments, "\x00")
+		if seen[key] {
+			return nil, fmt.Errorf("candidate CLI_VERSION_FORMS repeats arguments %q", arguments)
+		}
+		seen[key] = true
+		stdout, ok := observation["stdout"].(string)
+		if !ok {
+			return nil, fmt.Errorf("candidate CLI_VERSION_FORMS stdout for %q is malformed", arguments)
+		}
+		switch key {
+		case "--version", "version":
+			if stdout != candidateVersion+"\n" {
+				return nil, fmt.Errorf("candidate CLI_VERSION_FORMS stdout for %q does not equal the exact candidate version", arguments)
+			}
+			observation["stdout"] = "<VERSION>\n"
+		case "--json\x00--version":
+			normalized, err := normalizeJSONVersionOutput(stdout, candidateVersion)
+			if err != nil {
+				return nil, fmt.Errorf("candidate CLI_VERSION_FORMS JSON stdout: %w", err)
+			}
+			observation["stdout"] = normalized
+		default:
+			return nil, fmt.Errorf("candidate CLI_VERSION_FORMS has unexpected arguments %q", arguments)
+		}
+	}
+	for _, required := range []string{"--version", "version", "--json\x00--version"} {
+		if !seen[required] {
+			return nil, fmt.Errorf("candidate CLI_VERSION_FORMS is missing arguments %q", strings.Split(required, "\x00"))
+		}
+	}
+	return json.Marshal(document)
+}
+
+func contractArguments(value any) ([]string, bool) {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	result := make([]string, len(raw))
+	for index, item := range raw {
+		argument, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		result[index] = argument
+	}
+	return result, true
+}
+
+func normalizeJSONVersionOutput(stdout, candidateVersion string) (string, error) {
+	if !strings.HasSuffix(stdout, "\n") || strings.HasSuffix(stdout, "\r\n") || strings.HasSuffix(strings.TrimSuffix(stdout, "\n"), "\n") {
+		return "", errors.New("output must end in exactly one newline")
+	}
+	var payload map[string]any
+	if err := decodeJSON([]byte(stdout), &payload); err != nil {
+		return "", fmt.Errorf("decode output: %w", err)
+	}
+	if payload["command"] != "version" {
+		return "", errors.New("command is not version")
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok || data["version"] != candidateVersion {
+		return "", errors.New("data.version does not equal the exact candidate version")
+	}
+	data["version"] = "<VERSION>"
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(normalized) + "\n", nil
 }
 
 func compareCritical(baseline, candidate featureCoverage) error {

@@ -318,7 +318,8 @@ GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare \
   --candidate-commit "$GITHUB_SHA" --candidate-run-id "$GITHUB_RUN_ID" \
   --candidate-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
   --candidate-run-attempt "$GITHUB_RUN_ATTEMPT" \
-  --candidate-repository "$GITHUB_REPOSITORY" --candidate-reporter "v1.13.0"
+  --candidate-repository "$GITHUB_REPOSITORY" --candidate-reporter "v1.13.0" \
+  --candidate-version "$VERSION"
 ```
 
 The comparison requires the same platform set and suite hash, the same
@@ -326,6 +327,12 @@ critical scenario IDs and pass/expected-skip results, byte-equivalent
 normalized stdout/stderr/exit-code and JSON/JSONL contracts, a passing leak
 gate, and no statement-coverage decrease. The comparison report itself records
 both exact commit/run identities, repositories, reporter pins, and Go versions.
+For a strict `vMAJOR.MINOR.PATCH` candidate, the comparator additionally
+requires the three exact `CLI_VERSION_FORMS` output shapes and canonicalizes
+only their exact expected version before the byte comparison. Other scenarios
+and embedded version-like text remain byte-sensitive. Independently, the native
+smoke jobs require the literal candidate version on every platform; the shared
+quality gate requires both checks, so a wrong binary version cannot be masked.
 
 The current symlink contract rejects unsafe final config and lock targets. It
 does not claim protection from a hostile same-user process or a pre-existing

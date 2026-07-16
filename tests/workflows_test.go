@@ -18,6 +18,7 @@ import (
 
 type workflow struct {
 	On          workflowTriggers       `yaml:"on"`
+	RunName     string                 `yaml:"run-name"`
 	Concurrency workflowConcurrency    `yaml:"concurrency"`
 	Permissions map[string]string      `yaml:"permissions"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
@@ -587,6 +588,10 @@ func TestSemverComparisonHandlesLargeNumericComponents(t *testing.T) {
 
 func TestManualReleaseInputAndGates(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	const wantRunName = "env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }}"
+	if wf.RunName != wantRunName {
+		t.Fatalf("build-binaries run-name=%q, want %q", wf.RunName, wantRunName)
+	}
 	if len(wf.Permissions) != 4 || wf.Permissions["actions"] != "read" || wf.Permissions["contents"] != "read" || wf.Permissions["issues"] != "read" || wf.Permissions["pull-requests"] != "read" {
 		t.Fatalf("build-binaries workflow permissions=%v", wf.Permissions)
 	}
@@ -1257,6 +1262,9 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 	if run.If != "always()" || run.Shell != "bash" {
 		t.Fatalf("comparison execution if=%q shell=%q", run.If, run.Shell)
 	}
+	if run.Env["CANDIDATE_VERSION"] != "${{ inputs.version }}" {
+		t.Fatalf("comparison candidate version env=%q", run.Env["CANDIDATE_VERSION"])
+	}
 	for _, snippet := range []string{
 		"GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare",
 		`--baseline "$GITHUB_WORKSPACE/baseline-download"`,
@@ -1272,6 +1280,7 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 		`--baseline-repository "ildarbinanas-design/env-vault"`,
 		`--baseline-reporter "v1.12.2"`,
 		`--candidate-reporter "v1.13.0"`,
+		`--candidate-version "$CANDIDATE_VERSION"`,
 	} {
 		if !strings.Contains(run.Run, snippet) {
 			t.Fatalf("comparison command missing %q in %q", snippet, run.Run)
