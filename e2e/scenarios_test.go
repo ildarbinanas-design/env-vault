@@ -498,7 +498,7 @@ func testProfileSymlinkRejected(sc *scenario) {
 
 func testExecProfileDirectMulti(sc *scenario) {
 	first := sc.sentinels[0]
-	second := first
+	second := sc.sentinels[1]
 	setSecret(sc, "first", first)
 	setSecret(sc, "second", second)
 	config := filepath.Join(sc.root, "exec.yaml")
