@@ -146,7 +146,8 @@ jq -e --arg version "$version" '
 readme="$probe_dir/README.md"
 gh api --header 'Accept: application/vnd.github.raw+json' \
   "repos/$repository/contents/README.md?ref=$head_sha" > "$readme"
-grep -Fqx -- "Current stable release: \`v${version}\`. <!-- x-release-please-version -->" "$readme" ||
+readme_line=$(release_readme_version_line "v$version")
+grep -Fqx -- "$readme_line" "$readme" ||
   release_die "release proposal README does not match its manifest"
 
 changelog="$probe_dir/CHANGELOG.md"

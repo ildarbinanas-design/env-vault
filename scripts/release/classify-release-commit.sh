@@ -77,7 +77,7 @@ for index in "${!expected_paths[@]}"; do
   [[ "$mode" == "100644" ]] || release_die "release metadata and documentation must be regular non-executable files"
 done
 
-readme_line="Current stable release: \`v${current_version}\`. <!-- x-release-please-version -->"
+readme_line=$(release_readme_version_line "v$current_version")
 git show "$commit:README.md" | grep -Fqx -- "$readme_line" ||
   release_die "README current release does not match the manifest"
 

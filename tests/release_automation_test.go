@@ -16,7 +16,7 @@ import (
 
 const (
 	manifestV007  = "{\n  \".\": \"0.0.7\"\n}\n"
-	readmeV007    = "# fixture\n\nCurrent stable release: `v0.0.7`. <!-- x-release-please-version -->\n"
+	readmeV007    = "# fixture\n\nCurrent version: `v0.0.7`. <!-- x-release-please-version -->\n"
 	changelogV007 = "# Changelog\n\n" +
 		"## [0.0.7](https://example.invalid/compare/v0.0.6...v0.0.7) (2026-07-15)\n\n" +
 		"- Previous release.\n"
@@ -118,6 +118,38 @@ func TestCurrentReleaseHasExtractableReviewedNotes(t *testing.T) {
 	}
 	if !strings.Contains(output, "fix(security): harden runtime and Homebrew release contract") {
 		t.Fatalf("current release notes are incomplete: %q", output)
+	}
+}
+
+func TestCurrentREADMEUsesSharedReleaseVersionLine(t *testing.T) {
+	manifestData, err := os.ReadFile("../.release-please-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]string
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	version, ok := manifest["."]
+	if !ok || len(manifest) != 1 {
+		t.Fatalf("release manifest=%v, want one root version", manifest)
+	}
+
+	library, err := filepath.Abs("../scripts/release/lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	format := exec.Command("bash", "-c", `source "$1"; release_readme_version_line "$2"`, "bash", library, "v"+version)
+	formatted, err := format.CombinedOutput()
+	if err != nil {
+		t.Fatalf("format README version line: %v\n%s", err, formatted)
+	}
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(readme), string(formatted)); count != 1 {
+		t.Fatalf("README shared version line count=%d, want 1; line=%q", count, formatted)
 	}
 }
 
@@ -527,7 +559,7 @@ func commitReleaseFixture(t *testing.T, repo string, mutation releaseMutation) {
 	if mutation.staleREADME {
 		writeReleaseFixture(t, repo, "README.md", readmeV007+"\n")
 	} else {
-		writeReleaseFixture(t, repo, "README.md", "# fixture\n\nCurrent stable release: `v"+version+"`. <!-- x-release-please-version -->\n")
+		writeReleaseFixture(t, repo, "README.md", "# fixture\n\nCurrent version: `v"+version+"`. <!-- x-release-please-version -->\n")
 	}
 	if mutation.missingChangelog {
 		writeReleaseFixture(t, repo, "CHANGELOG.md", changelogV007+"\n")
@@ -772,7 +804,7 @@ case "$args" in
     printf '{".":"%s"}\n' "${FAKE_MAIN_MANIFEST_VERSION:-${FAKE_MANIFEST_VERSION:?}}"
     ;;
   *"contents/README.md"*)
-    printf '%b\n' 'Current stable release: \x60v0.0.8\x60. <!-- x-release-please-version -->'
+    printf '%b\n' 'Current version: \x60v0.0.8\x60. <!-- x-release-please-version -->'
     ;;
   *"contents/CHANGELOG.md"*)
     printf '%s\n' '# Changelog' '' '## [0.0.8](https://example.invalid/release) (2026-07-16)' '' '- Release.'
