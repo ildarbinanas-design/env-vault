@@ -26,6 +26,7 @@ import (
 
 const (
 	binaryEnv           = "ENV_VAULT_E2E_BINARY"
+	versionEnv          = "ENV_VAULT_E2E_VERSION"
 	helperEnv           = "ENV_VAULT_E2E_HELPER"
 	contractsDirEnv     = "ENV_VAULT_E2E_CONTRACTS_DIR"
 	sentinelRegistryEnv = "ENV_VAULT_E2E_SENTINEL_REGISTRY"
@@ -38,6 +39,7 @@ var registryMu sync.Mutex
 
 type suite struct {
 	binary      string
+	version     string
 	helper      string
 	root        string
 	contracts   string
@@ -135,6 +137,7 @@ func newSuite(t *testing.T) *suite {
 	}
 	return &suite{
 		binary:      binary,
+		version:     os.Getenv(versionEnv),
 		helper:      helper,
 		root:        root,
 		contracts:   os.Getenv(contractsDirEnv),
@@ -484,6 +487,9 @@ func (sc *scenario) normalizeScalarText(value string) string {
 		}
 	}
 	value = timestampPattern.ReplaceAllString(value, "<TIMESTAMP>")
+	if sc.suite.version != "" {
+		value = strings.ReplaceAll(value, sc.suite.version, "<VERSION>")
+	}
 	value = versionPattern.ReplaceAllString(value, "<VERSION>")
 	return value
 }
@@ -502,6 +508,24 @@ func TestContractNormalizationReplacesSentinelDerivedHashes(t *testing.T) {
 	}
 	if got := sc.normalizeScalarText(sc.sentinels[0]); got != sc.sentinels[0] {
 		t.Fatal("raw sentinels must not be normalized because that would mask a leak")
+	}
+}
+
+func TestContractNormalizationReplacesOnlyExpectedVersion(t *testing.T) {
+	sc := &scenario{t: t, suite: &suite{version: "v0.0.9"}}
+
+	if got, want := sc.normalizeScalarText("v0.0.9\n"), "<VERSION>\n"; got != want {
+		t.Fatalf("normalized expected version=%q, want %q", got, want)
+	}
+	if got, want := sc.normalizeScalarText("v0.0.8\n"), "v0.0.8\n"; got != want {
+		t.Fatalf("unexpected version was masked: got %q, want %q", got, want)
+	}
+	if got, want := sc.normalizeScalarText("ci-0123456789abcdef0123456789abcdef01234567"), "<VERSION>"; got != want {
+		t.Fatalf("normalized CI version=%q, want %q", got, want)
+	}
+	input := `{"version":"v0.0.9","unexpected":"v0.0.8"}`
+	if got, want := sc.normalizeText(input), `{"unexpected":"v0.0.8","version":"\u003cVERSION\u003e"}`; got != want {
+		t.Fatalf("normalized JSON version=%q, want %q", got, want)
 	}
 }
 
