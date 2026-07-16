@@ -21,9 +21,20 @@ Config files store only profile mappings:
 - optional profile description.
 
 Config files are created with mode `0600` where applicable. Mutations reject a
-config symlink and use a synced temporary sibling plus atomic replacement, so a
-checkout cannot redirect a profile mutation through `.env-vault.yaml` and
-readers do not observe a truncated file.
+config symlink and use a synced temporary sibling plus same-directory
+replacement, so a checkout cannot redirect a profile mutation through
+`.env-vault.yaml` and readers do not observe a truncated file. On Windows,
+transient sharing/access violations on reads and replacement receive bounded
+retries without deleting the prior config first.
+
+The Windows coverage E2E pass injects one sharing violation before replacing an
+existing regular test config. This path additionally requires the complete
+insecure test-backend gate, the E2E child marker, and `GOCOVERDIR`; it cannot run
+against a production keyring backend. Runtime coverage build-identity and
+isolated store/config path checks prevent activation in a release-like binary,
+and the hook does not alter public output. Supplying every request gate to an
+uninstrumented binary fails closed with a config error instead of injecting or
+silently ignoring the build-identity mismatch.
 
 Profile create/add/remove also serialize their complete
 load-mutate-validate-save sequence through a persistent adjacent lock file. The

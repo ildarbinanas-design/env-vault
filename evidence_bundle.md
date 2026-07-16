@@ -240,7 +240,7 @@ directive and existing `golang.org/x/sys v0.30.0` selection.
 
 | Area | Purpose |
 |---|---|
-| `internal/config/transaction.go` | Serialize Load→mutate→Validate→atomic Save through a bounded exclusive lock on persistent adjacent `<config>.lock` |
+| `internal/config/transaction.go` | Serialize Load→mutate→Validate→same-directory Save through a bounded exclusive lock on persistent adjacent `<config>.lock` |
 | Lock target boundary | Create with `flock.SetPermissions(0600)`, correct existing POSIX permissions, reject symlink/non-regular targets before acquisition and recheck after acquisition/chmod, and never remove the stable lock file |
 | `internal/cli/cli.go` | Route real profile create/add/remove operations through `config.Transaction`; keep dry runs non-mutating and complete `--check-secret` backend access before the config lock |
 | Structured errors | Add `CONFIG_LOCKED` with config-invalid exit status, preserved context deadline/cancellation cause, bounded five-second maximum wait, and retry remediation |
@@ -309,7 +309,7 @@ generator; this env-vault wave did not edit any `homebrew-tap` file.
 |---|---|
 | `internal/secretstore`, `internal/config`, `internal/cli` | Centralize secret/service validation; preserve safe slash hierarchy while rejecting absolute, backslash, empty, `.` and `..` path forms |
 | `internal/secretstore/keyring` | Repeat identifier validation immediately before backend access; fake-pass regression proves the exact safe prefix and proves unsafe input cannot invoke the backend |
-| `internal/config` | Reject existing and dangling config symlinks; publish a synced mode-`0600` temporary sibling with atomic rename instead of truncating the target |
+| `internal/config` | Reject existing and dangling config symlinks; publish a synced mode-`0600` temporary sibling with same-directory replacement instead of truncating the target |
 | `internal/platform`, `internal/runner` | Use one case-insensitive portable environment key for mapping duplicates, inherited collisions, override replacement, and `--clean-env`, including Windows `Path`/`PATH` |
 | Go regression tests | Cover traversal/service variants, safe slash names, fake-pass argv, symlink targets, concurrent complete-file visibility, case-only mapping duplicates, override deduplication, and Windows-style minimal env |
 | `scripts/release/generate-homebrew-formula.sh` | Emit Homebrew-native `on_macos`/`on_linux` plus `on_arm`/`on_intel` blocks, declare macOS Sequoia as the minimum, and install the three archived documentation files without changing version, URL, or checksum inputs |
@@ -343,7 +343,7 @@ generator; this env-vault wave did not edit any `homebrew-tap` file.
 | `pass` operations cannot use a secret or service traversal to leave the `env-vault` prefix | repo_verified | shared component validation plus adapter-level validation; fake-pass tests verify safe argv and zero calls for unsafe identifiers |
 | Existing safe slash-separated secret and service names remain supported | repo_verified | validator and fake-pass positive regression cases |
 | A config target symlink is not followed, created through, or replaced | cli_observed | existing-target and dangling-target tests preserve the symlink and outside target state |
-| Readers see a complete old or new config during concurrent saves | cli_observed | concurrent writer/reader regression plus atomic temporary-file replacement and race test |
+| Readers do not see a truncated config during concurrent saves | cli_observed | concurrent writer/reader regression plus same-directory temporary-file replacement and race test |
 | Environment mapping identity is portable to Windows | repo_verified | canonical key is used for config duplicate, runtime collision, replacement, and minimal-env selection; Windows-style tests and Windows cross-compilation pass |
 | The next generated formula cannot silently return to `Hardware::CPU.arm?` or omit the macOS minimum/documentation contract without failing the workflow regression suite | repo_verified | generated-fixture test requires exact DSL counts, Sequoia dependency, documentation installation, archived documentation inputs, and absence of `Hardware::CPU` |
 | Each generated architecture URL retains the SHA-256 of its matching archive | cli_observed | the regression creates four distinct archive bytes/checksums, requires each exact platform/selector URL/checksum block, and runs the project's exact formula verifier |
@@ -355,7 +355,7 @@ generator; this env-vault wave did not edit any `homebrew-tap` file.
 
 | Risk | Status | Mitigation or next action | Claim status |
 |---|---|---|---|
-| Profile commands still perform load-modify-save outside one inter-process lock, so concurrent successful commands can logically lose an update | open | Introduce a cross-platform locked config transaction API and move profile create/add/remove into it; current atomic save prevents truncation/corruption only | repo_verified |
+| Profile commands still perform load-modify-save outside one inter-process lock, so concurrent successful commands can logically lose an update | open | Introduce a cross-platform locked config transaction API and move profile create/add/remove into it; current replacement save prevents truncation/corruption only | repo_verified |
 | A hostile same-user process that can swap a parent directory or replace the temporary filename after close remains outside the target-symlink fix | accepted | Keep config directories user-owned; a stronger future implementation should use dirfd/openat or `os.Root` no-follow operations | repo_verified |
 | Windows behavior was cross-compiled but not executed on a native Windows host in this local run | planned | Require the existing Windows CI runner to execute focused runtime tests before release | cli_observed |
 | Real Keychain, Secret Service, WinCred, KWallet, and `pass` stores were not exercised | accepted | Run separately with disposable identifiers only after review; fake-pass tests cover the namespace boundary without touching user data | cli_observed |
@@ -1320,3 +1320,267 @@ Remove stable hardcoded secret payload fixtures from tests, smoke checks, docs, 
 ## Next Step
 
 Repeat AI-PDLC D0.20 acceptance with the registry update gate.
+
+---
+
+# Automated Release Planning Evidence — 2026-07-15T21:23:05Z
+
+## Scope
+
+This implementation run adds reviewed SemVer planning and exact-tag handoff
+without creating a tag or public release locally or remotely. The source base
+is `a4e9a5169959666a50f5022194d0b802cf3edac8` on local branch
+`agent/automated-release`.
+
+The changed scope is limited to:
+
+- Release Please manifest/configuration and the bootstrapped `CHANGELOG.md`;
+- protected release-planning, App-scope-audit, CI title, and existing publisher
+  workflows;
+- fail-closed release commit, generated-PR authorization, changelog extraction,
+  and lifecycle-label helpers;
+- workflow/release-script regression tests; and
+- contributor, architecture, external-settings, release, and user
+  documentation.
+
+No CLI secret behavior, production secret backend, product dependency, Go
+toolchain directive, release tag, GitHub Release, or Homebrew formula was
+changed by this run.
+
+## Implemented Controls
+
+| Control | Result | Claim status |
+|---|---|---|
+| Version ownership | `.release-please-manifest.json` bootstraps the published `0.0.7`; no manual bump is included in this infrastructure branch | repo_verified |
+| Documentation/version boundary | A generated PR updates the manifest, exact `CHANGELOG.md` section, and the single README version marker together | repo_verified |
+| Release Please strategy | Go strategy, manifest mode, PR-only, separate component PRs, literal project name in the title, and pinned v17.6.0 schema preserve the exact reviewed branch/title contract while keeping tags component-free | repo_verified |
+| Publication authorization | Merge of the generated release PR plus successful exact-SHA `ci` push run is required | repo_verified |
+| Generated PR provenance | Expected App bot, branch, title, stable footer, lifecycle label, base repo/branch, and merge SHA are checked | repo_verified |
+| Stale/detached protection | Current manifest equality, current-main ancestry, and exact successful CI are checked before tag/publication; every open proposal is one exact three-file commit on a green main base | repo_verified |
+| Tag-trigger protection | `build-binaries` repeats deterministic commit and generated-PR authorization before any public mutation | repo_verified |
+| Manual recovery boundary | Publisher dispatches can only resolve an existing tag; `v0.0.8+` repeats generated-PR authorization, while published `v0.0.1`–`v0.0.7` require an existing stable Release and tag ancestry | repo_verified |
+| Release Please lifecycle | Exact tag verification is followed by idempotent `pending` to `tagged` reconciliation; the serialized publisher requires tagged-only state with a bounded deadline | repo_verified |
+| Lifecycle label bootstrap | Planning idempotently creates/normalizes both Release Please repository labels before opening a proposal | repo_verified |
+| Merge-message integrity | Planning and the manual audit require squash-only `PR_TITLE` plus `PR_BODY`, strict checks, immutable `v*` tags, and no App bypass; rebase/merge commits fail closed | repo_verified |
+| Publisher ownership | `build-binaries` remains the sole GitHub Release/assets/attestation/Homebrew publisher | repo_verified |
+| Release notes | The public Release body is the reviewed, non-empty version section fetched from `CHANGELOG.md` at the exact tag source SHA | repo_verified |
+| External Actions | Checkout, setup, artifact, attestation, SBOM, dependency review, Release Please v5.0.0, and App-token v3.2.0 are pinned to verified full commit SHAs | source_verified |
+| PR title integrity | a separately required lightweight `pr-title` workflow handles `pull_request.edited`; metadata edits cannot rerun or replace the code-bearing `quality-gate` | repo_verified |
+| Human publication authorization | The generated PR has a stable body header stating that merge authorizes its exact release; proposal and merged-PR gates require the marker | repo_verified |
+| Release serialization | Planning and publication share non-cancelling `env-vault-release` concurrency, preventing label/tag handoff and successive-version races | repo_verified |
+| Future generated-PR CI | Workflow tests derive strict SemVer from the manifest rather than pinning `0.0.7`, so the generated version-only PR remains testable | repo_verified |
+| Secrets | No credential value was read, printed, persisted, or added to evidence | cli_observed |
+
+## Commands And Results
+
+| Command or action | Result | Claim status |
+|---|---|---|
+| Context7 plus official Release Please/GitHub documentation review | confirmed manifest mode, generic marker, title tokens, workflow recursion, App token, action inputs, and current stable action releases | source_verified |
+| GitHub API release/tag and signature reads for privileged actions | `release-please-action` v5.0.0 commit and `create-github-app-token` v3.2.0 commit are verified | source_verified |
+| `go test ./tests` | passed after release workflow, script, authorization, and Windows portability tests | cli_observed |
+| `go test ./... -count=1` | passed on the release-automation tree, including E2E runner and workflow contracts | cli_observed |
+| `go vet ./...` | passed on the release-automation tree | cli_observed |
+| `go test -race ./... -count=1` | passed; current release/workflow tests were repeated under race after the final ruleset changes | cli_observed |
+| `scripts/smoke.sh` | clean unrestricted rerun passed: `smoke ok` | cli_observed |
+| `scripts/license-check.sh` | unrestricted rerun passed with pinned go-licenses v2.0.1; expected non-Go assembly warning only | cli_observed |
+| `go mod tidy -diff`; `go mod verify` | no diff; all modules verified | cli_observed |
+| `shellcheck -x` on all new release helpers | passed | cli_observed |
+| `bash -n` on all new release helpers | passed | cli_observed |
+| Official v17.6.0 JSON schema + temporary pinned `ajv-cli@5.0.0` | `release-please-config.json valid`; only the schema's unsupported `uri-reference` format was ignored | cli_observed |
+| `git diff --check`; `gofmt`; `bash -n`; `shellcheck -x` | passed after final documentation, workflow, test, and helper edits | cli_observed |
+| Independent security, API/source, action-pin, and test audits | identified and drove fixes for Release Please merged-PR defaults, component/title rendering, version rendering, proposal-base TOCTOU, future generated-PR CI, explicit human authorization, lifecycle races, API pagination, App identity, rulesets, action pinning, and capability overclaims | cli_observed |
+| Read-only live repository settings gate | passed after the authorized squash-only merge settings and exact active main/tag rulesets were applied | cli_observed |
+
+## Authorized Remote Setup Update — 2026-07-15T22:39:50Z
+
+The user explicitly authorized the infrastructure commit, push, pull request,
+repository settings, GitHub App, and environment configuration. Infrastructure
+PR [#17](https://github.com/ildarbinanas-design/env-vault/pull/17) was opened
+from `agent/automated-release` at
+`62dea01afaf1de2e66e347abba0996e8e8523907`. Its first complete CI run
+[29454761680](https://github.com/ildarbinanas-design/env-vault/actions/runs/29454761680),
+CodeQL run
+[29454759495](https://github.com/ildarbinanas-design/env-vault/actions/runs/29454759495),
+and dependency-review run
+[29454761485](https://github.com/ildarbinanas-design/env-vault/actions/runs/29454761485)
+all passed, including the five-platform native E2E matrix and stable
+`quality-gate`.
+
+Authorized external state now matches the documented contract:
+
+- repository merge settings allow squash only, with pull-request title and
+  body as the squash title/body;
+- active main ruleset `18792628` requires the exact strict checks, resolved
+  conversations, and squash-only pull requests, with an empty bypass list;
+- active tag ruleset `19015306` protects `refs/tags/v*` from updates and
+  deletion, with an empty bypass list while allowing initial creation;
+- `release-planning` permits only branch `main`, has no reviewers or wait
+  timer, contains public variable `RELEASE_APP_CLIENT_ID`, and contains secret
+  `RELEASE_APP_PRIVATE_KEY`;
+- App `env-vault-release-planning` (App ID `4309657`, installation
+  `146851190`) is installed only on `env-vault`, with Administration and
+  Metadata read plus Contents, Issues, and Pull requests read/write; and
+- `scripts/release/verify-repository-release-settings.sh` passes against the
+  live repository.
+
+The private key was validated before upload without printing its contents,
+stored through `gh secret set` on standard input, and removed from the local
+filesystem. The inaccessible bootstrap key was revoked; exactly the newly
+uploaded key remains active. Secret values were not read back or recorded.
+
+## Risks And Pending Evidence
+
+| Risk or pending evidence | Status | Mitigation or required action | Claim status |
+|---|---|---|---|
+| Dedicated `env-vault-release-planning` GitHub App and `release-planning` environment are external state | configured | Exact least-privilege installation, environment branch policy, variable, and secret were configured; dispatch the committed read-only App audit after infrastructure merge | remote_observed |
+| Repository merge settings | configured | Squash-only `PR_TITLE` plus `PR_BODY` is active and the live settings verifier passes | remote_observed |
+| Main and immutable release-tag rulesets | configured | Exact active main and `refs/tags/v*` rulesets are present and the live settings verifier passes | remote_observed |
+| Global ruleset bypass actors are visible only to a ruleset writer | resolved_for_setup | Administrator inspection recorded empty main/tag bypass lists; repeat during App/key rotation | remote_observed |
+| Release Please lifecycle labels are currently absent in the repository | mitigated_in_code | The scoped planning App idempotently creates and verifies both definitions before the first proposal | cli_observed |
+| Exact App bot login/branch/body/label contract has not yet been observed in this repository | open | The implementation pins the upstream version and tests fixtures; confirm the first generated PR before merge | source_verified |
+| No real tag-triggered automated release has run | open | Merge the infrastructure PR only after green CI, inspect the generated release PR, then record the first planning and publisher run URLs | unknown |
+| Release Please reads the remote branch and cannot lock `main` during its API call | mitigated_in_code | Post-action validation requires the proposal to be one exact commit over a main SHA with successful push CI; shared concurrency and repeated exact-SHA publication checks fail closed | repo_verified |
+| Planning App `Contents: write` also technically permits Release API calls, and PR/contents write could merge a green PR | accepted | GitHub permission granularity cannot split these operations; exact action pins and workflow contract tests prove no Release/asset/merge endpoint exists in the planning path | source_verified |
+| Published `v0.0.1`–`v0.0.7` predate Release Please metadata | accepted | A bounded manual-only compatibility path requires their existing stable GitHub Release, immutable exact tag, and ancestry; it cannot create a tag or authorize `v0.0.8+` | repo_verified |
+| Remote publication requires exact approval under `AGENTS.md` | pending_exact_release | Infrastructure mutation was explicitly authorized. Do not merge the generated release PR or create its exact tag until the user reviews and approves that version and SHA | cli_observed |
+| Expected next version is `v0.0.8`, but Release Please is authoritative | pending | Do not edit the manifest manually; verify the generated release PR's computed version | source_verified |
+
+## Claim Status Summary
+
+| Claim | Status | Evidence |
+|---|---|---|
+| No manual version bump in implementation branch | repo_verified | manifest remains `0.0.7`; README marker remains `v0.0.7` |
+| Automatic PR-only version/changelog preparation implemented | repo_verified | release config, planning workflow, workflow tests |
+| Exact generated-PR and CI authorization implemented | repo_verified | authorization helper, tag gate, publisher entry gate, fail-closed tests |
+| Public release remains single-owner | repo_verified | Release Please skip setting and `build-binaries` publication step |
+| Remote release automation operational | partially_verified | external settings and PR #17 CI are green; the committed App audit and first Release Please proposal still require post-merge execution |
+| Authorized infrastructure mutation recorded | remote_observed | PR #17, exact commit/run URLs, ruleset IDs, environment, App installation, and key-handling evidence are recorded above |
+
+## PR #17 Windows Replacement Resilience — 2026-07-15T23:17:48Z
+
+### Scope
+
+Full CI run
+[29456774217](https://github.com/ildarbinanas-design/env-vault/actions/runs/29456774217)
+failed only the Windows E2E burn-in job
+[87491786025](https://github.com/ildarbinanas-design/env-vault/actions/runs/29456774217/job/87491786025):
+one of three shuffled full-suite repetitions reported
+`CONCURRENCY_PROFILE_MUTATIONS` exit `5` / `CONFIG_INVALID` while replacing the
+existing config. The release-like and coverage passes, the other two shuffled
+full-suite repetitions, and all five locking-only repetitions passed. The
+sanitized failure bundle contained no secret sentinel.
+
+The fix keeps the Unix path at one target validation and one `os.Rename`. On
+Windows only, config-target inspection and same-directory replacement retry
+`ERROR_ACCESS_DENIED`, `ERROR_SHARING_VIOLATION`, and
+`ERROR_LOCK_VIOLATION` for at most one second with 25 millisecond polling.
+Every replacement attempt revalidates the target; typed symlink/non-regular
+errors fail immediately, permanent filesystem errors remain failures, the
+prior config is never removed first, and the existing deferred cleanup removes
+an uncommitted temporary sibling. No E2E scenario, golden contract, or
+baseline identity changed.
+
+The instrumented Windows E2E binary deterministically returns one native
+sharing errno before replacing an existing regular test config, but only when
+the full insecure test-backend gate, E2E child marker, and `GOCOVERDIR` are
+present, `runtime/coverage` confirms the binary was built with `-cover`, and
+store/config paths remain inside the isolated scenario root. Existing mutation
+and concurrency assertions therefore exercise the retry path without changing
+public contracts or the suite hash. The native E2E
+matrix also runs the Windows-only deterministic config tests before the binary
+suite. A fully requested hook with a missing coverage build identity fails
+closed, so a regression in runtime detection cannot silently skip this
+exercise in the Windows coverage pass.
+
+The canonical manifest's legacy `atomic` labels remain byte-for-byte unchanged
+to preserve the reviewed Go 1.22 suite hash. Current documentation explicitly
+limits the Windows assertion to complete readable YAML, preservation before
+replacement, and cleanup of temporary siblings; it does not claim an OS-level
+atomicity guarantee.
+
+### Commands And Checks
+
+| Command or evidence | Result | Claim status |
+|---|---|---|
+| Context7 `/golang/go/go1.26.0` official `os.Rename` documentation and Go Windows source | confirmed non-Unix atomicity limitation, `MoveFileEx(..., MOVEFILE_REPLACE_EXISTING)`, and known antivirus-induced `ERROR_ACCESS_DENIED` behavior | source_verified |
+| Official `runtime/coverage.WriteMeta(io.Discard)` probe in plain and `go build -cover` executables | returned `false` for the release-like build and `true` for the instrumented build, establishing a non-env build-identity gate | cli_observed |
+| Sanitized Windows run artifact inspection | isolated the failure to config replacement during one burn-in repetition; 19 files and 125 registry records scanned with zero sentinel findings | cli_observed |
+| Deterministic Windows retry tests | cover retryable vs permanent errors, positive deadline `25+25+20 ms`, last-error return, target revalidation, typed unsafe target rejection, transient inspection retry, wrapped Windows errno classification, coverage build identity, isolated-path enforcement, and complete E2E injection gating without wall-clock sleeps | repo_verified |
+| `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=/usr/bin/true ./...` | all Windows packages and tests compile | cli_observed |
+| `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed after the final platform split, fail-fast unsafe-target fix, native Windows test gate, and coverage-only injection gate | cli_observed |
+| `go mod tidy`; repeated `go mod tidy -diff`; `git diff --check` | clean; existing `golang.org/x/sys v0.47.0` is now a direct dependency of the Windows implementation | cli_observed |
+| Pinned actionlint on `reusable-quality.yml`; workflow contract tests | passed with the native platform config-test step required before E2E | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate` | final Darwin arm64 pass: 22 passed, 0 failed/skipped/missing, 100% critical feature coverage, 71.3% statement coverage, suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf` | cli_observed |
+
+### Risks And Claim Status
+
+| Risk or claim | Status | Mitigation or required evidence | Claim status |
+|---|---|---|---|
+| Exact native Windows errno from the failed process | unavailable by design | sanitized public error contracts omit internal causes; failure point and subsequent success establish a transient replacement-error class, not a claim about a specific scanner process | cli_observed |
+| Native Windows retry execution | pending updated PR CI | The native E2E matrix now runs `go test ./internal/config -count=1`; Windows-only deterministic tests and the unchanged E2E burn-in must pass on `windows-latest` before merge | repo_verified |
+| Permanent ACL or read-only failure | preserved | narrow retries expire after one second and return the last error without changing permissions or deleting the destination | repo_verified |
+| Unix behavior and E2E coverage | preserved | platform build tags retain the single-attempt path; final subprocess coverage is 71.3%, above the 71.1% Darwin baseline | cli_observed |
+| Secret handling | preserved | no real secret or sentinel appears in code, reports, downloaded artifacts, or this evidence | cli_observed |
+
+## PR #17 Windows Concurrent Read Resilience — 2026-07-16T04:50:19+05:00
+
+### Scope
+
+Updated full CI run
+[29459242684](https://github.com/ildarbinanas-design/env-vault/actions/runs/29459242684)
+failed its native Windows config-test step in job
+[87499276143](https://github.com/ildarbinanas-design/env-vault/actions/runs/29459242684/job/87499276143).
+`TestConcurrentSavePublishesOnlyCompleteConfigs` observed
+`CONFIG_INVALID: Unable to read config` while twelve writers replaced the same
+config. This was an open/read failure, not an invalid-YAML failure; the exact
+wrapped Win32 errno is intentionally absent from the public error string and is
+not claimed here. The E2E steps did not start, and the missing-artifact error
+was secondary to that prerequisite failure.
+
+Windows `Load` now uses the same one-second, 25-millisecond bounded retry helper
+as replacement, and retries only `ERROR_ACCESS_DENIED`,
+`ERROR_SHARING_VIOLATION`, and `ERROR_LOCK_VIOLATION`. Unix still calls
+`os.ReadFile` exactly once. Missing files retain the existing empty-config
+behavior, YAML/schema failures are not retried, non-whitelisted errors return
+immediately, and a persistent whitelisted error is returned after the deadline.
+The concurrency assertion remains unchanged.
+
+The next exact-SHA run
+[29460098566](https://github.com/ildarbinanas-design/env-vault/actions/runs/29460098566),
+job
+[87501740067](https://github.com/ildarbinanas-design/env-vault/actions/runs/29460098566/job/87501740067),
+then completed the concurrent read/write portion and failed only the final
+test assertion `config mode=0666, want 0600`. Go's Windows `FileMode` does not
+model POSIX `0600`; the E2E and lock tests already enforce that permission bit
+only outside Windows, matching the documented "where applicable" contract.
+The unit test now always requires a regular file and requires exact `0600` on
+non-Windows platforms. No production assertion or public E2E contract changed.
+An exhaustive mode-assertion scan found the same non-portable expectation in
+the E2E comparison report test; it now also requires a regular file everywhere
+and exact `0600` only where POSIX mode bits apply.
+
+### Commands And Checks
+
+| Command or evidence | Result | Claim status |
+|---|---|---|
+| Native Windows job log inspection | isolated the primary failure to `go test ./internal/config -count=1`; the failure was a concurrent open/read error before E2E startup | remote_observed |
+| Follow-up native Windows job log inspection | read/write integrity completed; isolated the failure to a non-portable POSIX mode-bit assertion after `os.Stat` returned the normal Windows regular-file mode `0666` | remote_observed |
+| Cross-platform permission-assertion audit | found and corrected the equivalent E2E comparison-report test; all other critical mode assertions were already Windows-aware or inside an explicit Windows skip | repo_verified |
+| Deterministic Windows read tests | cover transient success, permanent failure, and the wrapped `os.PathError` shape returned by `os.ReadFile` | repo_verified |
+| `go test ./internal/config -count=1`; `go test ./... -count=1`; `go vet ./...`; `go test -race ./... -count=1` | passed locally after the read retry | cli_observed |
+| Windows config test cross-compile and `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./internal/config` | passed | cli_observed |
+| `go test ./tests -count=1`; pinned actionlint v1.7.12 on `reusable-quality.yml` | passed with the Windows-only ten-repetition concurrency burn-in contract | cli_observed |
+| Release-like cross-builds for linux amd64/arm64, darwin amd64/arm64, and windows amd64; Windows coverage cross-build | passed with Go 1.26.5 and `CGO_ENABLED=0` | cli_observed |
+| `go mod tidy -diff`; `scripts/smoke.sh`; `scripts/license-check.sh`; `git diff --check` | passed; license check used pinned go-licenses v2.0.1 with only the expected x/sys assembly warning | cli_observed |
+| `GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate` | Darwin arm64 pass: 22 passed, 0 failed/skipped/missing, 100% critical feature coverage, 71.4% statement coverage, unchanged suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf` | cli_observed |
+| Final leak scan | 18 report files and 125 sentinel-registry records scanned; zero findings | cli_observed |
+| Two independent read-only audits | both returned green with no P0-P2 findings; confirmed bounded/whitelisted retry, unchanged Unix and missing-file semantics, and no assertion weakening | cli_observed |
+
+### Risks And Claim Status
+
+| Risk or claim | Status | Mitigation or required evidence | Claim status |
+|---|---|---|---|
+| Exact underlying Win32 errno | unavailable by design | public structured errors omit causes; implementation covers only the three documented transient contention classes and preserves every other error | cli_observed |
+| Native Windows concurrency test after the read and test-portability fixes | pending updated PR CI | the Windows E2E job requires the package once plus ten sequential focused concurrency runs before the unchanged full E2E/burn-in/coverage job | repo_verified |
+| Permanent access failure latency | bounded | a whitelisted but persistent Windows access error adds at most one second and then returns the last error | repo_verified |
+| Unix behavior | unchanged | build-tagged implementation performs one `os.ReadFile` call and the existing single replacement attempt | repo_verified |

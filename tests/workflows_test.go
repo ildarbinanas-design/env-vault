@@ -2,10 +2,13 @@ package tests
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -27,9 +30,21 @@ type workflowConcurrency struct {
 }
 
 type workflowTriggers struct {
-	WorkflowDispatch workflowDispatch `yaml:"workflow_dispatch"`
-	WorkflowCall     workflowCall     `yaml:"workflow_call"`
-	Push             workflowPush     `yaml:"push"`
+	WorkflowDispatch workflowDispatch    `yaml:"workflow_dispatch"`
+	WorkflowCall     workflowCall        `yaml:"workflow_call"`
+	WorkflowRun      workflowRun         `yaml:"workflow_run"`
+	PullRequest      workflowPullRequest `yaml:"pull_request"`
+	Push             workflowPush        `yaml:"push"`
+}
+
+type workflowPullRequest struct {
+	Types []string `yaml:"types"`
+}
+
+type workflowRun struct {
+	Workflows []string `yaml:"workflows"`
+	Types     []string `yaml:"types"`
+	Branches  []string `yaml:"branches"`
 }
 
 type workflowPush struct {
@@ -99,22 +114,31 @@ type workflowStep struct {
 	With            map[string]string `yaml:"with"`
 }
 
-func TestWorkflowsUseNode24ActionMajors(t *testing.T) {
+const (
+	createAppTokenAction = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
+	releasePleaseAction  = "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7"
+)
+
+func TestWorkflowsPinExternalActionsToReviewedCommits(t *testing.T) {
 	expected := map[string]string{
-		"actions/checkout":                 "v7",
-		"actions/setup-go":                 "v6",
-		"actions/upload-artifact":          "v7",
-		"actions/download-artifact":        "v8",
-		"actions/attest":                   "v4",
-		"actions/create-github-app-token":  "v3",
-		"anchore/sbom-action":              "v0",
-		"actions/dependency-review-action": "v5",
+		"actions/checkout":                 "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+		"actions/setup-go":                 "924ae3a1cded613372ab5595356fb5720e22ba16",
+		"actions/upload-artifact":          "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+		"actions/download-artifact":        "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+		"actions/attest":                   "a1948c3f048ba23858d222213b7c278aabede763",
+		"actions/create-github-app-token":  "bcd2ba49218906704ab6c1aa796996da409d3eb1",
+		"anchore/sbom-action":              "e22c389904149dbc22b58101806040fa8d37a610",
+		"actions/dependency-review-action": "a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+		"googleapis/release-please-action": "45996ed1f6d02564a971a2fa1b5860e934307cf7",
 	}
 	for _, path := range []string{
+		"../.github/workflows/audit-release-planning-app.yml",
 		"../.github/workflows/audit-release-app.yml",
 		"../.github/workflows/build-binaries.yml",
 		"../.github/workflows/ci.yml",
 		"../.github/workflows/dependency-review.yml",
+		"../.github/workflows/pr-title.yml",
+		"../.github/workflows/release-please.yml",
 		"../.github/workflows/reusable-quality.yml",
 	} {
 		wf := readWorkflow(t, path)
@@ -149,7 +173,7 @@ func TestReleaseAppScopeAuditIsMetadataOnly(t *testing.T) {
 		t.Fatalf("scope audit environment=%q timeout=%d runner=%q", scope.Environment, scope.TimeoutMinutes, scope.RunsOn)
 	}
 	token := namedStep(t, scope, "Mint metadata-only installation token")
-	if token.Uses != "actions/create-github-app-token@v3" {
+	if token.Uses != createAppTokenAction {
 		t.Fatalf("scope audit token action=%q", token.Uses)
 	}
 	for key, want := range map[string]string{
@@ -181,6 +205,342 @@ func TestReleaseAppScopeAuditIsMetadataOnly(t *testing.T) {
 	}
 	if verify.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
 		t.Fatalf("scope audit verify env=%v", verify.Env)
+	}
+}
+
+func TestReleasePlanningAppScopeAuditIsReadOnly(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/audit-release-planning-app.yml")
+	if wf.Permissions["contents"] != "read" || len(wf.Permissions) != 1 {
+		t.Fatalf("planning scope audit workflow permissions=%v", wf.Permissions)
+	}
+	if wf.Concurrency.Group != "env-vault-release-planning-app-audit" || wf.Concurrency.CancelInProgress {
+		t.Fatalf("planning scope audit concurrency=%+v", wf.Concurrency)
+	}
+	scope := wf.Jobs["scope"]
+	if scope.Environment != "release-planning" || scope.TimeoutMinutes != 5 || scope.RunsOn != "ubuntu-latest" {
+		t.Fatalf("planning scope audit environment=%q timeout=%d runner=%q", scope.Environment, scope.TimeoutMinutes, scope.RunsOn)
+	}
+	checkout := usesStep(t, scope, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
+	if checkout.With["ref"] != "main" || checkout.With["persist-credentials"] != "false" {
+		t.Fatalf("planning scope audit checkout=%v", checkout.With)
+	}
+	token := namedStep(t, scope, "Mint read-only installation audit token")
+	if token.Uses != createAppTokenAction {
+		t.Fatalf("planning scope audit token action=%q", token.Uses)
+	}
+	for key, want := range map[string]string{
+		"client-id":                 "${{ vars.RELEASE_APP_CLIENT_ID }}",
+		"private-key":               "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
+		"owner":                     "${{ github.repository_owner }}",
+		"permission-administration": "read",
+		"permission-metadata":       "read",
+	} {
+		if got := token.With[key]; got != want {
+			t.Fatalf("planning scope audit token input %s=%q, want %q", key, got, want)
+		}
+	}
+	for _, forbidden := range []string{"repositories", "permission-actions", "permission-contents", "permission-issues", "permission-pull-requests", "skip-token-revoke"} {
+		if _, ok := token.With[forbidden]; ok {
+			t.Fatalf("planning scope audit unexpectedly sets %q", forbidden)
+		}
+	}
+	identity := namedStep(t, scope, "Require the exact release planning App identity")
+	if identity.Env["ACTUAL_APP_SLUG"] != "${{ steps.app-token.outputs.app-slug }}" || !strings.Contains(identity.Run, `"$ACTUAL_APP_SLUG" != "env-vault-release-planning"`) {
+		t.Fatalf("planning scope App identity step=%+v", identity)
+	}
+	settings := namedStep(t, scope, "Verify repository release settings and bypass policy")
+	if settings.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" || settings.Run != "scripts/release/verify-repository-release-settings.sh" {
+		t.Fatalf("planning scope repository settings step=%+v", settings)
+	}
+	verify := namedStep(t, scope, "Require a single-repository installation")
+	for _, snippet := range []string{
+		"installation/repositories",
+		"ildarbinanas-design/env-vault",
+		`${#repositories[@]}" != "1`,
+		"GITHUB_STEP_SUMMARY",
+		"metadata read and administration read",
+	} {
+		if !strings.Contains(verify.Run, snippet) {
+			t.Fatalf("planning scope audit missing %q", snippet)
+		}
+	}
+	if verify.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
+		t.Fatalf("planning scope audit verify env=%v", verify.Env)
+	}
+}
+
+func TestReleasePleaseWaitsForExactGreenMainAndDefersPublishing(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/release-please.yml")
+	if !slices.Equal(wf.On.WorkflowRun.Workflows, []string{"ci"}) ||
+		!slices.Equal(wf.On.WorkflowRun.Types, []string{"completed"}) ||
+		!slices.Equal(wf.On.WorkflowRun.Branches, []string{"main"}) {
+		t.Fatalf("release-please workflow_run=%+v", wf.On.WorkflowRun)
+	}
+	if len(wf.Permissions) != 4 || wf.Permissions["actions"] != "read" || wf.Permissions["contents"] != "read" || wf.Permissions["issues"] != "read" || wf.Permissions["pull-requests"] != "read" {
+		t.Fatalf("release-please permissions=%v", wf.Permissions)
+	}
+	if wf.Concurrency.Group != "env-vault-release" || wf.Concurrency.CancelInProgress || wf.Concurrency.Queue != "max" {
+		t.Fatalf("release-please concurrency=%+v", wf.Concurrency)
+	}
+
+	plan := wf.Jobs["plan"]
+	for _, snippet := range []string{
+		"workflow_run.conclusion == 'success'",
+		"workflow_run.event == 'push'",
+		"workflow_run.head_branch == 'main'",
+		"workflow_run.head_repository.full_name == github.repository",
+	} {
+		if !strings.Contains(plan.If, snippet) {
+			t.Fatalf("release-please job if=%q, missing %q", plan.If, snippet)
+		}
+	}
+	if plan.Environment != "release-planning" || plan.RunsOn != "ubuntu-latest" || plan.TimeoutMinutes != 10 {
+		t.Fatalf("release-please plan environment=%q runner=%q timeout=%d", plan.Environment, plan.RunsOn, plan.TimeoutMinutes)
+	}
+	for key, want := range map[string]string{
+		"publish":    "${{ steps.classify.outputs.publish }}",
+		"source_sha": "${{ steps.classify.outputs.source_sha }}",
+		"version":    "${{ steps.classify.outputs.version }}",
+	} {
+		if plan.Outputs[key] != want {
+			t.Fatalf("release-please output %s=%q, want %q", key, plan.Outputs[key], want)
+		}
+	}
+
+	checkout := namedStep(t, plan, "Check out the exact green main commit")
+	if checkout.Uses != "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" {
+		t.Fatalf("release-please checkout=%q", checkout.Uses)
+	}
+	for key, want := range map[string]string{
+		"ref":                 "${{ github.event.workflow_run.head_sha }}",
+		"fetch-depth":         "2",
+		"fetch-tags":          "true",
+		"persist-credentials": "false",
+	} {
+		if checkout.With[key] != want {
+			t.Fatalf("release-please checkout %s=%q, want %q", key, checkout.With[key], want)
+		}
+	}
+	classify := namedStep(t, plan, "Classify the exact green main commit")
+	if classify.ID != "classify" || classify.Env["EXPECTED_SHA"] != "${{ github.event.workflow_run.head_sha }}" {
+		t.Fatalf("release classifier=%+v", classify)
+	}
+	for _, snippet := range []string{"git rev-parse HEAD", `"$actual_sha" != "$EXPECTED_SHA"`, "classify-release-commit.sh", "GITHUB_OUTPUT"} {
+		if !strings.Contains(classify.Run, snippet) {
+			t.Fatalf("release classifier missing %q", snippet)
+		}
+	}
+	current := namedStep(t, plan, "Require the planning commit to remain current")
+	if current.ID != "current" || current.Env["GH_TOKEN"] != "${{ github.token }}" || current.Env["EXPECTED_SHA"] != "${{ github.event.workflow_run.head_sha }}" {
+		t.Fatalf("release planning current-head step=%+v", current)
+	}
+	for _, snippet := range []string{"git/ref/heads/main", "current=true", "current=false", "skipping stale planning run"} {
+		if !strings.Contains(current.Run, snippet) {
+			t.Fatalf("release planning current-head step missing %q", snippet)
+		}
+	}
+	authorize := namedStep(t, plan, "Verify generated release pull request authorization")
+	if authorize.ID != "authorize" || authorize.If != "steps.classify.outputs.publish == 'true'" || authorize.Env["GH_TOKEN"] != "${{ github.token }}" || authorize.Env["RELEASE_APP_SLUG"] != "${{ steps.release-token.outputs.app-slug }}" {
+		t.Fatalf("release authorization step=%+v", authorize)
+	}
+	for _, snippet := range []string{"verify-release-authorization.sh \"$VERSION\" \"$SOURCE_SHA\" prepublish", "pr_number=", "GITHUB_OUTPUT"} {
+		if !strings.Contains(authorize.Run, snippet) {
+			t.Fatalf("release authorization step missing %q", snippet)
+		}
+	}
+
+	token := namedStep(t, plan, "Mint repository-scoped release planning token")
+	if token.ID != "release-token" || token.Uses != createAppTokenAction {
+		t.Fatalf("release planning token=%+v", token)
+	}
+	if token.If != "steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'" {
+		t.Fatalf("release planning token if=%q", token.If)
+	}
+	for key, want := range map[string]string{
+		"client-id":                 "${{ vars.RELEASE_APP_CLIENT_ID }}",
+		"private-key":               "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
+		"owner":                     "${{ github.repository_owner }}",
+		"repositories":              "env-vault",
+		"permission-administration": "read",
+		"permission-contents":       "write",
+		"permission-issues":         "write",
+		"permission-pull-requests":  "write",
+	} {
+		if token.With[key] != want {
+			t.Fatalf("release planning token %s=%q, want %q", key, token.With[key], want)
+		}
+	}
+	identity := namedStep(t, plan, "Require the exact release planning App identity")
+	if identity.If != "steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'" || identity.Env["ACTUAL_APP_SLUG"] != "${{ steps.release-token.outputs.app-slug }}" || !strings.Contains(identity.Run, `"$ACTUAL_APP_SLUG" != "env-vault-release-planning"`) {
+		t.Fatalf("release planning App identity step=%+v", identity)
+	}
+	settings := namedStep(t, plan, "Verify repository release settings and bypass policy")
+	if settings.If != "steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'" || settings.Env["GH_TOKEN"] != "${{ steps.release-token.outputs.token }}" || settings.Run != "scripts/release/verify-repository-release-settings.sh" {
+		t.Fatalf("release repository settings step=%+v", settings)
+	}
+	labels := namedStep(t, plan, "Ensure release lifecycle labels")
+	if labels.If != "steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'" || labels.Env["GH_TOKEN"] != "${{ steps.release-token.outputs.token }}" || labels.Run != "scripts/release/ensure-release-labels.sh" {
+		t.Fatalf("release lifecycle labels step=%+v", labels)
+	}
+
+	releasePlease := namedStep(t, plan, "Create or update the reviewed release pull request")
+	if releasePlease.ID != "release-please" || releasePlease.Uses != releasePleaseAction {
+		t.Fatalf("release-please action=%+v", releasePlease)
+	}
+	if releasePlease.If != "steps.classify.outputs.publish != 'true' && steps.current.outputs.current == 'true'" {
+		t.Fatalf("release-please action if=%q", releasePlease.If)
+	}
+	for key, want := range map[string]string{
+		"token":               "${{ steps.release-token.outputs.token }}",
+		"target-branch":       "main",
+		"config-file":         "release-please-config.json",
+		"manifest-file":       ".release-please-manifest.json",
+		"skip-github-release": "true",
+	} {
+		if releasePlease.With[key] != want {
+			t.Fatalf("release-please action %s=%q, want %q", key, releasePlease.With[key], want)
+		}
+	}
+	proposal := namedStep(t, plan, "Verify the proposal is based on a green main commit")
+	if proposal.If != "steps.classify.outputs.publish != 'true' && steps.current.outputs.current == 'true'" || proposal.Env["GH_TOKEN"] != "${{ github.token }}" || proposal.Env["RELEASE_APP_SLUG"] != "${{ steps.release-token.outputs.app-slug }}" || proposal.Run != "scripts/release/verify-release-proposal.sh" {
+		t.Fatalf("release proposal verification step=%+v", proposal)
+	}
+
+	tag := namedStep(t, plan, "Create or verify the exact release tag")
+	if tag.If != "steps.classify.outputs.publish == 'true'" || tag.Env["GH_TOKEN"] != "${{ steps.release-token.outputs.token }}" || tag.Env["PR_NUMBER"] != "${{ steps.authorize.outputs.pr_number }}" {
+		t.Fatalf("release tag step=%+v", tag)
+	}
+	for _, snippet := range []string{
+		"resolve-tag-sha.sh",
+		`tag_status" == "4`,
+		"repos/${GITHUB_REPOSITORY}/git/refs",
+		`ref=refs/tags/${VERSION}`,
+		`sha=${SOURCE_SHA}`,
+		`"$verified_sha" != "$SOURCE_SHA"`,
+		`mark-release-pr-tagged.sh "$PR_NUMBER"`,
+	} {
+		if !strings.Contains(tag.Run, snippet) {
+			t.Fatalf("release tag step missing %q", snippet)
+		}
+	}
+	allSteps := fmt.Sprintf("%v", plan.Steps)
+	for _, forbidden := range []string{"gh release create", "--generate-notes", "TAP_APP_PRIVATE_KEY"} {
+		if strings.Contains(allSteps, forbidden) {
+			t.Fatalf("release planning workflow contains forbidden publication capability %q", forbidden)
+		}
+	}
+}
+
+func TestReleasePleaseConfigTracksDocsAndDefersGitHubRelease(t *testing.T) {
+	type releasePackage struct {
+		ReleaseType           string `json:"release-type"`
+		PackageName           string `json:"package-name"`
+		Component             string `json:"component"`
+		ChangelogPath         string `json:"changelog-path"`
+		SkipGitHubRelease     bool   `json:"skip-github-release"`
+		IncludeVInTag         bool   `json:"include-v-in-tag"`
+		IncludeComponentInTag bool   `json:"include-component-in-tag"`
+		PullRequestTitle      string `json:"pull-request-title-pattern"`
+		PullRequestHeader     string `json:"pull-request-header"`
+		PullRequestFooter     string `json:"pull-request-footer"`
+		ChangelogSections     []struct {
+			Type    string `json:"type"`
+			Section string `json:"section"`
+			Hidden  bool   `json:"hidden"`
+		} `json:"changelog-sections"`
+		ExtraFiles []struct {
+			Type string `json:"type"`
+			Path string `json:"path"`
+		} `json:"extra-files"`
+	}
+	var config struct {
+		Schema               string                    `json:"$schema"`
+		SeparatePullRequests bool                      `json:"separate-pull-requests"`
+		Packages             map[string]releasePackage `json:"packages"`
+	}
+	data, err := os.ReadFile("../release-please-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse release-please config: %v", err)
+	}
+	if len(config.Packages) != 1 {
+		t.Fatalf("release-please packages=%v", config.Packages)
+	}
+	if config.Schema != "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json" {
+		t.Fatalf("release-please schema=%q", config.Schema)
+	}
+	if !config.SeparatePullRequests {
+		t.Fatal("release-please must preserve its component branch and title by using separate pull requests")
+	}
+	pkg := config.Packages["."]
+	if pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" {
+		t.Fatalf("release package=%+v", pkg)
+	}
+	if !pkg.SkipGitHubRelease || !pkg.IncludeVInTag || pkg.IncludeComponentInTag {
+		t.Fatalf("release tag ownership config=%+v", pkg)
+	}
+	// Release Please renders ${version} without a v prefix and deliberately
+	// renders ${component} as empty when include-component-in-tag is false.
+	// Keep both the project name and v literal in this reviewed title contract
+	// while preserving the public vX.Y.Z tag format.
+	if pkg.PullRequestTitle != "chore${scope}: release env-vault v${version}" {
+		t.Fatalf("release PR title pattern=%q", pkg.PullRequestTitle)
+	}
+	renderedTitle := strings.NewReplacer(
+		"${scope}", "(main)",
+		"${version}", "0.0.8",
+	).Replace(pkg.PullRequestTitle)
+	if renderedTitle != "chore(main): release env-vault v0.0.8" {
+		t.Fatalf("rendered release PR title=%q", renderedTitle)
+	}
+	if pkg.PullRequestHeader != "Merging this reviewed pull request authorizes publication of this exact version after the merge commit passes main CI." {
+		t.Fatalf("release PR authorization header=%q", pkg.PullRequestHeader)
+	}
+	if pkg.PullRequestFooter != "This PR was generated with Release Please." {
+		t.Fatalf("release PR footer=%q", pkg.PullRequestFooter)
+	}
+	sectionTypes := make([]string, 0, len(pkg.ChangelogSections))
+	for _, section := range pkg.ChangelogSections {
+		if section.Section == "" || section.Hidden {
+			t.Fatalf("release changelog section=%+v, want visible named section", section)
+		}
+		sectionTypes = append(sectionTypes, section.Type)
+	}
+	if !slices.Equal(sectionTypes, []string{"feat", "fix", "build", "ci", "docs", "test", "refactor", "perf", "revert"}) {
+		t.Fatalf("release changelog types=%v", sectionTypes)
+	}
+	if len(pkg.ExtraFiles) != 1 || pkg.ExtraFiles[0].Type != "generic" || pkg.ExtraFiles[0].Path != "README.md" {
+		t.Fatalf("release extra files=%+v", pkg.ExtraFiles)
+	}
+
+	manifestData, err := os.ReadFile("../.release-please-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := make(map[string]string)
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("parse release manifest: %v", err)
+	}
+	version := manifest["."]
+	if len(manifest) != 1 || !regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`).MatchString(version) {
+		t.Fatalf("release manifest=%v", manifest)
+	}
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := fmt.Sprintf("Current stable release: `v%s`. <!-- x-release-please-version -->", version)
+	if strings.Count(string(readme), marker) != 1 {
+		t.Fatalf("README release marker count=%d", strings.Count(string(readme), marker))
+	}
+	changelog, err := os.ReadFile("../CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(changelog), fmt.Sprintf("## [%s]", version)) {
+		t.Fatal("CHANGELOG missing current published release")
 	}
 }
 
@@ -227,6 +587,9 @@ func TestSemverComparisonHandlesLargeNumericComponents(t *testing.T) {
 
 func TestManualReleaseInputAndGates(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	if len(wf.Permissions) != 4 || wf.Permissions["actions"] != "read" || wf.Permissions["contents"] != "read" || wf.Permissions["issues"] != "read" || wf.Permissions["pull-requests"] != "read" {
+		t.Fatalf("build-binaries workflow permissions=%v", wf.Permissions)
+	}
 	version, ok := wf.On.WorkflowDispatch.Inputs["version"]
 	if !ok {
 		t.Fatal("workflow_dispatch missing optional version input")
@@ -244,6 +607,16 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	}
 
 	metadata := wf.Jobs["metadata"]
+	checkout := usesStep(t, metadata, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
+	for key, want := range map[string]string{
+		"fetch-depth":         "2",
+		"fetch-tags":          "true",
+		"persist-credentials": "false",
+	} {
+		if checkout.With[key] != want {
+			t.Fatalf("release metadata checkout %s=%q, want %q", key, checkout.With[key], want)
+		}
+	}
 	resolve := namedStep(t, metadata, "Resolve build version and release mode")
 	for _, snippet := range []string{
 		"refs/heads/${DEFAULT_BRANCH}",
@@ -252,13 +625,28 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 		"publish=false",
 		"repair mode requires an explicit version",
 		"scripts/release/resolve-tag-sha.sh",
+		"publishing requires an existing exact tag created by release planning",
+		`semver-compare.sh "${version#v}" "0.0.7"`,
+		"get-release-state.sh",
+		"legacy repair requires an existing stable GitHub Release",
+		`compare/${source_sha}...${main_sha}`,
+		`legacy_release" != "true`,
 		"run_release",
 		"run_homebrew",
 		"source_sha",
+		"classify-release-commit.sh",
+		`verify-release-authorization.sh "$version" "$source_sha" tagged`,
+		"for attempt in {1..12}",
+		"sleep 5",
+		`"$authorized" != "true"`,
+		"tag source is not a deterministic release commit",
 	} {
 		if !strings.Contains(resolve.Run, snippet) {
 			t.Fatalf("metadata resolution missing %q", snippet)
 		}
+	}
+	if resolve.Env["RELEASE_APP_SLUG"] != "env-vault-release-planning" {
+		t.Fatalf("release metadata App slug=%q", resolve.Env["RELEASE_APP_SLUG"])
 	}
 	if !strings.Contains(resolve.Run, "^v(0|[1-9][0-9]*)") {
 		t.Fatal("metadata resolution missing strict semantic version gate")
@@ -276,25 +664,10 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 		}
 	}
 
-	createTag := namedStep(t, release, "Create release tag for manual dispatch")
-	if createTag.If != "github.event_name == 'workflow_dispatch' && needs.metadata.outputs.repair == 'none'" {
-		t.Fatalf("manual tag step if=%q", createTag.If)
-	}
-	for _, snippet := range []string{"SOURCE_SHA", "git/refs", "existing_sha", "--raw-field", "already points to the expected commit; no-op"} {
-		if !strings.Contains(createTag.Run, snippet) && createTag.Env[snippet] == "" {
-			t.Fatalf("manual tag step missing %q", snippet)
+	for _, step := range release.Steps {
+		if strings.Contains(step.Run, "git/refs") || strings.Contains(step.Name, "Create release tag") {
+			t.Fatalf("publisher must not create version tags during manual dispatch: %+v", step)
 		}
-	}
-	if createTag.Env["VERSION"] != "${{ needs.metadata.outputs.version }}" {
-		t.Fatalf("manual tag VERSION=%q", createTag.Env["VERSION"])
-	}
-	for _, snippet := range []string{`tag_status" == "0`, `tag_status" != "4`, `exit "$tag_status"`} {
-		if !strings.Contains(createTag.Run, snippet) {
-			t.Fatalf("manual tag error classification missing %q", snippet)
-		}
-	}
-	if strings.Contains(createTag.Run, "2>/dev/null") {
-		t.Fatal("manual tag creation must not hide resolver failures")
 	}
 	verifyTag := namedStep(t, release, "Verify release tag commit")
 	for _, snippet := range []string{"resolve-tag-sha.sh", `existing_sha" != "$SOURCE_SHA`, "exit 1"} {
@@ -380,6 +753,45 @@ func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 	}
 }
 
+func TestNewGitHubReleaseNotesComeFromVersionedChangelog(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	create := namedStep(t, wf.Jobs["release"], "Create GitHub Release")
+	for _, snippet := range []string{
+		"application/vnd.github.raw+json",
+		`contents/CHANGELOG.md?ref=${SOURCE_SHA}`,
+		`scripts/release/extract-changelog-section.sh "$VERSION" source-CHANGELOG.md > release-notes.md`,
+		`--title "$VERSION"`,
+		"--notes-file release-notes.md",
+	} {
+		if !strings.Contains(create.Run, snippet) {
+			t.Fatalf("release creation missing %q", snippet)
+		}
+	}
+	if create.Env["SOURCE_SHA"] != "${{ needs.metadata.outputs.source_sha }}" {
+		t.Fatalf("release notes source SHA=%q", create.Env["SOURCE_SHA"])
+	}
+	if strings.Contains(create.Run, "--generate-notes") {
+		t.Fatal("new releases must use the reviewed source CHANGELOG rather than regenerated notes")
+	}
+	for _, path := range []string{
+		"../scripts/release/classify-release-commit.sh",
+		"../scripts/release/ensure-release-labels.sh",
+		"../scripts/release/extract-changelog-section.sh",
+		"../scripts/release/mark-release-pr-tagged.sh",
+		"../scripts/release/verify-release-authorization.sh",
+		"../scripts/release/verify-release-proposal.sh",
+		"../scripts/release/verify-repository-release-settings.sh",
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
+			t.Fatalf("release helper is not executable: %s", path)
+		}
+	}
+}
+
 func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
 	for _, inputName := range []string{"source_sha", "version"} {
@@ -396,8 +808,47 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if !slices.Equal(ci.On.Push.Branches, []string{"main"}) {
 		t.Fatalf("CI push branches=%v, want main only to avoid duplicate PR branch runs", ci.On.Push.Branches)
 	}
+	if !slices.Equal(ci.On.PullRequest.Types, []string{"opened", "synchronize", "reopened"}) {
+		t.Fatalf("CI pull_request types=%v, want code-bearing events only", ci.On.PullRequest.Types)
+	}
+	if ci.Concurrency.Group != "ci-${{ github.event.pull_request.number || github.ref }}" || !ci.Concurrency.CancelInProgress {
+		t.Fatalf("CI concurrency=%+v, want stale full runs cancelled per pull request or branch", ci.Concurrency)
+	}
 	if len(ci.Jobs) != 2 {
-		t.Fatalf("CI has %d jobs, want reusable quality caller plus stable gate", len(ci.Jobs))
+		t.Fatalf("CI has %d jobs, want reusable quality caller and stable gate", len(ci.Jobs))
+	}
+	if _, ok := ci.Jobs["pr-title"]; ok {
+		t.Fatal("full CI must not own the metadata-only PR title check")
+	}
+
+	prTitleWorkflow := readWorkflow(t, "../.github/workflows/pr-title.yml")
+	if !slices.Equal(prTitleWorkflow.On.PullRequest.Types, []string{"opened", "synchronize", "reopened", "edited"}) {
+		t.Fatalf("PR-title pull_request types=%v, want code and metadata changes", prTitleWorkflow.On.PullRequest.Types)
+	}
+	if len(prTitleWorkflow.Jobs) != 1 {
+		t.Fatalf("PR-title workflow has %d jobs, want one lightweight check", len(prTitleWorkflow.Jobs))
+	}
+	if len(prTitleWorkflow.Permissions) != 0 {
+		t.Fatalf("PR-title workflow permissions=%v, want no token permissions", prTitleWorkflow.Permissions)
+	}
+	if prTitleWorkflow.Concurrency.Group != "pr-title-${{ github.event.pull_request.number }}" || !prTitleWorkflow.Concurrency.CancelInProgress {
+		t.Fatalf("PR-title concurrency=%+v", prTitleWorkflow.Concurrency)
+	}
+	prTitle := prTitleWorkflow.Jobs["pr-title"]
+	if prTitle.RunsOn != "ubuntu-latest" {
+		t.Fatalf("PR title runner=%q", prTitle.RunsOn)
+	}
+	titleCheck := namedStep(t, prTitle, "Require a Conventional Commit pull request title")
+	if titleCheck.Uses != "" {
+		t.Fatalf("PR title check uses external action %q, want shell-only validation", titleCheck.Uses)
+	}
+	if len(titleCheck.Env) != 1 || titleCheck.Env["PR_TITLE"] != "${{ github.event.pull_request.title }}" {
+		t.Fatalf("PR title check env=%v", titleCheck.Env)
+	}
+	for _, snippet := range []string{"Conventional Commits", "feat|fix|perf|refactor|build|ci|docs|test|chore|revert"} {
+		if !strings.Contains(titleCheck.Run, snippet) {
+			t.Fatalf("PR title check missing %q", snippet)
+		}
 	}
 	ciQuality := ci.Jobs["quality"]
 	if ciQuality.Uses != "./.github/workflows/reusable-quality.yml" {
@@ -414,7 +865,7 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 		t.Fatalf("quality gate if=%q needs=%v runner=%q", gate.If, gate.Needs, gate.RunsOn)
 	}
 	require := namedStep(t, gate, "Require every reusable quality job")
-	if require.Env["QUALITY_RESULT"] != "${{ needs.quality.result }}" || !strings.Contains(require.Run, `"$QUALITY_RESULT" != "success"`) {
+	if len(require.Env) != 1 || require.Env["QUALITY_RESULT"] != "${{ needs.quality.result }}" || !strings.Contains(require.Run, `"$QUALITY_RESULT" != "success"`) || strings.Contains(require.Run, "PR_TITLE_RESULT") {
 		t.Fatalf("quality gate step env=%v run=%q", require.Env, require.Run)
 	}
 
@@ -459,7 +910,7 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 	if len(wantPlatforms) != 0 {
 		t.Fatalf("license matrix missing native platforms: %v", wantPlatforms)
 	}
-	setup := usesStep(t, license, "actions/setup-go@v6")
+	setup := usesStep(t, license, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
 		t.Fatalf("license toolchain inputs=%v, want exact project Go version", setup.With)
 	}
@@ -491,11 +942,11 @@ func TestReusableQualityRequiresTidyVerifiedModules(t *testing.T) {
 	if module.RunsOn != "ubuntu-latest" || module.Env["GOTOOLCHAIN"] != "local" {
 		t.Fatalf("module job runner=%q env=%v", module.RunsOn, module.Env)
 	}
-	checkout := usesStep(t, module, "actions/checkout@v7")
+	checkout := usesStep(t, module, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
 		t.Fatalf("module checkout ref=%q", checkout.With["ref"])
 	}
-	setup := usesStep(t, module, "actions/setup-go@v6")
+	setup := usesStep(t, module, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
 		t.Fatalf("module setup-go inputs=%v", setup.With)
 	}
@@ -559,16 +1010,26 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 		t.Fatalf("e2e matrix missing native targets: %v", wantTargets)
 	}
 
-	checkout := usesStep(t, e2e, "actions/checkout@v7")
+	checkout := usesStep(t, e2e, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
 		t.Fatalf("e2e checkout ref=%q", checkout.With["ref"])
 	}
-	setup := usesStep(t, e2e, "actions/setup-go@v6")
+	setup := usesStep(t, e2e, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
 		t.Fatalf("e2e setup-go inputs=%v, want project Go baseline", setup.With)
 	}
+	nativeConfig := namedStep(t, e2e, "Run native platform config tests")
+	if nativeConfig.Run != "go test ./internal/config -count=1" || nativeConfig.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
+		t.Fatalf("native platform config test=%+v", nativeConfig)
+	}
+	windowsConfigBurnIn := namedStep(t, e2e, "Burn in Windows config concurrency")
+	if windowsConfigBurnIn.If != "matrix.goos == 'windows'" ||
+		windowsConfigBurnIn.Run != "go test ./internal/config -run '^TestConcurrentSavePublishesOnlyCompleteConfigs$' -count=10" ||
+		windowsConfigBurnIn.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
+		t.Fatalf("Windows config concurrency burn-in=%+v", windowsConfigBurnIn)
+	}
 	download := namedStep(t, e2e, "Download release-like artifact")
-	if download.Uses != "actions/download-artifact@v8" {
+	if download.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
 		t.Fatalf("e2e download action=%q", download.Uses)
 	}
 	if download.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" || download.With["path"] != "dist" {
@@ -605,7 +1066,7 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	}
 
 	upload := namedStep(t, e2e, "Upload E2E reports")
-	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@v7" {
+	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
 		t.Fatalf("e2e upload if=%q uses=%q", upload.If, upload.Uses)
 	}
 	for key, want := range map[string]string{
@@ -645,16 +1106,16 @@ func TestReusableQualityE2EGateFailsClosed(t *testing.T) {
 	if gate.RunsOn != "ubuntu-latest" || gate.TimeoutMinutes != 10 || gate.Env["GOTOOLCHAIN"] != "local" {
 		t.Fatalf("e2e gate runner=%q timeout=%d env=%v", gate.RunsOn, gate.TimeoutMinutes, gate.Env)
 	}
-	checkout := usesStep(t, gate, "actions/checkout@v7")
+	checkout := usesStep(t, gate, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
 		t.Fatalf("e2e gate checkout ref=%q", checkout.With["ref"])
 	}
-	setup := usesStep(t, gate, "actions/setup-go@v6")
+	setup := usesStep(t, gate, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
 		t.Fatalf("e2e gate setup-go inputs=%v", setup.With)
 	}
 	download := namedStep(t, gate, "Download E2E report artifacts")
-	if download.Uses != "actions/download-artifact@v8" {
+	if download.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
 		t.Fatalf("e2e gate download action=%q", download.Uses)
 	}
 	for key, want := range map[string]string{
@@ -686,7 +1147,7 @@ func TestReusableQualityE2EGateFailsClosed(t *testing.T) {
 		}
 	}
 	upload := namedStep(t, gate, "Upload matrix validation")
-	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@v7" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
+	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
 		t.Fatalf("matrix validation upload=%+v", upload)
 	}
 }
@@ -703,7 +1164,7 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 		t.Fatalf("compare GOTOOLCHAIN=%q", compare.Env["GOTOOLCHAIN"])
 	}
 	candidateCheckout := namedStep(t, compare, "Check out candidate source")
-	if candidateCheckout.Uses != "actions/checkout@v7" || candidateCheckout.With["ref"] != "${{ inputs.source_sha }}" {
+	if candidateCheckout.Uses != "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" || candidateCheckout.With["ref"] != "${{ inputs.source_sha }}" {
 		t.Fatalf("candidate checkout=%+v", candidateCheckout)
 	}
 	baselineCheckout := namedStep(t, compare, "Check out canonical baseline source")
@@ -717,7 +1178,7 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 			t.Fatalf("baseline checkout %s=%q, want %q", key, baselineCheckout.With[key], want)
 		}
 	}
-	setup := usesStep(t, compare, "actions/setup-go@v6")
+	setup := usesStep(t, compare, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" {
 		t.Fatalf("compare setup-go inputs=%v", setup.With)
 	}
@@ -735,7 +1196,7 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 		t.Fatalf("candidate report download=%+v", candidateDownload)
 	}
 	baselineDownload := namedStep(t, compare, "Download canonical baseline E2E reports")
-	if !baselineDownload.ContinueOnError || baselineDownload.Uses != "actions/download-artifact@v8" {
+	if !baselineDownload.ContinueOnError || baselineDownload.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
 		t.Fatalf("baseline report download=%+v", baselineDownload)
 	}
 	for key, want := range map[string]string{
@@ -842,7 +1303,7 @@ func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
 		t.Fatalf("comparison summary=%+v", summary)
 	}
 	upload := namedStep(t, compare, "Upload baseline comparison")
-	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@v7" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
+	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
 		t.Fatalf("comparison upload=%+v", upload)
 	}
 }
@@ -972,7 +1433,7 @@ func TestHomebrewPublishesThroughScopedAppPRAndAwaitsExactCI(t *testing.T) {
 	}
 
 	token := namedStep(t, homebrew, "Mint scoped Homebrew App token")
-	if token.Uses != "actions/create-github-app-token@v3" {
+	if token.Uses != createAppTokenAction {
 		t.Fatalf("Homebrew token action=%q", token.Uses)
 	}
 	for key, want := range map[string]string{
@@ -1047,7 +1508,7 @@ func TestRepairBuildsUseTheResolvedTagCommit(t *testing.T) {
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
 	for _, jobName := range []string{"module", "test", "race", "smoke", "license", "build", "e2e", "e2e-gate", "e2e-compare"} {
 		job := reusable.Jobs[jobName]
-		checkout := usesStep(t, job, "actions/checkout@v7")
+		checkout := usesStep(t, job, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 		if checkout.With["ref"] != "${{ inputs.source_sha }}" {
 			t.Fatalf("%s checkout ref=%q", jobName, checkout.With["ref"])
 		}
@@ -1210,7 +1671,7 @@ func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
 	}
 
 	setupGo := namedStep(t, supply, "Set up Go for safe extraction")
-	if setupGo.Uses != "actions/setup-go@v6" || setupGo.With["go-version-file"] != "go.mod" {
+	if setupGo.Uses != "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16" || setupGo.With["go-version-file"] != "go.mod" {
 		t.Fatalf("safe extraction Go setup uses=%q with=%v", setupGo.Uses, setupGo.With)
 	}
 	extract := namedStep(t, supply, "Safely extract packages for SBOM")
@@ -1224,7 +1685,7 @@ func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
 	}
 
 	sbom := namedStep(t, supply, "Generate SPDX SBOM")
-	if sbom.Uses != "anchore/sbom-action@v0" {
+	if sbom.Uses != "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610" {
 		t.Fatalf("SBOM action=%q", sbom.Uses)
 	}
 	for key, want := range map[string]string{
@@ -1240,7 +1701,7 @@ func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
 		}
 	}
 	upload := namedStep(t, supply, "Upload SPDX SBOM workflow artifact")
-	if upload.Uses != "actions/upload-artifact@v7" || upload.With["retention-days"] != "14" {
+	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["retention-days"] != "14" {
 		t.Fatalf("SBOM artifact upload uses=%q with=%v", upload.Uses, upload.With)
 	}
 	if !strings.Contains(upload.With["name"], "github.run_attempt") {
@@ -1256,7 +1717,7 @@ func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
 	}
 	for _, stepName := range []string{"Attest build provenance", "Attest SPDX SBOM"} {
 		step := namedStep(t, supply, stepName)
-		if step.Uses != "actions/attest@v4" {
+		if step.Uses != "actions/attest@a1948c3f048ba23858d222213b7c278aabede763" {
 			t.Fatalf("%s uses=%q", stepName, step.Uses)
 		}
 		if got := strings.Fields(step.With["subject-path"]); !slices.Equal(got, wantSubjects) {
@@ -1298,7 +1759,7 @@ func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
 	build := reusable.Jobs["build"]
 	upload := namedStep(t, build, "Upload artifact")
-	if upload.Uses != "actions/upload-artifact@v7" || upload.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" {
+	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" {
 		t.Fatalf("build artifact upload uses=%q with=%v", upload.Uses, upload.With)
 	}
 	smoke := reusable.Jobs["native-smoke"]
@@ -1365,7 +1826,7 @@ func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
 	if !slices.Contains(release.Needs, "quality") || !strings.Contains(release.If, "needs.quality.result == 'success'") {
 		t.Fatalf("release is not gated by reusable quality: needs=%v if=%q", release.Needs, release.If)
 	}
-	download := usesStep(t, release, "actions/download-artifact@v8")
+	download := usesStep(t, release, "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
 	if download.With["path"] != "dist" || download.With["merge-multiple"] != "true" {
 		t.Fatalf("release artifact download with=%v", download.With)
 	}

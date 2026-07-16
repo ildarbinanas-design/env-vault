@@ -19,7 +19,7 @@ const (
 )
 
 // TransactionFunc mutates a loaded config and reports whether it changed.
-// Returning changed=false skips the atomic save.
+// Returning changed=false skips the same-directory replacement save.
 type TransactionFunc func(*File) (changed bool, err error)
 
 // Transaction serializes one complete config read-modify-write operation.
@@ -37,8 +37,8 @@ func Transaction(ctx context.Context, path string, mutate TransactionFunc) (resu
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return apperrors.ConfigInvalid("config", "Unable to create config directory", "Check directory permissions", err)
 	}
-	if err := validateSaveTarget(path); err != nil {
-		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
+	if err := validateConfigTarget(path); err != nil {
+		return configTargetValidationError(err)
 	}
 
 	lockPath := transactionLockPath(path)
@@ -70,8 +70,8 @@ func Transaction(ctx context.Context, path string, mutate TransactionFunc) (resu
 	}
 	// Recheck the config path under the lock before Load so an existing
 	// symlink or non-regular target is rejected before it can be read.
-	if err := validateSaveTarget(path); err != nil {
-		return apperrors.ConfigInvalid("config", "Unsafe config target", "Use a regular config file, not a symlink", err)
+	if err := validateConfigTarget(path); err != nil {
+		return configTargetValidationError(err)
 	}
 
 	cfg, err := Load(path)

@@ -12,6 +12,11 @@ The canonical scenario manifest is [`e2e/scenarios.json`](../e2e/scenarios.json)
 It is the machine-readable source for
 `feature/requirement -> scenario ID -> Go test -> platforms -> result`.
 All listed scenarios are critical. A missing or unexpected skip fails the job.
+The manifest retains the legacy `atomic` scenario ID and requirement wording so
+the post-migration suite hash stays identical to the reviewed Go 1.22 baseline.
+On Windows those scenarios assert complete readable YAML, preservation of the
+prior file before replacement, and removal of temporary siblings; they do not
+claim an operating-system atomicity guarantee that Go does not provide.
 The suite hash covers the scenario/harness sources and the semantic runner,
 normalization, report validation, and same-source comparison logic. In the
 isolated reporting-tool file only the two version-string values are
@@ -51,6 +56,22 @@ process tree. Concurrency and signal tests use readiness files and bounded
 polling, not sleeps. Tests do not run in parallel, and burn-in uses shuffled
 order without rerunning failed tests. The runner records and requires three
 distinct full-suite scenario-order seeds and five distinct locking-suite seeds.
+Before the binary suite, every native matrix job runs the config package once;
+Windows additionally runs the focused concurrent save/read test ten times in
+one process as a sequential burn-in. Any failed repetition fails the job.
+
+On Windows, the coverage-instrumented binary also exercises the native config
+replacement retry deterministically. Only when the insecure test backend's
+full gate, the E2E child marker, and `GOCOVERDIR` are all present, the runtime
+confirms that the executable was built with `go build -cover`, and the
+store/config paths remain inside the isolated scenario root, replacement of an
+existing regular test config returns one synthetic
+`ERROR_SHARING_VIOLATION` before calling the unchanged `os.Rename`. Existing
+profile/concurrency assertions therefore fail if the bounded retry stops
+working. Release-like binaries and all real keyring backends cannot activate
+this testability hook. A process that supplies every E2E request gate without
+the coverage build identity fails closed instead of silently bypassing the
+exercise, so the instrumented Windows job cannot pass if detection regresses.
 
 ## Supported platform matrix
 
@@ -99,7 +120,7 @@ skip instead of silently dropping the platform.
 | Exact `ENV_NAME` conflict | `PROFILE_COLLISIONS_PERSISTENCE` | `TestE2E/PROFILE_COLLISIONS_PERSISTENCE` | P5 |
 | Case-insensitive `ENV_NAME` collision | `PROFILE_COLLISIONS_PERSISTENCE` | `TestE2E/PROFILE_COLLISIONS_PERSISTENCE` | P5 |
 | Persistence across separate processes | `PROFILE_COLLISIONS_PERSISTENCE` | `TestE2E/PROFILE_COLLISIONS_PERSISTENCE` | P5 |
-| Atomic save and readable YAML | `PROFILE_ATOMIC_PERMISSIONS` | `TestE2E/PROFILE_ATOMIC_PERMISSIONS` | P5 |
+| Same-directory replacement and readable YAML | `PROFILE_ATOMIC_PERMISSIONS` | `TestE2E/PROFILE_ATOMIC_PERMISSIONS` | P5 |
 | Private config/lock permissions and no stale temp files | `PROFILE_ATOMIC_PERMISSIONS` | `TestE2E/PROFILE_ATOMIC_PERMISSIONS` | P5 |
 | Final config and lock target symlink defenses | `PROFILE_SYMLINK_REJECTED` | `TestE2E/PROFILE_SYMLINK_REJECTED` | Unix + expected Windows skip |
 | Exec with profile | `EXEC_PROFILE_DIRECT_MULTI` | `TestE2E/EXEC_PROFILE_DIRECT_MULTI` | P5 |
@@ -122,7 +143,7 @@ skip instead of silently dropping the platform.
 | Dry exec does not launch the child | `DRY_RUN_NO_SIDE_EFFECTS` | `TestE2E/DRY_RUN_NO_SIDE_EFFECTS` | P5 |
 | Dry JSON and JSONL metadata contain no values | `DRY_RUN_NO_SIDE_EFFECTS` | `TestE2E/DRY_RUN_NO_SIDE_EFFECTS` | P5 |
 | Dry delete/add/remove preserve existing store/config digests and public state | `DRY_RUN_NO_SIDE_EFFECTS` | `TestE2E/DRY_RUN_NO_SIDE_EFFECTS` | P5 |
-| Dry operations create no lock or atomic temporary file | `DRY_RUN_NO_SIDE_EFFECTS` | `TestE2E/DRY_RUN_NO_SIDE_EFFECTS` | P5 |
+| Dry operations create no lock or replacement temporary file | `DRY_RUN_NO_SIDE_EFFECTS` | `TestE2E/DRY_RUN_NO_SIDE_EFFECTS` | P5 |
 | JSON envelope and schema fields | `OUTPUT_JSON_JSONL_FILE` | `TestE2E/OUTPUT_JSON_JSONL_FILE` | P5 |
 | Exactly one JSONL event and CRLF normalization | `OUTPUT_JSON_JSONL_FILE` | `TestE2E/OUTPUT_JSON_JSONL_FILE` | P5 |
 | `--output`, `--quiet`, and private output permissions | `OUTPUT_JSON_JSONL_FILE` | `TestE2E/OUTPUT_JSON_JSONL_FILE` | P5 |
@@ -134,9 +155,9 @@ skip instead of silently dropping the platform.
 | Backend unavailable/unsupported warning in text and JSON | `DOCTOR_BACKENDS` | `TestE2E/DOCTOR_BACKENDS` | P5 |
 | Incomplete explicit test backend returns `BACKEND_UNAVAILABLE` exit 4 with no native fallback | `DOCTOR_BACKENDS` | `TestE2E/DOCTOR_BACKENDS` | P5 |
 | Concurrent profile mutations from separate processes | `CONCURRENCY_PROFILE_MUTATIONS` | `TestE2E/CONCURRENCY_PROFILE_MUTATIONS` | P5 |
-| No lost updates, valid YAML, no stale atomic files | `CONCURRENCY_PROFILE_MUTATIONS` | `TestE2E/CONCURRENCY_PROFILE_MUTATIONS` | P5 |
+| No lost updates, valid YAML, no stale replacement files | `CONCURRENCY_PROFILE_MUTATIONS` | `TestE2E/CONCURRENCY_PROFILE_MUTATIONS` | P5 |
 | Bounded lock timeout and `CONFIG_LOCKED` | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
-| Killed active writer before atomic rename preserves the prior YAML | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
+| Killed active writer before replacement preserves the prior YAML | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
 | Lock release after process death permits recovery | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
 | Unique sentinel per scenario and no output/artifact leakage | all scenarios | `TestE2E/*` plus runner leak gate | P5 |
 | Real user keyrings remain untouched | all scenarios | isolated triple-gated harness | P5 |

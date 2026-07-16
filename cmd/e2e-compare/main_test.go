@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -169,8 +170,14 @@ func TestRealMainWritesReportBeforeReturningFailure(t *testing.T) {
 		t.Fatalf("persisted comparison status=%q", report.Status)
 	}
 	info, err := os.Stat(filepath.Join(opts.output, "comparison.md"))
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil {
 		t.Fatalf("comparison markdown info=%v err=%v", info, err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("comparison markdown mode=%v, want regular file", info.Mode())
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("comparison markdown permissions=%#o, want 0600", info.Mode().Perm())
 	}
 }
 

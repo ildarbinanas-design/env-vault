@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Optional release version (vX.Y.Z). Leave blank for a build-only run."
+        description: "Existing authorized release tag (vX.Y.Z) to retry. Leave blank for build-only; new versions come from Release Please."
         required: false
         default: ""
         type: string
@@ -23,7 +23,10 @@ on:
       - "v*"
 
 permissions:
+  actions: read
   contents: read
+  issues: read
+  pull-requests: read
 
 concurrency:
   group: env-vault-release
@@ -42,13 +45,18 @@ jobs:
       run_release: ${{ steps.resolve.outputs.run_release }}
       run_homebrew: ${{ steps.resolve.outputs.run_homebrew }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+          fetch-tags: true
+          persist-credentials: "false"
 
       - id: resolve
         name: Resolve build version and release mode
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_SLUG: env-vault-release-planning
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_REPAIR: ${{ inputs.repair }}
@@ -87,8 +95,80 @@ jobs:
             exit 1
           fi
           source_sha="$GITHUB_SHA"
-          if [[ "$publish" == "true" && ( "$EVENT_NAME" == "push" || "$repair" != "none" ) ]]; then
+          if [[ "$publish" == "true" ]]; then
+            set +e
             source_sha="$(scripts/release/resolve-tag-sha.sh "$version")"
+            tag_status=$?
+            set -e
+            if [[ "$tag_status" != "0" ]]; then
+              echo "publishing requires an existing exact tag created by release planning: ${version}" >&2
+              exit "$tag_status"
+            fi
+            if [[ "$EVENT_NAME" == "push" ]]; then
+              actual_sha="$(git rev-parse HEAD)"
+              if [[ "$actual_sha" != "$source_sha" ]]; then
+                echo "tag checkout ${actual_sha} does not match resolved source ${source_sha}" >&2
+                exit 1
+              fi
+            fi
+            legacy_release=false
+            if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+              legacy_comparison="$(scripts/release/semver-compare.sh "${version#v}" "0.0.7")"
+              if [[ "$legacy_comparison" != "1" ]]; then
+                legacy_state="$(scripts/release/get-release-state.sh "$version")"
+                if [[ "$legacy_state" != "${version}|false|false" ]]; then
+                  echo "legacy repair requires an existing stable GitHub Release: ${version}" >&2
+                  exit 1
+                fi
+                main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
+                legacy_ancestry="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${source_sha}...${main_sha}" --jq '.status')"
+                if [[ "$legacy_ancestry" != "ahead" && "$legacy_ancestry" != "identical" ]]; then
+                  echo "legacy release tag is not contained in ${DEFAULT_BRANCH}: ${version}" >&2
+                  exit 1
+                fi
+                legacy_release=true
+              fi
+            fi
+            if [[ "$legacy_release" != "true" ]]; then
+              classification="$(mktemp "${RUNNER_TEMP:-/tmp}/env-vault-release-classification.XXXXXX")"
+              trap 'rm -f -- "$classification"' EXIT
+              scripts/release/classify-release-commit.sh "$source_sha" > "$classification"
+              grep -Fqx 'publish=true' "$classification" || {
+                echo "tag source is not a deterministic release commit" >&2
+                exit 1
+              }
+              grep -Fqx "source_sha=${source_sha}" "$classification" || {
+                echo "release classifier source mismatch" >&2
+                exit 1
+              }
+              grep -Fqx "version=${version}" "$classification" || {
+                echo "release classifier version mismatch" >&2
+                exit 1
+              }
+              [[ "$(wc -l < "$classification" | tr -d '[:space:]')" == "3" ]] || {
+                echo "release classifier returned unexpected output" >&2
+                exit 1
+              }
+              if [[ "$EVENT_NAME" == "push" ]]; then
+                authorized=false
+                for attempt in {1..12}; do
+                  if scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null 2>&1; then
+                    authorized=true
+                    break
+                  fi
+                  if [[ "$attempt" != "12" ]]; then
+                    sleep 5
+                  fi
+                done
+                if [[ "$authorized" != "true" ]]; then
+                  scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged
+                  echo "release pull request did not reach tagged-only state within 60 seconds" >&2
+                  exit 1
+                fi
+              else
+                scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null
+              fi
+            fi
           fi
           run_build=true
           run_release=false
@@ -130,7 +210,7 @@ jobs:
     needs: [metadata]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Guard Homebrew version monotonicity
         env:
@@ -173,48 +253,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
 
-      - name: Create release tag for manual dispatch
-        if: github.event_name == 'workflow_dispatch' && needs.metadata.outputs.repair == 'none'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          set +e
-          existing_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
-          tag_status=$?
-          set -e
-          if [[ "$tag_status" == "0" ]]; then
-            if [[ "$existing_sha" != "$SOURCE_SHA" ]]; then
-              echo "tag ${VERSION} points to ${existing_sha}, expected ${SOURCE_SHA}" >&2
-              exit 1
-            fi
-            echo "tag ${VERSION} already points to the expected commit; no-op"
-            exit 0
-          fi
-          if [[ "$tag_status" != "4" ]]; then
-            echo "failed to resolve existing tag ${VERSION}" >&2
-            exit "$tag_status"
-          fi
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/git/refs" \
-            --raw-field "ref=refs/tags/${VERSION}" \
-            --raw-field "sha=${SOURCE_SHA}" \
-            --silent
-
       - name: Verify release tag commit
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.metadata.outputs.version }}
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+          VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
           existing_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
@@ -226,6 +276,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
@@ -240,10 +291,15 @@ jobs:
             fi
             echo "release ${VERSION} already exists; reconciling assets"
           elif [[ "$release_status" == "4" ]]; then
+            gh api \
+              --header 'Accept: application/vnd.github.raw+json' \
+              "repos/${GITHUB_REPOSITORY}/contents/CHANGELOG.md?ref=${SOURCE_SHA}" > source-CHANGELOG.md
+            scripts/release/extract-changelog-section.sh "$VERSION" source-CHANGELOG.md > release-notes.md
             gh release create "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
-              --generate-notes
+              --title "$VERSION" \
+              --notes-file release-notes.md
           else
             echo "failed to query existing release ${VERSION}" >&2
             exit "$release_status"
@@ -273,7 +329,7 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Download canonical release assets
         env:
@@ -329,7 +385,7 @@ jobs:
 
       - name: Set up Go for safe extraction
         if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
@@ -339,7 +395,7 @@ jobs:
 
       - name: Generate SPDX SBOM
         if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           path: sbom-root
           format: spdx-json
@@ -350,7 +406,7 @@ jobs:
 
       - name: Upload SPDX SBOM workflow artifact
         if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-sbom-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}
           path: env-vault-sbom.spdx.json
@@ -359,7 +415,7 @@ jobs:
 
       - name: Attest build provenance
         if: steps.attestation-state.outputs.create_provenance == 'true'
-        uses: actions/attest@v4
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: |
             release-dist/env-vault-linux-amd64.tar.gz
@@ -370,7 +426,7 @@ jobs:
 
       - name: Attest SPDX SBOM
         if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/attest@v4
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: |
             release-dist/env-vault-linux-amd64.tar.gz
@@ -414,7 +470,7 @@ jobs:
       tap_sha: ${{ steps.tap-result.outputs.tap_sha }}
       tap_ci_url: ${{ steps.tap-push-ci.outputs.run_url }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Download and verify published assets
         env:
@@ -431,7 +487,7 @@ jobs:
 
       - id: tap-token
         name: Mint scoped Homebrew App token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -586,7 +642,7 @@ jobs:
       contents: read
       attestations: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Verify release and Homebrew health
         env:

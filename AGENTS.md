@@ -15,6 +15,10 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - Mandatory tests are required once behavior beyond the local version placeholder is implemented.
 - Every implementation run must update an evidence bundle with commands, scope, checks, risks, and claim statuses.
 - Do not commit, push, tag, release, create a remote, or publish without explicit approval.
+  Merging a generated Release Please pull request is explicit approval only for
+  the exact version and source SHA recorded by that reviewed PR; the automated
+  release workflow may then create that exact tag and run the existing
+  fail-closed publisher. It is not approval for any other version or ref.
 
 ## Project Scope
 
