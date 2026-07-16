@@ -30,10 +30,12 @@ const (
 	ClassificationSchemaID = "env-vault.attempt-classification.v1"
 	LegacyQuerySchemaID    = "env-vault.legacy-rebuild-query.v1"
 
-	maxContractBytes = 1 << 20
-	blockedVersion   = "v0.0.8"
-	blockedTagSHA    = "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d"
-	versionPattern   = `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
+	maxContractBytes  = 1 << 20
+	blockedVersion008 = "v0.0.8"
+	blockedTagSHA008  = "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d"
+	blockedVersion009 = "v0.0.9"
+	blockedTagSHA009  = "b8b652dcff41d5f2ab4a9f14bed65ddf1f866c65"
+	versionPattern    = `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
 )
 
 var (
@@ -516,12 +518,21 @@ func validateNaming(n Naming) error {
 }
 
 func validateBlockedVersions(blocked []BlockedVersion) error {
-	if len(blocked) != 1 {
-		return fmt.Errorf("entry count=%d, want 1", len(blocked))
+	want := []struct {
+		version string
+		sha     string
+	}{
+		{blockedVersion008, blockedTagSHA008},
+		{blockedVersion009, blockedTagSHA009},
 	}
-	item := blocked[0]
-	if item.Version != blockedVersion || item.TagSHA != blockedTagSHA || !item.TagMustRemain || !item.GitHubReleaseMustNotExist || item.ReasonCode != "failed_tag_without_release" {
-		return errors.New("v0.0.8 must remain pinned to its failed tag without a GitHub Release")
+	if len(blocked) != len(want) {
+		return fmt.Errorf("entry count=%d, want %d", len(blocked), len(want))
+	}
+	for index, expected := range want {
+		item := blocked[index]
+		if item.Version != expected.version || item.TagSHA != expected.sha || !item.TagMustRemain || !item.GitHubReleaseMustNotExist || item.ReasonCode != "failed_tag_without_release" {
+			return fmt.Errorf("%s must remain pinned to its failed tag without a GitHub Release", expected.version)
+		}
 	}
 	return nil
 }

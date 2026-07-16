@@ -280,8 +280,11 @@ gh workflow run legacy-rebuild.yml \
 
 `v0.0.8` is a permanently failed immutable tag at
 `1d094f9e4a3e0343e713d4126f6118a8a9e98e2d`. It must remain present and must
-not acquire a GitHub Release. It is blocked from steady-state publication and
-from the legacy diagnostic selector.
+not acquire a GitHub Release. `v0.0.9` is likewise preserved at
+`b8b652dcff41d5f2ab4a9f14bed65ddf1f866c65` after its publisher exposed a
+deterministic orchestration defect before any publication or attestation.
+Both are blocked from steady-state publication and from the legacy diagnostic
+selector.
 
 Historical published releases are immutable. If one needs correction, publish
 a higher patch version; never rebuild historical bytes for publication or
@@ -311,7 +314,8 @@ A release is healthy only when one evidence tuple proves all of the following:
 8. A pre-tag settings proof binds the exact repository merge policy, three
    rulesets, present empty bypass lists, source/version, and planning run
    attempt; health and durable evidence replay its self-digest offline.
-9. Release health passed and `v0.0.8` still has no GitHub Release.
+9. Release health passed and every blocked failed tag, currently `v0.0.8` and
+   `v0.0.9`, still has no GitHub Release.
 
 The Release asset set is always exactly:
 

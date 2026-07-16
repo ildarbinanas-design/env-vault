@@ -548,7 +548,7 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 
 	metadata := wf.Jobs["metadata"]
 	resolve := namedStep(t, metadata, "Resolve exact tag, source, CI attempt, and repair stage")
-	if !containsAll(resolve.Run, "v0.0.8", "outside the steady-state publisher", "actions/workflows/ci.yml/runs", "run_attempt", "release-assets|homebrew|health") {
+	if !containsAll(resolve.Run, "version_policy.blocked_versions", "outside the steady-state publisher", "actions/workflows/ci.yml/runs", "run_attempt", "release-assets|homebrew|health") {
 		t.Fatalf("publisher metadata does not bind immutable tag/current CI attempt/repair policy")
 	}
 	for _, output := range []string{"version", "source_sha", "ci_run_id", "ci_run_attempt", "planning_run_id", "planning_run_attempt", "settings_proof_artifact_id", "settings_proof_artifact_name", "run_promotion", "run_release", "run_homebrew"} {
@@ -577,8 +577,15 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 		t.Fatalf("native artifacts are not tied to CI attempt: %v", nativeAssets.With)
 	}
 	verify := namedStep(t, promotion, "Verify promotion and stage the exact publisher bundle")
-	if !containsAll(verify.Run, "releasecheck promotion verify", "--run-attempt", "verified publisher bundle", "11") {
+	if !containsAll(verify.Run,
+		"releasecheck promotion verify", "--run-attempt", "verified publisher bundle", "11",
+		"mapfile -t manifests", "find promotion-manifest -type f -name promotion-manifest.json",
+		"${#manifests[@]} -eq 1", `--manifest "${manifests[0]}"`, `install -m 0600 "${manifests[0]}"`,
+	) {
 		t.Fatalf("publisher promotion does not verify/stage one manifest plus ten assets")
+	}
+	if strings.Contains(verify.Run, "--manifest promotion-manifest/promotion-manifest.json") {
+		t.Fatal("publisher reintroduced the incorrect flattened promotion-manifest path")
 	}
 	bundle := namedStep(t, promotion, "Upload publisher-local verified bundle")
 	if !containsAll(bundle.With["name"], "source_sha", "github.run_attempt") {
@@ -672,18 +679,18 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 	if !containsAll(settingsVerify.Run, "settings verify", "--planning-run-id", "--planning-run-attempt", "--source-sha", "--release-version", "cmp") {
 		t.Fatalf("health does not replay the settings proof against the exact release/planning tuple")
 	}
-	healthVerify := namedStep(t, health, "Verify release, supply chain, both Homebrew gates, and blocked tag")
+	healthVerify := namedStep(t, health, "Verify release, supply chain, both Homebrew gates, and blocked tags")
 	if healthVerify.Env["REPAIR_MODE"] != "${{ needs.metadata.outputs.repair }}" || !containsAll(healthVerify.Run, "publisher_repair_mode", `--arg repair_mode "$REPAIR_MODE"`) {
 		t.Fatalf("health observation does not bind the exact publisher repair mode: env=%v", healthVerify.Env)
 	}
 	if !containsAll(healthVerify.Run,
-		"wait-tap-ci.sh", "pull_request", "push", "v0.0.8",
+		"wait-tap-ci.sh", "pull_request", "push", "version_policy.blocked_versions[]",
 		"--verify-published-pr", "gh attestation verify", "runInvocationURI",
 		"attestation-verifications.json", "document_sha256", "document_json",
 		"merge_is_ancestor_of_tap", `merge-base --is-ancestor "$merge_sha" "$tap_sha"`,
 		`wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push`,
-		"releasecheck evidence seal-health") {
-		t.Fatalf("health does not independently re-observe release, attestations, both tap gates, and blocked v0.0.8")
+		"blocked_versions:$blocked_versions", "releasecheck evidence seal-health") {
+		t.Fatalf("health does not independently re-observe release, attestations, both tap gates, and all blocked versions")
 	}
 	if strings.Contains(healthVerify.Run, "verify-repository-release-settings.sh") || !containsAll(healthVerify.Run, "repository_release_settings", "repository-release-settings-proof.json") {
 		t.Fatalf("read-scoped health must embed the sealed proof without a live administration query")
@@ -800,12 +807,14 @@ func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
 			t.Fatalf("legacy contract entry=%+v", legacy)
 		}
 	}
-	if len(contract.VersionPolicy.BlockedVersions) != 1 {
+	if len(contract.VersionPolicy.BlockedVersions) != 2 {
 		t.Fatalf("blocked version policy=%+v", contract.VersionPolicy.BlockedVersions)
 	}
-	blocked := contract.VersionPolicy.BlockedVersions[0]
-	if blocked.Version != "v0.0.8" || !blocked.TagMustRemain || !blocked.GitHubReleaseMustNotExist {
-		t.Fatalf("v0.0.8 immutable failed-tag policy=%+v", blocked)
+	for index, expected := range []string{"v0.0.8", "v0.0.9"} {
+		blocked := contract.VersionPolicy.BlockedVersions[index]
+		if blocked.Version != expected || !blocked.TagMustRemain || !blocked.GitHubReleaseMustNotExist {
+			t.Fatalf("%s immutable failed-tag policy=%+v", expected, blocked)
+		}
 	}
 
 	raw := readFile(t, "../.github/workflows/legacy-rebuild.yml")

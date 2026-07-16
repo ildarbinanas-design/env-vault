@@ -121,8 +121,10 @@ jobs:
             exit 1
           fi
 
-          if [[ "$version" == "v0.0.8" ]]; then
-            echo "v0.0.8 is an intentionally failed immutable tag and must never have a GitHub Release" >&2
+          if jq -e --arg version "$version" '
+            any(.version_policy.blocked_versions[]; .version == $version)
+          ' release/contract.v1.json >/dev/null; then
+            echo "${version} is an intentionally failed immutable tag and must never have a GitHub Release" >&2
             exit 1
           fi
           if [[ "$(scripts/release/semver-compare.sh "${version#v}" "0.0.8")" != "1" ]]; then
@@ -410,8 +412,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -t manifests < <(find promotion-manifest -type f -name promotion-manifest.json -print | LC_ALL=C sort)
+          [[ ${#manifests[@]} -eq 1 ]] || {
+            echo "promotion manifest file count=${#manifests[@]}, want 1" >&2
+            exit 1
+          }
+
           go run ./cmd/releasecheck promotion verify \
-            --manifest promotion-manifest/promotion-manifest.json \
+            --manifest "${manifests[0]}" \
             --source-sha "$SOURCE_SHA" \
             --release-version "$VERSION" \
             --repository "$GITHUB_REPOSITORY" \
@@ -423,7 +431,7 @@ jobs:
           printf 'manifest_sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
 
           mkdir verified-bundle
-          install -m 0600 promotion-manifest/promotion-manifest.json verified-bundle/promotion-manifest.json
+          install -m 0600 "${manifests[0]}" verified-bundle/promotion-manifest.json
           go run ./cmd/releasecheck contract matrix --json |
             jq -r '.include[] | [.archive, .checksum] | @tsv' |
             while IFS=$'\t' read -r archive checksum; do
@@ -959,7 +967,7 @@ jobs:
             --json > repository-release-settings-proof.json
           cmp "${proofs[0]}" repository-release-settings-proof.json
 
-      - name: Verify release, supply chain, both Homebrew gates, and blocked tag
+      - name: Verify release, supply chain, both Homebrew gates, and blocked tags
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -1078,13 +1086,37 @@ jobs:
           pr_ci_attempt="$(jq -er '.run_attempt' tap-pr-ci.json)"
           tap_ci_attempt="$(jq -er '.run_attempt' tap-post-merge-ci.json)"
 
-          blocked_sha="$(jq -er '.version_policy.blocked_versions[] | select(.version == "v0.0.8") | .tag_sha' release/contract.v1.json)"
-          [[ "$(scripts/release/resolve-tag-sha.sh v0.0.8)" == "$blocked_sha" ]] || { echo "blocked v0.0.8 tag moved" >&2; exit 1; }
-          set +e
-          scripts/release/get-release-state.sh v0.0.8 >/dev/null 2>&1
-          blocked_release_status=$?
-          set -e
-          [[ "$blocked_release_status" == "4" ]] || { echo "v0.0.8 must remain without a GitHub Release" >&2; exit 1; }
+          blocked_versions='[]'
+          while IFS= read -r blocked; do
+            blocked_version="$(jq -er '.version | select(type == "string")' <<< "$blocked")"
+            blocked_sha="$(jq -er '.tag_sha | select(test("^[0-9a-f]{40}$"))' <<< "$blocked")"
+            jq -e '
+              .tag_must_remain == true and
+              .github_release_must_not_exist == true and
+              .reason_code == "failed_tag_without_release"
+            ' <<< "$blocked" >/dev/null
+            [[ "$(scripts/release/resolve-tag-sha.sh "$blocked_version")" == "$blocked_sha" ]] || {
+              echo "blocked ${blocked_version} tag moved" >&2
+              exit 1
+            }
+            set +e
+            scripts/release/get-release-state.sh "$blocked_version" >/dev/null 2>&1
+            blocked_release_status=$?
+            set -e
+            [[ "$blocked_release_status" == "4" ]] || {
+              echo "${blocked_version} must remain without a GitHub Release" >&2
+              exit 1
+            }
+            blocked_versions="$(jq -c \
+              --arg version "$blocked_version" \
+              --arg sha "$blocked_sha" \
+              '. + [{version:$version,tag_sha:$sha,tag_exists:true,release_exists:false}]' \
+              <<< "$blocked_versions")"
+          done < <(jq -c '.version_policy.blocked_versions[]' release/contract.v1.json)
+          [[ "$(jq 'length' <<< "$blocked_versions")" == "$(jq '.version_policy.blocked_versions | length' release/contract.v1.json)" ]] || {
+            echo "blocked-version observation is incomplete" >&2
+            exit 1
+          }
 
           mkdir health-evidence
           assets='[]'
@@ -1244,7 +1276,7 @@ jobs:
             --argjson tap_ci_attempt "$tap_ci_attempt" \
             --arg tap_ci_url "$tap_ci_url" \
             --arg tap_ci_workflow "$TAP_CI_WORKFLOW" \
-            --arg blocked_sha "$blocked_sha" \
+            --argjson blocked_versions "$blocked_versions" \
             --argjson repository_release_settings "$(jq -c . repository-release-settings-proof.json)" \
             --argjson health "$(jq -c . health-evidence/health-proof.json)" '
               {schema_id:"env-vault.release-observation.v1",schema_version:1,
@@ -1263,7 +1295,7 @@ jobs:
                    event:"pull_request",head_sha:$pr_head_sha,conclusion:"success",url:$pr_ci_url},
                  post_merge_ci:{run_id:$tap_ci_run_id,run_attempt:$tap_ci_attempt,workflow:$tap_ci_workflow,
                    event:"push",head_sha:$merge_sha,conclusion:"success",url:$tap_ci_url}},
-               blocked_versions:[{version:"v0.0.8",tag_sha:$blocked_sha,tag_exists:true,release_exists:false}],
+               blocked_versions:$blocked_versions,
                health:$health}
             ' > health-evidence/release-observation.json
           jq -e '.schema_id == "env-vault.release-observation.v1" and .health.result == "pass"' \
