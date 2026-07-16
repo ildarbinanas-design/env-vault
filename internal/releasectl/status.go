@@ -836,14 +836,14 @@ func errorDocument(now time.Time, request query, err error) document {
 	var apiErr *apiError
 	var observationErr *observationError
 	switch {
+	case errors.As(err, &observationErr):
+		info.Code = observationErr.code
+		info.Operation = observationErr.operation
 	case errors.As(err, &apiErr):
 		info.Code = apiErr.Code
 		info.Operation = apiErr.Endpoint
 		info.HTTPStatus = apiErr.HTTPStatus
 		info.Retryable = apiErr.Retryable
-	case errors.As(err, &observationErr):
-		info.Code = observationErr.code
-		info.Operation = observationErr.operation
 	}
 	return document{Schema: statusSchema, OK: false, ObservedAt: now.UTC(), Query: request, Error: &info}
 }

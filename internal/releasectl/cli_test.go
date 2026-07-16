@@ -69,6 +69,32 @@ func TestRunStatusEmitsStructuredAuthErrorWithoutRawDiagnostic(t *testing.T) {
 	}
 }
 
+func TestRunStatusPreservesRepositoryNotAccessibleError(t *testing.T) {
+	tagEndpoint := "repos/" + testRepository + "/git/ref/tags/" + testVersion
+	repositoryEndpoint := "repos/" + testRepository
+	github := &fixtureGitHub{
+		errors: map[string]error{
+			tagEndpoint:        &apiError{Code: "NOT_FOUND", Endpoint: tagEndpoint, HTTPStatus: 404},
+			repositoryEndpoint: &apiError{Code: "NOT_FOUND", Endpoint: repositoryEndpoint, HTTPStatus: 404},
+		},
+	}
+	clock := &fakeClock{now: time.Date(2026, 7, 16, 6, 0, 0, 0, time.UTC)}
+	var stdout bytes.Buffer
+	code := run([]string{
+		"release", "status", "--version", testVersion, "--repo", testRepository, "--json",
+	}, &stdout, &bytes.Buffer{}, dependencies{github: github, clock: clock})
+	if code != exitObservationError {
+		t.Fatalf("code=%d stdout=%s", code, stdout.String())
+	}
+	var doc document
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.OK || doc.Error == nil || doc.Error.Code != "REPOSITORY_NOT_ACCESSIBLE" || doc.Error.Operation != repositoryEndpoint || doc.Error.HTTPStatus != 0 {
+		t.Fatalf("doc=%+v", doc)
+	}
+}
+
 func TestRunStatusDeadlineCancelsBlockedAPIRequest(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 7, 16, 6, 0, 0, 0, time.UTC)}
 	var stdout bytes.Buffer
