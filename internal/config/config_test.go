@@ -160,6 +160,28 @@ func TestSaveRejectsExistingAndDanglingSymlinks(t *testing.T) {
 	}
 }
 
+func TestSaveRejectsNonRegularTarget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Empty()
+	cfg.Profiles["dev"] = Profile{}
+	err := Save(path, cfg)
+	if err == nil {
+		t.Fatal("Save unexpectedly accepted a directory target")
+	}
+	appErr, ok := apperrors.From(err)
+	if !ok || appErr.Code != apperrors.CodeConfigInvalid {
+		t.Fatalf("Save error=%#v, want CONFIG_INVALID", err)
+	}
+	info, statErr := os.Lstat(path)
+	if statErr != nil || !info.IsDir() {
+		t.Fatalf("non-regular target changed: info=%v err=%v", info, statErr)
+	}
+}
+
 func TestConcurrentSavePublishesOnlyCompleteConfigs(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.yaml")

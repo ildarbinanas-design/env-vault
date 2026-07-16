@@ -74,6 +74,23 @@ func TestResolveReadsSecretOnceWithoutExistenceProbe(t *testing.T) {
 	}
 }
 
+func TestResolveOptionalMissingSecretUsesOneGet(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{values: map[string][]byte{}}
+	result, err := Resolve(context.Background(), store,
+		[]config.SecretMapping{{Name: "optional-token", Env: "OPTIONAL_TOKEN", Required: false}}, nil,
+		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}})
+	if err != nil {
+		t.Fatalf("resolve optional missing secret: %v", err)
+	}
+	if store.getCalls != 1 || store.existsCalls != 0 {
+		t.Fatalf("Get calls=%d Exists calls=%d, want one Get and no Exists", store.getCalls, store.existsCalls)
+	}
+	if len(result.Secrets) != 0 || strings.Join(result.Env, "\n") != "PATH=/bin" {
+		t.Fatalf("optional missing secret changed result: %#v", result)
+	}
+}
+
 func TestDryRunUsesExistenceProbeWithoutReadingValue(t *testing.T) {
 	t.Parallel()
 	secretName := "dry-existence-token"
