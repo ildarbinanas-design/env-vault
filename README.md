@@ -93,7 +93,7 @@ Download the archive for your platform from the
 [latest release](https://github.com/ildarbinanas-design/env-vault/releases/latest),
 verify its checksum, and unpack (substitute the version, OS, and architecture):
 
-Current stable release: `v0.0.7`. <!-- x-release-please-version -->
+Current stable release: `v0.0.8`. <!-- x-release-please-version -->
 
 ```sh
 VERSION=vX.Y.Z TARGET=darwin-arm64
