@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -21,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ildarbinanas-design/env-vault/internal/e2ebaseline"
 )
 
 type resultCounts struct {
@@ -619,6 +622,23 @@ func validateContracts(filename, platform string, expected []string, recordedCou
 	return nil
 }
 
+func canonicalJSONSHA256(filename string) (string, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return "", err
+	}
+	var document any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return "", err
+	}
+	canonical, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
+}
+
 type scenarioContract struct {
 	SchemaVersion int                   `json:"schema_version"`
 	ScenarioID    string                `json:"scenario_id"`
@@ -676,12 +696,7 @@ func requireExactFile(filename string, expected []byte) error {
 }
 
 func evidenceDigestFiles() []string {
-	return []string{
-		"junit.xml", "raw-test.jsonl", "feature-coverage.json", "feature-coverage.md",
-		"contracts.json", "coverage.out", "coverage.txt", "coverage.html", "coverage-percent.txt",
-		"coverage-junit.xml", "coverage-raw-test.jsonl", "burn-in.jsonl", "locking-burn-in.jsonl",
-		"sanitized-failure-bundle/command-output.txt",
-	}
+	return e2ebaseline.RequiredProofEvidenceFiles()
 }
 
 func computeEvidenceDigests(directory string) (map[string]string, error) {

@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || github.run_attempt > 1 && format('rerun-{0}-{1}', github.run_id, github.run_attempt) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,7 +26,10 @@ jobs:
       actions: read
     with:
       source_sha: ${{ github.sha }}
-      version: ci-${{ github.sha }}
+      version: auto
+      event_name: ${{ github.event_name }}
+      pull_request_head_ref: ${{ github.event.pull_request.head.ref || '' }}
+      pull_request_head_sha: ${{ github.event.pull_request.head.sha || '' }}
 
   quality-gate:
     if: always()

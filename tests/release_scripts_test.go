@@ -27,6 +27,60 @@ var releaseTestArchives = []string{
 	"env-vault-windows-amd64.zip",
 }
 
+func TestArtifactPagesJQFlattensSlurpedEnvelopesFailClosed(t *testing.T) {
+	query := `include "artifact-pages"; env_vault_artifacts | map(.id)`
+	valid := `[
+		{"total_count":3,"artifacts":[{"id":11,"name":"first"},{"id":12,"name":"second"}]},
+		{"total_count":3,"artifacts":[{"id":13,"name":"third"}]}
+	]`
+	command := exec.Command("jq", "-L", "../scripts/release", "-c", query)
+	command.Stdin = strings.NewReader(valid)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("flatten realistic slurped artifact pages: %v\n%s", err, output)
+	}
+	if string(output) != "[11,12,13]\n" {
+		t.Fatalf("flattened artifact IDs=%q", output)
+	}
+
+	invalid := map[string]string{
+		"inconsistent total count": `[{"total_count":2,"artifacts":[{"id":11}]},{"total_count":3,"artifacts":[{"id":12}]}]`,
+		"incomplete pagination":    `[{"total_count":3,"artifacts":[{"id":11}]},{"total_count":3,"artifacts":[{"id":12}]}]`,
+		"missing artifacts array":  `[{"total_count":1}]`,
+		"duplicate artifact ID":    `[{"total_count":2,"artifacts":[{"id":11}]},{"total_count":2,"artifacts":[{"id":11}]}]`,
+	}
+	for name, input := range invalid {
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command("jq", "-L", "../scripts/release", "-c", query)
+			command.Stdin = strings.NewReader(input)
+			if output, err := command.CombinedOutput(); err == nil {
+				t.Fatalf("malformed artifact pages were accepted: %s", output)
+			}
+		})
+	}
+
+	exactQuery := `include "artifact-pages"; env_vault_exact_artifact("proof"; 91; "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") | .id`
+	exact := `[{"total_count":2,"artifacts":[{"id":21,"name":"other","expired":false,"workflow_run":{"id":91,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},{"id":22,"name":"proof","expired":false,"workflow_run":{"id":91,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]}]`
+	command = exec.Command("jq", "-L", "../scripts/release", "-c", exactQuery)
+	command.Stdin = strings.NewReader(exact)
+	output, err = command.CombinedOutput()
+	if err != nil || string(output) != "22\n" {
+		t.Fatalf("select exact artifact: err=%v output=%s", err, output)
+	}
+	for name, input := range map[string]string{
+		"missing exact artifact":   `[{"total_count":1,"artifacts":[{"id":21,"name":"other","expired":false,"workflow_run":{"id":91,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]}]`,
+		"duplicate exact artifact": `[{"total_count":2,"artifacts":[{"id":21,"name":"proof","expired":false,"workflow_run":{"id":91,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},{"id":22,"name":"proof","expired":false,"workflow_run":{"id":91,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			command := exec.Command("jq", "-L", "../scripts/release", "-c", exactQuery)
+			command.Stdin = strings.NewReader(input)
+			if output, err := command.CombinedOutput(); err == nil {
+				t.Fatalf("missing or ambiguous exact artifact was accepted: %s", output)
+			}
+		})
+	}
+}
+
 func TestResolveTagSHAClassifiesGitHubResponses(t *testing.T) {
 	fakeBin := installAPIFakeGH(t)
 	tests := []struct {
@@ -195,12 +249,12 @@ func TestArtifactAttestationStateIsIdempotentAndFailClosed(t *testing.T) {
 			wantAPICalls: 1,
 		},
 		{
-			name:         "unverifiable existing evidence is fatal",
+			name:         "wrong-source existing evidence requests exact replacement",
 			mode:         "verify-invalid",
-			wantStatus:   1,
-			wantOutput:   "fake gh: attestation verification failed",
-			wantAPICalls: 5,
-			wantVerifies: 1,
+			wantStatus:   0,
+			wantOutput:   "missing|missing",
+			wantAPICalls: 10,
+			wantVerifies: 2,
 		},
 	}
 
@@ -289,6 +343,7 @@ func TestReconcileReleaseAssets(t *testing.T) {
 		name          string
 		missing       []string
 		corrupt       string
+		divergentPair bool
 		extra         string
 		wantUploads   []string
 		wantStatus    int
@@ -326,7 +381,13 @@ func TestReconcileReleaseAssets(t *testing.T) {
 			missing:      []string{releaseTestArchives[0]},
 			corrupt:      releaseTestArchives[0] + ".sha256",
 			wantStatus:   1,
-			wantInOutput: "checksum mismatch for " + releaseTestArchives[0],
+			wantInOutput: "existing release checksum differs from verified promotion",
+		},
+		{
+			name:          "internally valid but divergent remote pair is fatal before upload",
+			divergentPair: true,
+			wantStatus:    1,
+			wantInOutput:  "existing release archive differs from verified promotion",
 		},
 		{
 			name:         "unexpected remote asset is fatal",
@@ -361,6 +422,18 @@ func TestReconcileReleaseAssets(t *testing.T) {
 				badChecksum := strings.Repeat("0", 64) + "  " + strings.TrimSuffix(test.corrupt, ".sha256") + "\n"
 				if err := os.WriteFile(filepath.Join(remoteDir, test.corrupt), []byte(badChecksum), 0o644); err != nil {
 					t.Fatalf("corrupt remote checksum: %v", err)
+				}
+			}
+			if test.divergentPair {
+				archive := releaseTestArchives[0]
+				contents := []byte("different but internally consistent remote archive\n")
+				if err := os.WriteFile(filepath.Join(remoteDir, archive), contents, 0o644); err != nil {
+					t.Fatalf("write divergent remote archive: %v", err)
+				}
+				digest := sha256.Sum256(contents)
+				checksum := fmt.Sprintf("%x  %s\n", digest, archive)
+				if err := os.WriteFile(filepath.Join(remoteDir, archive+".sha256"), []byte(checksum), 0o644); err != nil {
+					t.Fatalf("write divergent remote checksum: %v", err)
 				}
 			}
 			if test.extra != "" {
@@ -420,6 +493,7 @@ mode=${FAKE_GH_MODE:?FAKE_GH_MODE is required}
   printf 'fake gh: unsupported command: %s\n' "$*" >&2
   exit 90
 }
+
 shift
 include=false
 if [[ ${1:-} == --include ]]; then

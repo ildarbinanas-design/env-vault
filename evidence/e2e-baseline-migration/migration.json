@@ -1,0 +1,27 @@
+{
+  "schema_id": "env-vault.e2e-baseline-migration.v1",
+  "schema_version": 1,
+  "status": "pass",
+  "comparator": {
+    "path": "evidence/e2e-baseline-migration/comparison.json",
+    "sha256": "84a9f5f9d2e6b129f7dc1338db3c5d0b7fabd6577b62d6d2048a02a01dbcf293",
+    "name": "env-vault-e2e-candidate-comparison-attempt-1",
+    "run_id": "29479484474",
+    "run_attempt": "1"
+  },
+  "transition": {
+    "code": "independent_second_secret_sentinel",
+    "source_algorithm": "env-vault.e2e-whole-tree.v1",
+    "source_suite_hash": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
+    "target_algorithm": "env-vault.e2e-semantic-suite.v1",
+    "target_suite_hash": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8",
+    "changed_file": "e2e/scenarios_test.go",
+    "before_sha256": "24ee61fc5cca1a31d5bddfd237f74903f1e42f554d5259a81d809c9f5cd54a73",
+    "after_sha256": "aa0ed29220da884b15ec6d0ab32f30c63f23524f17dfa297034ea1a84819f759",
+    "before_fragment": "second := first",
+    "after_fragment": "second := sc.newSentinel()",
+    "review_patch_path": "evidence/e2e-baseline-migration/independent-sentinel.patch",
+    "review_patch_sha256": "2a89fb33af9d2335e904c6e2cf882aaccb50c3914111fd07d886c0a6006c20f4"
+  },
+  "baseline_facts_sha256": "ca7c48c1b84a635064b924a2c023d24e13f60c8c15328985c48d5686c23b3da0"
+}

@@ -1,28 +1,22 @@
 package main
 
 import (
-	"archive/tar"
-	"archive/zip"
 	"bufio"
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasearchive"
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
-const (
-	maxArtifactCompressedBytes = 128 << 20
-	maxArtifactEntries         = 64
-	maxArtifactFileBytes       = 128 << 20
-	maxArtifactTotalBytes      = 256 << 20
-)
+const maxArtifactCompressedBytes = 128 << 20
 
 type artifactEvidence struct {
 	Path             string `json:"path,omitempty"`
@@ -38,7 +32,7 @@ func prepareSubjectBinary(repoRoot, privateDir string, opts runOptions) (string,
 		return binary, artifactEvidence{}, commandResult{Name: "prebuilt-binary", ExitCode: boolExitCode(err == nil)}, err
 	}
 	if opts.artifact != "" {
-		binary, evidence, err := verifyAndExtractArtifact(opts.artifact, opts.checksum, filepath.Join(privateDir, "artifact"))
+		binary, evidence, err := verifyAndExtractArtifact(repoRoot, opts.artifact, opts.checksum, filepath.Join(privateDir, "artifact"))
 		return binary, evidence, commandResult{Name: "verify-release-artifact", ExitCode: boolExitCode(err == nil)}, err
 	}
 
@@ -91,7 +85,7 @@ func requireRegularBinary(filename string) (string, error) {
 	return abs, nil
 }
 
-func verifyAndExtractArtifact(archivePath, checksumPath, outputDir string) (string, artifactEvidence, error) {
+func verifyAndExtractArtifact(repoRoot, archivePath, checksumPath, outputDir string) (string, artifactEvidence, error) {
 	abs, err := filepath.Abs(archivePath)
 	if err != nil {
 		return "", artifactEvidence{}, fmt.Errorf("resolve artifact path: %w", err)
@@ -150,18 +144,14 @@ func verifyAndExtractArtifact(archivePath, checksumPath, outputDir string) (stri
 		evidence.ChecksumVerified = true
 	}
 
-	if err := os.MkdirAll(outputDir, 0o700); err != nil {
-		return "", evidence, fmt.Errorf("create artifact extraction directory: %w", err)
+	contract, err := releasecontract.LoadCanonical(repoRoot)
+	if err != nil {
+		return "", evidence, fmt.Errorf("load release contract for artifact extraction: %w", err)
+	}
+	if err := releasearchive.ExtractArchive(abs, outputDir, contract); err != nil {
+		return "", evidence, fmt.Errorf("extract release artifact: %w", err)
 	}
 	root := wantBase
-	if format == "zip" {
-		err = extractZipArtifact(abs, outputDir, root)
-	} else {
-		err = extractTarGzArtifact(abs, outputDir, root)
-	}
-	if err != nil {
-		return "", evidence, err
-	}
 	binaryName := "env-vault"
 	if expectedGOOS() == "windows" {
 		binaryName += ".exe"
@@ -238,149 +228,4 @@ func sha256File(filename string) (string, error) {
 		return "", fmt.Errorf("hash %s: %w", filename, err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func extractTarGzArtifact(filename, outputDir, root string) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("open tar.gz artifact: %w", err)
-	}
-	defer file.Close()
-	gz, err := gzip.NewReader(file)
-	if err != nil {
-		return fmt.Errorf("open gzip stream: %w", err)
-	}
-	defer gz.Close()
-	reader := tar.NewReader(gz)
-	entries := 0
-	var total int64
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("read tar entry: %w", err)
-		}
-		// Keep this source-local guard in addition to safeArchiveName's
-		// canonical checks. It conservatively rejects every traversal-like
-		// spelling and makes the archive-to-filesystem boundary explicit to
-		// static data-flow analysis before the entry reaches any path helper.
-		if strings.Contains(header.Name, "..") {
-			return fmt.Errorf("artifact entry %q contains a forbidden double-dot sequence", header.Name)
-		}
-		entries++
-		if entries > maxArtifactEntries {
-			return fmt.Errorf("artifact contains more than %d entries", maxArtifactEntries)
-		}
-		name, err := safeArchiveName(header.Name, root)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(outputDir, filepath.FromSlash(name))
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return fmt.Errorf("create artifact directory: %w", err)
-			}
-		case tar.TypeReg, tar.TypeRegA:
-			if header.Size < 0 || header.Size > maxArtifactFileBytes || total+header.Size > maxArtifactTotalBytes {
-				return fmt.Errorf("artifact entry %q exceeds extraction limits", name)
-			}
-			total += header.Size
-			if err := extractRegularFile(target, io.LimitReader(reader, header.Size), header.Size); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("artifact entry %q has forbidden type %d", name, header.Typeflag)
-		}
-	}
-	return nil
-}
-
-func extractZipArtifact(filename, outputDir, root string) error {
-	reader, err := zip.OpenReader(filename)
-	if err != nil {
-		return fmt.Errorf("open zip artifact: %w", err)
-	}
-	defer reader.Close()
-	if len(reader.File) > maxArtifactEntries {
-		return fmt.Errorf("artifact contains more than %d entries", maxArtifactEntries)
-	}
-	var total int64
-	for _, entry := range reader.File {
-		// See the equivalent tar guard above. This must remain before the entry
-		// name is propagated to any filesystem helper.
-		if strings.Contains(entry.Name, "..") {
-			return fmt.Errorf("artifact entry %q contains a forbidden double-dot sequence", entry.Name)
-		}
-		name, err := safeArchiveName(entry.Name, root)
-		if err != nil {
-			return err
-		}
-		if entry.Mode()&os.ModeSymlink != 0 || (!entry.FileInfo().IsDir() && !entry.Mode().IsRegular()) {
-			return fmt.Errorf("artifact entry %q is not a regular file or directory", name)
-		}
-		target := filepath.Join(outputDir, filepath.FromSlash(name))
-		if entry.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return fmt.Errorf("create artifact directory: %w", err)
-			}
-			continue
-		}
-		size := int64(entry.UncompressedSize64)
-		if size < 0 || size > maxArtifactFileBytes || total+size > maxArtifactTotalBytes {
-			return fmt.Errorf("artifact entry %q exceeds extraction limits", name)
-		}
-		total += size
-		source, err := entry.Open()
-		if err != nil {
-			return fmt.Errorf("open zip entry %q: %w", name, err)
-		}
-		extractErr := extractRegularFile(target, io.LimitReader(source, size), size)
-		closeErr := source.Close()
-		if extractErr != nil {
-			return extractErr
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close zip entry %q: %w", name, closeErr)
-		}
-	}
-	return nil
-}
-
-func safeArchiveName(name, root string) (string, error) {
-	if strings.Contains(name, "..") || strings.Contains(name, "\\") || strings.ContainsRune(name, '\x00') || path.IsAbs(name) {
-		return "", fmt.Errorf("artifact entry has unsafe path %q", name)
-	}
-	cleaned := path.Clean(name)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("artifact entry has unsafe path %q", name)
-	}
-	if cleaned != root && !strings.HasPrefix(cleaned, root+"/") {
-		return "", fmt.Errorf("artifact entry %q is outside expected root %q", name, root)
-	}
-	return cleaned, nil
-}
-
-func extractRegularFile(filename string, source io.Reader, size int64) error {
-	if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
-		return fmt.Errorf("create artifact parent directory: %w", err)
-	}
-	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("create artifact file: %w", err)
-	}
-	written, copyErr := io.Copy(file, source)
-	closeErr := file.Close()
-	if copyErr != nil {
-		return fmt.Errorf("extract artifact file: %w", copyErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close artifact file: %w", closeErr)
-	}
-	if written != size {
-		return fmt.Errorf("artifact file size mismatch: wrote %d, expected %d", written, size)
-	}
-	return nil
 }

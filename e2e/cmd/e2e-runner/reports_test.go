@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ildarbinanas-design/env-vault/internal/e2ebaseline"
 )
 
 func TestValidateXMLParsesCompleteJUnit(t *testing.T) {
@@ -517,6 +519,20 @@ func TestValidateMatrixEnforcesCrossPlatformRunIdentity(t *testing.T) {
 			}
 			if !test.wantErr && err != nil {
 				t.Fatalf("consistent matrix rejected: %v", err)
+			}
+			if !test.wantErr && test.expectedRunID == "42" {
+				var proof e2ebaseline.MatrixProof
+				if err := readJSON(filepath.Join(root, "matrix-validation.json"), &proof); err != nil {
+					t.Fatalf("read sealed matrix proof: %v", err)
+				}
+				if proof.SchemaID != e2ebaseline.MatrixProofSchemaID || proof.SchemaVersion != e2ebaseline.MatrixProofSchemaVersion || proof.Run.RunID != "42" || len(proof.PlatformEvidence) != 2 {
+					t.Fatalf("matrix proof identity/evidence=%+v", proof)
+				}
+				for _, evidence := range proof.PlatformEvidence {
+					if !validSHA256(evidence.ContractSHA256) || !validSHA256(evidence.MetadataSHA256) || !validSHA256(evidence.LeakSHA256) || len(evidence.EvidenceSHA256) != len(evidenceDigestFiles()) || !validSHA256(evidence.NormalizedEvidenceSHA256) {
+						t.Fatalf("platform %s proof is incomplete: %+v", evidence.ID, evidence)
+					}
+				}
 			}
 		})
 	}

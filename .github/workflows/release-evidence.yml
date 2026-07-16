@@ -1,0 +1,457 @@
+name: release-evidence
+run-name: env-vault-release-evidence publisher-run=${{ github.event.workflow_run.id }} attempt=${{ github.event.workflow_run.run_attempt }}
+
+on:
+  workflow_run:
+    workflows:
+      - build-binaries
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: env-vault-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  assemble:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.path == '.github/workflows/build-binaries.yml' &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - name: Check out the exact publisher source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build and identify the offline release checker
+        env:
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          "$RELEASECHECK" --version --json
+          "$RELEASECHECK" validate-contract --json
+
+      - name: Download the exact publisher-attempt observation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: env-vault-release-observation-*-attempt-${{ github.event.workflow_run.run_attempt }}
+          path: evidence-input
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - id: identity
+        name: Resolve exact CI, release PR, and PR-head CI identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISHER_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PUBLISHER_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p snapshots metrics promotion final
+          mapfile -t observations < <(find evidence-input -type f -name release-observation.json -print | LC_ALL=C sort)
+          [[ ${#observations[@]} -eq 1 ]] || { echo "release observation count=${#observations[@]}, want 1" >&2; exit 1; }
+          observation="${observations[0]}"
+          mapfile -t attestation_bundles < <(find evidence-input -type f -name attestation-verifications.json -print | LC_ALL=C sort)
+          [[ ${#attestation_bundles[@]} -eq 1 ]] || {
+            echo "attestation verification bundle count=${#attestation_bundles[@]}, want 1" >&2
+            exit 1
+          }
+          attestation_bundle="${attestation_bundles[0]}"
+          jq -e --arg source "$PUBLISHER_SOURCE_SHA" '
+            .schema_id == "env-vault.release-observation.v1" and .schema_version == 1 and
+            .source_sha == $source and
+            (.release_version | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+          ' "$observation" >/dev/null
+          version="$(jq -er '.release_version' "$observation")"
+          source_sha="$(jq -er '.source_sha | select(test("^[0-9a-f]{40}$"))' "$observation")"
+          jq -e '.repository_release_settings' "$observation" > snapshots/repository-release-settings-proof.json
+          planning_run_id="$(jq -er '.tuple.planning_run_id | select(type == "number" and . > 0 and floor == .)' snapshots/repository-release-settings-proof.json)"
+          planning_attempt="$(jq -er '.tuple.planning_run_attempt | select(type == "number" and . > 0 and floor == .)' snapshots/repository-release-settings-proof.json)"
+          settings_checked_at="$(jq -er '.tuple.checked_at | select(type == "string")' snapshots/repository-release-settings-proof.json)"
+          "$RELEASECHECK" settings verify \
+            --input snapshots/repository-release-settings-proof.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$source_sha" \
+            --release-version "$version" \
+            --planning-run-id "$planning_run_id" \
+            --planning-run-attempt "$planning_attempt" \
+            --checked-at "$settings_checked_at" \
+            --json > snapshots/repository-release-settings-verification.json
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISHER_RUN_ID}" > snapshots/publisher-run.json
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source "$source_sha" \
+            --arg version "$version" \
+            --argjson run_id "$PUBLISHER_RUN_ID" \
+            --argjson attempt "$PUBLISHER_ATTEMPT" '
+              .id == $run_id and .run_attempt == $attempt and .repository.full_name == $repository and
+              .head_sha == $source and .head_branch == $version and
+              (.event == "push" or .event == "workflow_dispatch") and
+              .status == "completed" and .conclusion == "success" and
+              .name == "build-binaries" and .path == ".github/workflows/build-binaries.yml"
+            ' snapshots/publisher-run.json >/dev/null
+
+          gh api --paginate --slurp --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f "head_sha=$source_sha" -f branch=main -f event=push -f status=completed -F per_page=100 \
+            > snapshots/ci-runs.json
+          ci_matches="$(jq -c --arg repository "$GITHUB_REPOSITORY" --arg source "$source_sha" '
+            [.[]?.workflow_runs[]? | select(
+              .repository.full_name == $repository and .head_repository.full_name == $repository and
+              .head_sha == $source and .head_branch == "main" and .event == "push" and
+              .status == "completed" and .conclusion == "success" and
+              .name == "ci" and .path == ".github/workflows/ci.yml"
+            )]
+          ' snapshots/ci-runs.json)"
+          [[ "$(jq 'length' <<< "$ci_matches")" == "1" ]] || { echo "exact successful main CI run is ambiguous" >&2; exit 1; }
+          ci_run_id="$(jq -er '.[0].id' <<< "$ci_matches")"
+          ci_attempt="$(jq -er '.[0].run_attempt' <<< "$ci_matches")"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}" > snapshots/ci-run.json
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts?per_page=100" \
+            > snapshots/ci-artifacts.json
+          "$RELEASECHECK" classify-attempt \
+            --run snapshots/ci-run.json --artifacts snapshots/ci-artifacts.json --json \
+            > snapshots/ci-classification.json
+          jq -e --arg source "$source_sha" --argjson run_id "$ci_run_id" --argjson attempt "$ci_attempt" '
+            .ok == true and .source_sha == $source and .run_id == $run_id and .attempt == $attempt and
+            .matrix_complete == true and .action_code == "none" and .reason_code == "ATTEMPT_MATRIX_COMPLETE"
+          ' snapshots/ci-classification.json >/dev/null
+
+          release_app_slug="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
+            [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
+            select(length == 1) | .[0].slug
+          ' release/contract.v1.json)"
+          export RELEASE_APP_SLUG="$release_app_slug"
+          export RELEASE_AUTHORIZATION_OUTPUT="snapshots/release-authorization-checkpoint.json"
+          release_pr_number="$(scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged)"
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${release_pr_number}" > snapshots/release-pr.json
+          release_pr_head_sha="$(jq -er \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source "$source_sha" \
+            --arg version "$version" \
+            --argjson number "$release_pr_number" '
+              select(
+                .number == $number and .state == "closed" and .merged_at != null and
+                .merge_commit_sha == $source and
+                .base.ref == "main" and .base.repo.full_name == $repository and
+                .head.ref == "release-please--branches--main--components--env-vault" and
+                .head.repo.full_name == $repository and
+                .title == ("chore(main): release env-vault " + $version) and
+                (.head.sha | test("^[0-9a-f]{40}$"))
+              ) | .head.sha
+            ' snapshots/release-pr.json)"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg version "$version" \
+            --arg source "$source_sha" \
+            --arg head "$release_pr_head_sha" \
+            --argjson number "$release_pr_number" '
+              .repository == $repository and .release_version == $version and .release_source_sha == $source and
+              .generated_release_pr.number == $number and .generated_release_pr.head_sha == $head and
+              .generated_release_pr.merge_sha == $source and .result == "pass" and
+              (.generated_release_pr.merged_at | type == "string") and
+              (.confirmation.comment_id | type == "number" and . > 0) and
+              (.confirmation.body_sha256 | test("^[0-9a-f]{64}$"))
+            ' "$RELEASE_AUTHORIZATION_OUTPUT" >/dev/null
+          release_pr_merged_at="$(jq -er '.generated_release_pr.merged_at' "$RELEASE_AUTHORIZATION_OUTPUT")"
+          jq -e --arg merged_at "$release_pr_merged_at" '.merged_at == $merged_at' snapshots/release-pr.json >/dev/null
+          gh pr checks "$release_pr_number" --repo "$GITHUB_REPOSITORY" \
+            --json name,state,workflow,link,bucket,event > snapshots/release-pr-checks.json
+          quality_link="$(jq -er '
+            [.[] | select(
+              .workflow == "ci" and .name == "quality-gate" and .state == "SUCCESS" and
+              .bucket == "pass" and .event == "pull_request"
+            )] | select(length == 1) | .[0].link
+          ' snapshots/release-pr-checks.json)"
+          prefix="https://github.com/${GITHUB_REPOSITORY}/actions/runs/"
+          [[ "$quality_link" == "$prefix"* ]] || { echo "release PR quality-gate URL mismatch" >&2; exit 1; }
+          pr_ci_tail="${quality_link#"$prefix"}"
+          pr_ci_run_id="${pr_ci_tail%%/*}"
+          [[ "$pr_ci_run_id" =~ ^[1-9][0-9]*$ ]] || { echo "release PR CI run ID is malformed" >&2; exit 1; }
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${pr_ci_run_id}" > snapshots/pr-ci-run.json
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg branch "release-please--branches--main--components--env-vault" \
+            --arg release_pr_head "$release_pr_head_sha" \
+            --argjson release_pr_number "$release_pr_number" \
+            --argjson run_id "$pr_ci_run_id" '
+              .id == $run_id and .repository.full_name == $repository and .head_repository.full_name == $repository and
+              .head_branch == $branch and .event == "pull_request" and .status == "completed" and
+              .conclusion == "success" and .name == "ci" and .path == ".github/workflows/ci.yml" and
+              (.run_attempt | type == "number" and . > 0) and
+              ([.pull_requests[]? | select(
+                .number == $release_pr_number and .head.ref == $branch and .head.sha == $release_pr_head and
+                .base.ref == "main"
+              )] | length == 1)
+          ' snapshots/pr-ci-run.json >/dev/null
+          pr_ci_attempt="$(jq -er '.run_attempt' snapshots/pr-ci-run.json)"
+          pr_ci_head_sha="$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' snapshots/pr-ci-run.json)"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${planning_run_id}" > snapshots/planning-run.json
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source "$source_sha" \
+            --argjson run_id "$planning_run_id" \
+            --argjson attempt "$planning_attempt" '
+              .id == $run_id and .run_attempt == $attempt and
+              .repository.full_name == $repository and .head_repository.full_name == $repository and
+              .head_sha == $source and .head_branch == "main" and .event == "workflow_run" and
+              .status == "completed" and .conclusion == "success" and
+              .name == "release-please" and .path == ".github/workflows/release-please.yml"
+            ' snapshots/planning-run.json >/dev/null
+
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg version "$version" \
+            --arg source "$source_sha" \
+            --arg release_pr_head "$release_pr_head_sha" \
+            --arg pr_ci_head "$pr_ci_head_sha" \
+            --argjson release_pr_number "$release_pr_number" \
+            --argjson planning_run_id "$planning_run_id" \
+            --argjson planning_attempt "$planning_attempt" \
+            --argjson pr_ci_run_id "$pr_ci_run_id" \
+            --argjson pr_ci_attempt "$pr_ci_attempt" \
+            --argjson evidence_run_id "$GITHUB_RUN_ID" \
+            --argjson evidence_attempt "$GITHUB_RUN_ATTEMPT" \
+            --slurpfile checkpoint "$RELEASE_AUTHORIZATION_OUTPUT" '
+              {schema_id:"env-vault.release-authorization.v1",schema_version:1,
+               repository:$repository,release_version:$version,
+               generated_release_pr:$checkpoint[0].generated_release_pr,
+               confirmation:$checkpoint[0].confirmation,
+               release_source_sha:$source,
+               planning_workflow:{id:"planning",name:"release-please",file:"release-please.yml",
+                 run_id:$planning_run_id,run_attempt:$planning_attempt,head_sha:$source,conclusion:"success"},
+               release_pr_ci:{id:"ci",name:"ci",file:"ci.yml",
+                 run_id:$pr_ci_run_id,run_attempt:$pr_ci_attempt,event:"pull_request",
+                 head_sha:$pr_ci_head,pull_request_number:$release_pr_number,
+                 generated_release_pr_head_sha:$release_pr_head,conclusion:"success"},
+               evidence_workflow:{id:"release_evidence",name:"release-evidence",file:"release-evidence.yml",
+                 run_id:$evidence_run_id,run_attempt:$evidence_attempt},
+               result:"pass"}
+            ' > snapshots/release-authorization.json
+
+          cp "$observation" snapshots/release-observation.json
+          cp "$attestation_bundle" snapshots/attestation-verifications.json
+          {
+            printf 'version=%s\n' "$version"
+            printf 'source_sha=%s\n' "$source_sha"
+            printf 'ci_run_id=%s\n' "$ci_run_id"
+            printf 'ci_attempt=%s\n' "$ci_attempt"
+            printf 'release_pr_number=%s\n' "$release_pr_number"
+            printf 'pr_ci_run_id=%s\n' "$pr_ci_run_id"
+            printf 'pr_ci_attempt=%s\n' "$pr_ci_attempt"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact promotion manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-promotion-${{ steps.identity.outputs.source_sha }}-attempt-${{ steps.identity.outputs.ci_attempt }}
+          path: promotion
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.identity.outputs.ci_run_id }}
+
+      - name: Compute exact current metrics and before/after comparison
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ steps.identity.outputs.ci_run_id }}
+          CI_ATTEMPT: ${{ steps.identity.outputs.ci_attempt }}
+          PR_CI_RUN_ID: ${{ steps.identity.outputs.pr_ci_run_id }}
+          PR_CI_ATTEMPT: ${{ steps.identity.outputs.pr_ci_attempt }}
+          PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISHER_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+        run: |
+          set -euo pipefail
+          fields='attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName'
+          gh run view "$CI_RUN_ID" --attempt "$CI_ATTEMPT" --repo "$GITHUB_REPOSITORY" --json "$fields" > metrics/main-ci-run.json
+          gh run view "$PR_CI_RUN_ID" --attempt "$PR_CI_ATTEMPT" --repo "$GITHUB_REPOSITORY" --json "$fields" > metrics/pr-ci-run.json
+          gh run view "$PUBLISHER_RUN_ID" --attempt "$PUBLISHER_ATTEMPT" --repo "$GITHUB_REPOSITORY" --json "$fields" > metrics/publisher-run.json
+          "$RELEASECHECK" metrics --run-json metrics/main-ci-run.json --output metrics/main-ci.json
+          "$RELEASECHECK" metrics --run-json metrics/pr-ci-run.json --output metrics/pr-ci.json
+          "$RELEASECHECK" metrics --run-json metrics/publisher-run.json --output metrics/publisher.json
+          "$RELEASECHECK" metrics compare \
+            --main-ci metrics/main-ci.json \
+            --pr-ci metrics/pr-ci.json \
+            --publisher metrics/publisher.json \
+            --output final/metrics-comparison.json \
+            --markdown-output final/metrics-comparison.md
+
+      - name: Assemble and replay durable release evidence offline
+        env:
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+        run: |
+          set -euo pipefail
+          mapfile -t manifests < <(find promotion -type f -name promotion-manifest.json -print | LC_ALL=C sort)
+          [[ ${#manifests[@]} -eq 1 ]] || { echo "promotion manifest count=${#manifests[@]}, want 1" >&2; exit 1; }
+          "$RELEASECHECK" evidence assemble \
+            --authorization snapshots/release-authorization.json \
+            --attestations snapshots/attestation-verifications.json \
+            --manifest "${manifests[0]}" \
+            --ci-metrics metrics/main-ci.json \
+            --publisher-metrics metrics/publisher.json \
+            --observation snapshots/release-observation.json \
+            --output final/release-evidence.json \
+            --markdown-output final/index.md
+          "$RELEASECHECK" evidence verify --input final/release-evidence.json
+
+      - name: Upload immutable evidence candidate for the write-scoped job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-release-evidence-candidate-${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            final/release-evidence.json
+            final/index.md
+            final/metrics-comparison.json
+            final/metrics-comparison.md
+            metrics/main-ci.json
+            metrics/pr-ci.json
+            metrics/publisher.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: ${{ always() && !cancelled() && needs.assemble.result == 'success' }}
+    needs: [assemble]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out the exact publisher source without persisted credentials
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.assemble.outputs.source_sha }}
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download the exact read-scoped evidence candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-release-evidence-candidate-${{ needs.assemble.outputs.version }}-${{ needs.assemble.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+
+      - name: Replay the complete candidate before granting it mutation authority
+        env:
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          VERSION: ${{ needs.assemble.outputs.version }}
+          SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          "$RELEASECHECK" --version --json
+          "$RELEASECHECK" validate-contract --json
+          mkdir replay
+          "$RELEASECHECK" evidence verify \
+            --input candidate/final/release-evidence.json \
+            --markdown-output replay/index.md
+          cmp candidate/final/index.md replay/index.md
+          "$RELEASECHECK" metrics compare \
+            --main-ci candidate/metrics/main-ci.json \
+            --pr-ci candidate/metrics/pr-ci.json \
+            --publisher candidate/metrics/publisher.json \
+            --output replay/metrics-comparison.json \
+            --markdown-output replay/metrics-comparison.md
+          cmp candidate/final/metrics-comparison.json replay/metrics-comparison.json
+          cmp candidate/final/metrics-comparison.md replay/metrics-comparison.md
+          jq -e --arg version "$VERSION" --arg source "$SOURCE_SHA" '
+            .release_version == $version and .source_sha == $source and .result == "pass"
+          ' candidate/final/release-evidence.json >/dev/null
+
+      - id: publish
+        name: Publish durable no-clobber evidence branch state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.assemble.outputs.version }}
+          SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
+        run: >-
+          scripts/release/publish-release-evidence.sh
+          "$VERSION"
+          "$SOURCE_SHA"
+          "$GITHUB_REPOSITORY"
+          candidate/final/release-evidence.json
+          candidate/final/index.md
+          candidate/final/metrics-comparison.json
+          candidate/final/metrics-comparison.md
+          >> "$GITHUB_OUTPUT"
+
+      - name: Report exact immutable evidence coordinates
+        env:
+          VERSION: ${{ needs.assemble.outputs.version }}
+          EVIDENCE_COMMIT_SHA: ${{ steps.publish.outputs.commit_sha }}
+          EVIDENCE_PATH_PREFIX: ${{ steps.publish.outputs.path_prefix }}
+          EVIDENCE_REPAIR_MODE: ${{ steps.publish.outputs.repair_mode }}
+          OUTPUT_PUBLISHER_RUN_ID: ${{ steps.publish.outputs.publisher_run_id }}
+          OUTPUT_PUBLISHER_RUN_ATTEMPT: ${{ steps.publish.outputs.publisher_run_attempt }}
+          PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid evidence commit SHA" >&2; exit 1; }
+          expected_prefix="evidence/releases/${VERSION}/publisher-runs/run-${PUBLISHER_RUN_ID}/attempt-${PUBLISHER_RUN_ATTEMPT}"
+          [[ "$EVIDENCE_PATH_PREFIX" == "$expected_prefix" &&
+             "$OUTPUT_PUBLISHER_RUN_ID" == "$PUBLISHER_RUN_ID" &&
+             "$OUTPUT_PUBLISHER_RUN_ATTEMPT" == "$PUBLISHER_RUN_ATTEMPT" ]] || {
+            echo "published evidence lineage tuple differs from the triggering publisher attempt" >&2
+            exit 1
+          }
+          case "$EVIDENCE_REPAIR_MODE" in
+            none|release-assets|homebrew|health) ;;
+            *) echo "published evidence repair mode is invalid" >&2; exit 1 ;;
+          esac
+          evidence_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/release-evidence.json"
+          index_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/index.md"
+          comparison_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/metrics-comparison.json"
+          {
+            printf '## Durable release evidence\n\n'
+            printf -- '- Evidence commit: `%s`\n' "$EVIDENCE_COMMIT_SHA"
+            printf -- '- Publisher run / attempt / repair: `%s` / `%s` / `%s`\n' "$PUBLISHER_RUN_ID" "$PUBLISHER_RUN_ATTEMPT" "$EVIDENCE_REPAIR_MODE"
+            printf -- '- [Machine evidence](%s)\n' "$evidence_url"
+            printf -- '- [Markdown index](%s)\n' "$index_url"
+            printf -- '- [Machine metrics comparison](%s)\n' "$comparison_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload replayable release evidence artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-release-evidence-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            candidate/final/release-evidence.json
+            candidate/final/index.md
+            candidate/final/metrics-comparison.json
+            candidate/final/metrics-comparison.md
+          if-no-files-found: error
+          retention-days: 90

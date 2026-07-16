@@ -4,20 +4,23 @@ This document is the external configuration contract for release planning and
 publication in `ildarbinanas-design/env-vault`. Release Please v5 prepares
 version documentation and `CHANGELOG.md` through a protected pull request in
 `env-vault`. After that exact release merge passes `ci` as a push to `main`,
-the release-planning workflow creates or verifies the exact tag at the green
-SHA. That tag starts `build-binaries`, which alone creates the public GitHub
-Release and assets. It then publishes the Homebrew formula through a protected
-pull request in `ildarbinanas-design/homebrew-tap` and proves both the
-pull-request check and the post-merge default-branch check for exact commit
-SHAs.
+the release-planning workflow downloads the five native artifacts and promotion
+manifest from that one exact CI attempt, verifies them offline, and only then
+creates or verifies the exact tag at the green SHA. That tag starts the
+seven-job `build-binaries` publisher, which promotes those bytes without a
+rebuild and alone creates the public GitHub Release and assets. It then
+publishes the Homebrew formula through a protected pull request in
+`ildarbinanas-design/homebrew-tap` and proves both the pull-request check and
+the post-merge default-branch check for exact commit SHAs.
 
 Repository settings must match this document before a release pull request is
 merged. Planning credentials are stored only in `release-planning`; tap
 credentials are stored only in `release`. The tap audit requests metadata read;
 the planning audit additionally requests Administration read so it can verify
 merge settings, ruleset structure, and that the planning App itself has no
-bypass. An administrator separately records that the complete global bypass
-lists are empty after App installation or key changes.
+bypass. The operational pre-tag check is authoritative for the complete global
+bypass lists: it requires all three to be present and empty and seals the exact
+responses for offline health/evidence replay.
 
 The planning audit reads repository merge settings through the GitHub GraphQL
 `Repository` fields. GitHub's REST repository response omits those policy
@@ -62,7 +65,7 @@ scope:
     generated release pull request;
   - **Issues: Read and write** — maintain Release Please pull-request labels;
   - **Administration: Read** — verify repository merge settings, ruleset
-    structure, and that this App itself cannot bypass either ruleset;
+    structure, and that this App itself cannot bypass any release ruleset;
   - **Metadata: Read** — GitHub grants this automatically.
 - Organization/account permissions: none.
 - Ruleset bypass: none. The generated release pull request must satisfy the
@@ -88,10 +91,10 @@ values:
 | Secret | `RELEASE_APP_PRIVATE_KEY` | Complete PEM private key for that App |
 
 Allow only the protected default branch `main`. Do not allow tags. A wait timer
-or required environment reviewer is not needed because merging the reviewed
-release pull request is the explicit authorization and the exact merge SHA
-must subsequently pass `ci` before the environment-backed workflow can create
-the tag.
+or required environment reviewer is not needed because the exact owner/member
+confirmation comment on the reviewed release pull request is the explicit
+authorization; the unchanged PR must then be merged and the exact merge SHA
+must pass `ci` before the environment-backed workflow can create the tag.
 
 The `release-please` workflow uses Release Please v5, pinned to the verified
 `v5.0.0` commit `45996ed1f6d02564a971a2fa1b5860e934307cf7`, in
@@ -115,8 +118,9 @@ capability from the credential itself.
 Verify the App installation with
 `.github/workflows/audit-release-planning-app.yml`. That manual workflow mints
 a metadata-plus-Administration-read token, succeeds only when the installation
-contains exactly `ildarbinanas-design/env-vault` and the App cannot bypass either
-ruleset, and relies on post-step revocation. It verifies squash-only merge
+contains exactly `ildarbinanas-design/env-vault` and the App cannot bypass the
+main, immutable-tag, or append-only-evidence rulesets, and relies on post-step
+revocation. It verifies squash-only merge
 policy through GraphQL so the audit token does not need push capability. A
 failed audit blocks release planning.
 
@@ -194,8 +198,8 @@ summary.
 
 Environment branch and tag policy:
 
-- allow the current default branch, `main`, for dispatch releases and repairs;
-- allow tags matching `v*` while tag-triggered releases remain supported; and
+- allow the current default branch, `main`, for the manual read-only App audit;
+- allow tags matching `v*` for automatic publication and exact-tag repairs; and
 - rely on the workflow's strict `vMAJOR.MINOR.PATCH` validation rather than
   treating the environment glob as version validation.
 
@@ -212,13 +216,13 @@ homebrew:
   environment: release
 ```
 
-The metadata, quality, build, Release, supply-chain, and `health` jobs must not
-declare it. A build-only run never schedules `homebrew`, so it cannot access a
-release credential. `repair=health` also skips `homebrew`; the read-only health
-job uses `contents: read`, `attestations: read`, public tap state, and the
-repository workflow token. The independent `audit-release-app.yml` workflow
-also declares `release`, but it is manual-only and mints metadata-read rather
-than write-capable permissions.
+The `metadata`, `preflight`, `promotion`, `release`, `supply_chain`, and
+`health` jobs must not declare it. The publisher has no build-only mode and no
+product build job. `repair=health` skips `homebrew`; the read-only health job
+uses `contents: read`, `attestations: read`, public tap state, and the repository
+workflow token. The independent `audit-release-app.yml` workflow also declares
+`release`, but it is manual-only and mints metadata-read rather than
+write-capable permissions.
 
 ## 4. `env-vault` branch and merge policy
 
@@ -245,6 +249,13 @@ bypass actor, and leave creation of a new version tag allowed. This lets the
 planning App create one new exact tag but prevents any actor from moving or
 deleting a published version through the normal repository path.
 
+Apply a third active branch ruleset named
+`Protect env-vault release evidence` to the exact ref
+`refs/heads/release-evidence`. It must block non-fast-forward updates and
+deletion, have no bypass actor, and allow initial branch creation plus ordinary
+fast-forward commits. Evidence links use exact commit SHAs; this ruleset also
+prevents the durable evidence history from being rewritten or removed.
+
 Observe each real check context from a pull request before adding it to the
 ruleset. Do not guess from a display label. The dedicated lightweight
 `pr-title` workflow accepts the forms documented in `CONTRIBUTING.md` and
@@ -253,37 +264,46 @@ workflow does not run for metadata-only edits; its independent `quality-gate`
 remains bound to the last code-bearing pull-request head.
 
 The Release Please pull request is not auto-merged. Opening, updating,
-approving, or closing it does not authorize publication. A maintainer's
-squash-merge of the reviewed release pull request is the explicit permission
-to publish its exact manifest version. The merge commit must then pass `ci` on
-`main`; only a successful push run from this repository for that exact SHA may
-create the tag.
+approving, or closing it does not authorize publication. The only human
+checkpoint combines semantic review with the exact tuple authorization
+documented in `RELEASING.md`; the version, PR number, and full head SHA must be
+re-read immediately before the squash merge and recorded as that exact
+owner/member PR comment. The comment must be created and last updated before
+the merge. The merge commit must then pass `ci` on `main`; only a successful
+push run from this repository for that exact SHA, with a complete
+single-attempt promotion manifest and ten matching artifacts, may create the
+tag.
 
 Release Please v5 must remain PR-only. The surrounding planning workflow may
 create only the classified exact tag after green `ci` and generated-PR
 provenance checks, then must replace `autorelease: pending` with
 `autorelease: tagged`. That tag starts `build-binaries`, whose tag entry point
-repeats the authorization checks before acting as the sole public GitHub
-Release and asset publisher. Its quality and monotonicity gates must pass
-before the Release is created. Configure no ruleset bypass for the
+repeats the authorization and promotion checks before acting as the sole
+public GitHub Release and asset publisher. It must promote the CI-verified
+artifacts rather than rebuild them; its preflight and monotonicity gates must
+pass before the Release is created. Configure no ruleset bypass for the
 release-planning App. Its coarse PR/contents permissions could technically
 merge a green PR, so the pinned workflow and its contract tests enforce that
 the App never calls a merge endpoint; only the maintainer squash merge is an
 accepted publication authorization.
 
 The planning workflow and the manual planning-App audit use Administration-read
-access to verify repository merge settings, exact active main/tag rulesets, and
-that the App itself cannot bypass them before any mutation. GitHub returns the
-complete `bypass_actors` list only to a caller with ruleset write access; do not
-grant that power to the release App. An administrator must separately inspect
-both rulesets and record that the global bypass lists are empty during setup and
-credential rotation. Repository merge settings are queried through GraphQL;
+access to verify repository merge settings and the exact active
+main/tag/evidence rulesets. Before tag creation, the operational planning token
+also has the repository write access required for GitHub to return complete
+`bypass_actors` fields. The offline checker requires those fields to be present
+and empty on all three rulesets, preserves the exact raw responses and digests,
+and seals them to the source/version/planning-run tuple. The publisher's
+read-only health job downloads that attempt-qualified proof and replays it
+offline instead of querying Administration APIs. The separately dispatched
+read-only App audit cannot replace the sealed pre-tag proof. Repository merge
+settings are queried through GraphQL;
 this preserves the manual audit's read-only token because the equivalent REST
 response does not include merge-policy fields for that token. Correct the
 repository if the automated check
 reports rebase merging, `COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`, a non-squash
 ruleset merge method, a missing strict check, weakened branch protection, or a
-missing immutable `v*` tag ruleset. The workflow does not weaken the contract
+missing immutable `v*` tag ruleset, or a mutable/deletable evidence branch. The workflow does not weaken the contract
 to accommodate unsafe settings.
 
 ## 5. `homebrew-tap` branch and merge policy
@@ -341,10 +361,12 @@ The release sequence is:
    `conclusion=success`.
 4. Re-read the PR, require the unchanged head SHA, and squash-merge it with
    `--match-head-commit`.
-5. Resolve the actual merge/default-branch commit SHA.
+5. Resolve the exact release merge commit SHA and independently snapshot the
+   current default-branch SHA.
 6. Wait up to 15 minutes for `test-formula.yml` with `event=push`, that exact
-   commit SHA, and `conclusion=success`.
-7. Pass the PR URL, tap SHA, and exact push-run URL to `health`.
+   release merge SHA, and `conclusion=success`.
+7. Pass the PR URL, exact merge SHA, current tap SHA, and exact push-run URL to
+   `health`.
 
 A timeout, cancellation, API error, malformed response, changed PR head, closed
 PR, merge failure, or non-success workflow conclusion stops the release. A
@@ -353,17 +375,19 @@ successful check for a different SHA or event is never accepted.
 If the tap default branch already contains the same version and byte-identical
 formula, publication is an idempotent no-op. If the matching release PR exists,
 it must already be merged and its merge commit must be an ancestor of the tap
-default branch. The workflow still waits for a successful push run on the exact
-current tap SHA. Same-version content or checksum differences are a hard
-failure.
+default branch. The workflow still waits for the successful push run on that
+exact release merge SHA, while separately requiring the current tap formula to
+remain byte-identical and the current tap SHA to descend from the merge. Later
+unrelated tap commits therefore do not invalidate already completed release
+CI. Same-version content or checksum differences are a hard failure.
 
 The final job summary contains links to:
 
 - the GitHub Release;
 - the immutable env-vault source SHA;
 - the tap pull request when one exists;
-- the exact tap commit;
-- the successful `test-formula` push run for that commit;
+- the exact release merge and current tap commits;
+- the successful `test-formula` push run for the release merge commit;
 - repository attestations; and
 - the env-vault release workflow run.
 
@@ -373,10 +397,13 @@ The release modes use the App and environment as follows:
 
 | Mode | App credential | Tap behavior | Health behavior |
 | --- | --- | --- | --- |
-| `none` | `homebrew` only | create/reuse PR or exact no-op; wait PR and push CI | verify all release and tap evidence |
-| `release-assets` | `homebrew` only | same as `none` after asset reconciliation | verify all release and tap evidence |
+| `release-assets` | `homebrew` only | create/reuse PR or exact no-op after asset reconciliation; wait exact PR and push CI | verify all release and tap evidence |
 | `homebrew` | `homebrew` only | resume/reuse PR or exact no-op; wait exact CI | verify all release and tap evidence |
 | `health` | none | no branch, PR, merge, or formula mutation | re-download assets, verify attestations/formula, and wait for exact tap push CI |
+
+The automatic tag event uses the internal normal mode; it is not selectable by
+manual dispatch. Every manual repair must run from the exact immutable tag ref.
+None of the repair modes rebuilds product artifacts.
 
 `repair=homebrew` is the recovery path after a branch, PR, merge, or tap-CI
 failure. It accepts existing remote state only when every version, source SHA,
@@ -427,9 +454,9 @@ Rotate the planning App private key without preparing or publishing a release:
 2. Replace `RELEASE_APP_PRIVATE_KEY` in `release-planning` without printing
    either key.
 3. Dispatch `audit-release-planning-app.yml` and require its read-only
-   single-`env-vault` scope, repository-setting, and App-no-bypass audit to pass;
-   separately record an administrator check that both global bypass lists are
-   empty.
+   single-`env-vault` scope, repository-setting, and App-no-bypass audit to
+   pass. The next tag handoff remains blocked until the operational pre-tag
+   checker observes and seals empty global bypass lists for all three rulesets.
 4. Delete the old planning App key immediately after the new key succeeds.
 
 Rotate the tap App private key without running a release:

@@ -1,0 +1,91 @@
+{
+  "schema_id": "env-vault.e2e-baseline-diff.v1",
+  "schema_version": 1,
+  "previous_digest": "cd22e755ba89d17b01d62260c2ede29ea5f63433c56335cc0b7b26d094e29e32",
+  "updated_digest": "33b1626cabdf2173c3ea1c76ac73461c0cb1a27d72fa2f852edc66cf6836216f",
+  "changes": [
+    {
+      "path": "$.migration",
+      "before": {
+        "path": "evidence/e2e-baseline-migration/migration.json",
+        "sha256": "146f7e2b5f18488cd1eaa9d96aaf32a90e151586ea2e76aa27b7bf19195d0711"
+      },
+      "after": null
+    },
+    {
+      "path": "$.platforms[0].contract_sha256",
+      "before": "aef1cd2f68b7f7514a34bf7029fdc9b44dfe77f5a9d8dab8247fdd3c505e4f88",
+      "after": "2fd9729d38b8d451f051026469b56ae8acf10b37d2f9ef1d71b8e6f181cc934e"
+    },
+    {
+      "path": "$.platforms[0].leak.registry_records",
+      "before": 125,
+      "after": 130
+    },
+    {
+      "path": "$.platforms[1].contract_sha256",
+      "before": "895bc130fa83bf74e7b6cf1b587c0b0617c685422478046b1495dc30cb03ff79",
+      "after": "76fb72b1c0551bd418c680a3cc5a78164b0c09348bcfa2e5b236585dee52d0bf"
+    },
+    {
+      "path": "$.platforms[1].leak.registry_records",
+      "before": 125,
+      "after": 130
+    },
+    {
+      "path": "$.platforms[2].contract_sha256",
+      "before": "7a863f57c9116f9271ae357f3b9f905a40e2b63106e97675f6544efdd8589a50",
+      "after": "9db6ad37b086ec84f981346f84e9680f05ac2068017aa719d1cf42cdb16fa48a"
+    },
+    {
+      "path": "$.platforms[2].leak.registry_records",
+      "before": 125,
+      "after": 130
+    },
+    {
+      "path": "$.platforms[3].contract_sha256",
+      "before": "0f09d47a7d353a2b6faacec1e5f7115bad6760620d734267b8b2a2e9de826d42",
+      "after": "5c583c2e75d95c2951b83eb42f4dbea246adc35c1e633770ca3cd234c8aa6293"
+    },
+    {
+      "path": "$.platforms[3].leak.registry_records",
+      "before": 125,
+      "after": 130
+    },
+    {
+      "path": "$.platforms[4].contract_sha256",
+      "before": "1f157f83f9c67e9b75ce657a4e1baf42de5c993cf47a9ab8d224809e7f9a7685",
+      "after": "5b560838a3c6f6e2beaeab1ed7b10c60a5a258ef674ce7ff6c7874ff6ea924d9"
+    },
+    {
+      "path": "$.platforms[4].leak.registry_records",
+      "before": 125,
+      "after": 130
+    },
+    {
+      "path": "$.provenance.commit_sha",
+      "before": "585d4d7e5a9c800debd57198ff9e0e88411630ec",
+      "after": "62b3d25fcbc0a960c2eba03f98d7026cd2be8421"
+    },
+    {
+      "path": "$.provenance.run_id",
+      "before": "29479484474",
+      "after": "29519762171"
+    },
+    {
+      "path": "$.provenance.run_url",
+      "before": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29479484474",
+      "after": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29519762171"
+    },
+    {
+      "path": "$.semantic_suite.source_report_hash",
+      "before": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
+      "after": "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8"
+    },
+    {
+      "path": "$.semantic_suite.transition_code",
+      "before": "independent_second_secret_sentinel",
+      "after": null
+    }
+  ]
+}

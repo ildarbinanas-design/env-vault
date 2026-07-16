@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ildarbinanas-design/env-vault/internal/e2esuite"
 )
 
 type scenarioManifest struct {
@@ -245,82 +246,11 @@ func matchTestEvent(events map[string]testEvent, goTest string) (testEvent, bool
 }
 
 func suiteHash(repoRoot string) (string, error) {
-	root := filepath.Join(repoRoot, "e2e")
-	var files []string
-	err := filepath.WalkDir(root, func(filename string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		relative, err := filepath.Rel(root, filename)
-		if err != nil {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
-		if entry.IsDir() {
-			if relative == "reports" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("suite input must not be a symlink: %s", relative)
-		}
-		if info.Mode().IsRegular() {
-			files = append(files, relative)
-		}
-		return nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("enumerate E2E suite: %w", err)
-	}
-	if len(files) == 0 {
-		return "", errors.New("E2E suite has no files")
-	}
-	sort.Strings(files)
-	hash := sha256.New()
-	for _, relative := range files {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
-		if err != nil {
-			return "", fmt.Errorf("hash suite file %s: %w", relative, err)
-		}
-		_, _ = io.WriteString(hash, relative)
-		_, _ = hash.Write([]byte{0})
-		_, _ = hash.Write(canonicalSuiteFileBytes(relative, data))
-		_, _ = hash.Write([]byte{0})
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
+	return e2esuite.Hash(repoRoot)
 }
 
 func canonicalSuiteBytes(data []byte) []byte {
-	// Git may materialize text files with CRLF in a Windows worktree. The
-	// declared suite identity represents source semantics, not checkout EOLs.
-	return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-}
-
-func canonicalSuiteFileBytes(relative string, data []byte) []byte {
-	data = canonicalSuiteBytes(data)
-	if relative != "cmd/e2e-runner/tooling.go" {
-		return data
-	}
-	// The reporting tool is operational plumbing, not part of the public CLI
-	// contract. Canonicalize only its two pinned values while retaining every
-	// other byte in tooling.go in the semantic suite identity. This lets phase 2
-	// update a reporter for toolchain compatibility without creating a loophole
-	// where executable init/code could be hidden in an unhashed file.
-	lines := bytes.Split(data, []byte{'\n'})
-	for index, line := range lines {
-		trimmed := strings.TrimSpace(string(line))
-		if strings.HasPrefix(trimmed, "gotestsumModuleVersion =") || strings.HasPrefix(trimmed, "gotestsumVersion       =") {
-			indent := line[:len(line)-len(bytes.TrimLeft(line, " \t"))]
-			name := strings.TrimSpace(strings.SplitN(trimmed, "=", 2)[0])
-			lines[index] = []byte(fmt.Sprintf("%s%s = \"<REPORTER_PIN>\"", indent, name))
-		}
-	}
-	return bytes.Join(lines, []byte{'\n'})
+	return e2esuite.CanonicalBytes(data)
 }
 
 func aggregateContracts(directory, output string, expected []string, platform string) (int, error) {

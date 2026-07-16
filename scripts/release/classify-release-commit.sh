@@ -34,7 +34,7 @@ read_manifest_version() {
 }
 
 current_version=$(read_manifest_version "$commit") || release_die "candidate release manifest is malformed"
-version_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+version_pattern="^${RELEASE_VERSION_PATTERN#^v}"
 [[ "$current_version" =~ $version_pattern ]] || release_die "candidate manifest version must match MAJOR.MINOR.PATCH"
 
 if ! git cat-file -e "$parent:$manifest" 2>/dev/null; then

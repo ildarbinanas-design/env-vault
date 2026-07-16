@@ -1,0 +1,73 @@
+{
+  "schema_version": "1",
+  "mode": "compare",
+  "status": "pass",
+  "suite_hash": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
+  "platforms": [
+    "darwin-amd64",
+    "darwin-arm64",
+    "linux-amd64",
+    "linux-arm64",
+    "windows-amd64"
+  ],
+  "generated_at": "2026-07-16T07:24:21.428786107Z",
+  "baseline_commit": "7a044bdbf73aa592016bbb3a02d81f314f08fe63",
+  "baseline_run_id": "29441160687",
+  "baseline_run_url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687",
+  "baseline_run_attempt": "1",
+  "baseline_repository": "ildarbinanas-design/env-vault",
+  "baseline_reporter": "v1.12.2",
+  "baseline_validation_outcome": "success",
+  "baseline_go_version": "go1.22.12",
+  "candidate_commit": "585d4d7e5a9c800debd57198ff9e0e88411630ec",
+  "candidate_run_id": "29479484474",
+  "candidate_run_url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29479484474",
+  "candidate_run_attempt": "1",
+  "candidate_repository": "ildarbinanas-design/env-vault",
+  "candidate_reporter": "v1.13.0",
+  "candidate_version": "ci-585d4d7e5a9c800debd57198ff9e0e88411630ec",
+  "candidate_validation_outcome": "success",
+  "candidate_go_version": "go1.26.5",
+  "checks": [
+    {
+      "name": "baseline matrix validation",
+      "status": "pass"
+    },
+    {
+      "name": "candidate matrix validation",
+      "status": "pass"
+    },
+    {
+      "name": "baseline reports",
+      "status": "pass"
+    },
+    {
+      "name": "candidate reports",
+      "status": "pass"
+    },
+    {
+      "name": "platform set",
+      "status": "pass"
+    },
+    {
+      "name": "suite and run identity",
+      "status": "pass"
+    },
+    {
+      "name": "critical scenarios and results",
+      "status": "pass"
+    },
+    {
+      "name": "public CLI contracts",
+      "status": "pass"
+    },
+    {
+      "name": "statement coverage non-regression",
+      "status": "pass"
+    },
+    {
+      "name": "secret leak gates",
+      "status": "pass"
+    }
+  ]
+}

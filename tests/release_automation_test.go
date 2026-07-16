@@ -1,11 +1,16 @@
 package tests
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasesettings"
 )
 
 const (
@@ -117,6 +122,7 @@ func TestCurrentReleaseHasExtractableReviewedNotes(t *testing.T) {
 
 func TestVerifyReleaseAuthorization(t *testing.T) {
 	const sourceSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const releasePRHeadSHA = "ffffffffffffffffffffffffffffffffffffffff"
 	commandDir := installFakeReleaseGH(t)
 	baseEnv := []string{
 		"GITHUB_REPOSITORY=example/env-vault",
@@ -128,15 +134,65 @@ func TestVerifyReleaseAuthorization(t *testing.T) {
 		"FAKE_CI_CONCLUSION=success",
 		"FAKE_PR_AUTHOR=env-vault-release-planning[bot]",
 		"FAKE_PR_LABEL=autorelease: pending",
+		"FAKE_PR_HEAD_SHA=" + releasePRHeadSHA,
+		"FAKE_PR_MERGED_AT=2026-07-16T00:00:00Z",
+		"FAKE_CONFIRMATION_ACTOR=ildarbinanas-design",
+		"FAKE_CONFIRMATION_ASSOCIATION=OWNER",
+		"FAKE_CONFIRMATION_USER_TYPE=User",
+		"FAKE_CONFIRMATION_CREATED_AT=2026-07-15T23:59:00Z",
+		"FAKE_CONFIRMATION_UPDATED_AT=2026-07-15T23:59:00Z",
 		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
 
-	output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), baseEnv, "verify-release-authorization.sh", "v0.0.8", sourceSHA, "prepublish")
+	authorizationOutput := filepath.Join(t.TempDir(), "release-authorization-checkpoint.json")
+	authorizationEnv := append([]string{}, baseEnv...)
+	authorizationEnv = append(authorizationEnv, "RELEASE_AUTHORIZATION_OUTPUT="+authorizationOutput)
+	output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), authorizationEnv, "verify-release-authorization.sh", "v0.0.8", sourceSHA, "prepublish")
 	if err != nil {
 		t.Fatalf("verify valid release authorization: %v\n%s", err, output)
 	}
 	if output != "42\n" {
 		t.Fatalf("authorized PR=%q, want 42", output)
+	}
+	checkpointData, err := os.ReadFile(authorizationOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint struct {
+		Repository         string `json:"repository"`
+		ReleaseVersion     string `json:"release_version"`
+		ReleaseSourceSHA   string `json:"release_source_sha"`
+		GeneratedReleasePR struct {
+			Number   int64  `json:"number"`
+			HeadSHA  string `json:"head_sha"`
+			MergeSHA string `json:"merge_sha"`
+			MergedAt string `json:"merged_at"`
+		} `json:"generated_release_pr"`
+		Confirmation struct {
+			CommentID        int64  `json:"comment_id"`
+			URL              string `json:"url"`
+			Actor            string `json:"actor"`
+			ActorAssociation string `json:"actor_association"`
+			CreatedAt        string `json:"created_at"`
+			UpdatedAt        string `json:"updated_at"`
+			BodySHA256       string `json:"body_sha256"`
+		} `json:"confirmation"`
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(checkpointData, &checkpoint); err != nil {
+		t.Fatalf("decode authorization checkpoint: %v", err)
+	}
+	canonicalBody := "ПОДТВЕРЖДАЮ RELEASE v0.0.8 PR #42 SHA " + releasePRHeadSHA
+	bodyDigest := sha256.Sum256([]byte(canonicalBody))
+	if checkpoint.Repository != "example/env-vault" || checkpoint.ReleaseVersion != "v0.0.8" ||
+		checkpoint.ReleaseSourceSHA != sourceSHA || checkpoint.GeneratedReleasePR.Number != 42 ||
+		checkpoint.GeneratedReleasePR.HeadSHA != releasePRHeadSHA || checkpoint.GeneratedReleasePR.MergeSHA != sourceSHA ||
+		checkpoint.GeneratedReleasePR.MergedAt != "2026-07-16T00:00:00Z" || checkpoint.Confirmation.CommentID != 9001 ||
+		checkpoint.Confirmation.URL != "https://github.com/example/env-vault/pull/42#issuecomment-9001" ||
+		checkpoint.Confirmation.Actor != "ildarbinanas-design" || checkpoint.Confirmation.ActorAssociation != "OWNER" ||
+		checkpoint.Confirmation.CreatedAt != "2026-07-15T23:59:00Z" || checkpoint.Confirmation.UpdatedAt != "2026-07-15T23:59:00Z" ||
+		checkpoint.Confirmation.BodySHA256 != hex.EncodeToString(bodyDigest[:]) || checkpoint.Result != "pass" {
+		t.Fatalf("authorization checkpoint is not exact: %+v", checkpoint)
 	}
 	taggedEnv := append([]string{}, baseEnv...)
 	taggedEnv = append(taggedEnv, "FAKE_PR_LABEL=autorelease: tagged")
@@ -146,16 +202,36 @@ func TestVerifyReleaseAuthorization(t *testing.T) {
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), baseEnv, "verify-release-authorization.sh", "v0.0.8", sourceSHA, "tagged"); err == nil {
 		t.Fatalf("pending release unexpectedly authorized for publication: %s", output)
 	}
+	advancedMainEnv := append([]string{}, taggedEnv...)
+	advancedMainEnv = append(advancedMainEnv,
+		"FAKE_SOURCE_MANIFEST_VERSION=0.0.8",
+		"FAKE_MAIN_MANIFEST_VERSION=0.0.9",
+	)
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), advancedMainEnv, "verify-release-authorization.sh", "v0.0.8", sourceSHA, "tagged"); err != nil || output != "42\n" {
+		t.Fatalf("verify tagged immutable release after main advances: %v\n%s", err, output)
+	}
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), advancedMainEnv, "verify-release-authorization.sh", "v0.0.8", sourceSHA, "prepublish"); err == nil {
+		t.Fatalf("prepublish authorization ignored a newer current-main manifest: %s", output)
+	}
 
 	cases := []struct {
 		name     string
 		override string
 	}{
-		{name: "stale manifest", override: "FAKE_MANIFEST_VERSION=0.0.9"},
+		{name: "stale source manifest", override: "FAKE_SOURCE_MANIFEST_VERSION=0.0.9"},
 		{name: "diverged commit", override: "FAKE_COMPARE_STATUS=diverged"},
 		{name: "failed ci", override: "FAKE_CI_CONCLUSION=failure"},
 		{name: "wrong App author", override: "FAKE_PR_AUTHOR=github-actions[bot]"},
 		{name: "missing lifecycle label", override: "FAKE_PR_LABEL=triage"},
+		{name: "wrong confirmation body", override: "FAKE_CONFIRMATION_BODY=confirm"},
+		{name: "non-member confirmation", override: "FAKE_CONFIRMATION_ASSOCIATION=CONTRIBUTOR"},
+		{name: "bot confirmation", override: "FAKE_CONFIRMATION_USER_TYPE=Bot"},
+		{name: "post-merge confirmation", override: "FAKE_CONFIRMATION_CREATED_AT=2026-07-16T00:00:01Z"},
+		{name: "post-merge edit", override: "FAKE_CONFIRMATION_UPDATED_AT=2026-07-16T00:00:01Z"},
+		{name: "same-second confirmation", override: "FAKE_CONFIRMATION_CREATED_AT=2026-07-16T00:00:00Z"},
+		{name: "same-second edit", override: "FAKE_CONFIRMATION_UPDATED_AT=2026-07-16T00:00:00Z"},
+		{name: "duplicate confirmation", override: "FAKE_CONFIRMATION_DUPLICATE=true"},
+		{name: "missing confirmation", override: "FAKE_CONFIRMATION_MISSING=true"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+" fails closed", func(t *testing.T) {
@@ -307,6 +383,56 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 	badTagRulesetEnv = append(badTagRulesetEnv, "FAKE_TAG_RULESET_ALLOW_UPDATE=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badTagRulesetEnv, "verify-repository-release-settings.sh"); err == nil {
 		t.Fatalf("mutable release tag ruleset unexpectedly succeeded: %s", output)
+	}
+
+	badEvidenceRulesetEnv := append([]string{}, baseEnv...)
+	badEvidenceRulesetEnv = append(badEvidenceRulesetEnv, "FAKE_EVIDENCE_RULESET_ALLOW_FORCE=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badEvidenceRulesetEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("mutable release evidence ruleset unexpectedly succeeded: %s", output)
+	}
+}
+
+func TestVerifyRepositoryReleaseSettingsSealsExactOfflineProof(t *testing.T) {
+	commandDir := installFakeReleaseGH(t)
+	tempDir := t.TempDir()
+	releasecheck := filepath.Join(tempDir, "releasecheck")
+	build := exec.Command("go", "build", "-trimpath", "-o", releasecheck, "./cmd/releasecheck")
+	build.Dir = ".."
+	build.Env = os.Environ()
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build releasecheck: %v\n%s", err, output)
+	}
+
+	const sourceSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	proofPath := filepath.Join(tempDir, "repository-release-settings-proof.json")
+	env := []string{
+		"GITHUB_REPOSITORY=example/env-vault",
+		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"RELEASECHECK=" + releasecheck,
+		"RELEASE_SETTINGS_PROOF_OUTPUT=" + proofPath,
+		"RELEASE_SETTINGS_SOURCE_SHA=" + sourceSHA,
+		"RELEASE_SETTINGS_VERSION=v0.0.9",
+		"RELEASE_SETTINGS_PLANNING_RUN_ID=29475939348",
+		"RELEASE_SETTINGS_PLANNING_RUN_ATTEMPT=2",
+	}
+	if output, err := runReleaseAutomationScriptEnv(t, tempDir, env, "verify-repository-release-settings.sh"); err != nil {
+		t.Fatalf("seal valid repository settings proof: %v\n%s", err, output)
+	}
+	encoded, err := os.ReadFile(proofPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := releasesettings.ParseProof(encoded)
+	if err != nil {
+		t.Fatalf("strictly parse settings proof: %v", err)
+	}
+	want := releasesettings.Tuple{
+		Repository: "example/env-vault", SourceSHA: sourceSHA,
+		ReleaseVersion: "v0.0.9", PlanningRunID: 29475939348,
+		PlanningRunAttempt: 2, CheckedAt: proof.Tuple.CheckedAt,
+	}
+	if err := releasesettings.Verify(proof, want); err != nil {
+		t.Fatalf("verify script-produced settings proof offline: %v", err)
 	}
 }
 
@@ -505,7 +631,7 @@ case "$args" in
     printf '{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":%s,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n' "${FAKE_ALLOW_REBASE:-false}"
     ;;
   *"rulesets?per_page=100"*)
-    printf '[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"}]]\n'
+    printf '[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"},{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","enforcement":"active"}]]\n'
     ;;
   *"rulesets/7"*)
     if [[ "${FAKE_RULESET_ALLOW_REBASE:-false}" == "true" ]]; then
@@ -535,8 +661,16 @@ case "$args" in
     fi
     printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_rules"
     ;;
+  *"rulesets/9"*)
+    if [[ "${FAKE_EVIDENCE_RULESET_ALLOW_FORCE:-false}" == "true" ]]; then
+      evidence_rules='[{"type":"deletion"}]'
+    else
+      evidence_rules='[{"type":"deletion"},{"type":"non_fast_forward"}]'
+    fi
+    printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
+    ;;
   *"api --paginate --slurp --method GET repos/example/env-vault/pulls"*)
-    printf '[[{"number":43,"base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this reviewed pull request authorizes publication of this exact version after the merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
+    printf '[[{"number":43,"base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
       "${FAKE_PROPOSAL_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *"git/commits/"*)
@@ -559,8 +693,11 @@ case "$args" in
   *"compare/"*)
     printf '{"status":"%s"}\n' "${FAKE_COMPARE_STATUS:?}"
     ;;
+  *"contents/.release-please-manifest.json?ref=${FAKE_SOURCE_SHA:-__missing_source__}"*)
+    printf '{".":"%s"}\n' "${FAKE_SOURCE_MANIFEST_VERSION:-${FAKE_MANIFEST_VERSION:?}}"
+    ;;
   *"contents/.release-please-manifest.json"*)
-    printf '{".":"%s"}\n' "${FAKE_MANIFEST_VERSION:?}"
+    printf '{".":"%s"}\n' "${FAKE_MAIN_MANIFEST_VERSION:-${FAKE_MANIFEST_VERSION:?}}"
     ;;
   *"contents/README.md"*)
     printf '%b\n' 'Current stable release: \x60v0.0.8\x60. <!-- x-release-please-version -->'
@@ -572,9 +709,38 @@ case "$args" in
     printf '{"workflow_runs":[{"head_sha":"%s","head_branch":"main","event":"push","conclusion":"%s"}]}\n' \
       "${FAKE_CI_HEAD_SHA:-${FAKE_SOURCE_SHA:?}}" "${FAKE_CI_CONCLUSION:?}"
     ;;
+  *"issues/42/comments?per_page=100"*)
+    if [[ "${FAKE_CONFIRMATION_MISSING:-false}" == "true" ]]; then
+      printf '%s\n' '[[]]'
+      exit 0
+    fi
+    canonical_body="ПОДТВЕРЖДАЮ RELEASE v0.0.8 PR #42 SHA ${FAKE_PR_HEAD_SHA:?}"
+    body=${FAKE_CONFIRMATION_BODY:-$canonical_body}
+    comment=$(jq -cn \
+      --arg body "$body" \
+      --arg actor "${FAKE_CONFIRMATION_ACTOR:?}" \
+      --arg association "${FAKE_CONFIRMATION_ASSOCIATION:?}" \
+      --arg user_type "${FAKE_CONFIRMATION_USER_TYPE:?}" \
+      --arg created_at "${FAKE_CONFIRMATION_CREATED_AT:?}" \
+      --arg updated_at "${FAKE_CONFIRMATION_UPDATED_AT:?}" \
+      '{id:9001,html_url:"https://github.com/example/env-vault/pull/42#issuecomment-9001",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
+    if [[ "${FAKE_CONFIRMATION_DUPLICATE:-false}" == "true" ]]; then
+      duplicate=$(jq -cn \
+        --arg body "$body" \
+        --arg actor "${FAKE_CONFIRMATION_ACTOR:?}" \
+        --arg association "${FAKE_CONFIRMATION_ASSOCIATION:?}" \
+        --arg user_type "${FAKE_CONFIRMATION_USER_TYPE:?}" \
+        --arg created_at "${FAKE_CONFIRMATION_CREATED_AT:?}" \
+        --arg updated_at "${FAKE_CONFIRMATION_UPDATED_AT:?}" \
+        '{id:9002,html_url:"https://github.com/example/env-vault/pull/42#issuecomment-9002",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
+      printf '[[%s,%s]]\n' "$comment" "$duplicate"
+    else
+      printf '[[%s]]\n' "$comment"
+    fi
+    ;;
   *"commits/"*"/pulls"*)
-    printf '[[{"number":42,"merged_at":"2026-07-16T00:00:00Z","merge_commit_sha":"%s","base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this reviewed pull request authorizes publication of this exact version after the merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
-      "${FAKE_SOURCE_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
+    printf '[[{"number":42,"state":"closed","merged_at":"%s","merge_commit_sha":"%s","base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
+      "${FAKE_PR_MERGED_AT:?}" "${FAKE_SOURCE_SHA:?}" "${FAKE_PR_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *)
     printf 'unexpected fake gh invocation: %s\n' "$args" >&2

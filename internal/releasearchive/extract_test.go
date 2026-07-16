@@ -9,7 +9,22 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
+
+var (
+	testReleaseContract = mustLoadReleaseContract()
+	releaseArchives     = archiveSpecs(testReleaseContract)
+)
+
+func mustLoadReleaseContract() releasecontract.Contract {
+	contract, err := releasecontract.LoadFile(filepath.Join("..", "..", filepath.FromSlash(releasecontract.CanonicalPath)))
+	if err != nil {
+		panic(err)
+	}
+	return contract
+}
 
 type archiveEntry struct {
 	name     string
@@ -38,7 +53,7 @@ func TestExtractAllValidReleaseArchives(t *testing.T) {
 		}
 	}
 
-	if err := ExtractAll(inputDir, outputDir); err != nil {
+	if err := ExtractAll(inputDir, outputDir, testReleaseContract); err != nil {
 		t.Fatalf("ExtractAll() error = %v", err)
 	}
 	for _, spec := range releaseArchives {
@@ -226,7 +241,7 @@ func TestRejectsWrongArchiveName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ExtractArchive(archivePath, filepath.Join(t.TempDir(), "output"))
+	err := ExtractArchive(archivePath, filepath.Join(t.TempDir(), "output"), testReleaseContract)
 	requireErrorContains(t, err, "unsupported release archive name")
 }
 
@@ -252,7 +267,7 @@ func TestRejectsNonEmptyOutputDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ExtractArchive(archivePath, outputDir)
+	err := ExtractArchive(archivePath, outputDir, testReleaseContract)
 	requireErrorContains(t, err, "output directory must be empty")
 	content, readErr := os.ReadFile(filepath.Join(outputDir, "keep"))
 	if readErr != nil || string(content) != "do not overwrite" {
@@ -296,7 +311,7 @@ func TestRejectsEntryCountLimit(t *testing.T) {
 
 func extractOneForTest(t *testing.T, archivePath string, limits extractionLimits) error {
 	t.Helper()
-	spec, ok := archiveSpecByName(filepath.Base(archivePath))
+	spec, ok := archiveSpecByName(filepath.Base(archivePath), releaseArchives)
 	if !ok {
 		t.Fatalf("test archive has unsupported name %q", filepath.Base(archivePath))
 	}

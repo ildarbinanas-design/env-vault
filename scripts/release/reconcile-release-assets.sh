@@ -46,6 +46,7 @@ repository=${4:-${GITHUB_REPOSITORY:-}}
 release_require_repository "$repository"
 release_require_version "$version"
 release_require_command gh
+release_require_command cmp
 [[ -d "$local_dir" && ! -L "$local_dir" ]] ||
   release_die "local asset directory not found: $local_dir"
 
@@ -65,28 +66,46 @@ for asset in "${RELEASE_ASSETS[@]}"; do
     release_die "release contains duplicate asset names: $asset"
 done
 
+# Promotion is the sole byte source. Validate all local pairs and every
+# existing remote member before performing the first upload so a mismatch in a
+# later platform cannot leave a partially mutated release.
+remote_dir="$work_dir/remote"
+mkdir "$remote_dir"
 for archive in "${RELEASE_ARCHIVES[@]}"; do
   checksum="$archive.sha256"
+	[[ -f "$local_dir/$archive" && ! -L "$local_dir/$archive" ]] ||
+		release_die "local release archive is missing or unsafe: $archive"
+	[[ -f "$local_dir/$checksum" && ! -L "$local_dir/$checksum" ]] ||
+		release_die "local release checksum is missing or unsafe: $checksum"
+	release_verify_checksum_pair "$local_dir/$archive" "$local_dir/$checksum"
+
   archive_count=$(remote_count "$archive")
   checksum_count=$(remote_count "$checksum")
-  pair_dir="$work_dir/$archive"
-  mkdir "$pair_dir"
-
-  if [[ "$archive_count" == "1" && "$checksum_count" == "1" ]]; then
-    download_remote_pair_members "$pair_dir" "$archive" "$checksum"
-    release_verify_checksum_pair "$pair_dir/$archive" "$pair_dir/$checksum"
-  elif [[ "$archive_count" == "1" ]]; then
-    download_remote_pair_members "$pair_dir" "$archive"
-    release_write_checksum_pair "$pair_dir/$archive" "$pair_dir/$checksum"
-    gh release upload "$version" "$pair_dir/$checksum" --repo "$repository"
-  elif [[ "$checksum_count" == "1" ]]; then
-    download_remote_pair_members "$pair_dir" "$checksum"
-    release_verify_checksum_pair "$local_dir/$archive" "$pair_dir/$checksum"
-    gh release upload "$version" "$local_dir/$archive" --repo "$repository"
-  else
-    release_verify_checksum_pair "$local_dir/$archive" "$local_dir/$checksum"
-    gh release upload "$version" "$local_dir/$archive" "$local_dir/$checksum" --repo "$repository"
+	if [[ "$archive_count" == "1" ]]; then
+		download_remote_pair_members "$remote_dir" "$archive"
+		cmp -s -- "$local_dir/$archive" "$remote_dir/$archive" ||
+			release_die "existing release archive differs from verified promotion: $archive"
+	fi
+	if [[ "$checksum_count" == "1" ]]; then
+		download_remote_pair_members "$remote_dir" "$checksum"
+		cmp -s -- "$local_dir/$checksum" "$remote_dir/$checksum" ||
+			release_die "existing release checksum differs from verified promotion: $checksum"
+	fi
+	if [[ "$archive_count" == "1" && "$checksum_count" == "1" ]]; then
+		release_verify_checksum_pair "$remote_dir/$archive" "$remote_dir/$checksum"
   fi
+done
+
+for archive in "${RELEASE_ARCHIVES[@]}"; do
+	checksum="$archive.sha256"
+	archive_count=$(remote_count "$archive")
+	checksum_count=$(remote_count "$checksum")
+	if [[ "$archive_count" == "0" ]]; then
+		gh release upload "$version" "$local_dir/$archive" --repo "$repository"
+	fi
+	if [[ "$checksum_count" == "0" ]]; then
+		gh release upload "$version" "$local_dir/$checksum" --repo "$repository"
+	fi
 done
 
 if [[ -z "$verified_dir" ]]; then
@@ -96,4 +115,8 @@ if [[ -z "$verified_dir" ]]; then
 fi
 
 "$SCRIPT_DIR/download-release-assets.sh" "$version" "$verified_dir" "$repository"
+for asset in "${RELEASE_ASSETS[@]}"; do
+	cmp -s -- "$local_dir/$asset" "$verified_dir/$asset" ||
+		release_die "published release asset differs from verified promotion: $asset"
+done
 printf 'release assets reconciled and verified for %s\n' "$version"
