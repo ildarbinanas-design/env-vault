@@ -47,8 +47,10 @@ The tap runs style, installation, and exact-version checks separately. The
 release workflow opens or reuses a version-specific tap pull request, waits for
 `test-formula.yml` on
 the exact pull-request head, squash-merges that exact head, and then waits for
-the workflow's successful `push` run on the resulting tap commit. The release
-is healthy only after that post-merge check succeeds. See
+the workflow's successful `push` run on the resulting release merge commit.
+Health also records the current tap head separately, proving that it still
+contains that merge and the exact formula even if unrelated tap commits arrive
+later. The release is healthy only after that post-merge check succeeds. See
 [RELEASING.md](RELEASING.md). Upgrade with `brew upgrade env-vault`.
 
 ### Migrating a manual or `go install` installation to Homebrew
@@ -95,6 +97,11 @@ verify its checksum, and unpack (substitute the version, OS, and architecture):
 
 Current stable release: `v0.0.8`. <!-- x-release-please-version -->
 
+The line above is managed by Release Please. `v0.0.8` itself is a preserved
+failed immutable tag and intentionally has no GitHub Release; use the
+[`latest` Release](https://github.com/ildarbinanas-design/env-vault/releases/latest)
+until the next version has completed automated publication and health checks.
+
 ```sh
 VERSION=vX.Y.Z TARGET=darwin-arm64
 curl -fsSLO "https://github.com/ildarbinanas-design/env-vault/releases/download/${VERSION}/env-vault-${TARGET}.tar.gz"
@@ -122,41 +129,38 @@ GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
 
 ## GitHub Builds
 
-Binary archives are built by the `build-binaries` GitHub Actions workflow.
-Both release builds and pull-request CI call the same `reusable-quality.yml`
-workflow, including native license scans and binary-only E2E verification on
-Linux, macOS, and Windows. Candidate reports are compared without coverage or
-contract tolerance to the preserved Go 1.22.12 baseline from
-[run 29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687).
+Pull-request and `main` CI call `reusable-quality.yml`. One graph performs
+source tests/vet/race/smoke, three native license checks, five native
+build/package/E2E jobs, and one complete-matrix gate. The matrix gate verifies
+the checked-in durable baseline; it does not depend on an expiring historical
+workflow artifact.
 
-- Release planning: after `ci` succeeds for a current `main` push, Release
-  Please v5 opens or updates a release pull request. Stale completed runs are
-  skipped, and the resulting single proposal commit is independently required
-  to start from a `main` SHA with a successful push CI run. That pull request
-  contains the proposed semantic version and matching `CHANGELOG.md` update;
-  Release Please is PR-only and does not create tags or GitHub Releases.
-- Release authorization: merging the reviewed release pull request is the
-  explicit approval to publish that exact version. The merge commit must pass
-  `ci` on `main` before publication begins.
-- Release handoff: after that green run, the release-planning workflow verifies
-  the deterministic release commit, generated-PR provenance, current manifest,
-  `main` ancestry, and exact successful CI run before creating the `vX.Y.Z` tag
-  at that SHA. It then marks the merged proposal `autorelease: tagged`. The
-  PR-only Release Please action itself never creates a tag or Release.
-- Release publication: the tag starts `build-binaries`, the only workflow
-  allowed to create the public GitHub Release. The tag entry point repeats the
-  same release-authorization checks, then reruns the complete quality and native
-  artifact gates before publishing archives, attestations, and the Homebrew
-  update.
-- Planning and publication share one non-cancelling concurrency group, so the
-  publisher starts only after lifecycle-label reconciliation and a later
-  proposal waits until the active release finishes.
-- Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
-  leave the optional version input blank.
-- Manual dispatch can retry only an existing authorized tag; it cannot create
-  or select a new version. Historical `v0.0.1`–`v0.0.7` repairs use an explicit
-  legacy existing-Release boundary, while `v0.0.8+` requires generated-PR
-  authorization.
+For an exact release merge, a bounded native probe verifies `--version`,
+`version`, and JSON version output on every native target with a scrubbed
+environment. The file-only checker binds those saved results and seals the five
+archives, five checksum sidecars, contract/coverage/leak results, and semantic
+suite identity in one promotion manifest. Release planning verifies that exact
+attempt before creating the immutable tag. The seven-job `build-binaries`
+publisher then promotes those checked bytes, creates provenance and SPDX SBOM
+attestations, publishes Homebrew through exact PR-head and post-merge CI gates,
+and performs release health checks. It does not rebuild the product or repeat
+source quality.
+
+GitHub API transport, observation, and mutations use `gh`; the repository's
+`releasecheck` tool is offline and validates saved JSON, manifests, and
+artifacts. An incomplete attempt deterministically requests a full
+`rerun_all_jobs`, never a failed-jobs-only artifact mixture. Manual publisher
+dispatch can only resume `release-assets`, `homebrew`, or `health` for an exact
+existing tag. `v0.0.1`–`v0.0.7` rebuilds are diagnostic-only and can never be
+published; `v0.0.8` remains a failed tag without a Release.
+
+The only routine human release checkpoint is semantic review plus an exact
+version/PR/head-SHA authorization. Automation records that exact line as a
+pre-merge generated-PR comment from the authorizing owner/member and binds its
+identity and body digest into machine evidence. Planning, publisher,
+supply-chain, Homebrew, health, machine evidence, and metrics then run
+automatically. Planning and publication share one non-cancelling global
+concurrency group.
 
 Pull request titles follow Conventional Commits because the squash title is
 the input to version and changelog generation. See [CONTRIBUTING.md](CONTRIBUTING.md)

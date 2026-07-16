@@ -13,12 +13,22 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - A test or insecure backend is allowed only behind an explicit environment gate and must be impossible to enable accidentally.
 - Structured errors are mandatory for implemented commands.
 - Mandatory tests are required once behavior beyond the local version placeholder is implemented.
-- Every implementation run must update an evidence bundle with commands, scope, checks, risks, and claim statuses.
+- Release evidence must be versioned machine JSON generated from exact workflow
+  and artifact identities. A generated Markdown index may summarize that JSON;
+  append-only narrative evidence is not an authorization or release gate.
+- GitHub transport and mutations use `gh` or the GitHub API. Repository
+  checkers consume saved files offline, hold no credentials, and fail closed on
+  unknown, incomplete, invalid, or unsupported input.
 - Do not commit, push, tag, release, create a remote, or publish without explicit approval.
-  Merging a generated Release Please pull request is explicit approval only for
-  the exact version and source SHA recorded by that reviewed PR; the automated
-  release workflow may then create that exact tag and run the existing
-  fail-closed publisher. It is not approval for any other version or ref.
+  A generated Release Please pull request may be merged only after the operator
+  records the exact authorization tuple as a comment on that pull request,
+  containing its version, pull-request number, and full unchanged head SHA.
+  The comment must be authored by a repository owner or member and its creation
+  and last edit must be strictly earlier than the recorded merge timestamp;
+  same-second, post-merge, and post-merge-edited comments are invalid. That one
+  tuple authorizes only the resulting exact merge source, immutable tag, and
+  fail-closed publisher; it is not approval for any changed PR head, version,
+  or ref.
 
 ## Project Scope
 
