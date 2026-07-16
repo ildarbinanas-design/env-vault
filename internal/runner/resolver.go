@@ -59,15 +59,30 @@ func Resolve(ctx context.Context, store secretstore.Store, profileMappings, dire
 		if _, exists := envMap[platform.CanonicalEnvKey(mapping.Env)]; exists && !opts.OverrideEnv {
 			return ResolveResult{}, apperrors.New(opts.Command, apperrors.CodeEnvCollision, "Environment variable already exists: "+mapping.Env, "Use --override-env or choose a different target env var", apperrors.ExitUsage)
 		}
-		exists, err := store.Exists(ctx, opts.Service, mapping.Name)
-		if err != nil {
-			return ResolveResult{}, backendUnavailable(opts.Command, err)
-		}
-		if !exists {
-			if mapping.Required {
-				return ResolveResult{}, missingSecretError(opts.Command, opts.Service, mapping.Name)
+		var value []byte
+		if opts.DryRun {
+			exists, err := store.Exists(ctx, opts.Service, mapping.Name)
+			if err != nil {
+				return ResolveResult{}, backendUnavailable(opts.Command, err)
 			}
-			continue
+			if !exists {
+				if mapping.Required {
+					return ResolveResult{}, missingSecretError(opts.Command, opts.Service, mapping.Name)
+				}
+				continue
+			}
+		} else {
+			var err error
+			value, err = store.Get(ctx, opts.Service, mapping.Name)
+			if stderrors.Is(err, secretstore.ErrNotFound) {
+				if mapping.Required {
+					return ResolveResult{}, missingSecretError(opts.Command, opts.Service, mapping.Name)
+				}
+				continue
+			}
+			if err != nil {
+				return ResolveResult{}, backendUnavailable(opts.Command, err)
+			}
 		}
 		fingerprint := secretstore.Fingerprint(opts.Service, mapping.Name)
 		result.Secrets = append(result.Secrets, ResolvedSecret{
@@ -77,13 +92,6 @@ func Resolve(ctx context.Context, store secretstore.Store, profileMappings, dire
 		})
 		if opts.DryRun {
 			continue
-		}
-		value, err := store.Get(ctx, opts.Service, mapping.Name)
-		if stderrors.Is(err, secretstore.ErrNotFound) {
-			return ResolveResult{}, missingSecretError(opts.Command, opts.Service, mapping.Name)
-		}
-		if err != nil {
-			return ResolveResult{}, backendUnavailable(opts.Command, err)
 		}
 		setEnv(&result.Env, envMap, mapping.Env, string(value))
 	}
