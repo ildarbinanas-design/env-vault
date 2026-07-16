@@ -26,12 +26,14 @@ supply-chain identity.
 | Unchanged guarantees | both matrices, critical scenarios, coverage non-regression, checksum validation, and leak gates passed | artifact_observed |
 | Publication state | tag retained at the exact SHA; Release, supply-chain, Homebrew, and health jobs remained skipped/blocked | remote_observed |
 
-The E2E harness normalized development and CI build labels but did not
+The frozen E2E harness normalized development and CI build labels but did not
 normalize the exact release version injected through `ENV_VAULT_E2E_VERSION`.
-The correction replaces only that exact value, only in
-`CLI_VERSION_FORMS`; arbitrary semantic versions in other public output remain
-observable. Native smoke continues to verify the literal release version on
-every platform before E2E comparison.
+The correction leaves that reviewed suite and its Go 1.22 baseline hash
+unchanged. The external cross-source comparator validates the three exact
+`CLI_VERSION_FORMS` shapes and canonicalizes only the expected strict release
+version in the candidate contract. Arbitrary semantic versions in other public
+output remain observable. Native smoke continues to verify the literal release
+version on every platform before E2E comparison.
 
 ### Changes
 
@@ -50,6 +52,9 @@ every platform before E2E comparison.
   SHA so a later ref change becomes a terminal inconsistency.
 - Add a stable non-secret `run-name` marker to `build-binaries` for future
   release/repair correlation without changing workflow topology or permissions.
+- Preserve the frozen E2E suite identity while making the external migration
+  comparator aware of the exact candidate release version; malformed shapes or
+  wrong literal versions fail closed.
 - Document the command, one-document output contract, exit statuses, and v1
   limitation that manual repair correlation and independent tap/attestation
   revalidation remain future work.
@@ -61,7 +66,9 @@ every platform before E2E comparison.
 | `go test ./...` | passed | cli_observed |
 | `go vet ./...` | passed | cli_observed |
 | `go test -race ./internal/releasectl -count=1` | passed | cli_observed |
+| `go test -race ./cmd/e2e-compare -count=1` | passed | cli_observed |
 | `git diff --check` | passed | cli_observed |
+| Replay the corrected comparator over the preserved Go 1.22 baseline and the five real `v0.0.8` candidate report artifacts | passed with frozen suite hash `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`, zero coverage tolerance, and all contract/leak/identity gates | artifact_observed |
 | Live `releasectl release status` for `v0.0.8` and the exact SHA | exit 1 with one JSON document; exact CI/planning/publisher IDs, failed job and steps, blocked downstream stages, and `inspect_publisher_failure` reproduced without log interpretation | remote_observed |
 | Independent read-only review | deadline/retry, host binding, rate-limit classification, downstream attribution, blocked terminal state, inaccessible-repository 404, and tag-SHA freeze findings were incorporated with regression tests | repo_verified |
 

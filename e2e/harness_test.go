@@ -42,7 +42,6 @@ type suite struct {
 	root        string
 	contracts   string
 	registry    string
-	version     string
 	passthrough map[string]string
 }
 
@@ -140,7 +139,6 @@ func newSuite(t *testing.T) *suite {
 		root:        root,
 		contracts:   os.Getenv(contractsDirEnv),
 		registry:    os.Getenv(sentinelRegistryEnv),
-		version:     firstNonEmpty(os.Getenv("ENV_VAULT_E2E_VERSION"), os.Getenv("VERSION")),
 		passthrough: passthrough,
 	}
 }
@@ -486,23 +484,8 @@ func (sc *scenario) normalizeScalarText(value string) string {
 		}
 	}
 	value = timestampPattern.ReplaceAllString(value, "<TIMESTAMP>")
-	if sc.id == "CLI_VERSION_FORMS" && sc.suite != nil && sc.suite.version != "" {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == sc.suite.version {
-			return strings.Replace(value, sc.suite.version, "<VERSION>", 1)
-		}
-	}
 	value = versionPattern.ReplaceAllString(value, "<VERSION>")
 	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func TestContractNormalizationReplacesSentinelDerivedHashes(t *testing.T) {
@@ -519,31 +502,6 @@ func TestContractNormalizationReplacesSentinelDerivedHashes(t *testing.T) {
 	}
 	if got := sc.normalizeScalarText(sc.sentinels[0]); got != sc.sentinels[0] {
 		t.Fatal("raw sentinels must not be normalized because that would mask a leak")
-	}
-}
-
-func TestContractNormalizationReplacesOnlyExpectedReleaseVersion(t *testing.T) {
-	sc := &scenario{
-		id:    "CLI_VERSION_FORMS",
-		suite: &suite{version: "v0.0.8"},
-	}
-	for _, input := range []string{"v0.0.8", "v0.0.8\n"} {
-		want := strings.Replace(input, "v0.0.8", "<VERSION>", 1)
-		if got := sc.normalizeScalarText(input); got != want {
-			t.Fatalf("normalized release version=%q, want %q", got, want)
-		}
-	}
-	jsonInput := "{\"data\":{\"version\":\"v0.0.8\"}}\n"
-	jsonWant := "{\"data\":{\"version\":\"\\u003cVERSION\\u003e\"}}\n"
-	if got := sc.normalizeText(jsonInput); got != jsonWant {
-		t.Fatalf("normalized JSON release version=%q, want %q", got, jsonWant)
-	}
-	if got := sc.normalizeScalarText("release v0.0.8 is available"); got != "release v0.0.8 is available" {
-		t.Fatalf("embedded semver was unexpectedly normalized: %q", got)
-	}
-	other := &scenario{id: "OTHER", suite: &suite{version: "v0.0.8"}}
-	if got := other.normalizeScalarText("v0.0.8\n"); got != "v0.0.8\n" {
-		t.Fatalf("version outside CLI_VERSION_FORMS was unexpectedly normalized: %q", got)
 	}
 }
 

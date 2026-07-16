@@ -507,6 +507,8 @@ jobs:
       - name: Compare candidate with canonical baseline
         if: always()
         shell: bash
+        env:
+          CANDIDATE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare \
@@ -528,7 +530,8 @@ jobs:
             --candidate-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --candidate-run-attempt "${{ github.run_attempt }}" \
             --candidate-repository "${{ github.repository }}" \
-            --candidate-reporter "v1.13.0"
+            --candidate-reporter "v1.13.0" \
+            --candidate-version "$CANDIDATE_VERSION"
 
       - name: Verify exact migration identity
         if: always()
