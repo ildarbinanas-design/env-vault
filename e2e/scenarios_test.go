@@ -105,6 +105,9 @@ func testCLIVersionForms(sc *scenario) {
 	if strings.TrimSpace(flag.Stdout) == "" || flag.Stdout != command.Stdout {
 		sc.t.Fatalf("version forms differ: flag=%q command=%q", flag.Stdout, command.Stdout)
 	}
+	if sc.suite.version != "" && strings.TrimSpace(flag.Stdout) != sc.suite.version {
+		sc.t.Fatalf("version output=%q, want exact %q from %s", strings.TrimSpace(flag.Stdout), sc.suite.version, versionEnv)
+	}
 	jsonResult := sc.run("--json", "--version")
 	wantExit(sc.t, jsonResult, 0)
 	got := parseEnvelope(sc.t, jsonResult)

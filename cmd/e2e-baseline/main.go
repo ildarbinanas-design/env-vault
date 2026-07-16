@@ -177,6 +177,6 @@ func runVerifyMigration(args []string, stdout, stderr io.Writer) error {
 	if verifyErr != nil {
 		return verifyErr
 	}
-	_, err = fmt.Fprintf(stdout, "verified historical comparator migration: %s -> %s\n", report.SourceSuiteHash, report.CurrentSemanticHash)
+	_, err = fmt.Fprintf(stdout, "verified historical comparator migration: %s -> %s\n", report.SourceSuiteHash, report.ArchivedSemanticHash)
 	return err
 }

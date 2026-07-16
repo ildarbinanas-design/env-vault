@@ -1,6 +1,7 @@
 package e2ebaseline
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -23,10 +24,10 @@ func TestCanonicalBaselineAndArchivedMigrationAreDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if baseline.Provenance.RunID != "29519762171" || baseline.Provenance.RunAttempt != "1" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
+	if baseline.Provenance.CommitSHA != "054d7b1c3f1c3a63e8a2ed162f72f3ad2f28a9b9" || baseline.Provenance.RunID != "29526068945" || baseline.Provenance.RunAttempt != "1" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
 		t.Fatalf("baseline identity=%+v toolchain=%+v", baseline.Provenance, baseline.Toolchain)
 	}
-	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8" || baseline.SemanticSuite.SourceReportHash != baseline.SemanticSuite.Hash || baseline.Migration != nil {
+	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1" || baseline.SemanticSuite.SourceReportHash != baseline.SemanticSuite.Hash || baseline.Migration != nil {
 		t.Fatalf("semantic suite=%+v", baseline.SemanticSuite)
 	}
 	migratedBaselinePath := filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigratedBaseline))
@@ -46,6 +47,9 @@ func TestCanonicalBaselineAndArchivedMigrationAreDurable(t *testing.T) {
 	if report.ComparatorSHA256 != CanonicalComparatorSHA256 || migratedBaseline.Migration == nil || report.MigrationProofSHA256 != migratedBaseline.Migration.SHA256 {
 		t.Fatalf("migration digests=%+v baseline=%+v", report, migratedBaseline.Migration)
 	}
+	if report.ArchivedSemanticHash != migratedBaseline.SemanticSuite.Hash {
+		t.Fatalf("migration semantic hashes=%+v", report)
+	}
 	for _, path := range []string{baselinePath, migratedBaselinePath} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -56,6 +60,44 @@ func TestCanonicalBaselineAndArchivedMigrationAreDurable(t *testing.T) {
 				t.Fatalf("durable baseline %s contains expiring field %q", path, forbidden)
 			}
 		}
+	}
+}
+
+func TestArchivedMigrationVerificationDoesNotNeedLiveSuite(t *testing.T) {
+	repositoryRoot := filepath.Join("..", "..")
+	contract, err := releasecontract.LoadCanonical(repositoryRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := LoadFile(filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigratedBaseline)), contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveRoot := t.TempDir()
+	for _, relative := range []string{CanonicalMigrationPath, CanonicalComparatorPath, CanonicalTransitionPatch} {
+		data, err := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(archiveRoot, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	proofPath := filepath.Join(archiveRoot, filepath.FromSlash(CanonicalMigrationPath))
+	report, err := VerifyMigration(archiveRoot, proofPath, baseline, contract)
+	if err != nil || report.Status != "pass" || report.ArchivedSemanticHash != baseline.SemanticSuite.Hash {
+		t.Fatalf("standalone archive status=%s err=%v report=%+v", report.Status, err, report)
+	}
+	encoded, err := Marshal(report)
+	if err != nil || !bytes.Contains(encoded, []byte(`"archived_semantic_hash"`)) || bytes.Contains(encoded, []byte(`"current_semantic_hash"`)) {
+		t.Fatalf("standalone archive report schema=%s err=%v", encoded, err)
+	}
+	if _, err := os.Stat(filepath.Join(archiveRoot, "e2e")); !os.IsNotExist(err) {
+		t.Fatalf("archive verifier unexpectedly required a live E2E tree: %v", err)
 	}
 }
 
@@ -122,6 +164,63 @@ func TestMigrationFailsClosedOnMalformedOrTamperedEvidence(t *testing.T) {
 		report, err := VerifyMigration(repositoryRoot, migrationPath, tampered, contract)
 		if err == nil || report.Status != "fail" || checkStatus(report.Checks, "baseline_facts") != "fail" {
 			t.Fatalf("tampered baseline accepted: status=%s err=%v checks=%+v", report.Status, err, report.Checks)
+		}
+	})
+
+	t.Run("migration reference", func(t *testing.T) {
+		tampered := baseline
+		tampered.Migration = &MigrationReference{Path: baseline.Migration.Path, SHA256: strings.Repeat("f", 64)}
+		report, err := VerifyMigration(repositoryRoot, migrationPath, tampered, contract)
+		if err == nil || report.Status != "fail" || checkStatus(report.Checks, "baseline_migration_reference") != "fail" {
+			t.Fatalf("tampered migration reference accepted: status=%s err=%v checks=%+v", report.Status, err, report.Checks)
+		}
+	})
+
+	t.Run("archived semantic binding", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			mutate func(*Baseline)
+		}{
+			{"algorithm", func(value *Baseline) { value.SemanticSuite.Algorithm = "env-vault.e2e-semantic-suite.v9" }},
+			{"hash", func(value *Baseline) { value.SemanticSuite.Hash = strings.Repeat("a", 64) }},
+			{"source hash", func(value *Baseline) { value.SemanticSuite.SourceReportHash = strings.Repeat("b", 64) }},
+			{"transition code", func(value *Baseline) { value.SemanticSuite.TransitionCode = "other_reviewed_transition" }},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				tampered := baseline
+				test.mutate(&tampered)
+				report, err := VerifyMigration(repositoryRoot, migrationPath, tampered, contract)
+				if err == nil || report.Status != "fail" || checkStatus(report.Checks, "archived_semantic_suite") != "fail" {
+					t.Fatalf("tampered archived semantic binding accepted: status=%s err=%v checks=%+v", report.Status, err, report.Checks)
+				}
+			})
+		}
+	})
+
+	t.Run("reviewed transition patch", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, filepath.FromSlash(proof.Transition.ReviewPatchPath))), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		patch, err := os.ReadFile(filepath.Join(repositoryRoot, filepath.FromSlash(proof.Transition.ReviewPatchPath)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(proof.Transition.ReviewPatchPath)), patch, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyTransition(root, proof.Transition); err != nil {
+			t.Fatalf("archived transition patch rejected: %v", err)
+		}
+		tampered := bytes.Replace(patch, []byte("+\t"+proof.Transition.AfterFragment), []byte("+\tsecond := first"), 1)
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(proof.Transition.ReviewPatchPath)), tampered, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		tamperedTransition := proof.Transition
+		tamperedTransition.ReviewPatchSHA256 = bytesSHA256(tampered)
+		if err := verifyTransition(root, tamperedTransition); err == nil || !strings.Contains(err.Error(), "exact one-line") {
+			t.Fatalf("malformed transition patch accepted: %v", err)
 		}
 	})
 }
@@ -230,6 +329,13 @@ func TestGenerateAndVerifyUseOnlySealedProof(t *testing.T) {
 	report, err := Verify(validVerifyOptions(proofPath, repositoryRoot), baseline, contract)
 	if err != nil || report.Status != "pass" || report.MatrixProofDigest == "" {
 		t.Fatalf("verify status=%s proof=%q err=%v checks=%+v", report.Status, report.MatrixProofDigest, err, report.Checks)
+	}
+	stale := baseline
+	stale.SemanticSuite.Hash = strings.Repeat("9", 64)
+	stale.SemanticSuite.SourceReportHash = stale.SemanticSuite.Hash
+	report, err = Verify(validVerifyOptions(proofPath, repositoryRoot), stale, contract)
+	if err == nil || report.Status != "fail" || checkStatus(report.Checks, "semantic_suite") != "fail" {
+		t.Fatalf("stale active semantic suite accepted: status=%s err=%v checks=%+v", report.Status, err, report.Checks)
 	}
 	baseline.Platforms[0].CoverageFloorPercent = 99
 	report, err = Verify(validVerifyOptions(proofPath, repositoryRoot), baseline, contract)

@@ -22,12 +22,12 @@ func TestCanonicalE2EBaselineIdentityIsPinned(t *testing.T) {
 	}
 	if baseline.SchemaID != e2ebaseline.SchemaID || baseline.SchemaVersion != e2ebaseline.SchemaVersion ||
 		baseline.Provenance.Repository != "ildarbinanas-design/env-vault" ||
-		baseline.Provenance.CommitSHA != "62b3d25fcbc0a960c2eba03f98d7026cd2be8421" ||
-		baseline.Provenance.RunID != "29519762171" ||
-		baseline.Provenance.RunURL != "https://github.com/ildarbinanas-design/env-vault/actions/runs/29519762171" ||
+		baseline.Provenance.CommitSHA != "054d7b1c3f1c3a63e8a2ed162f72f3ad2f28a9b9" ||
+		baseline.Provenance.RunID != "29526068945" ||
+		baseline.Provenance.RunURL != "https://github.com/ildarbinanas-design/env-vault/actions/runs/29526068945" ||
 		baseline.Provenance.RunAttempt != "1" || baseline.Provenance.Phase != "candidate" ||
 		baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" ||
-		baseline.SemanticSuite.SourceReportHash != "6b7f1d8a715e7f8b0f9e75e71f45a139e01deb1804a9d5556ca14071d10ae2f8" ||
+		baseline.SemanticSuite.SourceReportHash != "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1" ||
 		baseline.SemanticSuite.TransitionCode != "" || baseline.Migration != nil {
 		t.Fatalf("canonical baseline identity is incomplete or changed: %+v", baseline)
 	}
