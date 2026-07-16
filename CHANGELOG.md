@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.12](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.11...v0.0.12) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** align checksum line ending contract ([#30](https://github.com/ildarbinanas-design/env-vault/issues/30)) ([c7d3cd8](https://github.com/ildarbinanas-design/env-vault/commit/c7d3cd80dcdca69824400649431b791e3a0c9271))
+
 ## [0.0.11](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.10...v0.0.11) (2026-07-16)
 
 
