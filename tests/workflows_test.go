@@ -578,23 +578,25 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 	}
 	verify := namedStep(t, promotion, "Verify promotion and stage the exact publisher bundle")
 	if !containsAll(verify.Run,
-		"releasecheck promotion verify", "--run-attempt", "verified publisher bundle", "11",
+		"releasecheck promotion verify", "--run-attempt", "verified publisher bundle", "exactly ten regular release assets",
 		"mapfile -t manifests", "find promotion-manifest -type f -name promotion-manifest.json",
 		"${#manifests[@]} -eq 1", `--manifest "${manifests[0]}"`, `install -m 0600 "${manifests[0]}"`,
+		"verified-bundle/assets/$archive", "verified-bundle/assets/$checksum",
+		"find verified-bundle/assets -mindepth 1 -maxdepth 1", "find verified-bundle/assets -maxdepth 1 -type f",
 	) {
-		t.Fatalf("publisher promotion does not verify/stage one manifest plus ten assets")
+		t.Fatalf("publisher promotion does not isolate one manifest from exactly ten regular assets")
 	}
 	if strings.Contains(verify.Run, "--manifest promotion-manifest/promotion-manifest.json") {
 		t.Fatal("publisher reintroduced the incorrect flattened promotion-manifest path")
 	}
 	bundle := namedStep(t, promotion, "Upload publisher-local verified bundle")
-	if !containsAll(bundle.With["name"], "source_sha", "github.run_attempt") {
+	if !containsAll(bundle.With["name"], "source_sha", "github.run_attempt") || bundle.With["path"] != "verified-bundle" {
 		t.Fatalf("publisher-local bundle is not current-run qualified: %v", bundle.With)
 	}
 
 	release := wf.Jobs["release"]
 	downloadBundle := namedStep(t, release, "Download publisher-local verified promotion bundle")
-	if downloadBundle.Uses != downloadAction || downloadBundle.With["name"] != bundle.With["name"] {
+	if downloadBundle.Uses != downloadAction || downloadBundle.With["name"] != bundle.With["name"] || downloadBundle.With["path"] != "dist" {
 		t.Fatalf("release does not consume the exact publisher-local bundle: download=%v upload=%v", downloadBundle.With, bundle.With)
 	}
 	assertStepOrder(t, release,
@@ -605,8 +607,12 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 		"No-clobber reconcile all ten release assets",
 	)
 	reverify := namedStep(t, release, "Reverify promotion immediately before mutation")
-	if !containsAll(reverify.Run, "releasecheck promotion verify", "--run-attempt", "--artifacts-root dist") {
+	if !containsAll(reverify.Run, "releasecheck promotion verify", "--run-attempt", "--manifest dist/promotion-manifest.json", "--artifacts-root dist/assets") {
 		t.Fatalf("release mutation lacks immediate promotion re-verification")
+	}
+	reconcile := namedStep(t, release, "No-clobber reconcile all ten release assets")
+	if reconcile.Run != `scripts/release/reconcile-release-assets.sh "$VERSION" dist/assets` {
+		t.Fatalf("release no-clobber reconciliation does not use the exact verified asset inventory: %q", reconcile.Run)
 	}
 
 	raw := readFile(t, "../.github/workflows/build-binaries.yml")
@@ -807,10 +813,10 @@ func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
 			t.Fatalf("legacy contract entry=%+v", legacy)
 		}
 	}
-	if len(contract.VersionPolicy.BlockedVersions) != 2 {
+	if len(contract.VersionPolicy.BlockedVersions) != 3 {
 		t.Fatalf("blocked version policy=%+v", contract.VersionPolicy.BlockedVersions)
 	}
-	for index, expected := range []string{"v0.0.8", "v0.0.9"} {
+	for index, expected := range []string{"v0.0.8", "v0.0.9", "v0.0.10"} {
 		blocked := contract.VersionPolicy.BlockedVersions[index]
 		if blocked.Version != expected || !blocked.TagMustRemain || !blocked.GitHubReleaseMustNotExist {
 			t.Fatalf("%s immutable failed-tag policy=%+v", expected, blocked)

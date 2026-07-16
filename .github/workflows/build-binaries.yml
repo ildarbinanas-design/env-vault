@@ -431,15 +431,19 @@ jobs:
           printf 'manifest_sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
 
           mkdir verified-bundle
+          mkdir verified-bundle/assets
           install -m 0600 "${manifests[0]}" verified-bundle/promotion-manifest.json
           go run ./cmd/releasecheck contract matrix --json |
             jq -r '.include[] | [.archive, .checksum] | @tsv' |
             while IFS=$'\t' read -r archive checksum; do
-              install -m 0600 "promotion-artifacts/$archive" "verified-bundle/$archive"
-              install -m 0600 "promotion-artifacts/$checksum" "verified-bundle/$checksum"
+              install -m 0600 "promotion-artifacts/$archive" "verified-bundle/assets/$archive"
+              install -m 0600 "promotion-artifacts/$checksum" "verified-bundle/assets/$checksum"
             done
-          [[ "$(find verified-bundle -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "11" ]] || {
-            echo "verified publisher bundle must contain one manifest and ten release assets" >&2
+          [[ "$(find verified-bundle -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" == "2" &&
+             "$(find verified-bundle -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "1" &&
+             "$(find verified-bundle/assets -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" == "10" &&
+             "$(find verified-bundle/assets -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "10" ]] || {
+            echo "verified publisher bundle must separate one manifest from exactly ten regular release assets" >&2
             exit 1
           }
 
@@ -495,7 +499,7 @@ jobs:
           --repository "$GITHUB_REPOSITORY"
           --run-id "$CI_RUN_ID"
           --run-attempt "$CI_RUN_ATTEMPT"
-          --artifacts-root dist
+          --artifacts-root dist/assets
           --json
 
       - name: Verify release tag commit
@@ -547,7 +551,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
-        run: scripts/release/reconcile-release-assets.sh "$VERSION" dist
+        run: scripts/release/reconcile-release-assets.sh "$VERSION" dist/assets
 
   supply_chain:
     if: >-

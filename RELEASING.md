@@ -283,7 +283,11 @@ gh workflow run legacy-rebuild.yml \
 not acquire a GitHub Release. `v0.0.9` is likewise preserved at
 `b8b652dcff41d5f2ab4a9f14bed65ddf1f866c65` after its publisher exposed a
 deterministic orchestration defect before any publication or attestation.
-Both are blocked from steady-state publication and from the legacy diagnostic
+`v0.0.10` is preserved at
+`591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795`; its publisher promoted and staged
+the exact artifacts, then failed closed because the manifest shared the
+ten-asset inventory directory. No publication or attestation occurred. All
+three are blocked from steady-state publication and from the legacy diagnostic
 selector.
 
 Historical published releases are immutable. If one needs correction, publish
@@ -314,8 +318,8 @@ A release is healthy only when one evidence tuple proves all of the following:
 8. A pre-tag settings proof binds the exact repository merge policy, three
    rulesets, present empty bypass lists, source/version, and planning run
    attempt; health and durable evidence replay its self-digest offline.
-9. Release health passed and every blocked failed tag, currently `v0.0.8` and
-   `v0.0.9`, still has no GitHub Release.
+9. Release health passed and every blocked failed tag, currently `v0.0.8`,
+   `v0.0.9`, and `v0.0.10`, still has no GitHub Release.
 
 The Release asset set is always exactly:
 

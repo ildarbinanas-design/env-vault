@@ -35,6 +35,8 @@ const (
 	blockedTagSHA008  = "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d"
 	blockedVersion009 = "v0.0.9"
 	blockedTagSHA009  = "b8b652dcff41d5f2ab4a9f14bed65ddf1f866c65"
+	blockedVersion010 = "v0.0.10"
+	blockedTagSHA010  = "591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795"
 	versionPattern    = `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
 )
 
@@ -524,6 +526,7 @@ func validateBlockedVersions(blocked []BlockedVersion) error {
 	}{
 		{blockedVersion008, blockedTagSHA008},
 		{blockedVersion009, blockedTagSHA009},
+		{blockedVersion010, blockedTagSHA010},
 	}
 	if len(blocked) != len(want) {
 		return fmt.Errorf("entry count=%d, want %d", len(blocked), len(want))
