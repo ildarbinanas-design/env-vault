@@ -49,6 +49,11 @@ func TestCanonicalContract(t *testing.T) {
 	if _, ok := contract.LegacyVersion("v0.0.8"); ok {
 		t.Fatal("failed v0.0.8 tag entered legacy rebuild policy")
 	}
+	if got := contract.VersionPolicy.BlockedVersions; len(got) != 2 ||
+		got[0].Version != blockedVersion008 || got[0].TagSHA != blockedTagSHA008 ||
+		got[1].Version != blockedVersion009 || got[1].TagSHA != blockedTagSHA009 {
+		t.Fatalf("blocked failed-tag policy=%+v", got)
+	}
 }
 
 func TestIsVersionUsesStrictCanonicalPolicy(t *testing.T) {
@@ -115,6 +120,9 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"target drift": func(c *Contract) { c.Platforms[1].Runner = "ubuntu-latest" },
 		"failed tag release": func(c *Contract) {
 			c.VersionPolicy.BlockedVersions[0].GitHubReleaseMustNotExist = false
+		},
+		"missing failed tag": func(c *Contract) {
+			c.VersionPolicy.BlockedVersions = c.VersionPolicy.BlockedVersions[:1]
 		},
 		"legacy publication": func(c *Contract) { c.VersionPolicy.LegacyRebuild.PublicationEligible = true },
 		"artifact naming": func(c *Contract) {
