@@ -51,7 +51,11 @@ func diffValues(path string, before, after any, changes *[]DiffChange) {
 	leftObject, leftIsObject := before.(map[string]any)
 	rightObject, rightIsObject := after.(map[string]any)
 	if leftIsObject && rightIsObject {
-		keys := make(map[string]bool, len(leftObject)+len(rightObject))
+		keyCapacity := len(leftObject)
+		if len(rightObject) > keyCapacity {
+			keyCapacity = len(rightObject)
+		}
+		keys := make(map[string]bool, keyCapacity)
 		for key := range leftObject {
 			keys[key] = true
 		}
