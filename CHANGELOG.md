@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.11](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.10...v0.0.11) (2026-07-16)
+
+
+### Bug Fixes
+
+* **release:** isolate publisher asset inventory ([#27](https://github.com/ildarbinanas-design/env-vault/issues/27)) ([5a37ea6](https://github.com/ildarbinanas-design/env-vault/commit/5a37ea653b40b583c4fee2153dfcf872216d0dfd))
+* **release:** share README version contract ([#29](https://github.com/ildarbinanas-design/env-vault/issues/29)) ([f287f20](https://github.com/ildarbinanas-design/env-vault/commit/f287f2078ff59b18c0933e28a999a49dfb9f1fd8))
+
 ## [0.0.10](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.9...v0.0.10) (2026-07-16)
 
 
