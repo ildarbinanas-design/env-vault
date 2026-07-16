@@ -17,6 +17,13 @@
         "tag_must_remain": true,
         "github_release_must_not_exist": true,
         "reason_code": "failed_tag_without_release"
+      },
+      {
+        "version": "v0.0.10",
+        "tag_sha": "591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795",
+        "tag_must_remain": true,
+        "github_release_must_not_exist": true,
+        "reason_code": "failed_tag_without_release"
       }
     ],
     "legacy_rebuild": {

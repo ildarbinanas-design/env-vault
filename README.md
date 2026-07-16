@@ -95,9 +95,9 @@ Download the archive for your platform from the
 [latest release](https://github.com/ildarbinanas-design/env-vault/releases/latest),
 verify its checksum, and unpack (substitute the version, OS, and architecture):
 
-Current stable release: `v0.0.10`. <!-- x-release-please-version -->
+Current version: `v0.0.10`. <!-- x-release-please-version -->
 
-The line above is managed by Release Please. `v0.0.8` and `v0.0.9` are
+The line above is managed by Release Please. `v0.0.8`, `v0.0.9`, and `v0.0.10` are
 preserved failed immutable tags and intentionally have no GitHub Release; use the
 [`latest` Release](https://github.com/ildarbinanas-design/env-vault/releases/latest)
 until the next version has completed automated publication and health checks.
@@ -152,7 +152,7 @@ artifacts. An incomplete attempt deterministically requests a full
 `rerun_all_jobs`, never a failed-jobs-only artifact mixture. Manual publisher
 dispatch can only resume `release-assets`, `homebrew`, or `health` for an exact
 existing tag. `v0.0.1`–`v0.0.7` rebuilds are diagnostic-only and can never be
-published; `v0.0.8` and `v0.0.9` remain failed tags without Releases.
+published; `v0.0.8`, `v0.0.9`, and `v0.0.10` remain failed tags without Releases.
 
 The only routine human release checkpoint is semantic review plus an exact
 version/PR/head-SHA authorization. Automation records that exact line as a
