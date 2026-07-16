@@ -370,7 +370,7 @@ func validateRepositoryReleaseSettings(contract releasecontract.Contract, author
 		PlanningRunAttempt: authorization.PlanningWorkflow.RunAttempt,
 		CheckedAt:          proof.Tuple.CheckedAt,
 	}
-	if err := releasesettings.Verify(proof, expected); err != nil {
+	if err := releasesettings.Verify(contract, proof, expected); err != nil {
 		code := CodeInputInvalid
 		switch releasesettings.ErrorCode(err) {
 		case releasesettings.CodeDigestMismatch:

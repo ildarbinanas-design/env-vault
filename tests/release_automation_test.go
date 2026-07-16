@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"github.com/ildarbinanas-design/env-vault/internal/releasesettings"
 )
 
@@ -488,7 +489,11 @@ func TestVerifyRepositoryReleaseSettingsSealsExactOfflineProof(t *testing.T) {
 		ReleaseVersion: "v0.0.9", PlanningRunID: 29475939348,
 		PlanningRunAttempt: 2, CheckedAt: proof.Tuple.CheckedAt,
 	}
-	if err := releasesettings.Verify(proof, want); err != nil {
+	contract, err := releasecontract.LoadCanonical("..")
+	if err != nil {
+		t.Fatalf("load canonical release contract: %v", err)
+	}
+	if err := releasesettings.Verify(contract, proof, want); err != nil {
 		t.Fatalf("verify script-produced settings proof offline: %v", err)
 	}
 }
@@ -774,8 +779,8 @@ case "$args" in
     printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
     ;;
   *"api --paginate --slurp --method GET repos/example/env-vault/pulls"*)
-    printf '[[{"number":43,"base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
-      "${FAKE_PROPOSAL_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
+    printf '[[{"number":43,"base":{"ref":"main","sha":"%s","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
+      "${FAKE_PROPOSAL_PARENT_SHA:?}" "${FAKE_PROPOSAL_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *"git/commits/"*)
     jq -cn --arg parent "${FAKE_PROPOSAL_PARENT_SHA:?}" '{message:"chore(main): release env-vault v0.0.8\n\nThis PR was generated with Release Please.",tree:{sha:"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},parents:[{sha:$parent}]}'

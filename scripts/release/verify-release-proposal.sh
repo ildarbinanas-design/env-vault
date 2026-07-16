@@ -6,10 +6,21 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-[[ $# -eq 0 ]] || {
-  printf 'usage: %s\n' "$(basename "$0")" >&2
-  exit 2
-}
+exact_pr_number=''
+exact_head_sha=''
+case $# in
+  0) ;;
+  2)
+    exact_pr_number=$1
+    exact_head_sha=$2
+    [[ "$exact_pr_number" =~ ^[1-9][0-9]{0,8}$ ]] || release_die "exact pull request number is malformed"
+    [[ "$exact_head_sha" =~ ^[0-9a-f]{40}$ ]] || release_die "exact pull request head SHA is malformed"
+    ;;
+  *)
+    printf 'usage: %s [PR_NUMBER EXACT_HEAD_SHA]\n' "$(basename "$0")" >&2
+    exit 2
+    ;;
+esac
 
 repository=${GITHUB_REPOSITORY:-}
 expected_app_slug=${RELEASE_APP_SLUG:-}
@@ -26,36 +37,73 @@ trap cleanup EXIT
 
 owner=${repository%%/*}
 branch=release-please--branches--main--components--env-vault
-pull_pages="$probe_dir/pulls.json"
-gh api --paginate --slurp --method GET \
-  "repos/$repository/pulls" \
-  --raw-field 'state=open' \
-  --raw-field 'base=main' \
-  --raw-field "head=$owner:$branch" \
-  --raw-field 'per_page=100' > "$pull_pages"
-
-pull_count=$(jq -er '[.[][]] | length' "$pull_pages") || release_die "GitHub returned malformed release pull requests"
-if [[ "$pull_count" == "0" ]]; then
-  printf 'proposal=false\n'
-  exit 0
-fi
-[[ "$pull_count" == "1" ]] || release_die "exactly one open Release Please pull request is required"
-
 pull="$probe_dir/pull.json"
-jq -e --arg repository "$repository" --arg branch "$branch" --arg author "${expected_app_slug}[bot]" '
-  [.[][]][0] |
-  select(
-    .base.ref == "main" and
-    .base.repo.full_name == $repository and
-    .head.ref == $branch and
-    .head.repo.full_name == $repository and
-    .user.login == $author and
-    ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
-    ((.body // "") | contains("This PR was generated with Release Please.")) and
-    ([.labels[].name] | index("autorelease: pending") != null) and
-    ([.labels[].name] | index("autorelease: tagged") == null)
-  )
-' "$pull_pages" > "$pull" || release_die "open release proposal provenance is invalid"
+if [[ -n "$exact_pr_number" ]]; then
+  gh api "repos/$repository/pulls/$exact_pr_number" > "$pull"
+  jq -e \
+    --arg repository "$repository" \
+    --arg branch "$branch" \
+    --arg author "${expected_app_slug}[bot]" \
+    --arg head "$exact_head_sha" \
+    --argjson number "$exact_pr_number" '
+      .number == $number and
+      .base.ref == "main" and
+      .base.repo.full_name == $repository and
+      (.base.sha | type == "string" and test("^[0-9a-f]{40}$")) and
+      .head.ref == $branch and
+      .head.repo.full_name == $repository and
+      .head.sha == $head and
+      .user.login == $author and
+      ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
+      ((.body // "") | contains("This PR was generated with Release Please.")) and
+      if .state == "open" then
+        .merged == false and
+        ([.labels[].name] | index("autorelease: pending") != null) and
+        ([.labels[].name] | index("autorelease: tagged") == null)
+      elif .state == "closed" then
+        .merged == true and
+        (.merge_commit_sha | type == "string" and test("^[0-9a-f]{40}$")) and
+        (.merged_at | type == "string" and try fromdateiso8601 != null) and
+        ([.labels[].name] as $labels |
+          [($labels | index("autorelease: pending") != null),
+           ($labels | index("autorelease: tagged") != null)] |
+          map(select(. == true)) | length == 1
+        )
+      else
+        false
+      end
+    ' "$pull" >/dev/null || release_die "exact release proposal provenance is invalid"
+else
+  pull_pages="$probe_dir/pulls.json"
+  gh api --paginate --slurp --method GET \
+    "repos/$repository/pulls" \
+    --raw-field 'state=open' \
+    --raw-field 'base=main' \
+    --raw-field "head=$owner:$branch" \
+    --raw-field 'per_page=100' > "$pull_pages"
+
+  pull_count=$(jq -er '[.[][]] | length' "$pull_pages") || release_die "GitHub returned malformed release pull requests"
+  if [[ "$pull_count" == "0" ]]; then
+    printf 'proposal=false\n'
+    exit 0
+  fi
+  [[ "$pull_count" == "1" ]] || release_die "exactly one open Release Please pull request is required"
+
+  jq -e --arg repository "$repository" --arg branch "$branch" --arg author "${expected_app_slug}[bot]" '
+    [.[][]][0] |
+    select(
+      .base.ref == "main" and
+      .base.repo.full_name == $repository and
+      .head.ref == $branch and
+      .head.repo.full_name == $repository and
+      .user.login == $author and
+      ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
+      ((.body // "") | contains("This PR was generated with Release Please.")) and
+      ([.labels[].name] | index("autorelease: pending") != null) and
+      ([.labels[].name] | index("autorelease: tagged") == null)
+    )
+  ' "$pull_pages" > "$pull" || release_die "open release proposal provenance is invalid"
+fi
 
 title=$(jq -er '.title' "$pull") || release_die "release proposal title is malformed"
 version=$(jq -nr --arg title "$title" '
@@ -71,6 +119,10 @@ parent_sha=$(jq -er '
   .parents[0].sha |
   select(test("^[0-9a-f]{40}$"))
 ' "$commit") || release_die "release proposal must contain exactly one commit"
+pull_base_sha=$(jq -er '.base.sha | select(test("^[0-9a-f]{40}$"))' "$pull") ||
+  release_die "release proposal base SHA is malformed"
+[[ "$pull_base_sha" == "$parent_sha" ]] ||
+  release_die "release proposal base is not the exact head commit parent"
 jq -e --arg title "$title" '
   (.message | split("\n")[0]) == $title and
   (.tree.sha | test("^[0-9a-f]{40}$"))

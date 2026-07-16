@@ -3,28 +3,32 @@ package releasesettings
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 func TestSealAndVerifyExactRepositorySettingsProof(t *testing.T) {
 	tuple := validTuple()
 	raw := validRawInputs()
-	check, err := Check(tuple.Repository, raw)
+	contract := validContract(t)
+	check, err := Check(contract, tuple.Repository, raw)
 	if err != nil {
 		t.Fatalf("check valid settings: %v", err)
 	}
 	if !check.OK || check.SchemaID != CheckSchemaID || check.SchemaVersion != SchemaVersion || check.Repository != tuple.Repository || check.Result != ResultPass {
 		t.Fatalf("unexpected check result: %+v", check)
 	}
-	proof, err := Seal(tuple, raw)
+	proof, err := Seal(contract, tuple, raw)
 	if err != nil {
 		t.Fatalf("seal valid settings: %v", err)
 	}
 	if proof.SchemaID != SchemaID || proof.SchemaVersion != SchemaVersion || proof.Result != ResultPass || proof.ProofSHA256 == "" {
 		t.Fatalf("unexpected sealed proof: %+v", proof)
 	}
-	if err := Verify(proof, tuple); err != nil {
+	if err := Verify(contract, proof, tuple); err != nil {
 		t.Fatalf("verify valid settings: %v", err)
 	}
 
@@ -36,14 +40,15 @@ func TestSealAndVerifyExactRepositorySettingsProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse sealed proof: %v", err)
 	}
-	if err := Verify(parsed, tuple); err != nil {
+	if err := Verify(contract, parsed, tuple); err != nil {
 		t.Fatalf("verify parsed settings: %v", err)
 	}
 }
 
 func TestVerifyRejectsTamperEvenWhenOuterDigestIsRecomputed(t *testing.T) {
 	tuple := validTuple()
-	proof, err := Seal(tuple, validRawInputs())
+	contract := validContract(t)
+	proof, err := Seal(contract, tuple, validRawInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +57,7 @@ func TestVerifyRejectsTamperEvenWhenOuterDigestIsRecomputed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Verify(proof, tuple); ErrorCode(err) != CodeDigestMismatch {
+	if err := Verify(contract, proof, tuple); ErrorCode(err) != CodeDigestMismatch {
 		t.Fatalf("tampered embedded bytes error=%v code=%q, want %s", err, ErrorCode(err), CodeDigestMismatch)
 	}
 
@@ -63,20 +68,21 @@ func TestVerifyRejectsTamperEvenWhenOuterDigestIsRecomputed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Verify(proof, tuple); ErrorCode(err) != CodePolicyInvalid {
+	if err := Verify(contract, proof, tuple); ErrorCode(err) != CodePolicyInvalid {
 		t.Fatalf("tampered policy error=%v code=%q, want %s", err, ErrorCode(err), CodePolicyInvalid)
 	}
 }
 
 func TestVerifyRejectsWrongExpectedTuple(t *testing.T) {
 	tuple := validTuple()
-	proof, err := Seal(tuple, validRawInputs())
+	contract := validContract(t)
+	proof, err := Seal(contract, tuple, validRawInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
 	wrong := tuple
 	wrong.PlanningRunAttempt++
-	if err := Verify(proof, wrong); ErrorCode(err) != CodeTupleMismatch {
+	if err := Verify(contract, proof, wrong); ErrorCode(err) != CodeTupleMismatch {
 		t.Fatalf("wrong tuple error=%v code=%q, want %s", err, ErrorCode(err), CodeTupleMismatch)
 	}
 }
@@ -91,7 +97,7 @@ func TestRESTDetailAllowsOmittedOrExplicitEmptyBypassActors(t *testing.T) {
 				t.Fatal("fixture did not contain bypass_actors")
 			}
 			*target = []byte(changed)
-			if _, err := Check(validTuple().Repository, raw); err != nil {
+			if _, err := Check(validContract(t), validTuple().Repository, raw); err != nil {
 				t.Fatalf("omitted bypass_actors was rejected: %v", err)
 			}
 		})
@@ -116,7 +122,7 @@ func TestRESTDetailRejectsUnsafeBypassShapes(t *testing.T) {
 					needle = `,"current_user_can_bypass":"never"`
 				}
 				*target = []byte(strings.Replace(string(*target), needle, replacement, 1))
-				if _, err := Check(validTuple().Repository, raw); err == nil {
+				if _, err := Check(validContract(t), validTuple().Repository, raw); err == nil {
 					t.Fatal("unsafe REST bypass shape was accepted")
 				}
 			})
@@ -190,10 +196,10 @@ func TestGraphQLRulesetInventoryFailsClosed(t *testing.T) {
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			raw := mutate(validRawInputs())
-			if _, err := Check(validTuple().Repository, raw); err == nil {
+			if _, err := Check(validContract(t), validTuple().Repository, raw); err == nil {
 				t.Fatal("invalid GraphQL ruleset inventory was accepted by check")
 			}
-			if _, err := Seal(validTuple(), raw); err == nil {
+			if _, err := Seal(validContract(t), validTuple(), raw); err == nil {
 				t.Fatal("invalid GraphQL ruleset inventory was accepted by seal")
 			}
 		})
@@ -210,7 +216,7 @@ func TestPullRequestRequiredReviewersMustBePresentAndEmpty(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			raw := validRawInputs()
 			raw.MainRuleset = []byte(strings.Replace(string(raw.MainRuleset), `,"required_reviewers":[]`, replacement, 1))
-			if _, err := Check(validTuple().Repository, raw); err == nil {
+			if _, err := Check(validContract(t), validTuple().Repository, raw); err == nil {
 				t.Fatal("invalid required_reviewers was accepted")
 			}
 		})
@@ -218,7 +224,7 @@ func TestPullRequestRequiredReviewersMustBePresentAndEmpty(t *testing.T) {
 }
 
 func TestStrictFieldIdentityForProofAndRawSettings(t *testing.T) {
-	proof, err := Seal(validTuple(), validRawInputs())
+	proof, err := Seal(validContract(t), validTuple(), validRawInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +239,7 @@ func TestStrictFieldIdentityForProofAndRawSettings(t *testing.T) {
 
 	raw := validRawInputs()
 	raw.MergeSettings = []byte(strings.Replace(string(raw.MergeSettings), `"mergeCommitAllowed"`, `"MergeCommitAllowed"`, 1))
-	if _, err := Seal(validTuple(), raw); ErrorCode(err) != CodeInputInvalid {
+	if _, err := Seal(validContract(t), validTuple(), raw); ErrorCode(err) != CodeInputInvalid {
 		t.Fatalf("non-canonical raw field error=%v code=%q", err, ErrorCode(err))
 	}
 }
@@ -242,13 +248,13 @@ func TestSealRejectsDuplicateCanonicalRulesetAndUnsafeMergePolicy(t *testing.T) 
 	raw := validRawInputs()
 	duplicate := `,{"id":10,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"}`
 	raw.RulesetPages = []byte(strings.Replace(string(raw.RulesetPages), `}]]`, `}`+duplicate+`]]`, 1))
-	if _, err := Seal(validTuple(), raw); ErrorCode(err) != CodePolicyInvalid {
+	if _, err := Seal(validContract(t), validTuple(), raw); ErrorCode(err) != CodePolicyInvalid {
 		t.Fatalf("duplicate ruleset error=%v code=%q", err, ErrorCode(err))
 	}
 
 	raw = validRawInputs()
 	raw.MergeSettings = []byte(strings.Replace(string(raw.MergeSettings), `"rebaseMergeAllowed":false`, `"rebaseMergeAllowed":true`, 1))
-	if _, err := Seal(validTuple(), raw); ErrorCode(err) != CodePolicyInvalid {
+	if _, err := Seal(validContract(t), validTuple(), raw); ErrorCode(err) != CodePolicyInvalid {
 		t.Fatalf("unsafe merge policy error=%v code=%q", err, ErrorCode(err))
 	}
 }
@@ -262,6 +268,15 @@ func validTuple() Tuple {
 		PlanningRunAttempt: 2,
 		CheckedAt:          "2026-07-16T12:34:56Z",
 	}
+}
+
+func validContract(t *testing.T) releasecontract.Contract {
+	t.Helper()
+	contract, err := releasecontract.LoadCanonical(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contract
 }
 
 func validRawInputs() RawInputs {

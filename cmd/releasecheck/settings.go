@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"github.com/ildarbinanas-design/env-vault/internal/releasesettings"
 )
 
@@ -27,6 +28,7 @@ func runSettings(args []string, stdout, stderr io.Writer) int {
 
 func runSettingsCheck(args []string, stdout, stderr io.Writer) int {
 	set := newFlagSet("settings check")
+	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
 	repository := set.String("repository", "", "exact owner/repository")
 	inputs := addSettingsInputFlags(set)
 	jsonOutput := set.Bool("json", false, "emit versioned JSON")
@@ -34,11 +36,15 @@ func runSettingsCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, settingsCheckUsage())
 		return exitUsage
 	}
+	contract, err := releasecontract.LoadFile(*contractPath)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
 	raw, err := inputs.read()
 	if err != nil {
 		return writeFailure(stdout, stderr, *jsonOutput, releasesettings.CodeInputInvalid, err, exitSnapshotInvalid)
 	}
-	result, err := releasesettings.Check(*repository, raw)
+	result, err := releasesettings.Check(contract, *repository, raw)
 	if err != nil {
 		return writeSettingsFailure(stdout, stderr, *jsonOutput, err)
 	}
@@ -59,6 +65,7 @@ func runSettingsCheck(args []string, stdout, stderr io.Writer) int {
 
 func runSettingsSeal(args []string, stdout, stderr io.Writer) int {
 	set := newFlagSet("settings seal")
+	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
 	tupleFlags := addSettingsTupleFlags(set)
 	inputs := addSettingsInputFlags(set)
 	output := set.String("output", "", "new sealed settings proof, or - for stdout")
@@ -66,11 +73,15 @@ func runSettingsSeal(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, settingsSealUsage())
 		return exitUsage
 	}
+	contract, err := releasecontract.LoadFile(*contractPath)
+	if err != nil {
+		return writeFailure(stdout, stderr, *output == "-", "CONTRACT_INVALID", err, exitContractInvalid)
+	}
 	raw, err := inputs.read()
 	if err != nil {
 		return writeFailure(stdout, stderr, *output == "-", releasesettings.CodeInputInvalid, err, exitSnapshotInvalid)
 	}
-	proof, err := releasesettings.Seal(tupleFlags.value(), raw)
+	proof, err := releasesettings.Seal(contract, tupleFlags.value(), raw)
 	if err != nil {
 		return writeSettingsFailure(stdout, stderr, *output == "-", err)
 	}
@@ -89,12 +100,17 @@ func runSettingsSeal(args []string, stdout, stderr io.Writer) int {
 
 func runSettingsVerify(args []string, stdout, stderr io.Writer) int {
 	set := newFlagSet("settings verify")
+	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
 	tupleFlags := addSettingsTupleFlags(set)
 	input := set.String("input", "", "sealed repository settings proof JSON")
 	jsonOutput := set.Bool("json", false, "emit the verified proof JSON")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || !tupleFlags.complete() || *input == "" {
 		fmt.Fprint(stderr, settingsVerifyUsage())
 		return exitUsage
+	}
+	contract, err := releasecontract.LoadFile(*contractPath)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
 	}
 	data, err := readRegularEvidenceInput(*input)
 	if err != nil {
@@ -104,7 +120,7 @@ func runSettingsVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeSettingsFailure(stdout, stderr, *jsonOutput, err)
 	}
-	if err := releasesettings.Verify(proof, tupleFlags.value()); err != nil {
+	if err := releasesettings.Verify(contract, proof, tupleFlags.value()); err != nil {
 		return writeSettingsFailure(stdout, stderr, *jsonOutput, err)
 	}
 	if *jsonOutput {
@@ -221,13 +237,13 @@ Commands:
 }
 
 func settingsCheckUsage() string {
-	return "usage: releasecheck settings check --repository OWNER/REPO --merge-settings FILE --ruleset-pages FILE --main-ruleset FILE --tag-ruleset FILE --evidence-ruleset FILE [--json]\n"
+	return "usage: releasecheck settings check [--contract FILE] --repository OWNER/REPO --merge-settings FILE --ruleset-pages FILE --main-ruleset FILE --tag-ruleset FILE --evidence-ruleset FILE [--json]\n"
 }
 
 func settingsSealUsage() string {
-	return "usage: releasecheck settings seal --repository OWNER/REPO --source-sha SHA --release-version vX.Y.Z --planning-run-id ID --planning-run-attempt N --checked-at TIME --merge-settings FILE --ruleset-pages FILE --main-ruleset FILE --tag-ruleset FILE --evidence-ruleset FILE --output FILE|-\n"
+	return "usage: releasecheck settings seal [--contract FILE] --repository OWNER/REPO --source-sha SHA --release-version vX.Y.Z --planning-run-id ID --planning-run-attempt N --checked-at TIME --merge-settings FILE --ruleset-pages FILE --main-ruleset FILE --tag-ruleset FILE --evidence-ruleset FILE --output FILE|-\n"
 }
 
 func settingsVerifyUsage() string {
-	return "usage: releasecheck settings verify --input FILE --repository OWNER/REPO --source-sha SHA --release-version vX.Y.Z --planning-run-id ID --planning-run-attempt N --checked-at TIME [--json]\n"
+	return "usage: releasecheck settings verify [--contract FILE] --input FILE --repository OWNER/REPO --source-sha SHA --release-version vX.Y.Z --planning-run-id ID --planning-run-attempt N --checked-at TIME [--json]\n"
 }

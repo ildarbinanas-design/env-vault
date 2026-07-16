@@ -31,14 +31,6 @@ var canonicalRulesets = []rulesetIdentity{
 	{Name: "Protect env-vault release evidence", Target: "branch"},
 }
 
-var canonicalChecks = []string{
-	"Analyze (actions)",
-	"Analyze (go)",
-	"Dependency review",
-	"pr-title",
-	"quality-gate",
-}
-
 type rulesetIdentity struct {
 	Name   string
 	Target string
@@ -46,11 +38,15 @@ type rulesetIdentity struct {
 
 // Seal validates untrusted saved observations, binds their exact bytes to the
 // tuple, and returns a self-digested proof.
-func Seal(tuple Tuple, raw RawInputs) (Proof, error) {
+func Seal(contract releasecontract.Contract, tuple Tuple, raw RawInputs) (Proof, error) {
+	mainRequiredChecks, err := mainRequiredCheckNames(contract)
+	if err != nil {
+		return Proof{}, err
+	}
 	if err := validateTuple(tuple); err != nil {
 		return Proof{}, err
 	}
-	inputs, err := validateRawInputs(tuple.Repository, raw)
+	inputs, err := validateRawInputs(tuple.Repository, raw, mainRequiredChecks)
 	if err != nil {
 		return Proof{}, err
 	}
@@ -68,8 +64,12 @@ func Seal(tuple Tuple, raw RawInputs) (Proof, error) {
 
 // Check validates the same untrusted saved observations as Seal without
 // creating a release-tuple proof. It performs no network access.
-func Check(repository string, raw RawInputs) (CheckResult, error) {
-	if _, err := validateRawInputs(repository, raw); err != nil {
+func Check(contract releasecontract.Contract, repository string, raw RawInputs) (CheckResult, error) {
+	mainRequiredChecks, err := mainRequiredCheckNames(contract)
+	if err != nil {
+		return CheckResult{}, err
+	}
+	if _, err := validateRawInputs(repository, raw, mainRequiredChecks); err != nil {
 		return CheckResult{}, err
 	}
 	return CheckResult{
@@ -80,7 +80,11 @@ func Check(repository string, raw RawInputs) (CheckResult, error) {
 
 // Verify replays the complete offline decision and requires the caller's
 // independently known tuple to equal the sealed tuple exactly.
-func Verify(proof Proof, expected Tuple) error {
+func Verify(contract releasecontract.Contract, proof Proof, expected Tuple) error {
+	mainRequiredChecks, err := mainRequiredCheckNames(contract)
+	if err != nil {
+		return err
+	}
 	if proof.SchemaID != SchemaID || proof.SchemaVersion != SchemaVersion || proof.Result != ResultPass {
 		return fail(CodeInputInvalid, "repository settings proof schema or result is invalid", nil)
 	}
@@ -97,7 +101,7 @@ func Verify(proof Proof, expected Tuple) error {
 	if !reflect.DeepEqual(proof.Tuple, expected) {
 		return fail(CodeTupleMismatch, "repository settings proof tuple differs from the expected exact tuple", nil)
 	}
-	if err := validateInputs(proof.Tuple.Repository, proof.Inputs); err != nil {
+	if err := validateInputs(proof.Tuple.Repository, proof.Inputs, mainRequiredChecks); err != nil {
 		return err
 	}
 	return nil
@@ -125,7 +129,7 @@ func validateRepository(repository string) error {
 	return nil
 }
 
-func validateRawInputs(repository string, raw RawInputs) (Inputs, error) {
+func validateRawInputs(repository string, raw RawInputs, mainRequiredChecks []string) (Inputs, error) {
 	if err := validateRepository(repository); err != nil {
 		return Inputs{}, err
 	}
@@ -145,13 +149,13 @@ func validateRawInputs(repository string, raw RawInputs) (Inputs, error) {
 		MainRuleset: documents[2], TagRuleset: documents[3],
 		EvidenceRuleset: documents[4],
 	}
-	if err := validateInputs(repository, inputs); err != nil {
+	if err := validateInputs(repository, inputs, mainRequiredChecks); err != nil {
 		return Inputs{}, err
 	}
 	return inputs, nil
 }
 
-func validateInputs(repository string, inputs Inputs) error {
+func validateInputs(repository string, inputs Inputs, mainRequiredChecks []string) error {
 	documents := []struct {
 		name     string
 		document Document
@@ -178,7 +182,7 @@ func validateInputs(repository string, inputs Inputs) error {
 	if !reflect.DeepEqual(graphqlIDs, restIDs) {
 		return fail(CodePolicyInvalid, "GraphQL and REST canonical ruleset IDs differ", nil)
 	}
-	if err := validateMainRuleset([]byte(inputs.MainRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[0].Name]); err != nil {
+	if err := validateMainRuleset([]byte(inputs.MainRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[0].Name], mainRequiredChecks); err != nil {
 		return err
 	}
 	if err := validateTagRuleset([]byte(inputs.TagRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[1].Name]); err != nil {
@@ -432,7 +436,7 @@ type requiredStatusCheck struct {
 	IntegrationID *int64 `json:"integration_id"`
 }
 
-func validateMainRuleset(data []byte, repository string, expectedID int64) error {
+func validateMainRuleset(data []byte, repository string, expectedID int64, mainRequiredChecks []string) error {
 	detail, err := decodeRulesetDetail(data)
 	if err != nil {
 		return err
@@ -473,10 +477,22 @@ func validateMainRuleset(data []byte, repository string, expectedID int64) error
 		actualChecks = append(actualChecks, check.Context)
 	}
 	sort.Strings(actualChecks)
-	if !reflect.DeepEqual(actualChecks, canonicalChecks) {
+	if !reflect.DeepEqual(actualChecks, mainRequiredChecks) {
 		return fail(CodePolicyInvalid, fmt.Sprintf("main required checks=%q, want exact canonical set", actualChecks), nil)
 	}
 	return nil
+}
+
+func mainRequiredCheckNames(contract releasecontract.Contract) ([]string, error) {
+	if err := contract.Validate(); err != nil {
+		return nil, fail(CodeInputInvalid, "release contract is invalid", err)
+	}
+	names := make([]string, 0, len(contract.MainRequiredChecks))
+	for _, check := range contract.MainRequiredChecks {
+		names = append(names, check.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func validateTagRuleset(data []byte, repository string, expectedID int64) error {

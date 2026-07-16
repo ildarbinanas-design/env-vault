@@ -136,6 +136,13 @@
     { "id": "dependency_review", "name": "Dependency review", "file": "dependency-review.yml" },
     { "id": "pr_title", "name": "pr-title", "file": "pr-title.yml" }
   ],
+  "main_required_checks": [
+    { "name": "Analyze (actions)", "workflow": "CodeQL", "event": "dynamic" },
+    { "name": "Analyze (go)", "workflow": "CodeQL", "event": "dynamic" },
+    { "name": "Dependency review", "workflow": "Dependency review", "event": "pull_request" },
+    { "name": "pr-title", "workflow": "pr-title", "event": "pull_request" },
+    { "name": "quality-gate", "workflow": "ci", "event": "pull_request" }
+  ],
   "apps": [
     {
       "id": "release_planning",

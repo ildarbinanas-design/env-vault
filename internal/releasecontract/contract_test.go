@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -41,6 +42,16 @@ func TestCanonicalContract(t *testing.T) {
 	}
 	if contract.Schemas["repository_release_settings_check"] != "env-vault.repository-release-settings-check.v1" {
 		t.Fatal("repository release-settings check schema is not canonical")
+	}
+	wantChecks := []RequiredCheck{
+		{Name: "Analyze (actions)", Workflow: "CodeQL", Event: "dynamic"},
+		{Name: "Analyze (go)", Workflow: "CodeQL", Event: "dynamic"},
+		{Name: "Dependency review", Workflow: "Dependency review", Event: "pull_request"},
+		{Name: "pr-title", Workflow: "pr-title", Event: "pull_request"},
+		{Name: "quality-gate", Workflow: "ci", Event: "pull_request"},
+	}
+	if !reflect.DeepEqual(contract.MainRequiredChecks, wantChecks) {
+		t.Fatalf("main required checks=%+v, want %+v", contract.MainRequiredChecks, wantChecks)
 	}
 	legacy, ok := contract.LegacyVersion("v0.0.7")
 	if !ok || legacy.TagSHA != "4fbae380747e75a1f59498adbd76ccf5791e0480" || !legacy.LiteralVersionSupported || contract.VersionPolicy.LegacyRebuild.PublicationEligible {
@@ -134,6 +145,15 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"action code separator": func(c *Contract) { c.ActionCodes[2] = "rerun-all-jobs" },
 		"app slug underscore":   func(c *Contract) { c.Apps[0].Slug = "env_vault_release_planning" },
 		"missing reason":        func(c *Contract) { c.ReasonCodes = c.ReasonCodes[1:] },
+		"missing required check": func(c *Contract) {
+			c.MainRequiredChecks = c.MainRequiredChecks[:len(c.MainRequiredChecks)-1]
+		},
+		"required check event drift": func(c *Contract) {
+			c.MainRequiredChecks[0].Event = "pull_request"
+		},
+		"duplicate required check": func(c *Contract) {
+			c.MainRequiredChecks[1] = c.MainRequiredChecks[0]
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
