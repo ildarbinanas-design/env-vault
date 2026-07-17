@@ -468,3 +468,14 @@ state:
 Global release serialization, five native targets, E2E/burn-in frequency,
 single-attempt identity, both Homebrew CI gates, and Windows concurrency
 coverage are release guarantees, not emergency retry knobs.
+
+GitHub Actions run identity must use the exact repository/head-repository,
+run ID/attempt, workflow `path`, event, head SHA/branch, and completed/success
+state. REST `.name` is not a stable workflow identifier when `run-name` is
+configured, and `.pull_requests` may be empty for an exact run after its pull
+request is merged. Resolve release-PR CI from the unique successful required
+`ci / quality-gate` check URL on the exact PR. Require its exact `/job/JOB_ID`
+shape and cross-check the job ID, run ID/attempt, head SHA, check/workflow
+names, success state, and canonical URL before requiring the run's direct
+`head_sha` to equal the reviewed PR head. See the incident matrix in the
+[operator runbook](docs/release-operator-runbook.md).

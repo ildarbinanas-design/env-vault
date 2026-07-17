@@ -116,8 +116,11 @@ jobs:
               .head_sha == $source and .head_branch == $version and
               (.event == "push" or .event == "workflow_dispatch") and
               .status == "completed" and .conclusion == "success" and
-              .name == "build-binaries" and .path == ".github/workflows/build-binaries.yml"
-            ' snapshots/publisher-run.json >/dev/null
+              .path == ".github/workflows/build-binaries.yml"
+            ' snapshots/publisher-run.json >/dev/null || {
+              echo "publisher run identity mismatch" >&2
+              exit 1
+            }
 
           gh api --paginate --slurp --method GET \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
@@ -128,7 +131,7 @@ jobs:
               .repository.full_name == $repository and .head_repository.full_name == $repository and
               .head_sha == $source and .head_branch == "main" and .event == "push" and
               .status == "completed" and .conclusion == "success" and
-              .name == "ci" and .path == ".github/workflows/ci.yml"
+              .path == ".github/workflows/ci.yml"
             )]
           ' snapshots/ci-runs.json)"
           [[ "$(jq 'length' <<< "$ci_matches")" == "1" ]] || { echo "exact successful main CI run is ambiguous" >&2; exit 1; }
@@ -195,25 +198,44 @@ jobs:
           prefix="https://github.com/${GITHUB_REPOSITORY}/actions/runs/"
           [[ "$quality_link" == "$prefix"* ]] || { echo "release PR quality-gate URL mismatch" >&2; exit 1; }
           pr_ci_tail="${quality_link#"$prefix"}"
-          pr_ci_run_id="${pr_ci_tail%%/*}"
-          [[ "$pr_ci_run_id" =~ ^[1-9][0-9]*$ ]] || { echo "release PR CI run ID is malformed" >&2; exit 1; }
+          if [[ "$pr_ci_tail" =~ ^([1-9][0-9]*)/job/([1-9][0-9]*)$ ]]; then
+            pr_ci_run_id="${BASH_REMATCH[1]}"
+            pr_ci_job_id="${BASH_REMATCH[2]}"
+          else
+            echo "release PR quality-gate URL shape is malformed" >&2
+            exit 1
+          fi
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${pr_ci_run_id}" > snapshots/pr-ci-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${pr_ci_job_id}" > snapshots/pr-ci-job.json
+          pr_ci_attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and floor == .)' snapshots/pr-ci-job.json)"
+          jq -e \
+            --arg quality_link "$quality_link" \
+            --arg release_pr_head "$release_pr_head_sha" \
+            --argjson job_id "$pr_ci_job_id" \
+            --argjson run_id "$pr_ci_run_id" \
+            --argjson attempt "$pr_ci_attempt" '
+              .id == $job_id and .run_id == $run_id and .run_attempt == $attempt and
+              .head_sha == $release_pr_head and .name == "quality-gate" and .workflow_name == "ci" and
+              .status == "completed" and .conclusion == "success" and .html_url == $quality_link
+          ' snapshots/pr-ci-job.json >/dev/null || {
+            echo "release PR quality-gate job identity mismatch" >&2
+            exit 1
+          }
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg branch "release-please--branches--main--components--env-vault" \
             --arg release_pr_head "$release_pr_head_sha" \
-            --argjson release_pr_number "$release_pr_number" \
-            --argjson run_id "$pr_ci_run_id" '
+            --argjson run_id "$pr_ci_run_id" \
+            --argjson attempt "$pr_ci_attempt" '
               .id == $run_id and .repository.full_name == $repository and .head_repository.full_name == $repository and
-              .head_branch == $branch and .event == "pull_request" and .status == "completed" and
-              .conclusion == "success" and .name == "ci" and .path == ".github/workflows/ci.yml" and
-              (.run_attempt | type == "number" and . > 0) and
-              ([.pull_requests[]? | select(
-                .number == $release_pr_number and .head.ref == $branch and .head.sha == $release_pr_head and
-                .base.ref == "main"
-              )] | length == 1)
-          ' snapshots/pr-ci-run.json >/dev/null
-          pr_ci_attempt="$(jq -er '.run_attempt' snapshots/pr-ci-run.json)"
+              .head_sha == $release_pr_head and .head_branch == $branch and
+              .event == "pull_request" and .status == "completed" and
+              .conclusion == "success" and .path == ".github/workflows/ci.yml" and
+              .run_attempt == $attempt
+          ' snapshots/pr-ci-run.json >/dev/null || {
+            echo "release PR CI run identity mismatch" >&2
+            exit 1
+          }
           pr_ci_head_sha="$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' snapshots/pr-ci-run.json)"
 
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${planning_run_id}" > snapshots/planning-run.json
@@ -226,8 +248,11 @@ jobs:
               .repository.full_name == $repository and .head_repository.full_name == $repository and
               .head_sha == $source and .head_branch == "main" and .event == "workflow_run" and
               .status == "completed" and .conclusion == "success" and
-              .name == "release-please" and .path == ".github/workflows/release-please.yml"
-            ' snapshots/planning-run.json >/dev/null
+              .path == ".github/workflows/release-please.yml"
+            ' snapshots/planning-run.json >/dev/null || {
+              echo "release planning run identity mismatch" >&2
+              exit 1
+            }
 
           jq -n \
             --arg repository "$GITHUB_REPOSITORY" \
