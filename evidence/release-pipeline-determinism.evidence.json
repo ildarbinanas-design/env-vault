@@ -1,0 +1,88 @@
+{
+  "schema_id": "env-vault.release-evidence.v1",
+  "generated_at": "2026-07-17T10:46:33Z",
+  "task_id": "release-pipeline-determinism",
+  "objective_code": "llm-free-release",
+  "repository": {
+    "name": "ildarbinanas-design/env-vault",
+    "before_sha": "0eef84548b802a89f98c08744b5b51aac3d543ad",
+    "after_sha": "3baa39031d0059ca57760693efa518d6579c0072"
+  },
+  "release_result": {
+    "status": "implementation_only",
+    "github_release": "not_checked",
+    "assets": [],
+    "attestations": []
+  },
+  "change_codes": [
+    "automatic-machine-evidence",
+    "declarative-release-contract",
+    "deterministic-repair-plans",
+    "exact-version-promotion",
+    "windows-atomic-read"
+  ],
+  "checks": [
+    {
+      "id": "release-evidence-tests",
+      "command": "go test -count=1 ./internal/releaseevidence ./internal/releasecontract ./cmd/release-evidence",
+      "result": "pass",
+      "source": "local"
+    },
+    {
+      "id": "release-evidence-vet",
+      "command": "go vet ./internal/releaseevidence ./internal/releasecontract ./cmd/release-evidence",
+      "result": "pass",
+      "source": "local"
+    },
+    {
+      "id": "release-evidence-workflow-policy",
+      "command": "go test -count=1 ./tests -run ^TestReleaseEvidenceWorkflowIsAutomaticReadOnlyAndAttemptQualified$",
+      "result": "pass",
+      "source": "local"
+    },
+    {
+      "id": "required-ci",
+      "command": "GitHub required checks at the exact implementation head SHA",
+      "result": "not_run",
+      "source": "github_api"
+    }
+  ],
+  "guarantees": [
+    {
+      "id": "exact-source-artifacts",
+      "status": "preserved",
+      "evidence": "promotion-manifest"
+    },
+    {
+      "id": "exact-version-pretag",
+      "status": "improved",
+      "evidence": "native-promotion-gate"
+    },
+    {
+      "id": "immutable-release-tags",
+      "status": "preserved",
+      "evidence": "release-contract"
+    },
+    {
+      "id": "no-attempt-mixing",
+      "status": "preserved",
+      "evidence": "attempt-identity"
+    },
+    {
+      "id": "secret-safety",
+      "status": "preserved",
+      "evidence": "machine-evidence-schema"
+    }
+  ],
+  "workflow_runs": [],
+  "residual_risks": [
+    {
+      "code": "required-ci-pending",
+      "status": "open"
+    },
+    {
+      "code": "release-not-executed",
+      "status": "accepted"
+    }
+  ]
+}
