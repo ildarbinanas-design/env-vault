@@ -33,10 +33,15 @@ read boundary. They:
 - apply at most five attempts per page, 100 pages, 500 REST requests, and 120
   seconds of cumulative retry wait per read; each `gh` process is capped at 64
   MiB stdout and 256 KiB stderr;
-- require every pagination `Link` to keep the original host, path, and complete
-  query scope (endpoint query plus fields), including invariant `per_page` when
-  supplied; the reviewed release endpoints need only canonical `page`, which
-  must advance by exactly one, so added filters and cursor controls fail closed;
+- do not interpret `Link` on a non-paginated read. On a paginated read, parse
+  RFC link-values without splitting quoted commas, ignore well-formed
+  informational relations (including repeatable unrelated target attributes)
+  and alternate `anchor` contexts, and follow only one
+  canonical `rel="next"` whose target keeps the trusted origin, original path,
+  and complete query scope (endpoint query plus fields), including invariant
+  `per_page` when supplied. The reviewed release endpoints need only canonical
+  `page`, which must advance by exactly one, so added filters, cursor controls,
+  ambiguous relations, and duplicate next targets fail closed;
 - expose stable versioned capability, error, REST observation, Contents, Git
   blob, and Actions identity documents;
 - bind Actions authority to repository/head-repository, run ID and attempt,
@@ -83,6 +88,12 @@ read-only GraphQL ruleset
 query. Every direct or high-level `gh` exception is enumerated with owner and
 rationale in `release/github-transport-boundary.v1.json`; tests fail on an
 unregistered command or count change.
+
+GitHub's public Attestations REST endpoint later demonstrated why pagination
+semantics and general HTTP metadata must remain separate: it returned a valid
+non-paginated `200` response with a `Link` whose only relation was
+`deprecation`, plus `Deprecation` and `Sunset` headers. That relation is not a
+page transition and is now covered by an exact response fixture. See ADR 0005.
 
 ## Alternatives considered
 

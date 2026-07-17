@@ -189,6 +189,141 @@ func TestPublishHomebrewPRVerifyOnlyChecksPublishedFormulaWithoutWrites(t *testi
 	}
 }
 
+func TestPublishHomebrewPRRequiresExactUnpublishedStateWithoutWrites(t *testing.T) {
+	fixture := newHomebrewTapFixture(t, "1.2.2")
+	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+	refsBefore := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+	main := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main")
+
+	output, status := fixture.runPublishMode(t, nil, []string{"--require-unpublished", releaseTestVersion, formula, homebrewTapRepository})
+	if status != 0 {
+		t.Fatalf("require-unpublished exit status=%d\n%s", status, output)
+	}
+	values := parseHomebrewPublishOutputs(t, output)
+	assertHomebrewPublishOutputs(t, values, map[string]string{
+		"base_sha":                 main,
+		"head_sha":                 main,
+		"tap_sha":                  main,
+		"pr_number":                "",
+		"pr_url":                   "",
+		"merge_sha":                "",
+		"merge_is_ancestor_of_tap": "false",
+		"state":                    "UNPUBLISHED",
+		"already_merged":           "false",
+		"no_op":                    "true",
+	})
+	assertHomebrewVerifyPublishedPRDidNotMutate(t, fixture, refsBefore)
+	if calls := readOptionalFile(t, fixture.ghLog); !strings.Contains(calls, "pr list") {
+		t.Fatalf("unpublished verifier did not inspect deterministic PR state:\n%s", calls)
+	}
+}
+
+func TestPublishHomebrewPRUnpublishedGuardRejectsExistingCoordinates(t *testing.T) {
+	for name, prepare := range map[string]func(*testing.T, *homebrewTapFixture, string) map[string]string{
+		"release branch": func(t *testing.T, fixture *homebrewTapFixture, formula string) map[string]string {
+			fixture.createReleaseBranch(t, formula, false)
+			return nil
+		},
+		"pull request": func(t *testing.T, fixture *homebrewTapFixture, formula string) map[string]string {
+			head := fixture.createReleaseBranch(t, formula, false)
+			return map[string]string{
+				"FAKE_PR_STATE":    "OPEN",
+				"FAKE_PR_NUMBER":   "17",
+				"FAKE_PR_HEAD_SHA": head,
+				"FAKE_PR_BODY":     homebrewPRBody(t, formula, releaseTestVersion, homebrewSourceSHA),
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newHomebrewTapFixture(t, "1.2.2")
+			formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+			extra := prepare(t, fixture, formula)
+			refsBefore := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+			output, status := fixture.runPublishMode(t, extra, []string{"--require-unpublished", releaseTestVersion, formula, homebrewTapRepository})
+			if status == 0 || !strings.Contains(output, "already exists") {
+				t.Fatalf("require-unpublished status=%d, want existing-coordinate failure\n%s", status, output)
+			}
+			assertHomebrewVerifyPublishedPRDidNotMutate(t, fixture, refsBefore)
+		})
+	}
+}
+
+func TestPublishHomebrewPRExpectedBaseGuardsFirstMutation(t *testing.T) {
+	fixture := newHomebrewTapFixture(t, "1.2.2")
+	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+	refsBefore := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+
+	output, status := fixture.runPublish(t, map[string]string{
+		"EXPECTED_TAP_BASE_SHA": strings.Repeat("b", 40),
+	}, releaseTestVersion, formula)
+	if status == 0 || !strings.Contains(output, "changed from the expected pre-publication base") {
+		t.Fatalf("expected-base guard status=%d\n%s", status, output)
+	}
+	refsAfter := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+	if refsAfter != refsBefore {
+		t.Fatalf("expected-base guard changed remote refs\nbefore:\n%s\nafter:\n%s", refsBefore, refsAfter)
+	}
+	calls := readOptionalFile(t, fixture.ghLog)
+	if strings.Contains(calls, "pr create") {
+		t.Fatalf("expected-base guard created a pull request:\n%s", calls)
+	}
+}
+
+func TestPublishHomebrewPRExpectedBaseRejectsRacedBranchFromOlderBase(t *testing.T) {
+	fixture := newHomebrewTapFixture(t, "1.2.2")
+	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+	fixture.createReleaseBranch(t, formula, false)
+
+	fixture.gitRun(t, "-C", fixture.seed, "switch", "main")
+	fixture.gitRun(t, "-C", fixture.seed, "reset", "--hard", "origin/main")
+	if err := os.WriteFile(filepath.Join(fixture.seed, "README.md"), []byte("tap advanced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fixture.gitRun(t, "-C", fixture.seed, "add", "README.md")
+	fixture.gitRun(t, "-C", fixture.seed, "commit", "-m", "advance tap main")
+	fixture.gitRun(t, "-C", fixture.seed, "push", "origin", "main")
+	newMain := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main")
+	refsBefore := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+
+	output, status := fixture.runPublish(t, map[string]string{
+		"EXPECTED_TAP_BASE_SHA": newMain,
+	}, releaseTestVersion, formula)
+	if status == 0 || !strings.Contains(output, "not based directly on the expected tap default branch") {
+		t.Fatalf("raced-branch base guard status=%d\n%s", status, output)
+	}
+	if refsAfter := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref"); refsAfter != refsBefore {
+		t.Fatalf("raced-branch guard changed remote refs\nbefore:\n%s\nafter:\n%s", refsBefore, refsAfter)
+	}
+	if calls := readOptionalFile(t, fixture.ghLog); strings.Contains(calls, "pr create") {
+		t.Fatalf("raced-branch guard created a pull request:\n%s", calls)
+	}
+}
+
+func TestPublishHomebrewPRUnpublishedGuardFindsWrongBasePRByDeterministicHead(t *testing.T) {
+	fixture := newHomebrewTapFixture(t, "1.2.2")
+	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
+	refsBefore := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref")
+
+	output, status := fixture.runPublishMode(t, map[string]string{
+		"FAKE_PR_STATE":    "CLOSED",
+		"FAKE_PR_NUMBER":   "19",
+		"FAKE_PR_HEAD_SHA": strings.Repeat("b", 40),
+		"FAKE_PR_BASE_REF": "maintenance",
+	}, []string{"--require-unpublished", releaseTestVersion, formula, homebrewTapRepository})
+	if status == 0 || !strings.Contains(output, "deterministic release pull request already exists") {
+		t.Fatalf("wrong-base PR collision status=%d\n%s", status, output)
+	}
+	if refsAfter := fixture.gitOutput(t, "--git-dir="+fixture.origin, "show-ref"); refsAfter != refsBefore {
+		t.Fatalf("wrong-base PR collision changed remote refs\nbefore:\n%s\nafter:\n%s", refsBefore, refsAfter)
+	}
+	calls := readOptionalFile(t, fixture.ghLog)
+	for _, line := range strings.Split(calls, "\n") {
+		if strings.Contains(line, "pr list") && strings.Contains(line, "--base") {
+			t.Fatalf("deterministic-head discovery was incorrectly narrowed by base:\n%s", calls)
+		}
+	}
+}
+
 func TestPublishHomebrewPRVerifyPublishedPRIsStrictlyReadOnly(t *testing.T) {
 	fixture := newHomebrewTapFixture(t, "1.2.2")
 	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")

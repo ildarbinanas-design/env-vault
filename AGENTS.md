@@ -34,7 +34,10 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
   typed identity; run `.name`, job `workflow_name`, and `.pull_requests` are
   diagnostic only. Direct/high-level `gh` exceptions must remain enumerated in
   `release/github-transport-boundary.v1.json`; mutations are never blindly
-  retried after an ambiguous transport result.
+  retried after an ambiguous transport result. Non-paginated reads do not
+  interpret informational RFC `Link` metadata; paginated reads follow only one
+  unanchored, trusted, invariant-preserving `rel="next"` and ignore other
+  well-formed relation contexts.
 - Do not commit, push, tag, release, create a remote, or publish without explicit approval.
   A generated Release Please pull request may be merged only after the operator
   records the exact authorization tuple as a comment on that pull request,

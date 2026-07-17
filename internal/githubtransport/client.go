@@ -255,6 +255,9 @@ func (c *Client) readPage(ctx context.Context, endpoint string, request ReadRequ
 			classified = classifyResult(result, response, parseErr, attempt, c.Now())
 		}
 		if classified == nil {
+			if !request.Paginate {
+				return pageReadResult{Body: response.Body, Wait: waited, HTTPStatus: response.Status, ServerDate: response.Headers["date"]}, nil
+			}
 			next, nextPage, err := nextEndpoint(response.Link, pagination, currentPage)
 			if err != nil {
 				return pageReadResult{Wait: waited}, &TransportError{Code: "PAGINATION_INVALID", Message: err.Error(), HTTPStatus: response.Status, Attempts: attempt}
@@ -649,22 +652,56 @@ func nextEndpoint(link string, scope paginationScope, currentPage uint64) (strin
 	if link == "" {
 		return "", 0, nil
 	}
+	values, err := parseLinkHeader(link)
+	if err != nil {
+		return "", 0, err
+	}
 	next := ""
 	nextPage := uint64(0)
-	for _, part := range strings.Split(link, ",") {
-		section := strings.TrimSpace(part)
-		left, right := strings.Index(section, "<"), strings.Index(section, ">")
-		if left != 0 || right <= left+1 || right+2 > len(section) || section[right+1] != ';' {
-			return "", 0, errors.New("pagination next link is malformed")
-		}
-		relation := strings.TrimSpace(section[right+2:])
-		if !regexp.MustCompile(`^rel="(?:next|prev|first|last)"$`).MatchString(relation) {
-			return "", 0, errors.New("pagination relation is malformed or unsupported")
-		}
-		if relation != `rel="next"` {
+	for _, value := range values {
+		// RFC 8288 gives an anchored link a different context. This transport
+		// deliberately has no alternate-context model, so it must ignore the
+		// complete link-value instead of treating an anchored next relation as
+		// pagination for the requested resource.
+		if _, anchored := value.parameters["anchor"]; anchored {
 			continue
 		}
-		parsed, err := url.Parse(section[left+1 : right])
+		if value.duplicateRelation {
+			return "", 0, errors.New("pagination Link relation parameter is duplicated")
+		}
+		relation, present := value.parameters["rel"]
+		if !present {
+			continue
+		}
+		relations := strings.Fields(relation)
+		if len(relations) == 0 {
+			return "", 0, errors.New("pagination relation is malformed")
+		}
+		paginationRelations := make([]string, 0, 1)
+		for _, candidate := range relations {
+			if !validLinkRelation(candidate) {
+				return "", 0, errors.New("pagination relation is malformed")
+			}
+			for _, paginationRelation := range []string{"next", "prev", "first", "last"} {
+				if strings.EqualFold(candidate, paginationRelation) {
+					if candidate != paginationRelation {
+						return "", 0, errors.New("pagination relation has non-canonical spelling")
+					}
+					paginationRelations = append(paginationRelations, candidate)
+				}
+			}
+		}
+		if len(paginationRelations) == 0 {
+			continue
+		}
+		if len(relations) != 1 || len(paginationRelations) != 1 {
+			return "", 0, errors.New("pagination relation is ambiguous")
+		}
+		relation = paginationRelations[0]
+		if relation != "next" {
+			continue
+		}
+		parsed, err := url.Parse(value.target)
 		if err != nil || parsed.Scheme != "https" || parsed.Host != "api.github.com" || parsed.User != nil || parsed.Fragment != "" {
 			return "", 0, errors.New("pagination next link has an untrusted origin")
 		}
@@ -710,6 +747,203 @@ func nextEndpoint(link string, scope paginationScope, currentPage uint64) (strin
 		nextPage = page
 	}
 	return next, nextPage, nil
+}
+
+type parsedLinkValue struct {
+	target            string
+	parameters        map[string]string
+	duplicateRelation bool
+}
+
+func parseLinkHeader(header string) ([]parsedLinkValue, error) {
+	if len(header) == 0 || len(header) > 64<<10 {
+		return nil, errors.New("pagination Link header is empty or exceeds the reviewed limit")
+	}
+	sections, err := splitLinkHeader(header)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]parsedLinkValue, 0, len(sections))
+	for _, section := range sections {
+		value, err := parseLinkValue(section)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func splitLinkHeader(header string) ([]string, error) {
+	sections := make([]string, 0, 2)
+	start := 0
+	inTarget, inQuote, escaped := false, false, false
+	for index := 0; index < len(header); index++ {
+		character := header[index]
+		if (character < 0x20 && character != '\t') || character == 0x7f {
+			return nil, errors.New("pagination Link header contains a control character")
+		}
+		if inQuote {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch character {
+			case '\\':
+				escaped = true
+			case '"':
+				inQuote = false
+			}
+			continue
+		}
+		if inTarget {
+			switch character {
+			case '<':
+				return nil, errors.New("pagination Link target is malformed")
+			case '>':
+				inTarget = false
+			}
+			continue
+		}
+		switch character {
+		case '<':
+			inTarget = true
+		case '>':
+			return nil, errors.New("pagination Link target is malformed")
+		case '"':
+			inQuote = true
+		case ',':
+			section := strings.TrimSpace(header[start:index])
+			if section == "" {
+				return nil, errors.New("pagination Link header contains an empty link-value")
+			}
+			sections = append(sections, section)
+			start = index + 1
+		}
+	}
+	if inTarget || inQuote || escaped {
+		return nil, errors.New("pagination Link header contains an unterminated link-value")
+	}
+	section := strings.TrimSpace(header[start:])
+	if section == "" {
+		return nil, errors.New("pagination Link header contains an empty link-value")
+	}
+	return append(sections, section), nil
+}
+
+func parseLinkValue(section string) (parsedLinkValue, error) {
+	if !strings.HasPrefix(section, "<") {
+		return parsedLinkValue{}, errors.New("pagination Link value has no target")
+	}
+	right := strings.IndexByte(section, '>')
+	if right <= 1 {
+		return parsedLinkValue{}, errors.New("pagination Link target is malformed")
+	}
+	target := section[1:right]
+	_, err := url.Parse(target)
+	if err != nil || target == "" || strings.ContainsAny(target, " \\<>\"") {
+		return parsedLinkValue{}, errors.New("pagination Link target is malformed")
+	}
+
+	remainder := strings.TrimSpace(section[right+1:])
+	parameters := make(map[string]string)
+	duplicateRelation := false
+	for remainder != "" {
+		if remainder[0] != ';' {
+			return parsedLinkValue{}, errors.New("pagination Link parameters are malformed")
+		}
+		remainder = strings.TrimLeft(remainder[1:], " \t")
+		nameEnd := 0
+		for nameEnd < len(remainder) && isLinkTokenByte(remainder[nameEnd]) {
+			nameEnd++
+		}
+		if nameEnd == 0 {
+			return parsedLinkValue{}, errors.New("pagination Link parameter name is malformed")
+		}
+		name := strings.ToLower(remainder[:nameEnd])
+		if _, duplicate := parameters[name]; duplicate && name == "rel" {
+			duplicateRelation = true
+		}
+		remainder = strings.TrimLeft(remainder[nameEnd:], " \t")
+		value := ""
+		if strings.HasPrefix(remainder, "=") {
+			remainder = strings.TrimLeft(remainder[1:], " \t")
+			if remainder == "" {
+				return parsedLinkValue{}, errors.New("pagination Link parameter value is missing")
+			}
+			if remainder[0] == '"' {
+				var quoted strings.Builder
+				closed := false
+				for index := 1; index < len(remainder); index++ {
+					character := remainder[index]
+					if character == '"' {
+						remainder = remainder[index+1:]
+						closed = true
+						break
+					}
+					if character == '\\' {
+						index++
+						if index >= len(remainder) || remainder[index] < 0x20 || remainder[index] == 0x7f {
+							return parsedLinkValue{}, errors.New("pagination Link quoted parameter is malformed")
+						}
+						character = remainder[index]
+					} else if character < 0x20 || character == 0x7f {
+						return parsedLinkValue{}, errors.New("pagination Link quoted parameter is malformed")
+					}
+					quoted.WriteByte(character)
+				}
+				if !closed {
+					return parsedLinkValue{}, errors.New("pagination Link quoted parameter is unterminated")
+				}
+				value = quoted.String()
+			} else {
+				valueEnd := 0
+				for valueEnd < len(remainder) && isLinkTokenByte(remainder[valueEnd]) {
+					valueEnd++
+				}
+				if valueEnd == 0 {
+					return parsedLinkValue{}, errors.New("pagination Link parameter value is malformed")
+				}
+				value = remainder[:valueEnd]
+				remainder = remainder[valueEnd:]
+			}
+		}
+		// RFC 8288 permits some target attributes (notably hreflang) to occur
+		// more than once. Their semantics are informational to this transport,
+		// so retain only the first value. Record duplicate rel separately so an
+		// anchored alternate context can be ignored before enforcing uniqueness.
+		if _, duplicate := parameters[name]; !duplicate {
+			parameters[name] = value
+		}
+		remainder = strings.TrimLeft(remainder, " \t")
+	}
+	return parsedLinkValue{target: target, parameters: parameters, duplicateRelation: duplicateRelation}, nil
+}
+
+func isLinkTokenByte(character byte) bool {
+	if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+		return true
+	}
+	return strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character))
+}
+
+func validLinkRelation(relation string) bool {
+	if relation == "" {
+		return false
+	}
+	token := true
+	for index := 0; index < len(relation); index++ {
+		if !isLinkTokenByte(relation[index]) {
+			token = false
+			break
+		}
+	}
+	if token {
+		return true
+	}
+	parsed, err := url.Parse(relation)
+	return err == nil && parsed.IsAbs() && parsed.Scheme != "" && parsed.User == nil &&
+		!strings.ContainsAny(relation, " \\<>\"")
 }
 
 func sanitizedEnvironment() []string { return SanitizedEnvironment() }

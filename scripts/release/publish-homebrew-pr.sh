@@ -10,7 +10,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/lib.sh"
 
 usage() {
-  printf 'usage: %s [--verify-only|--verify-published-pr] vMAJOR.MINOR.PATCH FORMULA OWNER/REPO [WORK_DIR]\n' "$(basename "$0")" >&2
+  printf 'usage: %s [--verify-only|--verify-published-pr|--require-unpublished] vMAJOR.MINOR.PATCH FORMULA OWNER/REPO [WORK_DIR]\n' "$(basename "$0")" >&2
   exit 2
 }
 
@@ -78,8 +78,15 @@ validate_formula_at_commit() {
 validate_branch_content() {
   local commit=$1
   local merge_base changed_paths
+  local -a parents
 
   validate_formula_at_commit "$commit" "$scratch_dir/branch-formula.rb"
+
+  if [[ -n ${expected_tap_base_sha:-} ]]; then
+    read -r -a parents <<< "$(git -C "$work_dir" rev-list --parents -n 1 "$commit")"
+    [[ ${#parents[@]} -eq 2 && "${parents[1]}" == "$expected_tap_base_sha" ]] ||
+      release_die "release branch is not based directly on the expected tap default branch"
+  fi
   merge_base=$(git -C "$work_dir" merge-base "refs/remotes/origin/$base_branch" "$commit") ||
     release_die "release branch does not share history with the tap default branch"
   changed_paths=$(git -C "$work_dir" diff --name-only --no-renames "$merge_base" "$commit") ||
@@ -95,7 +102,6 @@ load_pr() {
     --repo "$tap_repository" \
     --state all \
     --head "$branch" \
-    --base "$base_branch" \
     --limit 100 \
     --json number,url,state,headRefName,headRefOid,baseRefName,title,isDraft,isCrossRepository,mergeCommit \
     --jq '.[] | [.number, .url, .state, .headRefName, .headRefOid, (.mergeCommit.oid // "-"), .baseRefName, .title, (.isDraft | tostring), (.isCrossRepository | tostring)] | @tsv') ||
@@ -199,6 +205,19 @@ verify_remote_branch() {
   remote_branch_sha=$remote_sha
 }
 
+require_expected_base_unchanged() {
+  local lines remote_sha
+
+  [[ -n "$expected_tap_base_sha" ]] || return 0
+  lines=$(git -C "$work_dir" ls-remote --heads origin "refs/heads/$base_branch") ||
+    release_die "cannot recheck the expected tap default branch"
+  [[ $(printf '%s\n' "$lines" | awk 'NF { count++ } END { print count + 0 }') == "1" ]] ||
+    release_die "tap default branch is missing or ambiguous before mutation"
+  read -r remote_sha _ <<< "$lines"
+  [[ "$remote_sha" == "$expected_tap_base_sha" ]] ||
+    release_die "tap default branch changed from the expected pre-publication base"
+}
+
 operation=publish
 case ${1:-} in
   --verify-only)
@@ -207,6 +226,10 @@ case ${1:-} in
     ;;
   --verify-published-pr)
     operation=verify_published_pr
+    shift
+    ;;
+  --require-unpublished)
+    operation=require_unpublished
     shift
     ;;
   --*)
@@ -234,6 +257,13 @@ formula_version=$(parse_formula_version "$formula")
 source_sha=${SOURCE_SHA:-}
 [[ "$source_sha" =~ ^[0-9a-f]{40,64}$ ]] ||
   release_die "SOURCE_SHA must be a lowercase hexadecimal commit SHA"
+expected_tap_base_sha=${EXPECTED_TAP_BASE_SHA:-}
+if [[ -n "$expected_tap_base_sha" ]]; then
+  [[ "$operation" == "publish" ]] ||
+    release_die "EXPECTED_TAP_BASE_SHA is supported only for Homebrew publication"
+  [[ "$expected_tap_base_sha" =~ ^[0-9a-f]{40,64}$ ]] ||
+    release_die "EXPECTED_TAP_BASE_SHA must be a lowercase hexadecimal commit SHA"
+fi
 formula_sha=$(release_sha256_file "$formula")
 expected_marker="<!-- env-vault-release version=$version source_sha=$source_sha formula_sha256=$formula_sha -->"
 
@@ -256,8 +286,9 @@ if [[ "$operation" == "publish" ]]; then
   release_require_command gh
   [[ -n ${GH_TOKEN:-} ]] || release_die "GH_TOKEN is required to publish a Homebrew pull request"
   gh auth setup-git >/dev/null || release_die "cannot configure Git authentication"
-elif [[ "$operation" == "verify_published_pr" ]]; then
+elif [[ "$operation" == "verify_published_pr" || "$operation" == "require_unpublished" ]]; then
   release_require_command gh
+  [[ -n ${GH_TOKEN:-} ]] || release_die "GH_TOKEN is required for exact Homebrew pull request observation"
 fi
 
 git clone --no-tags "https://github.com/${tap_repository}.git" "$work_dir" >&2 ||
@@ -276,6 +307,9 @@ git -C "$work_dir" fetch --no-tags origin \
 base_sha=$(git -C "$work_dir" rev-parse "refs/remotes/origin/$base_branch") ||
   release_die "cannot resolve the tap default branch"
 [[ "$base_sha" =~ ^[0-9a-f]{40,64}$ ]] || release_die "tap default branch has an invalid SHA"
+if [[ -n "$expected_tap_base_sha" && "$base_sha" != "$expected_tap_base_sha" ]]; then
+  release_die "tap default branch changed from the expected pre-publication base"
+fi
 require_formula_blob_at_commit "$base_sha"
 git -C "$work_dir" show "${base_sha}:Formula/env-vault.rb" > "$scratch_dir/published-formula.rb" ||
   release_die "tap default branch has no env-vault formula"
@@ -301,6 +335,23 @@ if [[ "$operation" == "verify_only" ]]; then
   tap_sha=$base_sha
   state=PUBLISHED
   already_merged=true
+  no_op=true
+  emit_outputs
+  exit 0
+fi
+
+if [[ "$operation" == "require_unpublished" ]]; then
+  [[ "$comparison" == "1" ]] ||
+    release_die "tap default version is $published_version, expected a version lower than $target_version"
+  load_pr
+  verify_remote_branch
+  [[ -z "$pr_number" ]] ||
+    release_die "deterministic release pull request already exists for $version"
+  [[ -z "$remote_branch_sha" ]] ||
+    release_die "deterministic release branch already exists for $version"
+  head_sha=$base_sha
+  tap_sha=$base_sha
+  state=UNPUBLISHED
   no_op=true
   emit_outputs
   exit 0
@@ -399,6 +450,7 @@ if [[ -z "$remote_branch_sha" ]]; then
   git -C "$work_dir" commit -m "env-vault $version" >&2
   head_sha=$(git -C "$work_dir" rev-parse HEAD)
   validate_branch_content "$head_sha"
+  require_expected_base_unchanged
   git -C "$work_dir" push origin "$head_sha:refs/heads/$branch" >&2 ||
     release_die "release branch push was rejected; refusing to overwrite the remote branch"
   pushed_sha=$(git -C "$work_dir" ls-remote --heads origin "refs/heads/$branch" | awk 'NR == 1 { print $1 }')
@@ -413,6 +465,7 @@ fi
 current_remote_sha=$(git -C "$work_dir" ls-remote --heads origin "refs/heads/$branch" | awk 'NR == 1 { print $1 }')
 [[ "$current_remote_sha" == "$remote_branch_sha" ]] ||
   release_die "remote release branch changed before pull request creation"
+require_expected_base_unchanged
 create_log="$scratch_dir/gh-pr-create.log"
 if ! gh pr create \
   --repo "$tap_repository" \

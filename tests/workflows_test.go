@@ -1044,6 +1044,171 @@ func TestEmptyReleaseBootstrapFailedPublisherPredicateUsesRealisticJobPages(t *t
 	}
 }
 
+func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/publish-homebrew-bridge.yml")
+	assertGlobalReleaseConcurrency(t, "Homebrew bridge", wf)
+	assertPermissions(t, "Homebrew bridge", wf.Permissions, map[string]string{
+		"actions": "read", "attestations": "read", "contents": "read",
+	})
+	assertJobIDs(t, wf, "homebrew_bridge")
+	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
+	wantInputs := []string{
+		"control_sha", "control_ci_run_id", "control_ci_run_attempt",
+		"version", "source_sha", "source_ci_run_id", "source_ci_run_attempt", "release_id",
+		"bootstrap_control_sha", "bootstrap_run_id", "bootstrap_run_attempt", "bootstrap_job_id",
+		"bootstrap_result_artifact_id", "bootstrap_result_artifact_sha256",
+		"failed_publisher_run_id", "failed_publisher_run_attempt",
+		"metadata_job_id", "promotion_job_id", "preflight_job_id", "release_job_id",
+		"supply_chain_job_id", "failed_homebrew_job_id", "health_job_id",
+	}
+	if len(dispatch.Inputs) != len(wantInputs) {
+		t.Fatalf("Homebrew bridge inputs=%v, want exact %v", dispatch.Inputs, wantInputs)
+	}
+	for _, name := range wantInputs {
+		input, ok := dispatch.Inputs[name]
+		if !ok || !input.Required || input.Type != "string" || input.Default != "" || len(input.Options) != 0 {
+			t.Fatalf("Homebrew bridge input %q is not an exact required string: %+v", name, input)
+		}
+	}
+
+	job := wf.Jobs["homebrew_bridge"]
+	if job.Environment != "release" || job.TimeoutMinutes != 55 {
+		t.Fatalf("Homebrew bridge environment/timeout=%q/%d", job.Environment, job.TimeoutMinutes)
+	}
+	assertPermissions(t, "Homebrew bridge job", job.Permissions, map[string]string{
+		"actions": "read", "attestations": "read", "contents": "read",
+	})
+
+	control := namedStep(t, job, "Validate protected-main control, source contract, tag, and Release")
+	if !containsAll(control.Run,
+		`"$GITHUB_SHA" == "$CONTROL_SHA"`, `refs/heads/${DEFAULT_BRANCH}`,
+		"control-ci-identity.json", "source-ci-identity.json", "actions/workflows/ci.yml/runs",
+		`.naming == $source.naming`, `.platforms == $source.platforms`, `.assets == $source.assets`,
+		`.id == "homebrew_tap"`, `.id == "ci" or .id == "publisher"`, `.id == "homebrew_bridge"`,
+		`resolve-tag-sha.sh "$VERSION"`, `.id == $release_id`, `length == 10`, `$contract[0].assets`) {
+		t.Fatalf("Homebrew bridge control/source/release guard is incomplete: %s", control.Run)
+	}
+
+	incident := namedStep(t, job, "Bind successful bootstrap result and failed publisher graph")
+	if !containsAll(incident.Run,
+		"bootstrap-identity.json", ".github/workflows/bootstrap-release-assets.yml", "--job-name bootstrap",
+		"BOOTSTRAP_RESULT_ARTIFACT_SHA256", "env_vault_exact_artifact", "failed-publisher-identity.json",
+		"event=workflow_dispatch version=${VERSION} repair=release-assets", "([.[].total_count] | unique) == [7]",
+		`{id:$homebrew,name:"homebrew",conclusion:"failure"}`,
+		"Require exact-source attestations before tap mutation", "Generate exact Homebrew formula", "skipped",
+		"Mint scoped Homebrew App token", "Create or reuse deterministic Homebrew pull request") {
+		t.Fatalf("Homebrew bridge bootstrap/publisher incident guard is incomplete: %s", incident.Run)
+	}
+
+	download := namedStep(t, job, "Download exact bootstrap result")
+	if download.Uses != downloadAction || download.With["run-id"] != "${{ inputs.bootstrap_run_id }}" ||
+		download.With["github-token"] != "${{ github.token }}" || download.With["repository"] != "${{ github.repository }}" {
+		t.Fatalf("Homebrew bridge bootstrap download is not exact/authenticated: %+v", download.With)
+	}
+	preflight := namedStep(t, job, "Verify bootstrap result and complete release state before tap access")
+	if !containsAll(preflight.Run,
+		"source scripts/release/lib.sh", "env-vault.release-assets-bootstrap.v1", "bootstrap_pair",
+		`release_sha256_file "release-dist/$bootstrap_archive"`, `release_sha256_file "release-dist/$bootstrap_checksum"`,
+		`.name == $archive and .sha256 == $archive_sha256`, `.name == $checksum and .sha256 == $checksum_sha256`,
+		"download-release-assets.sh", "artifact-attestation-state.sh", "complete|complete",
+		"verify-artifact-attestations.sh", ".github/workflows/build-binaries.yml",
+		`git show "${SOURCE_SHA}:scripts/release/generate-homebrew-formula.sh"`,
+		"env -i", "source-formula-home", "current and immutable-source Homebrew formulas differ",
+		"--require-unpublished", ".state == \"UNPUBLISHED\"") {
+		t.Fatalf("Homebrew bridge release/bootstrap/formula preflight is incomplete: %s", preflight.Run)
+	}
+
+	preToken := namedStep(t, job, "Recheck protected main and unpublished tap immediately before token")
+	if !containsAll(preToken.Run,
+		"default-branch-before-token.json", `.object.sha == $control`, "--require-unpublished",
+		`.state == "UNPUBLISHED"`, `printf 'TAP_BEFORE_SHA=%s`) {
+		t.Fatalf("Homebrew bridge lacks immediate control/tap recheck: %s", preToken.Run)
+	}
+	token := namedStep(t, job, "Mint scoped Homebrew App token")
+	if token.Uses != createAppTokenAction || !reflect.DeepEqual(token.With, map[string]string{
+		"client-id":                "${{ vars.TAP_APP_CLIENT_ID }}",
+		"private-key":              "${{ secrets.TAP_APP_PRIVATE_KEY }}",
+		"owner":                    "${{ env.TAP_REPOSITORY_OWNER }}",
+		"repositories":             "${{ env.TAP_REPOSITORY_NAME }}",
+		"permission-actions":       "read",
+		"permission-contents":      "write",
+		"permission-pull-requests": "write",
+	}) {
+		t.Fatalf("Homebrew bridge App token is not exactly scoped: uses=%s with=%v", token.Uses, token.With)
+	}
+	appScope := namedStep(t, job, "Require exact Homebrew App identity and repository scope")
+	if !containsAll(appScope.Run, "ACTUAL_APP_SLUG", "installation/repositories", `"${#repositories[@]}" == "1"`, "$expected_repository") {
+		t.Fatalf("Homebrew bridge App identity/scope check is incomplete: %s", appScope.Run)
+	}
+	appRecheck := namedStep(t, job, "Recheck exact tap base with scoped App before publication")
+	if appRecheck.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" || !containsAll(appRecheck.Run,
+		"--require-unpublished", `.base_sha == $base`, `.state == "UNPUBLISHED"`, "$TAP_BEFORE_SHA") {
+		t.Fatalf("Homebrew bridge does not close the pre-publication tap race: env=%v run=%s", appRecheck.Env, appRecheck.Run)
+	}
+	publish := namedStep(t, job, "Create or reuse deterministic Homebrew pull request")
+	if publish.Env["EXPECTED_TAP_BASE_SHA"] != "${{ env.TAP_BEFORE_SHA }}" ||
+		publish.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" {
+		t.Fatalf("Homebrew bridge publication does not enforce the exact pre-token tap base: %v", publish.Env)
+	}
+
+	prCI := namedStep(t, job, "Require exact Homebrew pull-request head CI")
+	postCI := namedStep(t, job, "Require exact Homebrew post-merge CI")
+	if !containsAll(prCI.Run, "wait-tap-ci.sh", "pull_request") ||
+		prCI.Env["TAP_CI_IDENTITY_OUTPUT"] != "${{ runner.temp }}/tap-pr-ci-identity.json" ||
+		!containsAll(postCI.Run, "wait-tap-ci.sh", "push") ||
+		postCI.Env["TAP_CI_IDENTITY_OUTPUT"] != "${{ runner.temp }}/tap-push-ci-identity.json" {
+		t.Fatalf("Homebrew bridge does not preserve both typed tap CI identities")
+	}
+	merge := namedStep(t, job, "Merge exact Homebrew pull-request head")
+	if !containsAll(merge.Run, "merge-homebrew-pr.sh", `"$PR_NUMBER"`, `"$HEAD_SHA"`) {
+		t.Fatalf("Homebrew bridge merge is not exact-head guarded: %s", merge.Run)
+	}
+	final := namedStep(t, job, "Verify exact published Homebrew state")
+	if !containsAll(final.Run, "--verify-published-pr", `.merge_sha == $merge`, `.tap_sha | test`, `printf 'tap_sha=%s`) {
+		t.Fatalf("Homebrew bridge final tap snapshot is not independently verified: %s", final.Run)
+	}
+	result := namedStep(t, job, "Emit compact typed Homebrew bridge result")
+	if !containsAll(result.Run,
+		"env-vault.homebrew-publication-bridge.v1", "control", "source", "bootstrap", "failed_publisher",
+		"formula_sha256", "tap_before_sha", "pr_ci", "post_merge_ci", "workflow_identity",
+		`next_action:"dispatch_tag_scoped_health"`, `.homebrew.post_merge_ci.identity.run.head_sha == $merge_sha`) {
+		t.Fatalf("Homebrew bridge result omits required typed identities: %s", result.Run)
+	}
+	upload := namedStep(t, job, "Upload exact Homebrew bridge result")
+	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "source_sha", "github.run_id", "github.run_attempt") ||
+		upload.With["path"] != "${{ runner.temp }}/homebrew-bridge-result.json" {
+		t.Fatalf("Homebrew bridge result artifact is not exact-run qualified: %+v", upload.With)
+	}
+
+	assertStepOrder(t, job,
+		"Validate protected-main control, source contract, tag, and Release",
+		"Bind successful bootstrap result and failed publisher graph",
+		"Download exact bootstrap result",
+		"Verify bootstrap result and complete release state before tap access",
+		"Recheck protected main and unpublished tap immediately before token",
+		"Mint scoped Homebrew App token",
+		"Require exact Homebrew App identity and repository scope",
+		"Recheck exact tap base with scoped App before publication",
+		"Create or reuse deterministic Homebrew pull request",
+		"Require exact Homebrew pull-request head CI",
+		"Merge exact Homebrew pull-request head",
+		"Require exact Homebrew post-merge CI",
+		"Verify exact published Homebrew state",
+		"Emit compact typed Homebrew bridge result",
+		"Upload exact Homebrew bridge result",
+	)
+	raw := readFile(t, "../.github/workflows/publish-homebrew-bridge.yml")
+	for _, forbidden := range []string{
+		"gh release ", "reconcile-release-assets.sh", "bootstrap-release-asset-pair.sh",
+		"actions/attest@", "gh workflow run", "gh run rerun", "git tag", "release-evidence",
+		"permission-administration", "permission-workflows",
+	} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("Homebrew bridge contains forbidden mutation/scope %q", forbidden)
+		}
+	}
+}
+
 func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
 	assertPermissions(t, "release evidence", wf.Permissions, map[string]string{

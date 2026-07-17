@@ -242,6 +242,16 @@ or substituted for the immutable baseline JSON.
   inventory engine should absorb both only after parity tests preserve the
   exact zero/two/ten-state transitions; this incident is not justification to
   collapse the five native builders or broaden mutation permissions.
+- **Implemented follow-up hardening (2026-07-18):** a later Homebrew failure
+  showed that the public Attestations endpoint can return an informational
+  RFC `Link` with only `rel="deprecation"`. Non-paginated reads now ignore Link
+  metadata, while paginated reads parse complete link-values and follow only a
+  unique unanchored trusted invariant-preserving `next`. The protected-main
+  Homebrew bridge verifies the already-correct ten assets, bootstrap result,
+  exact attestations, failed publisher graph, formula parity, and unpublished
+  tap state before the existing scoped App PR/CI/merge path. Its incident tuple
+  remains dispatch data and its typed result points only to a tag-scoped health
+  repair. ADR 0005 records the recovery boundary.
 - **Dependencies and order:** freeze existing proof schemas; implement parity
   readers; dual-run old/new read-only verification; then remove duplicated jobs.
 - **Acceptance criteria:** all current adversarial fixtures produce the same
