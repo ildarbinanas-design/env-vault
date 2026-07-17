@@ -56,6 +56,8 @@ func TestE2EReporterBuilderIsExecutableAndFailClosed(t *testing.T) {
 	for _, required := range []string{
 		"for download_attempt in 1 2 3",
 		"timeout --foreground --signal=TERM --kill-after=15s 2m",
+		"run_bounded_tool_go mod download",
+		"run_bounded_tool_go mod tidy -diff",
 		"vendor directory is not allowed",
 		"GOFLAGS=",
 		"GOPROXY=off",

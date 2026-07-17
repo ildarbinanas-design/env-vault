@@ -18,15 +18,21 @@ write_sha256() {
   fi
 }
 
-download_tool_modules() {
+run_bounded_tool_go() {
   if command -v timeout >/dev/null 2>&1; then
     timeout --foreground --signal=TERM --kill-after=15s 2m \
       env GOTOOLCHAIN=local GOWORK=off \
       GOFLAGS='' \
-      go -C "$tool_module" mod download
+      go -C "$tool_module" "$@"
   else
-    GOTOOLCHAIN=local GOWORK=off GOFLAGS='' go -C "$tool_module" mod download
+    GOTOOLCHAIN=local GOWORK=off GOFLAGS='' \
+      go -C "$tool_module" "$@"
   fi
+}
+
+download_tool_modules() {
+  run_bounded_tool_go mod download &&
+    run_bounded_tool_go mod tidy -diff
 }
 
 [[ $# -eq 2 ]] || usage
