@@ -8,15 +8,123 @@ on:
         required: true
         type: string
       version:
-        description: "Exact version embedded in binaries and verified by native smoke tests."
+        description: "Exact vX.Y.Z version, or auto for deterministic CI resolution."
         required: true
+        type: string
+      event_name:
+        description: "Caller event name used only when version is auto."
+        required: false
+        default: ""
+        type: string
+      pull_request_head_ref:
+        description: "Caller pull-request head ref used to recognize Release Please."
+        required: false
+        default: ""
+        type: string
+      pull_request_head_sha:
+        description: "Exact caller pull-request head SHA used to classify Release Please."
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: read
 
 jobs:
-  module:
+  resolve:
+    name: resolve-source-quality
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    outputs:
+      matrix: ${{ steps.contract.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+      release_candidate: ${{ steps.version.outputs.release_candidate }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.source_sha }}
+          # A Release Please pull request is checked as a synthetic merge. The
+          # classifier runs on its PR-head parent and needs that commit's own
+          # parent, so three generations are the minimum non-shallow graph.
+          fetch-depth: 3
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - id: version
+        name: Resolve exact candidate version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CALLER_EVENT_NAME: ${{ inputs.event_name }}
+          PR_HEAD_REF: ${{ inputs.pull_request_head_ref }}
+          PR_HEAD_SHA: ${{ inputs.pull_request_head_sha }}
+        run: |
+          set -euo pipefail
+          source scripts/release/lib.sh
+          resolved="$REQUESTED_VERSION"
+          release_candidate=false
+
+          if [[ "$resolved" == "auto" ]]; then
+            resolved="ci-${SOURCE_SHA}"
+            if [[ "$CALLER_EVENT_NAME" == "pull_request" && "$PR_HEAD_REF" == "release-please--branches--main--components--env-vault" ]]; then
+              [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "Release Please head SHA is missing or malformed" >&2
+                exit 1
+              }
+              git cat-file -e "${PR_HEAD_SHA}^{commit}"
+              read -r -a source_parents <<< "$(git rev-list --parents -n 1 "$SOURCE_SHA")"
+              if [[ ${#source_parents[@]} -ne 3 || "${source_parents[2]}" != "$PR_HEAD_SHA" ]]; then
+                echo "Release Please head ${PR_HEAD_SHA} is not the exact pull-request parent of source ${SOURCE_SHA}" >&2
+                exit 1
+              fi
+              classification="$(scripts/release/classify-release-commit.sh "$PR_HEAD_SHA")"
+              [[ "$(sed -n 's/^publish=//p' <<< "$classification")" == "true" ]] || {
+                echo "Release Please head did not classify as a release" >&2
+                exit 1
+              }
+              [[ "$(sed -n 's/^source_sha=//p' <<< "$classification")" == "$PR_HEAD_SHA" ]] || {
+                echo "Release Please classifier returned a different source SHA" >&2
+                exit 1
+              }
+              resolved="$(sed -n 's/^version=//p' <<< "$classification")"
+              release_candidate=true
+            elif [[ "$CALLER_EVENT_NAME" == "push" ]]; then
+              read -r -a parents <<< "$(git rev-list --parents -n 1 "$SOURCE_SHA")"
+              if [[ ${#parents[@]} -eq 2 ]]; then
+                classification="$(scripts/release/classify-release-commit.sh "$SOURCE_SHA")"
+                if [[ "$(sed -n 's/^publish=//p' <<< "$classification")" == "true" ]]; then
+                  resolved="$(sed -n 's/^version=//p' <<< "$classification")"
+                  release_candidate=true
+                fi
+              fi
+            fi
+          fi
+
+          if [[ "$resolved" =~ ^ci-[0-9a-f]{40}$ ]]; then
+            :
+          else
+            release_require_version "$resolved"
+          fi
+          {
+            printf 'version=%s\n' "$resolved"
+            printf 'release_candidate=%s\n' "$release_candidate"
+          } >> "$GITHUB_OUTPUT"
+          printf 'resolved exact build version: %s\n' "$resolved"
+
+      - id: contract
+        name: Validate release contract and resolve native matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(go run ./cmd/release-contract matrix --json)"
+          jq -e '.include | type == "array" and length == 5' <<< "$matrix" >/dev/null
+          printf 'matrix=%s\n' "$(jq -c . <<< "$matrix")" >> "$GITHUB_OUTPUT"
+
+  race:
     runs-on: ubuntu-latest
     env:
       GOTOOLCHAIN: local
@@ -35,45 +143,20 @@ jobs:
       - name: Verify module cache
         run: go mod verify
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.source_sha }}
+      - name: Validate checked-in machine evidence
+        run: go run ./cmd/release-evidence validate-records
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
+      - name: Run source tests
+        run: go test ./...
 
-      - run: go test ./...
-      - run: go vet ./...
+      - name: Vet source
+        run: go vet ./...
 
-  race:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.source_sha }}
+      - name: Run source smoke tests
+        run: scripts/smoke.sh
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-
-      - run: go test -race ./...
-
-  smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.source_sha }}
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-
-      - run: scripts/smoke.sh
+      - name: Run source race tests
+        run: go test -race ./...
 
   license:
     name: license-${{ matrix.os }}
@@ -101,212 +184,16 @@ jobs:
         shell: bash
         run: scripts/license-check.sh
 
-  build:
-    name: build-${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-            ext: ""
-            archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-latest
-            cgo: "0"
-            ext: ""
-            archive: tar.gz
-          - goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            cgo: "1"
-            ext: ""
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            runner: macos-15
-            cgo: "1"
-            ext: ""
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-            ext: ".exe"
-            archive: zip
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.source_sha }}
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -eu
-          mkdir -p "dist/env-vault-${GOOS}-${GOARCH}"
-          go build \
-            -trimpath \
-            -ldflags="-s -w -X github.com/ildarbinanas-design/env-vault/internal/cli.Version=${VERSION}" \
-            -o "dist/env-vault-${GOOS}-${GOARCH}/env-vault${{ matrix.ext }}" \
-            ./cmd/env-vault
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/env-vault-${GOOS}-${GOARCH}/"
-
-      - name: Package
-        run: |
-          set -eu
-          cd dist
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            zip -r "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}"
-          else
-            tar -czf "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}"
-          fi
-          shasum -a 256 "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}" > "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}
-            dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256
-          retention-days: 14
-
-  native-smoke:
-    needs: [build]
-    name: smoke-${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-24.04-arm
-            archive: tar.gz
-          - goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            runner: macos-15
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            runner: windows-latest
-            archive: zip
-    steps:
-      - name: Download built artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist
-
-      - name: Verify exact version on Unix
-        if: runner.os != 'Windows'
-        shell: bash
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          ARCHIVE: ${{ matrix.archive }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          name="env-vault-${GOOS}-${GOARCH}"
-          (
-            cd dist
-            shasum -a 256 -c "${name}.${ARCHIVE}.sha256"
-            tar -xzf "${name}.${ARCHIVE}"
-          )
-          binary="dist/${name}/env-vault"
-          printf '%s\n' "$VERSION" > expected-version.txt
-          "$binary" --version > version-flag.txt
-          "$binary" version > version-command.txt
-          diff -u expected-version.txt version-flag.txt
-          diff -u expected-version.txt version-command.txt
-
-      - name: Verify exact version on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $name = "env-vault-$env:GOOS-$env:GOARCH"
-          $archive = Join-Path "dist" "$name.zip"
-          $checksumFile = Join-Path "dist" "$name.zip.sha256"
-          $expectedChecksum = ((Get-Content -LiteralPath $checksumFile -Raw).Trim() -split '\s+')[0]
-          $actualChecksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualChecksum -cne $expectedChecksum) {
-            throw "checksum mismatch for $archive"
-          }
-          Expand-Archive -LiteralPath $archive -DestinationPath "dist/unpacked"
-          $binary = Join-Path "dist/unpacked/$name" "env-vault.exe"
-          $flagOutput = @(& $binary --version)
-          $flagExit = $LASTEXITCODE
-          if ($flagExit -ne 0 -or $flagOutput.Count -ne 1 -or $flagOutput[0] -cne $env:VERSION) {
-            throw "--version output '$($flagOutput -join '\n')', want '$env:VERSION'"
-          }
-          $commandOutput = @(& $binary version)
-          $commandExit = $LASTEXITCODE
-          if ($commandExit -ne 0 -or $commandOutput.Count -ne 1 -or $commandOutput[0] -cne $env:VERSION) {
-            throw "version output '$($commandOutput -join '\n')', want '$env:VERSION'"
-          }
-
-  e2e:
-    needs: [build]
-    name: e2e-${{ matrix.goos }}-${{ matrix.goarch }}
+  native:
+    needs: [resolve]
+    name: artifact-quality-${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
       GOTOOLCHAIN: local
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            runner: ubuntu-latest
-            cgo: "0"
-            archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-24.04-arm
-            cgo: "0"
-            archive: tar.gz
-          - goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            cgo: "1"
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            runner: macos-15
-            cgo: "1"
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            runner: windows-latest
-            cgo: "0"
-            archive: zip
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -319,7 +206,7 @@ jobs:
       - name: Run native platform config tests
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
-        run: go test ./internal/config -count=1
+        run: go test -v ./internal/config -count=1
 
       - name: Burn in Windows config concurrency
         if: matrix.goos == 'windows'
@@ -327,11 +214,65 @@ jobs:
           CGO_ENABLED: ${{ matrix.cgo }}
         run: go test ./internal/config -run '^TestConcurrentSavePublishesOnlyCompleteConfigs$' -count=10
 
-      - name: Download release-like artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Build native release artifact
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          name="env-vault-${GOOS}-${GOARCH}"
+          mkdir -p "dist/${name}"
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X github.com/ildarbinanas-design/env-vault/internal/cli.Version=${VERSION}" \
+            -o "dist/${name}/${BINARY}" \
+            ./cmd/env-vault
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/${name}/"
+
+      - name: Package native release artifact on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ARCHIVE: ${{ matrix.archive }}
+          CHECKSUM: ${{ matrix.checksum }}
+        run: |
+          set -euo pipefail
+          name="env-vault-${GOOS}-${GOARCH}"
+          cd dist
+          tar -czf "$ARCHIVE" "$name"
+          shasum -a 256 "$ARCHIVE" > "$CHECKSUM"
+
+      - name: Package native release artifact on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ARCHIVE: ${{ matrix.archive }}
+          CHECKSUM: ${{ matrix.checksum }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "env-vault-$env:GOOS-$env:GOARCH"
+          $archive = Join-Path "dist" $env:ARCHIVE
+          Compress-Archive -LiteralPath (Join-Path "dist" $name) -DestinationPath $archive
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:ARCHIVE" | Set-Content -LiteralPath (Join-Path "dist" $env:CHECKSUM) -Encoding ascii
+
+      - name: Upload native release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: env-vault-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist
+          name: env-vault-release-${{ matrix.id }}-attempt-${{ github.run_attempt }}
+          path: |
+            dist/${{ matrix.archive }}
+            dist/${{ matrix.checksum }}
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Install pinned E2E reporter
         continue-on-error: true
@@ -342,7 +283,7 @@ jobs:
           CGO_ENABLED: ${{ matrix.cgo }}
           ENV_VAULT_E2E_GOOS: ${{ matrix.goos }}
           ENV_VAULT_E2E_GOARCH: ${{ matrix.goarch }}
-          ENV_VAULT_E2E_VERSION: ${{ inputs.version }}
+          ENV_VAULT_E2E_VERSION: ${{ needs.resolve.outputs.version }}
           ENV_VAULT_E2E_COMMIT_SHA: ${{ inputs.source_sha }}
         run: >-
           go run ./e2e/cmd/e2e-runner run
@@ -350,26 +291,79 @@ jobs:
           --coverage-floor 60
           --command-timeout 3m
           --test-timeout 5m
-          --artifact "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}"
-          --checksum "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"
+          --artifact "dist/${{ matrix.archive }}"
+          --checksum "dist/${{ matrix.checksum }}"
+
+      - name: Verify checksum and literal version; record platform evidence
+        shell: bash
+        env:
+          PLATFORM_ID: ${{ matrix.id }}
+          ARCHIVE: ${{ matrix.archive }}
+          CHECKSUM: ${{ matrix.checksum }}
+          BINARY: ${{ matrix.binary }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="env-vault-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p promotion-platform
+          go run ./cmd/release-promotion record-platform \
+            --platform "$PLATFORM_ID" \
+            --source-sha "$SOURCE_SHA" \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --archive "dist/$ARCHIVE" \
+            --checksum "dist/$CHECKSUM" \
+            --binary "dist/${name}/${BINARY}" \
+            --reports reports/e2e/candidate \
+            --artifact-name "env-vault-release-${PLATFORM_ID}-attempt-${GITHUB_RUN_ATTEMPT}" \
+            --e2e-artifact-name "env-vault-e2e-candidate-${PLATFORM_ID}-attempt-${GITHUB_RUN_ATTEMPT}" \
+            --coverage-floor 60 \
+            --output "promotion-platform/${PLATFORM_ID}.json"
+
+      - name: Upload platform quality evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-promotion-platform-${{ matrix.id }}-attempt-${{ github.run_attempt }}
+          path: promotion-platform/${{ matrix.id }}.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload E2E reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: env-vault-e2e-candidate-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
+          name: env-vault-e2e-candidate-${{ matrix.id }}-attempt-${{ github.run_attempt }}
           path: reports/e2e/candidate
           if-no-files-found: error
           retention-days: 30
 
   e2e-gate:
-    if: always()
-    needs: [e2e]
+    if: always() && !cancelled()
+    needs: [resolve, race, license, native]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GOTOOLCHAIN: local
     steps:
+      - name: Require every quality stage
+        shell: bash
+        env:
+          SOURCE_QUALITY_RESULT: ${{ needs.resolve.result }}
+          RACE_RESULT: ${{ needs.race.result }}
+          LICENSE_RESULT: ${{ needs.license.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          set -euo pipefail
+          for result in "$SOURCE_QUALITY_RESULT" "$RACE_RESULT" "$LICENSE_RESULT" "$NATIVE_RESULT"; do
+            [[ "$result" == "success" ]] || {
+              echo "quality stage result: $result" >&2
+              exit 1
+            }
+          done
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.source_sha }}
@@ -378,7 +372,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Download E2E report artifacts
+      - name: Download current-attempt E2E reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}
@@ -386,7 +380,7 @@ jobs:
           merge-multiple: true
 
       - name: Validate complete E2E report matrix
-        if: always()
+        shell: bash
         run: >-
           go run ./e2e/cmd/e2e-runner validate-matrix
           --reports reports-download
@@ -398,165 +392,73 @@ jobs:
           --expected-repository "${{ github.repository }}"
           --expected-reporter "v1.13.0"
 
-      - name: Upload matrix validation
+      - name: Verify validated matrix against durable baseline
+        shell: bash
+        run: >-
+          go run ./cmd/e2e-baseline verify
+          --baseline docs/e2e-baseline.json
+          --proof reports-download/matrix-validation.json
+          --output baseline-verification
+          --phase candidate
+          --expected-commit "${{ inputs.source_sha }}"
+          --expected-run-id "${{ github.run_id }}"
+          --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --expected-run-attempt "${{ github.run_attempt }}"
+          --expected-repository "${{ github.repository }}"
+
+      - name: Download current-attempt platform promotion evidence
+        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: env-vault-promotion-platform-*-attempt-${{ github.run_attempt }}
+          path: promotion-evidence
+          merge-multiple: true
+
+      - name: Assemble exact promotion manifest
+        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t evidence < <(find promotion-evidence -type f -name '*.json' -print | LC_ALL=C sort)
+          [[ ${#evidence[@]} -eq 5 ]] || {
+            echo "promotion evidence count=${#evidence[@]}, want 5 from run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" >&2
+            exit 1
+          }
+          evidence_csv="$(IFS=,; printf '%s' "${evidence[*]}")"
+          created_at="$(git show -s --format=%cI "$SOURCE_SHA")"
+          mkdir -p promotion
+          go run ./cmd/release-promotion assemble \
+            --source-sha "$SOURCE_SHA" \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --event push \
+            --created-at "$created_at" \
+            --evidence "$evidence_csv" \
+            --output promotion/promotion-manifest.json
+
+      - name: Upload exact promotion manifest
+        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-promotion-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: promotion/promotion-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload durable baseline verification
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: env-vault-e2e-candidate-matrix-attempt-${{ github.run_attempt }}
+          name: env-vault-e2e-baseline-verification-attempt-${{ github.run_attempt }}
           path: |
             reports-download/matrix-validation.json
             reports-download/matrix-validation.md
-          if-no-files-found: error
-          retention-days: 30
-
-  e2e-compare:
-    if: always()
-    needs: [e2e, e2e-gate]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      actions: read
-    env:
-      GOTOOLCHAIN: local
-    steps:
-      - name: Check out candidate source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.source_sha }}
-
-      - name: Check out canonical baseline source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: ildarbinanas-design/env-vault
-          ref: 7a044bdbf73aa592016bbb3a02d81f314f08fe63
-          path: baseline-source
-          persist-credentials: "false"
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-
-      - name: Preload recorded comparison toolchains
-        shell: bash
-        run: |
-          set -euo pipefail
-          GOTOOLCHAIN=go1.22.12 go version
-          GOTOOLCHAIN=go1.26.5 go version
-
-      - name: Download candidate E2E reports
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}
-          path: candidate-download
-          merge-multiple: true
-
-      - name: Download canonical baseline E2E reports
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          github-token: ${{ github.token }}
-          repository: ildarbinanas-design/env-vault
-          run-id: "29441160687"
-          pattern: env-vault-e2e-baseline-*-attempt-1
-          path: baseline-download
-          merge-multiple: true
-
-      - name: Validate canonical baseline against baseline source
-        id: baseline_source_validation
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f -- \
-            "$GITHUB_WORKSPACE/baseline-download/matrix-validation.json" \
-            "$GITHUB_WORKSPACE/baseline-download/matrix-validation.md"
-          cd baseline-source
-          GOTOOLCHAIN=go1.22.12 go run ./e2e/cmd/e2e-runner validate-matrix \
-            --reports "$GITHUB_WORKSPACE/baseline-download" \
-            --phase baseline \
-            --expected-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
-            --expected-run-id "29441160687" \
-            --expected-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
-            --expected-run-attempt "1" \
-            --expected-repository "ildarbinanas-design/env-vault" \
-            --expected-reporter "v1.12.2"
-
-      - name: Validate candidate against candidate source
-        id: candidate_source_validation
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f -- \
-            "$GITHUB_WORKSPACE/candidate-download/matrix-validation.json" \
-            "$GITHUB_WORKSPACE/candidate-download/matrix-validation.md"
-          GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
-            --reports "$GITHUB_WORKSPACE/candidate-download" \
-            --phase candidate \
-            --expected-commit "${{ inputs.source_sha }}" \
-            --expected-run-id "${{ github.run_id }}" \
-            --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --expected-run-attempt "${{ github.run_attempt }}" \
-            --expected-repository "${{ github.repository }}" \
-            --expected-reporter "v1.13.0"
-
-      - name: Compare candidate with canonical baseline
-        if: always()
-        shell: bash
-        env:
-          CANDIDATE_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare \
-            --baseline "$GITHUB_WORKSPACE/baseline-download" \
-            --candidate "$GITHUB_WORKSPACE/candidate-download" \
-            --output "$GITHUB_WORKSPACE/comparison-report" \
-            --coverage-tolerance 0 \
-            --expected-suite-hash "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" \
-            --baseline-validation-outcome "${{ steps.baseline_source_validation.outcome }}" \
-            --candidate-validation-outcome "${{ steps.candidate_source_validation.outcome }}" \
-            --baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
-            --baseline-run-id "29441160687" \
-            --baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
-            --baseline-run-attempt "1" \
-            --baseline-repository "ildarbinanas-design/env-vault" \
-            --baseline-reporter "v1.12.2" \
-            --candidate-commit "${{ inputs.source_sha }}" \
-            --candidate-run-id "${{ github.run_id }}" \
-            --candidate-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --candidate-run-attempt "${{ github.run_attempt }}" \
-            --candidate-repository "${{ github.repository }}" \
-            --candidate-reporter "v1.13.0" \
-            --candidate-version "$CANDIDATE_VERSION"
-
-      - name: Verify exact migration identity
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq -e '
-            .status == "pass" and
-            .suite_hash == "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" and
-            .baseline_go_version == "go1.22.12" and
-            .candidate_go_version == "go1.26.5"
-          ' comparison-report/comparison.json >/dev/null
-
-      - name: Add comparison to job summary
-        if: always()
-        shell: bash
-        run: cat comparison-report/comparison.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload baseline comparison
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-e2e-candidate-comparison-attempt-${{ github.run_attempt }}
-          path: |
-            comparison-report/comparison.json
-            comparison-report/comparison.md
+            baseline-verification/baseline-verification.json
+            baseline-verification/baseline-verification.md
           if-no-files-found: error
           retention-days: 30

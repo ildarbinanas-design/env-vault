@@ -13,7 +13,20 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - A test or insecure backend is allowed only behind an explicit environment gate and must be impossible to enable accidentally.
 - Structured errors are mandatory for implemented commands.
 - Mandatory tests are required once behavior beyond the local version placeholder is implemented.
-- Every implementation run must update an evidence bundle with commands, scope, checks, risks, and claim statuses.
+- Every implementation run must add a versioned `evidence/*.evidence.json`
+  record. The JSON is authoritative and must bind the exact before and
+  implementation commit SHAs, stable scope/change codes, commands and results,
+  preserved guarantees, residual risks, and claim statuses. Remote evidence
+  must additionally bind exact run IDs, attempts, asset digests, attestations,
+  tap commits/CI, publication state, timings, and retries when applicable.
+- Normalize an implementation record and regenerate the concise Markdown index
+  with `go run ./cmd/release-evidence implementation --record <record> --candidate-sha <sha>`.
+  The command must fail closed unless `<sha>` is the clean current HEAD or the
+  exact parent of an evidence-only child commit. Validate a release evidence
+  record with `go run ./cmd/release-evidence validate --input evidence/<task>.evidence.json`;
+  never hand-edit generated JSON or `evidence/README.md`.
+- `evidence_bundle.md` is a read-only historical archive from before the
+  machine-evidence transition. Never append to it.
 - Do not commit, push, tag, release, create a remote, or publish without explicit approval.
   Merging a generated Release Please pull request is explicit approval only for
   the exact version and source SHA recorded by that reviewed PR; the automated

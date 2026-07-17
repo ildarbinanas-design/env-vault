@@ -1,0 +1,240 @@
+{
+  "schema_id": "env-vault.release-contract.v1",
+  "schema_version": 1,
+  "version_policy": {
+    "pattern": "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+    "blocked_versions": [
+      {
+        "version": "v0.0.8",
+        "tag_sha": "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d",
+        "tag_must_remain": true,
+        "github_release_must_not_exist": true,
+        "reason_code": "failed_tag_without_release"
+      }
+    ],
+    "legacy_rebuild": {
+      "go_version": "1.22.12",
+      "publication_eligible": false,
+      "versions": [
+        { "version": "v0.0.1", "tag_sha": "b9dd8826b3dca3a0f638df39797cb13d1eb10aa5", "literal_version_supported": false },
+        { "version": "v0.0.2", "tag_sha": "595bf4fa7ca6a7346400e2243bc3b678f6767c5b", "literal_version_supported": false },
+        { "version": "v0.0.3", "tag_sha": "4a8b11697d93829c364e0807d83fc87df2a2fd5a", "literal_version_supported": false },
+        { "version": "v0.0.4", "tag_sha": "765627566f1d5ba175de017fe8ef3614a0408453", "literal_version_supported": true },
+        { "version": "v0.0.5", "tag_sha": "1d927ce2828153e87399749b48656d8dbc9ce1f4", "literal_version_supported": true },
+        { "version": "v0.0.6", "tag_sha": "76c9ac760b9d98752d737a1875339ac3ca2de0e5", "literal_version_supported": true },
+        { "version": "v0.0.7", "tag_sha": "4fbae380747e75a1f59498adbd76ccf5791e0480", "literal_version_supported": true }
+      ]
+    }
+  },
+  "platforms": [
+    {
+      "id": "linux-amd64",
+      "runner": "ubuntu-latest",
+      "goos": "linux",
+      "goarch": "amd64",
+      "cgo": "0",
+      "archive": "env-vault-linux-amd64.tar.gz",
+      "checksum": "env-vault-linux-amd64.tar.gz.sha256",
+      "archive_format": "tar.gz",
+      "binary": "env-vault"
+    },
+    {
+      "id": "linux-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "goos": "linux",
+      "goarch": "arm64",
+      "cgo": "0",
+      "archive": "env-vault-linux-arm64.tar.gz",
+      "checksum": "env-vault-linux-arm64.tar.gz.sha256",
+      "archive_format": "tar.gz",
+      "binary": "env-vault"
+    },
+    {
+      "id": "darwin-amd64",
+      "runner": "macos-15-intel",
+      "goos": "darwin",
+      "goarch": "amd64",
+      "cgo": "1",
+      "archive": "env-vault-darwin-amd64.tar.gz",
+      "checksum": "env-vault-darwin-amd64.tar.gz.sha256",
+      "archive_format": "tar.gz",
+      "binary": "env-vault"
+    },
+    {
+      "id": "darwin-arm64",
+      "runner": "macos-15",
+      "goos": "darwin",
+      "goarch": "arm64",
+      "cgo": "1",
+      "archive": "env-vault-darwin-arm64.tar.gz",
+      "checksum": "env-vault-darwin-arm64.tar.gz.sha256",
+      "archive_format": "tar.gz",
+      "binary": "env-vault"
+    },
+    {
+      "id": "windows-amd64",
+      "runner": "windows-latest",
+      "goos": "windows",
+      "goarch": "amd64",
+      "cgo": "0",
+      "archive": "env-vault-windows-amd64.zip",
+      "checksum": "env-vault-windows-amd64.zip.sha256",
+      "archive_format": "zip",
+      "binary": "env-vault.exe"
+    }
+  ],
+  "assets": [
+    "env-vault-linux-amd64.tar.gz",
+    "env-vault-linux-amd64.tar.gz.sha256",
+    "env-vault-linux-arm64.tar.gz",
+    "env-vault-linux-arm64.tar.gz.sha256",
+    "env-vault-darwin-amd64.tar.gz",
+    "env-vault-darwin-amd64.tar.gz.sha256",
+    "env-vault-darwin-arm64.tar.gz",
+    "env-vault-darwin-arm64.tar.gz.sha256",
+    "env-vault-windows-amd64.zip",
+    "env-vault-windows-amd64.zip.sha256"
+  ],
+  "workflows": [
+    { "id": "ci", "name": "ci", "file": "ci.yml" },
+    { "id": "quality", "name": "reusable-quality", "file": "reusable-quality.yml" },
+    { "id": "planning", "name": "release-please", "file": "release-please.yml" },
+    { "id": "publisher", "name": "build-binaries", "file": "build-binaries.yml" },
+    { "id": "release_evidence", "name": "release-evidence", "file": "release-evidence.yml" },
+    { "id": "legacy_rebuild", "name": "legacy-rebuild", "file": "legacy-rebuild.yml" },
+    { "id": "pr_title", "name": "pr-title", "file": "pr-title.yml" },
+    { "id": "dependency_review", "name": "Dependency review", "file": "dependency-review.yml" },
+    { "id": "planning_app_audit", "name": "audit-release-planning-app", "file": "audit-release-planning-app.yml" },
+    { "id": "tap_app_audit", "name": "audit-release-app", "file": "audit-release-app.yml" }
+  ],
+  "apps": [
+    {
+      "id": "release_planning",
+      "slug": "env-vault-release-planning",
+      "repository": "ildarbinanas-design/env-vault",
+      "environment": "release-planning",
+      "audit_workflow": "planning_app_audit"
+    },
+    {
+      "id": "homebrew_tap",
+      "slug": "env-vault-tap-release",
+      "repository": "ildarbinanas-design/homebrew-tap",
+      "environment": "release",
+      "audit_workflow": "tap_app_audit",
+      "ci_workflow_file": "test-formula.yml",
+      "ci_workflow_name": "test-formula"
+    }
+  ],
+  "capabilities": {
+    "observation": [
+      { "id": "release.plan", "transport": "github_api", "http_methods": ["GET"] },
+      { "id": "release.status", "transport": "github_api", "http_methods": ["GET"] },
+      { "id": "release.watch", "transport": "github_api", "http_methods": ["GET"] },
+      { "id": "release.verify", "transport": "github_api", "http_methods": ["GET"] },
+      { "id": "release.metrics", "transport": "github_api", "http_methods": ["GET"] },
+      { "id": "release.repair.plan", "transport": "github_api", "http_methods": ["GET"] },
+      { "id": "release.legacy_rebuild.plan", "transport": "github_api", "http_methods": ["GET"] }
+    ],
+    "mutation": [
+      {
+        "id": "release.repair.apply",
+        "dry_run_default": true,
+        "requires_plan_digest": true,
+        "requires_remote_preconditions": true,
+        "idempotent": true
+      },
+      {
+        "id": "release.legacy_rebuild.apply",
+        "dry_run_default": true,
+        "requires_plan_digest": true,
+        "requires_remote_preconditions": true,
+        "idempotent": true
+      }
+    ]
+  },
+  "release_stages": [
+    { "id": "source_quality", "ordinal": 1, "workflow": "ci", "state_mutating": false },
+    { "id": "exact_version_artifact_quality", "ordinal": 2, "workflow": "quality", "state_mutating": false },
+    { "id": "planning", "ordinal": 3, "workflow": "planning", "state_mutating": true },
+    { "id": "publication", "ordinal": 4, "workflow": "publisher", "state_mutating": true },
+    { "id": "supply_chain", "ordinal": 5, "workflow": "publisher", "state_mutating": true },
+    { "id": "homebrew", "ordinal": 6, "workflow": "publisher", "state_mutating": true },
+    { "id": "health", "ordinal": 7, "workflow": "publisher", "state_mutating": false }
+  ],
+  "repair_modes": [
+    { "code": "none", "resume_stage": "publication", "rebuilds": false, "state_mutating": true },
+    { "code": "release-assets", "resume_stage": "publication", "rebuilds": false, "state_mutating": true },
+    { "code": "homebrew", "resume_stage": "homebrew", "rebuilds": false, "state_mutating": true },
+    { "code": "health", "resume_stage": "health", "rebuilds": false, "state_mutating": false }
+  ],
+  "action_codes": [
+    "none",
+    "wait_tag",
+    "wait_main_ci",
+    "wait_planning",
+    "wait_publisher",
+    "wait_release_assets",
+    "wait_supply_chain",
+    "wait_homebrew",
+    "wait_health",
+    "rerun_all_jobs",
+    "rerun_tap_pr_ci_all_jobs",
+    "rerun_tap_post_merge_ci_all_jobs",
+    "wait_tap_ci",
+    "replan_publisher",
+    "dispatch_legacy_rebuild",
+    "dispatch_release_assets_repair",
+    "dispatch_homebrew_repair",
+    "dispatch_health_repair",
+    "inspect_main_ci_failure",
+    "inspect_planning_failure",
+    "inspect_publisher_failure",
+    "inspect_release_failure",
+    "inspect_supply_chain_failure",
+    "inspect_homebrew_failure",
+    "inspect_health_failure",
+    "resolve_inconsistency"
+  ],
+  "error_codes": [
+    "CONTRACT_INVALID",
+    "INPUT_INVALID",
+    "AUTH_REQUIRED",
+    "AUTH_FORBIDDEN",
+    "RATE_LIMITED",
+    "NOT_FOUND",
+    "API_UNAVAILABLE",
+    "API_REQUEST_FAILED",
+    "MALFORMED_RESPONSE",
+    "DEPENDENCY_MISSING",
+    "REMOTE_STATE_UNKNOWN",
+    "REMOTE_PRECONDITION_FAILED",
+    "PLAN_DIGEST_MISMATCH",
+    "ATTEMPT_MATRIX_INCOMPLETE",
+    "CI_ATTEMPT_FAILED",
+    "TAP_CI_ATTEMPT_FAILED",
+    "PROMOTION_ARTIFACT_INVENTORY_INVALID",
+    "LEGACY_REBUILD_UNSUPPORTED",
+    "LEGACY_PROMOTION_PROOF_UNAVAILABLE",
+    "ATTESTATION_VERIFICATION_FAILED",
+    "OBSERVATION_FAILED",
+    "REPOSITORY_NOT_ACCESSIBLE"
+  ],
+  "schemas": {
+    "release_contract": "env-vault.release-contract.v1",
+    "release_contract_matrix": "env-vault.release-contract-matrix.v1",
+    "e2e_baseline": "env-vault.e2e-baseline.v2",
+    "e2e_matrix_proof": "env-vault.e2e-matrix-proof.v1",
+    "e2e_baseline_verification": "env-vault.e2e-baseline-verification.v1",
+    "release_evidence": "env-vault.release-evidence.v1",
+    "release_status": "env-vault.release-status.v1",
+    "release_plan": "env-vault.release-plan.v1",
+    "release_verify": "env-vault.release-verify.v1",
+    "release_metrics": "env-vault.release-metrics.v1",
+    "release_repair_apply": "env-vault.release-repair-apply.v1",
+    "promotion_platform": "env-vault.promotion-platform.v1",
+    "promotion_manifest": "env-vault.promotion-manifest.v1",
+    "repair_plan": "env-vault.release-repair-plan.v1",
+    "legacy_rebuild_plan": "env-vault.legacy-rebuild-plan.v1",
+    "legacy_rebuild_apply": "env-vault.legacy-rebuild-apply.v1"
+  }
+}

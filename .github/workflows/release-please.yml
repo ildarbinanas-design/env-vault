@@ -59,6 +59,34 @@ jobs:
           fi
           scripts/release/classify-release-commit.sh "$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Go for promotion verification
+        if: steps.classify.outputs.publish == 'true'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download exact promotion manifest from triggering CI attempt
+        if: steps.classify.outputs.publish == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-promotion-${{ steps.classify.outputs.source_sha }}-attempt-${{ github.event.workflow_run.run_attempt }}
+          path: promotion
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify exact promotion manifest before authorization and tag
+        if: steps.classify.outputs.publish == 'true'
+        shell: bash
+        run: >-
+          go run ./cmd/release-promotion verify
+          --manifest promotion/promotion-manifest.json
+          --source-sha "${{ steps.classify.outputs.source_sha }}"
+          --version "${{ steps.classify.outputs.version }}"
+          --repository "${{ github.repository }}"
+          --run-id "${{ github.event.workflow_run.id }}"
+          --run-attempt "${{ github.event.workflow_run.run_attempt }}"
+
       - id: current
         name: Require the planning commit to remain current
         env:
@@ -85,7 +113,7 @@ jobs:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: env-vault
+          repositories: ${{ github.event.repository.name }}
           permission-administration: read
           permission-contents: write
           permission-issues: write
@@ -98,7 +126,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$ACTUAL_APP_SLUG" != "env-vault-release-planning" ]]; then
+          expected_slug="$(jq -er '
+            [.apps[] | select(.id == "release_planning")] |
+            select(length == 1) | .[0].slug |
+            select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
+          ' release/contract.v1.json)"
+          if [[ "$ACTUAL_APP_SLUG" != "$expected_slug" ]]; then
             echo "unexpected release planning App identity" >&2
             exit 1
           fi
@@ -149,6 +182,28 @@ jobs:
           RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
         shell: bash
         run: scripts/release/verify-release-proposal.sh
+
+      - name: Recheck exact promotion artifact inventory immediately before tag
+        if: steps.classify.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > ci-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" > ci-artifacts.json
+          go run ./cmd/release-promotion inventory \
+            --run-json ci-run.json \
+            --artifacts-json ci-artifacts.json \
+            --source-sha "$SOURCE_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --branch "$DEFAULT_BRANCH"
 
       - name: Create or verify the exact release tag
         if: steps.classify.outputs.publish == 'true'

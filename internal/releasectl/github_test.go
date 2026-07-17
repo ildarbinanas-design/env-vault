@@ -13,6 +13,13 @@ type runnerStub struct {
 	stderr []byte
 	err    error
 	args   []string
+	input  []byte
+}
+
+func (r *runnerStub) RunInput(_ context.Context, args []string, input []byte) ([]byte, []byte, error) {
+	r.args = append([]string(nil), args...)
+	r.input = append([]byte(nil), input...)
+	return r.stdout, r.stderr, r.err
 }
 
 func (r *runnerStub) Run(_ context.Context, args []string) ([]byte, []byte, error) {
@@ -41,6 +48,9 @@ func TestGHClientUsesOnlyGETAndStableQueryOrder(t *testing.T) {
 	}
 	if hostname := indexOf(runner.args, "--hostname"); hostname < 0 || hostname+1 >= len(runner.args) || runner.args[hostname+1] != "github.com" {
 		t.Fatalf("GitHub API hostname is not pinned: %v", runner.args)
+	}
+	if indexOf(runner.args, "X-GitHub-Api-Version: 2026-03-10") < 0 {
+		t.Fatalf("GitHub API version does not provide exact workflow-dispatch run details: %v", runner.args)
 	}
 	joined := strings.Join(runner.args, " ")
 	if strings.Contains(joined, " POST ") || strings.Contains(joined, " PATCH ") || strings.Contains(joined, " DELETE ") || strings.Contains(joined, " PUT ") {
@@ -96,6 +106,30 @@ func TestGHClientRejectsMalformedOrMultipleJSONValues(t *testing.T) {
 		if !errors.As(err, &apiErr) || apiErr.Code != "MALFORMED_RESPONSE" {
 			t.Fatalf("body=%q err=%T %v", body, err, err)
 		}
+	}
+}
+
+func TestGHClientMutationCapabilityUsesExplicitMethodAndStdinJSON(t *testing.T) {
+	runner := &runnerStub{}
+	client := ghClient{runner: runner}
+	body := struct {
+		AllowRebase bool `json:"allow_rebase_merge"`
+	}{AllowRebase: false}
+	endpoint := "repos/example/env-vault"
+	if err := client.Mutate(context.Background(), "PATCH", endpoint, body, nil); err != nil {
+		t.Fatal(err)
+	}
+	if indexOf(runner.args, "PATCH") < 0 || indexOf(runner.args, "--input") < 0 || runner.args[len(runner.args)-1] != endpoint {
+		t.Fatalf("args=%v", runner.args)
+	}
+	if indexOf(runner.args, "X-GitHub-Api-Version: 2026-03-10") < 0 {
+		t.Fatalf("mutation transport uses an API version without exact dispatch identity: %v", runner.args)
+	}
+	if string(runner.input) != `{"allow_rebase_merge":false}` {
+		t.Fatalf("input=%q", runner.input)
+	}
+	if err := client.Mutate(context.Background(), "DELETE", endpoint, nil, nil); err == nil {
+		t.Fatal("DELETE must not be available to the operator mutation transport")
 	}
 }
 

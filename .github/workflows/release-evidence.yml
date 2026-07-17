@@ -1,0 +1,106 @@
+name: release-evidence
+run-name: env-vault-evidence publisher-run=${{ github.event.workflow_run.id }} attempt=${{ github.event.workflow_run.run_attempt }}
+
+on:
+  workflow_run:
+    workflows:
+      - build-binaries
+    types:
+      - completed
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-evidence-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: >-
+      ${{
+        (
+          github.event.workflow_run.event == 'push' &&
+          startsWith(github.event.workflow_run.head_branch, 'v')
+        ) || (
+          github.event.workflow_run.event == 'workflow_dispatch' &&
+          startsWith(github.event.workflow_run.head_branch, 'v')
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
+      PUBLISHER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+    steps:
+      - name: Checkout exact publisher source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: "false"
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - id: identity
+        name: Resolve exact publisher, tag, and main CI identity
+        run: go run ./cmd/release-evidence trigger --event "$GITHUB_EVENT_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact published release assets
+        if: steps.identity.outputs.publisher_conclusion == 'success'
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "$VERSION" \
+            --repo "$REPOSITORY" \
+            --dir release-assets \
+            --clobber
+
+      - name: Download exact main CI promotion manifest
+        if: steps.identity.outputs.publisher_conclusion == 'success'
+        run: |
+          set -euo pipefail
+          gh run download "${{ steps.identity.outputs.ci_run_id }}" \
+            --repo "$REPOSITORY" \
+            --name "env-vault-promotion-${{ steps.identity.outputs.source_sha }}-attempt-${{ steps.identity.outputs.ci_run_attempt }}" \
+            --dir promotion-manifest
+
+      - name: Collect exact release evidence and metrics
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence-out
+          output="evidence-out/release-${VERSION}-run-${PUBLISHER_RUN_ID}-attempt-${PUBLISHER_RUN_ATTEMPT}.evidence.json"
+          go run ./cmd/release-evidence collect \
+            --repo "$REPOSITORY" \
+            --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --publisher-run-id "$PUBLISHER_RUN_ID" \
+            --publisher-run-attempt "$PUBLISHER_RUN_ATTEMPT" \
+            --assets release-assets \
+            --promotion-manifest promotion-manifest/promotion-manifest.json \
+            --output "$output"
+          go run ./cmd/release-evidence validate --input "$output"
+          go run ./cmd/release-evidence index \
+            --directory evidence-out \
+            --output evidence-out/README.md
+
+      - name: Upload authoritative machine evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}
+          path: evidence-out
+          if-no-files-found: error
+          retention-days: 90

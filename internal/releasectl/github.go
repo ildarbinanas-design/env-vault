@@ -13,19 +13,37 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-)
 
-const githubAPIVersion = "2022-11-28"
+	"github.com/ildarbinanas-design/env-vault/internal/githubapi"
+)
 
 type commandRunner interface {
 	Run(context.Context, []string) ([]byte, []byte, error)
 }
 
+// inputCommandRunner is deliberately separate from commandRunner. Observation
+// code only receives commandRunner and therefore cannot acquire a request body
+// or invoke a mutating API method by accident.
+type inputCommandRunner interface {
+	RunInput(context.Context, []string, []byte) ([]byte, []byte, error)
+}
+
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, args []string) ([]byte, []byte, error) {
+	return execRunner{}.run(ctx, args, nil)
+}
+
+func (execRunner) RunInput(ctx context.Context, args []string, input []byte) ([]byte, []byte, error) {
+	return execRunner{}.run(ctx, args, input)
+}
+
+func (execRunner) run(ctx context.Context, args []string, input []byte) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Env = safeGitHubEnvironment(os.Environ())
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -57,6 +75,12 @@ type githubGetter interface {
 	Get(context.Context, string, map[string]string, any) error
 }
 
+// githubMutator is not embedded into githubGetter. GET-only commands are
+// constructed with githubGetter and cannot reach this capability.
+type githubMutator interface {
+	Mutate(context.Context, string, string, any, any) error
+}
+
 type ghClient struct {
 	runner commandRunner
 }
@@ -84,7 +108,7 @@ func (c ghClient) Get(ctx context.Context, endpoint string, query map[string]str
 		"--method", "GET",
 		"--hostname", "github.com",
 		"--header", "Accept: application/vnd.github+json",
-		"--header", "X-GitHub-Api-Version: " + githubAPIVersion,
+		"--header", "X-GitHub-Api-Version: " + githubapi.Version,
 		endpoint,
 	}
 	keys := make([]string, 0, len(query))
@@ -104,6 +128,60 @@ func (c ghClient) Get(ctx context.Context, endpoint string, query map[string]str
 		return classifyAPIError(endpoint, stderr, err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(stdout))
+	if err := decoder.Decode(target); err != nil {
+		return &apiError{Code: "MALFORMED_RESPONSE", Endpoint: endpoint, cause: err}
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return &apiError{Code: "MALFORMED_RESPONSE", Endpoint: endpoint, cause: errors.New("multiple JSON values")}
+	} else if !errors.Is(err, io.EOF) {
+		return &apiError{Code: "MALFORMED_RESPONSE", Endpoint: endpoint, cause: err}
+	}
+	return nil
+}
+
+func (c ghClient) Mutate(ctx context.Context, method, endpoint string, body, target any) error {
+	switch method {
+	case "POST", "PATCH", "PUT":
+	default:
+		return &apiError{Code: "API_REQUEST_FAILED", Endpoint: endpoint, cause: fmt.Errorf("unsupported mutation method %q", method)}
+	}
+	runner, ok := c.runner.(inputCommandRunner)
+	if !ok {
+		return &apiError{Code: "DEPENDENCY_MISSING", Endpoint: endpoint, cause: errors.New("mutation transport is unavailable")}
+	}
+	args := []string{
+		"api",
+		"--method", method,
+		"--hostname", "github.com",
+		"--header", "Accept: application/vnd.github+json",
+		"--header", "X-GitHub-Api-Version: " + githubapi.Version,
+	}
+	var input []byte
+	if body != nil {
+		var err error
+		input, err = json.Marshal(body)
+		if err != nil {
+			return &apiError{Code: "MALFORMED_RESPONSE", Endpoint: endpoint, cause: err}
+		}
+		args = append(args, "--input", "-")
+	}
+	args = append(args, endpoint)
+	stdout, stderr, err := runner.RunInput(ctx, args, input)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return &apiError{Code: "API_UNAVAILABLE", Endpoint: endpoint, Retryable: true, cause: ctxErr}
+		}
+		return classifyAPIError(endpoint, stderr, err)
+	}
+	if target == nil {
+		return nil
+	}
+	return decodeStrictAPIResponse(endpoint, stdout, target)
+}
+
+func decodeStrictAPIResponse(endpoint string, data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	if err := decoder.Decode(target); err != nil {
 		return &apiError{Code: "MALFORMED_RESPONSE", Endpoint: endpoint, cause: err}
 	}

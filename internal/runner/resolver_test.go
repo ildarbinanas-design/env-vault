@@ -13,12 +13,15 @@ import (
 )
 
 type fakeStore struct {
-	values map[string][]byte
+	values      map[string][]byte
+	getCalls    int
+	existsCalls int
 }
 
 func (s fakeStore) Set(context.Context, string, string, []byte) error { return nil }
 
-func (s fakeStore) Get(_ context.Context, _ string, name string) ([]byte, error) {
+func (s *fakeStore) Get(_ context.Context, _ string, name string) ([]byte, error) {
+	s.getCalls++
 	value, ok := s.values[name]
 	if !ok {
 		return nil, secretstore.ErrNotFound
@@ -26,7 +29,8 @@ func (s fakeStore) Get(_ context.Context, _ string, name string) ([]byte, error)
 	return append([]byte(nil), value...), nil
 }
 
-func (s fakeStore) Exists(_ context.Context, _ string, name string) (bool, error) {
+func (s *fakeStore) Exists(_ context.Context, _ string, name string) (bool, error) {
+	s.existsCalls++
 	_, ok := s.values[name]
 	return ok, nil
 }
@@ -40,7 +44,7 @@ func TestResolveProfileMapping(t *testing.T) {
 	secretName := "nexus-token"
 	envName := "NPM_TOKEN"
 	value := testutil.EphemeralValue(t)
-	result, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	result, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		[]config.SecretMapping{{Name: secretName, Env: envName, Required: true}}, nil,
 		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}})
 	if err != nil {
@@ -51,12 +55,46 @@ func TestResolveProfileMapping(t *testing.T) {
 	}
 }
 
+func TestResolveReadsSecretOnceWithoutExistenceProbe(t *testing.T) {
+	t.Parallel()
+	secretName := "single-read-token"
+	value := testutil.EphemeralValue(t)
+	store := &fakeStore{values: map[string][]byte{secretName: []byte(value)}}
+	result, err := Resolve(context.Background(), store,
+		[]config.SecretMapping{{Name: secretName, Env: "SINGLE_READ_TOKEN", Required: true}}, nil,
+		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if store.getCalls != 1 || store.existsCalls != 0 {
+		t.Fatalf("Get calls=%d Exists calls=%d, want one Get and no Exists", store.getCalls, store.existsCalls)
+	}
+	if !containsEnvValue(result.Env, value) {
+		t.Fatal("resolved environment is missing the fetched value")
+	}
+}
+
+func TestDryRunUsesExistenceProbeWithoutReadingValue(t *testing.T) {
+	t.Parallel()
+	secretName := "dry-existence-token"
+	store := &fakeStore{values: map[string][]byte{secretName: []byte(testutil.EphemeralValue(t))}}
+	_, err := Resolve(context.Background(), store,
+		[]config.SecretMapping{{Name: secretName, Env: "DRY_EXISTENCE_TOKEN", Required: true}}, nil,
+		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}, DryRun: true})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if store.getCalls != 0 || store.existsCalls != 1 {
+		t.Fatalf("Get calls=%d Exists calls=%d, want no Get and one Exists", store.getCalls, store.existsCalls)
+	}
+}
+
 func TestResolveDirectSecret(t *testing.T) {
 	t.Parallel()
 	secretName := "nexus-token"
 	envName := "NPM_TOKEN"
 	value := testutil.EphemeralValue(t)
-	result, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	result, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		nil, []config.SecretMapping{{Name: secretName, Env: envName, Required: true}},
 		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}})
 	if err != nil {
@@ -76,7 +114,7 @@ func TestResolveCombinedMappings(t *testing.T) {
 	secondName := "service-token"
 	firstValue := testutil.EphemeralValue(t)
 	secondValue := testutil.EphemeralValue(t)
-	store := fakeStore{values: map[string][]byte{firstName: []byte(firstValue), secondName: []byte(secondValue)}}
+	store := &fakeStore{values: map[string][]byte{firstName: []byte(firstValue), secondName: []byte(secondValue)}}
 	result, err := Resolve(context.Background(), store,
 		[]config.SecretMapping{{Name: firstName, Env: "NPM_TOKEN", Required: true}},
 		[]config.SecretMapping{{Name: secondName, Env: "SERVICE_TOKEN", Required: true}},
@@ -91,7 +129,7 @@ func TestResolveCombinedMappings(t *testing.T) {
 
 func TestResolveMissingSecret(t *testing.T) {
 	t.Parallel()
-	_, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{}},
+	_, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{}},
 		[]config.SecretMapping{{Name: "missing", Env: "MISSING", Required: true}}, nil,
 		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}})
 	if err == nil {
@@ -108,7 +146,7 @@ func TestResolveEnvCollision(t *testing.T) {
 	secretName := "nexus-token"
 	envName := "NPM_TOKEN"
 	value := testutil.EphemeralValue(t)
-	_, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	_, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		[]config.SecretMapping{{Name: secretName, Env: envName, Required: true}}, nil,
 		ResolveOptions{CurrentEnv: []string{envName + "=" + testutil.EphemeralValue(t)}})
 	if err == nil {
@@ -124,7 +162,7 @@ func TestResolveEnvCollisionIsCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	secretName := "nexus-token"
 	value := testutil.EphemeralValue(t)
-	_, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	_, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		[]config.SecretMapping{{Name: secretName, Env: "PATH", Required: true}}, nil,
 		ResolveOptions{CurrentEnv: []string{"Path=/windows/system32"}})
 	if err == nil {
@@ -140,7 +178,7 @@ func TestResolveRejectsCaseInsensitiveDuplicateMappings(t *testing.T) {
 	t.Parallel()
 	firstName := "first-token"
 	secondName := "second-token"
-	store := fakeStore{values: map[string][]byte{
+	store := &fakeStore{values: map[string][]byte{
 		firstName:  []byte(testutil.EphemeralValue(t)),
 		secondName: []byte(testutil.EphemeralValue(t)),
 	}}
@@ -162,7 +200,7 @@ func TestResolveOverrideEnv(t *testing.T) {
 	secretName := "nexus-token"
 	envName := "NPM_TOKEN"
 	value := testutil.EphemeralValue(t)
-	result, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	result, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		[]config.SecretMapping{{Name: secretName, Env: envName, Required: true}}, nil,
 		ResolveOptions{CurrentEnv: []string{envName + "=" + testutil.EphemeralValue(t)}, OverrideEnv: true})
 	if err != nil {
@@ -177,7 +215,7 @@ func TestResolveOverrideReplacesAllCaseVariants(t *testing.T) {
 	t.Parallel()
 	secretName := "nexus-token"
 	value := testutil.EphemeralValue(t)
-	result, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	result, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		[]config.SecretMapping{{Name: secretName, Env: "PATH", Required: true}}, nil,
 		ResolveOptions{
 			CurrentEnv:  []string{"Path=/windows/system32", "PATH=/bin", "HOME=/home/test"},
@@ -205,7 +243,7 @@ func TestDryRunDoesNotInjectSecretValue(t *testing.T) {
 	t.Parallel()
 	secretName := "nexus-token"
 	value := testutil.EphemeralValue(t)
-	result, err := Resolve(context.Background(), fakeStore{values: map[string][]byte{secretName: []byte(value)}},
+	result, err := Resolve(context.Background(), &fakeStore{values: map[string][]byte{secretName: []byte(value)}},
 		[]config.SecretMapping{{Name: secretName, Env: "NPM_TOKEN", Required: true}}, nil,
 		ResolveOptions{CurrentEnv: []string{"PATH=/bin"}, DryRun: true})
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/redact"
@@ -58,6 +59,26 @@ func TestJSONLEvent(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.HasSuffix(got, "\n") || strings.Count(got, "\n") != 1 {
 		t.Fatalf("expected one jsonl line, got %q", got)
+	}
+}
+
+func TestJSONAndJSONLSingleEnvelopeCompatibility(t *testing.T) {
+	t.Parallel()
+	fixed := time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)
+	var jsonOutput, jsonlOutput bytes.Buffer
+	jsonRenderer := New(&jsonOutput, &bytes.Buffer{}, Options{JSON: true}, redact.New())
+	jsonlRenderer := New(&jsonlOutput, &bytes.Buffer{}, Options{JSONL: true}, redact.New())
+	jsonRenderer.now = func() time.Time { return fixed }
+	jsonlRenderer.now = func() time.Time { return fixed }
+	data := map[string]any{"version": "v1.2.3"}
+	if err := jsonRenderer.Success("version", data, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonlRenderer.Success("version", data, nil); err != nil {
+		t.Fatal(err)
+	}
+	if jsonOutput.String() != jsonlOutput.String() || strings.Count(jsonOutput.String(), "\n") != 1 {
+		t.Fatalf("single-envelope JSON/JSONL contract diverged: json=%q jsonl=%q", jsonOutput.String(), jsonlOutput.String())
 	}
 }
 

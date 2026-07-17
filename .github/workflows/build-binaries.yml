@@ -1,5 +1,5 @@
 name: build-binaries
-run-name: env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }}
+run-name: env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }} state=${{ github.event.inputs.repair_state_digest || 'automatic' }}
 
 on:
   workflow_dispatch:
@@ -19,6 +19,11 @@ on:
           - release-assets
           - homebrew
           - health
+      repair_state_digest:
+        description: "Exact releasectl repair precondition digest. Required for repair modes."
+        required: false
+        default: ""
+        type: string
   push:
     tags:
       - "v*"
@@ -45,6 +50,13 @@ jobs:
       run_build: ${{ steps.resolve.outputs.run_build }}
       run_release: ${{ steps.resolve.outputs.run_release }}
       run_homebrew: ${{ steps.resolve.outputs.run_homebrew }}
+      use_promotion: ${{ steps.resolve.outputs.use_promotion }}
+      ci_run_id: ${{ steps.resolve.outputs.ci_run_id }}
+      ci_run_attempt: ${{ steps.resolve.outputs.ci_run_attempt }}
+      tap_repository: ${{ steps.resolve.outputs.tap_repository }}
+      tap_repository_owner: ${{ steps.resolve.outputs.tap_repository_owner }}
+      tap_repository_name: ${{ steps.resolve.outputs.tap_repository_name }}
+      tap_ci_workflow: ${{ steps.resolve.outputs.tap_ci_workflow }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -57,15 +69,28 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_APP_SLUG: env-vault-release-planning
           EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_REPAIR: ${{ inputs.repair }}
+          INPUT_REPAIR_STATE_DIGEST: ${{ inputs.repair_state_digest }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
+          RELEASE_APP_SLUG="$(jq -er '
+            [.apps[] | select(.id == "release_planning")] |
+            select(length == 1) | .[0].slug |
+            select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
+          ' release/contract.v1.json)"
+          export RELEASE_APP_SLUG
+          tap_app="$(jq -cer '[.apps[] | select(.id == "homebrew_tap")] | select(length == 1) | .[0]' release/contract.v1.json)"
+          tap_repository="$(jq -er '.repository | select(type == "string")' <<< "$tap_app")"
+          tap_ci_workflow="$(jq -er '.ci_workflow_file | select(type == "string" and test("^[A-Za-z0-9._-]+\\.ya?ml$"))' <<< "$tap_app")"
+          release_require_repository "$tap_repository"
+          tap_repository_owner="${tap_repository%%/*}"
+          tap_repository_name="${tap_repository#*/}"
           version="$REF_NAME"
           publish=false
           repair="${INPUT_REPAIR:-none}"
@@ -73,6 +98,19 @@ jobs:
             none|release-assets|homebrew|health) ;;
             *) echo "unsupported repair mode: $repair" >&2; exit 1 ;;
           esac
+          repair_state_digest="${INPUT_REPAIR_STATE_DIGEST:-}"
+          if [[ "$repair" == "none" && -n "$repair_state_digest" ]]; then
+            echo "repair_state_digest is only valid for an explicit repair mode" >&2
+            exit 1
+          fi
+          if [[ "$repair" != "none" && ! "$repair_state_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "repair mode requires an exact lowercase 64-hex repair_state_digest" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "$INPUT_VERSION" && "$repair" == "none" ]]; then
+            echo "manual steady-state publication requires a plan-derived repair mode" >&2
+            exit 1
+          fi
           if [[ "$EVENT_NAME" == "push" && "$repair" != "none" ]]; then
             echo "tag-triggered releases cannot select repair mode" >&2
             exit 1
@@ -84,18 +122,20 @@ jobs:
           if [[ "$EVENT_NAME" == "push" ]]; then
             publish=true
           elif [[ -n "$INPUT_VERSION" ]]; then
-            if [[ "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
-              echo "manual releases must run from refs/heads/${DEFAULT_BRANCH}" >&2
+            if [[ "$REF" != "refs/tags/${INPUT_VERSION}" ]]; then
+              echo "manual repairs must run from the exact immutable release tag ref" >&2
               exit 1
             fi
             version="$INPUT_VERSION"
             publish=true
           fi
-          if [[ "$publish" == "true" && ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "release version must match vMAJOR.MINOR.PATCH" >&2
-            exit 1
+          if [[ "$publish" == "true" ]]; then
+            release_require_version "$version"
           fi
           source_sha="$GITHUB_SHA"
+          use_promotion=false
+          ci_run_id=''
+          ci_run_attempt=''
           if [[ "$publish" == "true" ]]; then
             set +e
             source_sha="$(scripts/release/resolve-tag-sha.sh "$version")"
@@ -105,76 +145,93 @@ jobs:
               echo "publishing requires an existing exact tag created by release planning: ${version}" >&2
               exit "$tag_status"
             fi
+            actual_sha="$(git rev-parse HEAD)"
+            if [[ "$actual_sha" != "$source_sha" || "$GITHUB_SHA" != "$source_sha" ]]; then
+              echo "tag checkout ${actual_sha} and event SHA ${GITHUB_SHA} must match resolved source ${source_sha}" >&2
+              exit 1
+            fi
+            if [[ "$version" == "v0.0.8" ]]; then
+              echo "v0.0.8 is an intentionally failed immutable tag and must never have a GitHub Release" >&2
+              exit 1
+            fi
+            legacy_comparison="$(scripts/release/semver-compare.sh "${version#v}" "0.0.7")"
+            if [[ "$legacy_comparison" != "1" ]]; then
+              echo "${version} is outside the steady-state publisher; use releasectl release legacy-rebuild plan/apply" >&2
+              exit 1
+            fi
+            classification="$(mktemp "${RUNNER_TEMP:-/tmp}/env-vault-release-classification.XXXXXX")"
+            trap 'rm -f -- "$classification"' EXIT
+            scripts/release/classify-release-commit.sh "$source_sha" > "$classification"
+            grep -Fqx 'publish=true' "$classification" || {
+              echo "tag source is not a deterministic release commit" >&2
+              exit 1
+            }
+            grep -Fqx "source_sha=${source_sha}" "$classification" || {
+              echo "release classifier source mismatch" >&2
+              exit 1
+            }
+            grep -Fqx "version=${version}" "$classification" || {
+              echo "release classifier version mismatch" >&2
+              exit 1
+            }
+            [[ "$(wc -l < "$classification" | tr -d '[:space:]')" == "3" ]] || {
+              echo "release classifier returned unexpected output" >&2
+              exit 1
+            }
             if [[ "$EVENT_NAME" == "push" ]]; then
-              actual_sha="$(git rev-parse HEAD)"
-              if [[ "$actual_sha" != "$source_sha" ]]; then
-                echo "tag checkout ${actual_sha} does not match resolved source ${source_sha}" >&2
+              authorized=false
+              for attempt in {1..12}; do
+                if scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null 2>&1; then
+                  authorized=true
+                  break
+                fi
+                if [[ "$attempt" != "12" ]]; then
+                  sleep 5
+                fi
+              done
+              if [[ "$authorized" != "true" ]]; then
+                scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged
+                echo "release pull request did not reach tagged-only state within 60 seconds" >&2
                 exit 1
               fi
+            else
+              scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null
             fi
-            legacy_release=false
-            if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-              legacy_comparison="$(scripts/release/semver-compare.sh "${version#v}" "0.0.7")"
-              if [[ "$legacy_comparison" != "1" ]]; then
-                legacy_state="$(scripts/release/get-release-state.sh "$version")"
-                if [[ "$legacy_state" != "${version}|false|false" ]]; then
-                  echo "legacy repair requires an existing stable GitHub Release: ${version}" >&2
-                  exit 1
-                fi
-                main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
-                legacy_ancestry="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${source_sha}...${main_sha}" --jq '.status')"
-                if [[ "$legacy_ancestry" != "ahead" && "$legacy_ancestry" != "identical" ]]; then
-                  echo "legacy release tag is not contained in ${DEFAULT_BRANCH}: ${version}" >&2
-                  exit 1
-                fi
-                legacy_release=true
-              fi
+
+            if [[ "$repair" == "none" || "$repair" == "release-assets" ]]; then
+              ci_runs="$(gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&status=success&head_sha=${source_sha}&per_page=100")"
+              matches="$(jq -c \
+                --arg source "$source_sha" \
+                --arg branch "$DEFAULT_BRANCH" \
+                --arg repository "$GITHUB_REPOSITORY" \
+                '[.workflow_runs[] | select(
+                  .head_sha == $source and
+                  .head_branch == $branch and
+                  .head_repository.full_name == $repository and
+                  .event == "push" and
+                  .status == "completed" and
+                  .conclusion == "success" and
+                  .name == "ci" and
+                  .path == ".github/workflows/ci.yml"
+                )]' <<< "$ci_runs")"
+              [[ "$(jq 'length' <<< "$matches")" == "1" ]] || {
+                echo "expected exactly one successful ci.yml push run for ${source_sha}" >&2
+                exit 1
+              }
+              ci_run_id="$(jq -er '.[0].id | select(type == "number" and . > 0)' <<< "$matches")"
+              ci_run_attempt="$(jq -er '.[0].run_attempt | select(type == "number" and . > 0)' <<< "$matches")"
+              use_promotion=true
             fi
-            if [[ "$legacy_release" != "true" ]]; then
-              classification="$(mktemp "${RUNNER_TEMP:-/tmp}/env-vault-release-classification.XXXXXX")"
-              trap 'rm -f -- "$classification"' EXIT
-              scripts/release/classify-release-commit.sh "$source_sha" > "$classification"
-              grep -Fqx 'publish=true' "$classification" || {
-                echo "tag source is not a deterministic release commit" >&2
-                exit 1
-              }
-              grep -Fqx "source_sha=${source_sha}" "$classification" || {
-                echo "release classifier source mismatch" >&2
-                exit 1
-              }
-              grep -Fqx "version=${version}" "$classification" || {
-                echo "release classifier version mismatch" >&2
-                exit 1
-              }
-              [[ "$(wc -l < "$classification" | tr -d '[:space:]')" == "3" ]] || {
-                echo "release classifier returned unexpected output" >&2
-                exit 1
-              }
-              if [[ "$EVENT_NAME" == "push" ]]; then
-                authorized=false
-                for attempt in {1..12}; do
-                  if scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null 2>&1; then
-                    authorized=true
-                    break
-                  fi
-                  if [[ "$attempt" != "12" ]]; then
-                    sleep 5
-                  fi
-                done
-                if [[ "$authorized" != "true" ]]; then
-                  scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged
-                  echo "release pull request did not reach tagged-only state within 60 seconds" >&2
-                  exit 1
-                fi
-              else
-                scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null
-              fi
-            fi
+          fi
+          if [[ "$publish" != "true" ]]; then
+            version="ci-${source_sha}"
           fi
           run_build=true
           run_release=false
           run_homebrew=false
           if [[ "$publish" == "true" ]]; then
+            run_build=false
             case "$repair" in
               none|release-assets)
                 run_release=true
@@ -197,6 +254,13 @@ jobs:
             printf 'run_build=%s\n' "$run_build"
             printf 'run_release=%s\n' "$run_release"
             printf 'run_homebrew=%s\n' "$run_homebrew"
+            printf 'use_promotion=%s\n' "$use_promotion"
+            printf 'ci_run_id=%s\n' "$ci_run_id"
+            printf 'ci_run_attempt=%s\n' "$ci_run_attempt"
+            printf 'tap_repository=%s\n' "$tap_repository"
+            printf 'tap_repository_owner=%s\n' "$tap_repository_owner"
+            printf 'tap_repository_name=%s\n' "$tap_repository_name"
+            printf 'tap_ci_workflow=%s\n' "$tap_ci_workflow"
           } >> "$GITHUB_OUTPUT"
 
   preflight:
@@ -215,10 +279,11 @@ jobs:
 
       - name: Guard Homebrew version monotonicity
         env:
+          TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git tap-preflight
+          git clone --depth 1 "https://github.com/${TAP_REPOSITORY}.git" tap-preflight
           target_version="${VERSION#v}"
           published_version="$(sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p' tap-preflight/Formula/env-vault.rb)"
           comparison="$(scripts/release/semver-compare.sh "$target_version" "$published_version")"
@@ -239,6 +304,100 @@ jobs:
       source_sha: ${{ needs.metadata.outputs.source_sha }}
       version: ${{ needs.metadata.outputs.version }}
 
+  promotion:
+    if: needs.metadata.outputs.use_promotion == 'true'
+    needs: [metadata]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.metadata.outputs.source_sha }}
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Require exact current-attempt CI artifact inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ needs.metadata.outputs.ci_run_id }}
+          CI_RUN_ATTEMPT: ${{ needs.metadata.outputs.ci_run_attempt }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > ci-run.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" > ci-artifacts.json
+          go run ./cmd/release-promotion inventory \
+            --run-json ci-run.json \
+            --artifacts-json ci-artifacts.json \
+            --source-sha "$SOURCE_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --branch "$DEFAULT_BRANCH"
+
+      - name: Download exact promotion manifest from CI
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-promotion-${{ needs.metadata.outputs.source_sha }}-attempt-${{ needs.metadata.outputs.ci_run_attempt }}
+          path: promotion-manifest
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.metadata.outputs.ci_run_id }}
+
+      - name: Download five exact native release artifacts from CI
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: env-vault-release-*-attempt-${{ needs.metadata.outputs.ci_run_attempt }}
+          path: promotion-artifacts
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.metadata.outputs.ci_run_id }}
+
+      - name: Verify promotion and stage exact publisher bundle
+        env:
+          CI_RUN_ID: ${{ needs.metadata.outputs.ci_run_id }}
+          CI_RUN_ATTEMPT: ${{ needs.metadata.outputs.ci_run_attempt }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./cmd/release-promotion verify \
+            --manifest promotion-manifest/promotion-manifest.json \
+            --source-sha "$SOURCE_SHA" \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --artifacts promotion-artifacts
+          mkdir -p verified-bundle
+          cp -- promotion-manifest/promotion-manifest.json verified-bundle/
+          go run ./cmd/release-contract matrix --json |
+            jq -r '.include[] | [.archive, .checksum] | @tsv' |
+            while IFS=$'\t' read -r archive checksum; do
+              cp -- "promotion-artifacts/$archive" "promotion-artifacts/$checksum" verified-bundle/
+            done
+          [[ "$(find verified-bundle -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "11" ]] || {
+            echo "verified publisher bundle must contain one manifest and ten release assets" >&2
+            exit 1
+          }
+
+      - name: Upload publisher-local verified bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-publisher-bundle-${{ needs.metadata.outputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: verified-bundle
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     if: >-
       ${{
@@ -247,17 +406,22 @@ jobs:
         needs.metadata.result == 'success' &&
         needs.preflight.result == 'success' &&
         needs.metadata.outputs.run_release == 'true' &&
-        needs.quality.result == 'success'
+        needs.metadata.outputs.use_promotion == 'true' &&
+        needs.quality.result == 'skipped' &&
+        needs.promotion.result == 'success'
       }}
-    needs: [metadata, preflight, quality]
+    needs: [metadata, preflight, quality, promotion]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Download publisher-local verified promotion bundle
+        if: needs.metadata.outputs.use_promotion == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: env-vault-publisher-bundle-${{ needs.metadata.outputs.source_sha }}-attempt-${{ github.run_attempt }}
           path: dist
           merge-multiple: true
 
@@ -337,6 +501,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: scripts/release/download-release-assets.sh "$VERSION" release-dist
+
+      - id: attestation-subjects
+        name: Resolve attestation subjects from release contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'paths<<ENV_VAULT_SUBJECTS'
+            jq -r '.platforms[].archive | "release-dist/" + .' release/contract.v1.json
+            echo 'ENV_VAULT_SUBJECTS'
+          } >> "$GITHUB_OUTPUT"
 
       - id: attestation-state
         name: Detect complete existing attestations
@@ -418,23 +593,13 @@ jobs:
         if: steps.attestation-state.outputs.create_provenance == 'true'
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
-          subject-path: |
-            release-dist/env-vault-linux-amd64.tar.gz
-            release-dist/env-vault-linux-arm64.tar.gz
-            release-dist/env-vault-darwin-amd64.tar.gz
-            release-dist/env-vault-darwin-arm64.tar.gz
-            release-dist/env-vault-windows-amd64.zip
+          subject-path: ${{ steps.attestation-subjects.outputs.paths }}
 
       - name: Attest SPDX SBOM
         if: steps.attestation-state.outputs.create_sbom == 'true'
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
-          subject-path: |
-            release-dist/env-vault-linux-amd64.tar.gz
-            release-dist/env-vault-linux-arm64.tar.gz
-            release-dist/env-vault-darwin-amd64.tar.gz
-            release-dist/env-vault-darwin-arm64.tar.gz
-            release-dist/env-vault-windows-amd64.zip
+          subject-path: ${{ steps.attestation-subjects.outputs.paths }}
           sbom-path: env-vault-sbom.spdx.json
 
   homebrew:
@@ -445,6 +610,7 @@ jobs:
         needs.metadata.result == 'success' &&
         needs.preflight.result == 'success' &&
         needs.metadata.outputs.run_homebrew == 'true' &&
+        (needs.metadata.outputs.use_promotion != 'true' || needs.promotion.result == 'success') &&
         (
           (
             (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
@@ -458,12 +624,13 @@ jobs:
           )
         )
       }}
-    needs: [metadata, preflight, release, supply_chain]
+    needs: [metadata, preflight, promotion, release, supply_chain]
     runs-on: ubuntu-latest
     timeout-minutes: 55
     environment: release
     permissions:
       contents: read
+      attestations: read
     outputs:
       publication_state: ${{ steps.tap-result.outputs.publication_state }}
       pr_number: ${{ steps.tap-result.outputs.pr_number }}
@@ -479,6 +646,22 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: scripts/release/download-release-assets.sh "$VERSION" release-dist
 
+      - name: Require exact-source release attestations before tap mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          state="$(scripts/release/artifact-attestation-state.sh \
+            release-dist \
+            "$GITHUB_REPOSITORY" \
+            "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
+            "$SOURCE_SHA")"
+          [[ "$state" == "complete|complete" ]] || {
+            echo "Homebrew mutation requires complete exact-source provenance and SBOM attestations; observed ${state}" >&2
+            exit 1
+          }
+
       - name: Generate formula
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -492,36 +675,59 @@ jobs:
         with:
           client-id: ${{ vars.TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: homebrew-tap
+          owner: ${{ needs.metadata.outputs.tap_repository_owner }}
+          repositories: ${{ needs.metadata.outputs.tap_repository_name }}
           permission-actions: read
           permission-contents: write
           permission-pull-requests: write
+
+      - name: Require exact Homebrew App mutation identity and scope
+        env:
+          ACTUAL_APP_SLUG: ${{ steps.tap-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(jq -cer '[.apps[] | select(.id == "homebrew_tap")] | select(length == 1) | .[0]' release/contract.v1.json)"
+          expected_slug="$(jq -er '.slug | select(type == "string" and length > 0)' <<< "$app")"
+          expected_repository="$(jq -er '.repository | select(type == "string" and length > 0)' <<< "$app")"
+          [[ "$ACTUAL_APP_SLUG" == "$expected_slug" ]] || {
+            echo "unexpected Homebrew App identity" >&2
+            exit 1
+          }
+          mapfile -t repositories < <(gh api --paginate installation/repositories --jq '.repositories[].full_name')
+          [[ "${#repositories[@]}" == "1" && "${repositories[0]:-}" == "$expected_repository" ]] || {
+            echo "Homebrew App installation scope differs from the release contract" >&2
+            exit 1
+          }
 
       - id: publish-tap-pr
         name: Create or reuse Homebrew pull request
         env:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
+          TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: >-
           scripts/release/publish-homebrew-pr.sh
           "$VERSION"
           tap-out/env-vault.rb
-          ildarbinanas-design/homebrew-tap
+          "$TAP_REPOSITORY"
           >> "$GITHUB_OUTPUT"
 
       - id: tap-pr-ci
         name: Wait for exact Homebrew pull request CI
-        if: steps.publish-tap-pr.outputs.state == 'OPEN'
+        if: steps.publish-tap-pr.outputs.state == 'OPEN' || steps.publish-tap-pr.outputs.state == 'MERGED'
         env:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
           HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
+          TAP_CI_WORKFLOW: ${{ needs.metadata.outputs.tap_ci_workflow }}
+          TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
         run: |
           set -euo pipefail
           run_url="$(scripts/release/wait-tap-ci.sh \
-            ildarbinanas-design/homebrew-tap \
-            test-formula.yml \
+            "$TAP_REPOSITORY" \
+            "$TAP_CI_WORKFLOW" \
             "$HEAD_SHA" \
             pull_request \
             900 \
@@ -535,10 +741,11 @@ jobs:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
           HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
           PR_NUMBER: ${{ steps.publish-tap-pr.outputs.pr_number }}
+          TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
         run: |
           set -euo pipefail
           merge_sha="$(scripts/release/merge-homebrew-pr.sh \
-            ildarbinanas-design/homebrew-tap \
+            "$TAP_REPOSITORY" \
             "$PR_NUMBER" \
             "$HEAD_SHA")"
           printf 'merge_sha=%s\n' "$merge_sha" >> "$GITHUB_OUTPUT"
@@ -558,7 +765,7 @@ jobs:
               tap_sha="$MERGED_TAP_SHA"
               publication_state=merged
               ;;
-            MERGED|PUBLISHED)
+            MERGED)
               tap_sha="$PUBLISHED_TAP_SHA"
               publication_state=already-published
               ;;
@@ -582,12 +789,14 @@ jobs:
         name: Wait for exact Homebrew default-branch CI
         env:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          TAP_CI_WORKFLOW: ${{ needs.metadata.outputs.tap_ci_workflow }}
+          TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
           TAP_SHA: ${{ steps.tap-result.outputs.tap_sha }}
         run: |
           set -euo pipefail
           run_url="$(scripts/release/wait-tap-ci.sh \
-            ildarbinanas-design/homebrew-tap \
-            test-formula.yml \
+            "$TAP_REPOSITORY" \
+            "$TAP_CI_WORKFLOW" \
             "$TAP_SHA" \
             push \
             900 \
@@ -616,6 +825,7 @@ jobs:
         !cancelled() &&
         needs.metadata.result == 'success' &&
         needs.metadata.outputs.publish == 'true' &&
+        (needs.metadata.outputs.use_promotion != 'true' || needs.promotion.result == 'success') &&
         (
           (
             (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
@@ -637,7 +847,7 @@ jobs:
           )
         )
       }}
-    needs: [metadata, release, supply_chain, homebrew]
+    needs: [metadata, promotion, release, supply_chain, homebrew]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -654,6 +864,8 @@ jobs:
           PUBLISHED_TAP_SHA: ${{ needs.homebrew.outputs.tap_sha }}
           PUBLISHED_TAP_CI_URL: ${{ needs.homebrew.outputs.tap_ci_url }}
           TAP_PR_URL: ${{ needs.homebrew.outputs.pr_url }}
+          TAP_CI_WORKFLOW: ${{ needs.metadata.outputs.tap_ci_workflow }}
+          TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
         run: |
           set -euo pipefail
           tag_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
@@ -673,11 +885,11 @@ jobs:
             "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
             "$SOURCE_SHA"
           if [[ "$REPAIR" == "health" ]]; then
-            git clone --depth 1 https://github.com/ildarbinanas-design/homebrew-tap.git health-tap
+            git clone --depth 1 "https://github.com/${TAP_REPOSITORY}.git" health-tap
             tap_sha="$(git -C health-tap rev-parse HEAD)"
             tap_ci_url="$(scripts/release/wait-tap-ci.sh \
-              ildarbinanas-design/homebrew-tap \
-              test-formula.yml \
+              "$TAP_REPOSITORY" \
+              "$TAP_CI_WORKFLOW" \
               "$tap_sha" \
               push \
               900 \
@@ -687,12 +899,12 @@ jobs:
             tap_sha="$PUBLISHED_TAP_SHA"
             tap_ci_url="$PUBLISHED_TAP_CI_URL"
             tap_pr_url="$TAP_PR_URL"
-            [[ "$tap_sha" =~ ^[0-9a-f]{40}$ && "$tap_ci_url" == https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/* ]] || {
+            [[ "$tap_sha" =~ ^[0-9a-f]{40}$ && "$tap_ci_url" == "${GITHUB_SERVER_URL}/${TAP_REPOSITORY}/actions/runs/"* ]] || {
               echo "Homebrew job did not return exact tap health evidence" >&2
               exit 1
             }
             git init health-tap
-            git -C health-tap remote add origin https://github.com/ildarbinanas-design/homebrew-tap.git
+            git -C health-tap remote add origin "https://github.com/${TAP_REPOSITORY}.git"
             git -C health-tap fetch --depth 1 origin "$tap_sha"
             git -C health-tap checkout --detach FETCH_HEAD
             [[ "$(git -C health-tap rev-parse HEAD)" == "$tap_sha" ]] || {
@@ -703,7 +915,7 @@ jobs:
           scripts/release/verify-homebrew-formula.sh \
             "$VERSION" health-dist health-tap/Formula/env-vault.rb
           release_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
-          tap_commit_url="${GITHUB_SERVER_URL}/ildarbinanas-design/homebrew-tap/commit/${tap_sha}"
+          tap_commit_url="${GITHUB_SERVER_URL}/${TAP_REPOSITORY}/commit/${tap_sha}"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           attestations_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/attestations"
           {

@@ -44,7 +44,8 @@ parse_formula_version() {
   line_count=$(printf '%s\n' "$parsed" | awk 'NF { count++ } END { print count + 0 }')
   [[ "$line_count" == "1" ]] ||
     release_die "Homebrew formula must contain exactly one version declaration"
-  [[ "$parsed" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+  local version_pattern="^${RELEASE_VERSION_PATTERN#^v}"
+  [[ "$parsed" =~ $version_pattern ]] ||
     release_die "Homebrew formula contains an invalid version"
   printf '%s\n' "$parsed"
 }
@@ -315,8 +316,7 @@ if [[ "$comparison" == "0" ]]; then
     merge_sha=$pr_merge_sha
     state=MERGED
   else
-    head_sha=$base_sha
-    state=PUBLISHED
+    release_die "tap default formula is current but the deterministic release pull request is missing"
   fi
   tap_sha=$base_sha
   already_merged=true

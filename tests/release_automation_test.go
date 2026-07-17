@@ -303,10 +303,40 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 		t.Fatalf("release App ruleset bypass unexpectedly succeeded: %s", output)
 	}
 
+	externalMainBypassEnv := append([]string{}, baseEnv...)
+	externalMainBypassEnv = append(externalMainBypassEnv, "FAKE_RULESET_EXTERNAL_BYPASS=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), externalMainBypassEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("main ruleset with a different bypass actor unexpectedly succeeded: %s", output)
+	}
+
+	incompleteMainBypassEnv := append([]string{}, baseEnv...)
+	incompleteMainBypassEnv = append(incompleteMainBypassEnv, "FAKE_RULESET_BYPASS_NULL=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), incompleteMainBypassEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("main ruleset with an incomplete bypass list unexpectedly succeeded: %s", output)
+	}
+
 	badTagRulesetEnv := append([]string{}, baseEnv...)
 	badTagRulesetEnv = append(badTagRulesetEnv, "FAKE_TAG_RULESET_ALLOW_UPDATE=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badTagRulesetEnv, "verify-repository-release-settings.sh"); err == nil {
 		t.Fatalf("mutable release tag ruleset unexpectedly succeeded: %s", output)
+	}
+
+	externalTagBypassEnv := append([]string{}, baseEnv...)
+	externalTagBypassEnv = append(externalTagBypassEnv, "FAKE_TAG_RULESET_EXTERNAL_BYPASS=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), externalTagBypassEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("tag ruleset with a different bypass actor unexpectedly succeeded: %s", output)
+	}
+
+	incompleteTagBypassEnv := append([]string{}, baseEnv...)
+	incompleteTagBypassEnv = append(incompleteTagBypassEnv, "FAKE_TAG_RULESET_BYPASS_NULL=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), incompleteTagBypassEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("tag ruleset with an incomplete bypass list unexpectedly succeeded: %s", output)
+	}
+
+	duplicatePaginatedRulesetEnv := append([]string{}, baseEnv...)
+	duplicatePaginatedRulesetEnv = append(duplicatePaginatedRulesetEnv, "FAKE_RULESET_DUPLICATE_PAGE=true")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), duplicatePaginatedRulesetEnv, "verify-repository-release-settings.sh"); err == nil {
+		t.Fatalf("duplicated ruleset on a later API page unexpectedly succeeded: %s", output)
 	}
 }
 
@@ -504,18 +534,28 @@ case "$args" in
   "api repos/example/env-vault")
     printf '{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":%s,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n' "${FAKE_ALLOW_REBASE:-false}"
     ;;
-  *"rulesets?per_page=100"*)
-    printf '[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"}]]\n'
-    ;;
+	  *"rulesets?per_page=100"*)
+	    if [[ "${FAKE_RULESET_DUPLICATE_PAGE:-false}" == "true" ]]; then
+	      printf '[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"}],[{"id":9,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"}]]\n'
+	    else
+	      printf '[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"}]]\n'
+	    fi
+	    ;;
   *"rulesets/7"*)
     if [[ "${FAKE_RULESET_ALLOW_REBASE:-false}" == "true" ]]; then
       merge_methods='["squash","rebase"]'
     else
       merge_methods='["squash"]'
     fi
-    if [[ "${FAKE_RULESET_BYPASS:-false}" == "true" ]]; then
-      bypass='[{"actor_id":1,"actor_type":"Integration","bypass_mode":"always"}]'
-      can_bypass='always'
+	    if [[ "${FAKE_RULESET_BYPASS_NULL:-false}" == "true" ]]; then
+	      bypass='null'
+	      can_bypass='never'
+	    elif [[ "${FAKE_RULESET_EXTERNAL_BYPASS:-false}" == "true" ]]; then
+	      bypass='[{"actor_id":2,"actor_type":"Team","bypass_mode":"always"}]'
+	      can_bypass='never'
+	    elif [[ "${FAKE_RULESET_BYPASS:-false}" == "true" ]]; then
+	      bypass='[{"actor_id":1,"actor_type":"Integration","bypass_mode":"always"}]'
+	      can_bypass='always'
     else
       bypass='[]'
       can_bypass='never'
@@ -527,13 +567,20 @@ case "$args" in
     fi
     printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":%s},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods" "$pr_title_integration_id"
     ;;
-  *"rulesets/8"*)
+	  *"rulesets/8"*)
     if [[ "${FAKE_TAG_RULESET_ALLOW_UPDATE:-false}" == "true" ]]; then
       tag_rules='[{"type":"deletion"}]'
     else
       tag_rules='[{"type":"deletion"},{"type":"update"}]'
     fi
-    printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_rules"
+	    if [[ "${FAKE_TAG_RULESET_BYPASS_NULL:-false}" == "true" ]]; then
+	      tag_bypass='null'
+	    elif [[ "${FAKE_TAG_RULESET_EXTERNAL_BYPASS:-false}" == "true" ]]; then
+	      tag_bypass='[{"actor_id":2,"actor_type":"Team","bypass_mode":"always"}]'
+	    else
+	      tag_bypass='[]'
+	    fi
+	    printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":%s,"current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_bypass" "$tag_rules"
     ;;
   *"api --paginate --slurp --method GET repos/example/env-vault/pulls"*)
     printf '[[{"number":43,"base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this reviewed pull request authorizes publication of this exact version after the merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \

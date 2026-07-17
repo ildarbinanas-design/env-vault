@@ -1,0 +1,90 @@
+{
+  "schema": "env-vault.release-refactor-baseline.v1",
+  "observed_at": "2026-07-16T07:56:58Z",
+  "repository": "ildarbinanas-design/env-vault",
+  "default_branch": "main",
+  "main_sha": "0eef84548b802a89f98c08744b5b51aac3d543ad",
+  "authentication": {
+    "gh_session": "valid",
+    "public_api": "available",
+    "administration_read": "available",
+    "verified_at": "2026-07-16T08:10:40Z"
+  },
+  "release_pr": {
+    "number": 21,
+    "version": "v0.0.9",
+    "head_sha": "f28f3bd9f498756da45a50a1778e6058a5330e83",
+    "base_sha": "0eef84548b802a89f98c08744b5b51aac3d543ad",
+    "state": "open",
+    "label": "autorelease: pending",
+    "required_checks": "success",
+    "authorized_to_merge": false
+  },
+  "failed_release": {
+    "version": "v0.0.8",
+    "tag_sha": "1d094f9e4a3e0343e713d4126f6118a8a9e98e2d",
+    "tag_must_not_move_or_delete": true,
+    "github_release": "absent",
+    "release_assets": "absent",
+    "must_remain_without_github_release": true,
+    "publisher_run": {
+      "id": 29475939348,
+      "attempt": 1,
+      "conclusion": "failure",
+      "wall_seconds": 417,
+      "job_count": 30,
+      "aggregate_job_seconds": 1280,
+      "failed_job": "quality / e2e-compare"
+    }
+  },
+  "performance_baselines": {
+    "main_ci": {
+      "run_id": 29475607744,
+      "attempt": 1,
+      "wall_seconds": 387,
+      "job_count": 25,
+      "aggregate_job_seconds": 1253
+    },
+    "pull_request_ci": {
+      "run_id": 29479484474,
+      "attempt": 1,
+      "wall_seconds": 359,
+      "job_count": 25,
+      "aggregate_job_seconds": 1205
+    },
+    "incomplete_rerun_incident": {
+      "run_id": 29479864725,
+      "failed_jobs_attempt": 2,
+      "attempt_2_executed_jobs": 4,
+      "attempt_2_runner_seconds": 224,
+      "all_attempts_executed_jobs": 54,
+      "all_attempts_runner_seconds": 2472,
+      "required_action_code": "rerun_all_jobs"
+    }
+  },
+  "external_state": {
+    "main_ruleset_id": 18792628,
+    "tag_ruleset_id": 19015306,
+    "required_checks": [
+      "Analyze (actions)",
+      "Analyze (go)",
+      "Dependency review",
+      "pr-title",
+      "quality-gate"
+    ],
+    "ruleset_bypass_lists": {
+      "main": [],
+      "release_tags": []
+    },
+    "ruleset_bypass_status": "pass",
+    "environments": {
+      "release": [
+        "branch:main",
+        "tag:v*"
+      ],
+      "release-planning": [
+        "branch:main"
+      ]
+    }
+  }
+}

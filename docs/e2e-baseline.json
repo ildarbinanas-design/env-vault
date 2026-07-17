@@ -1,69 +1,586 @@
 {
-  "schema_version": 1,
-  "phase": "baseline",
-  "repository": "ildarbinanas-design/env-vault",
-  "commit_sha": "7a044bdbf73aa592016bbb3a02d81f314f08fe63",
-  "run_id": "29441160687",
-  "run_url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687",
-  "run_attempt": "1",
-  "go_version": "go1.22.12",
-  "gotestsum_version": "v1.12.2",
-  "suite_hash": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
-  "minimum_artifact_expires_at": "2026-08-14T18:37:53Z",
-  "platforms": {
-    "darwin-amd64": {
-      "passed": 22,
-      "failed": 0,
-      "skipped": 0,
-      "statement_coverage": 71.1,
-      "binary_sha256": "417c7bcd937ff7882d6350ffa31177fe90b3627e5a18a86aa79799f6d2170d11",
-      "artifact_id": 8353563980,
-      "artifact_expires_at": "2026-08-14T18:39:04Z",
-      "artifact_sha256": "429564eaac2539e6adef537e08a6310c2ce7a50fb55706fe6e6405a491c41ea9"
+  "schema_id": "env-vault.e2e-baseline.v2",
+  "schema_version": 2,
+  "semantic_suite": {
+    "hash": "f970e318a1bedf3b446b5d525fb962640a8e6333d604e5c9c1b0608965b4c812",
+    "source_report_hash": "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf",
+    "transition_code": "independent_second_secret_sentinel"
+  },
+  "toolchain": {
+    "go_version": "go1.26.5",
+    "gotestsum_version": "v1.13.0"
+  },
+  "provenance": {
+    "repository": "ildarbinanas-design/env-vault",
+    "commit_sha": "585d4d7e5a9c800debd57198ff9e0e88411630ec",
+    "run_id": "29479484474",
+    "run_url": "https://github.com/ildarbinanas-design/env-vault/actions/runs/29479484474",
+    "run_attempt": "1",
+    "phase": "candidate"
+  },
+  "platforms": [
+    {
+      "id": "linux-amd64",
+      "goos": "linux",
+      "goarch": "amd64",
+      "contract_sha256": "aef1cd2f68b7f7514a34bf7029fdc9b44dfe77f5a9d8dab8247fdd3c505e4f88",
+      "coverage_floor_percent": 71.2,
+      "counts": {
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "missing": 0
+      },
+      "expected_skips": [],
+      "critical_scenarios": [
+        {
+          "id": "CLI_ARGUMENT_ERRORS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_ROOT",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_SUBCOMMANDS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_VERSION_FORMS",
+          "result": "pass"
+        },
+        {
+          "id": "CONCURRENCY_PROFILE_MUTATIONS",
+          "result": "pass"
+        },
+        {
+          "id": "DOCTOR_BACKENDS",
+          "result": "pass"
+        },
+        {
+          "id": "DRY_RUN_NO_SIDE_EFFECTS",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ARG_STREAM_EXIT",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ENV_MODES",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_MISSING_SECRET_NO_CHILD",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_PROFILE_DIRECT_MULTI",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_SIGNAL_FORWARDING",
+          "result": "pass"
+        },
+        {
+          "id": "LOCK_TIMEOUT_CRASH_INTEGRITY",
+          "result": "pass"
+        },
+        {
+          "id": "OUTPUT_JSON_JSONL_FILE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_ATOMIC_PERMISSIONS",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_COLLISIONS_PERSISTENCE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_SYMLINK_REJECTED",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_TARGETS_CHECK_SECRET",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_VALIDATION_SECURITY",
+          "result": "pass"
+        },
+        {
+          "id": "TEXT_OUTPUT_CONTRACTS",
+          "result": "pass"
+        }
+      ],
+      "leak": {
+        "status": "pass",
+        "detected": false,
+        "files_scanned": 19,
+        "occurrences": 0,
+        "registry_records": 125,
+        "findings": 0
+      }
     },
-    "darwin-arm64": {
-      "passed": 22,
-      "failed": 0,
-      "skipped": 0,
-      "statement_coverage": 71.1,
-      "binary_sha256": "3305c1c73c3e004a445a22b4decbf784f82cc4faf30466907d7589511784c7b8",
-      "artifact_id": 8353548720,
-      "artifact_expires_at": "2026-08-14T18:38:31Z",
-      "artifact_sha256": "0db0d73d930712f739047d950f3fc48e6cf5e46939b8e47ee24d51834a896222"
+    {
+      "id": "linux-arm64",
+      "goos": "linux",
+      "goarch": "arm64",
+      "contract_sha256": "895bc130fa83bf74e7b6cf1b587c0b0617c685422478046b1495dc30cb03ff79",
+      "coverage_floor_percent": 71.2,
+      "counts": {
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "missing": 0
+      },
+      "expected_skips": [],
+      "critical_scenarios": [
+        {
+          "id": "CLI_ARGUMENT_ERRORS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_ROOT",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_SUBCOMMANDS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_VERSION_FORMS",
+          "result": "pass"
+        },
+        {
+          "id": "CONCURRENCY_PROFILE_MUTATIONS",
+          "result": "pass"
+        },
+        {
+          "id": "DOCTOR_BACKENDS",
+          "result": "pass"
+        },
+        {
+          "id": "DRY_RUN_NO_SIDE_EFFECTS",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ARG_STREAM_EXIT",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ENV_MODES",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_MISSING_SECRET_NO_CHILD",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_PROFILE_DIRECT_MULTI",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_SIGNAL_FORWARDING",
+          "result": "pass"
+        },
+        {
+          "id": "LOCK_TIMEOUT_CRASH_INTEGRITY",
+          "result": "pass"
+        },
+        {
+          "id": "OUTPUT_JSON_JSONL_FILE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_ATOMIC_PERMISSIONS",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_COLLISIONS_PERSISTENCE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_SYMLINK_REJECTED",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_TARGETS_CHECK_SECRET",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_VALIDATION_SECURITY",
+          "result": "pass"
+        },
+        {
+          "id": "TEXT_OUTPUT_CONTRACTS",
+          "result": "pass"
+        }
+      ],
+      "leak": {
+        "status": "pass",
+        "detected": false,
+        "files_scanned": 19,
+        "occurrences": 0,
+        "registry_records": 125,
+        "findings": 0
+      }
     },
-    "linux-amd64": {
-      "passed": 22,
-      "failed": 0,
-      "skipped": 0,
-      "statement_coverage": 71.1,
-      "binary_sha256": "31f1a4c47213cda08ae3e72111766ca3d0af158e6e24c04329f48caababc5833",
-      "artifact_id": 8353530916,
-      "artifact_expires_at": "2026-08-14T18:37:53Z",
-      "artifact_sha256": "d17f2429acc5e0ffb655a8cdd1cc12c244faf299fc588b2e94c1a951b5933064"
+    {
+      "id": "darwin-amd64",
+      "goos": "darwin",
+      "goarch": "amd64",
+      "contract_sha256": "7a863f57c9116f9271ae357f3b9f905a40e2b63106e97675f6544efdd8589a50",
+      "coverage_floor_percent": 71.1,
+      "counts": {
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "missing": 0
+      },
+      "expected_skips": [],
+      "critical_scenarios": [
+        {
+          "id": "CLI_ARGUMENT_ERRORS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_ROOT",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_SUBCOMMANDS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_VERSION_FORMS",
+          "result": "pass"
+        },
+        {
+          "id": "CONCURRENCY_PROFILE_MUTATIONS",
+          "result": "pass"
+        },
+        {
+          "id": "DOCTOR_BACKENDS",
+          "result": "pass"
+        },
+        {
+          "id": "DRY_RUN_NO_SIDE_EFFECTS",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ARG_STREAM_EXIT",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ENV_MODES",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_MISSING_SECRET_NO_CHILD",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_PROFILE_DIRECT_MULTI",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_SIGNAL_FORWARDING",
+          "result": "pass"
+        },
+        {
+          "id": "LOCK_TIMEOUT_CRASH_INTEGRITY",
+          "result": "pass"
+        },
+        {
+          "id": "OUTPUT_JSON_JSONL_FILE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_ATOMIC_PERMISSIONS",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_COLLISIONS_PERSISTENCE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_SYMLINK_REJECTED",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_TARGETS_CHECK_SECRET",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_VALIDATION_SECURITY",
+          "result": "pass"
+        },
+        {
+          "id": "TEXT_OUTPUT_CONTRACTS",
+          "result": "pass"
+        }
+      ],
+      "leak": {
+        "status": "pass",
+        "detected": false,
+        "files_scanned": 19,
+        "occurrences": 0,
+        "registry_records": 125,
+        "findings": 0
+      }
     },
-    "linux-arm64": {
-      "passed": 22,
-      "failed": 0,
-      "skipped": 0,
-      "statement_coverage": 71.1,
-      "binary_sha256": "126283c6698f85666969e98784abe5af65a82bc28d88b837076fd9e07a167234",
-      "artifact_id": 8353534706,
-      "artifact_expires_at": "2026-08-14T18:38:01Z",
-      "artifact_sha256": "2c21840bda45466fecb15e271d48a28049b972b12cd9e93c784fcc5d17df31a7"
+    {
+      "id": "darwin-arm64",
+      "goos": "darwin",
+      "goarch": "arm64",
+      "contract_sha256": "0f09d47a7d353a2b6faacec1e5f7115bad6760620d734267b8b2a2e9de826d42",
+      "coverage_floor_percent": 71.1,
+      "counts": {
+        "passed": 22,
+        "failed": 0,
+        "skipped": 0,
+        "missing": 0
+      },
+      "expected_skips": [],
+      "critical_scenarios": [
+        {
+          "id": "CLI_ARGUMENT_ERRORS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_ROOT",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_SUBCOMMANDS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_VERSION_FORMS",
+          "result": "pass"
+        },
+        {
+          "id": "CONCURRENCY_PROFILE_MUTATIONS",
+          "result": "pass"
+        },
+        {
+          "id": "DOCTOR_BACKENDS",
+          "result": "pass"
+        },
+        {
+          "id": "DRY_RUN_NO_SIDE_EFFECTS",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ARG_STREAM_EXIT",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ENV_MODES",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_MISSING_SECRET_NO_CHILD",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_PROFILE_DIRECT_MULTI",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_SIGNAL_FORWARDING",
+          "result": "pass"
+        },
+        {
+          "id": "LOCK_TIMEOUT_CRASH_INTEGRITY",
+          "result": "pass"
+        },
+        {
+          "id": "OUTPUT_JSON_JSONL_FILE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_ATOMIC_PERMISSIONS",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_COLLISIONS_PERSISTENCE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_SYMLINK_REJECTED",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_TARGETS_CHECK_SECRET",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_VALIDATION_SECURITY",
+          "result": "pass"
+        },
+        {
+          "id": "TEXT_OUTPUT_CONTRACTS",
+          "result": "pass"
+        }
+      ],
+      "leak": {
+        "status": "pass",
+        "detected": false,
+        "files_scanned": 19,
+        "occurrences": 0,
+        "registry_records": 125,
+        "findings": 0
+      }
     },
-    "windows-amd64": {
-      "passed": 20,
-      "failed": 0,
-      "skipped": 2,
+    {
+      "id": "windows-amd64",
+      "goos": "windows",
+      "goarch": "amd64",
+      "contract_sha256": "1f157f83f9c67e9b75ce657a4e1baf42de5c993cf47a9ab8d224809e7f9a7685",
+      "coverage_floor_percent": 71.5,
+      "counts": {
+        "passed": 20,
+        "failed": 0,
+        "skipped": 2,
+        "missing": 0
+      },
       "expected_skips": [
         "EXEC_SIGNAL_FORWARDING",
         "PROFILE_SYMLINK_REJECTED"
       ],
-      "statement_coverage": 70.7,
-      "binary_sha256": "7acb61f6a3a49309ef985a216af9f89dec3e717a3f2f33d2e6e0e1f63bea1311",
-      "artifact_id": 8353574329,
-      "artifact_expires_at": "2026-08-14T18:39:26Z",
-      "artifact_sha256": "aa5431d4f333189cacbdc03b49a9260f652d62e2055de03c51f78b22701fd5a9"
+      "critical_scenarios": [
+        {
+          "id": "CLI_ARGUMENT_ERRORS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_ROOT",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_HELP_SUBCOMMANDS",
+          "result": "pass"
+        },
+        {
+          "id": "CLI_VERSION_FORMS",
+          "result": "pass"
+        },
+        {
+          "id": "CONCURRENCY_PROFILE_MUTATIONS",
+          "result": "pass"
+        },
+        {
+          "id": "DOCTOR_BACKENDS",
+          "result": "pass"
+        },
+        {
+          "id": "DRY_RUN_NO_SIDE_EFFECTS",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ARG_STREAM_EXIT",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_ENV_MODES",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_MISSING_SECRET_NO_CHILD",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_PROFILE_DIRECT_MULTI",
+          "result": "pass"
+        },
+        {
+          "id": "EXEC_SIGNAL_FORWARDING",
+          "result": "expected_skip"
+        },
+        {
+          "id": "LOCK_TIMEOUT_CRASH_INTEGRITY",
+          "result": "pass"
+        },
+        {
+          "id": "OUTPUT_JSON_JSONL_FILE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_ATOMIC_PERMISSIONS",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_COLLISIONS_PERSISTENCE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "PROFILE_SYMLINK_REJECTED",
+          "result": "expected_skip"
+        },
+        {
+          "id": "PROFILE_TARGETS_CHECK_SECRET",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_LIFECYCLE",
+          "result": "pass"
+        },
+        {
+          "id": "SECRET_VALIDATION_SECURITY",
+          "result": "pass"
+        },
+        {
+          "id": "TEXT_OUTPUT_CONTRACTS",
+          "result": "pass"
+        }
+      ],
+      "leak": {
+        "status": "pass",
+        "detected": false,
+        "files_scanned": 19,
+        "occurrences": 0,
+        "registry_records": 125,
+        "findings": 0
+      }
     }
-  }
+  ]
 }

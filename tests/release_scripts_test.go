@@ -289,6 +289,7 @@ func TestReconcileReleaseAssets(t *testing.T) {
 		name          string
 		missing       []string
 		corrupt       string
+		divergentPair bool
 		extra         string
 		wantUploads   []string
 		wantStatus    int
@@ -326,7 +327,13 @@ func TestReconcileReleaseAssets(t *testing.T) {
 			missing:      []string{releaseTestArchives[0]},
 			corrupt:      releaseTestArchives[0] + ".sha256",
 			wantStatus:   1,
-			wantInOutput: "checksum mismatch for " + releaseTestArchives[0],
+			wantInOutput: "existing release checksum differs from verified promotion",
+		},
+		{
+			name:          "internally valid but divergent remote pair is fatal before upload",
+			divergentPair: true,
+			wantStatus:    1,
+			wantInOutput:  "existing release archive differs from verified promotion",
 		},
 		{
 			name:         "unexpected remote asset is fatal",
@@ -361,6 +368,18 @@ func TestReconcileReleaseAssets(t *testing.T) {
 				badChecksum := strings.Repeat("0", 64) + "  " + strings.TrimSuffix(test.corrupt, ".sha256") + "\n"
 				if err := os.WriteFile(filepath.Join(remoteDir, test.corrupt), []byte(badChecksum), 0o644); err != nil {
 					t.Fatalf("corrupt remote checksum: %v", err)
+				}
+			}
+			if test.divergentPair {
+				archive := releaseTestArchives[0]
+				contents := []byte("different but internally consistent remote archive\n")
+				if err := os.WriteFile(filepath.Join(remoteDir, archive), contents, 0o644); err != nil {
+					t.Fatalf("write divergent remote archive: %v", err)
+				}
+				digest := sha256.Sum256(contents)
+				checksum := fmt.Sprintf("%x  %s\n", digest, archive)
+				if err := os.WriteFile(filepath.Join(remoteDir, archive+".sha256"), []byte(checksum), 0o644); err != nil {
+					t.Fatalf("write divergent remote checksum: %v", err)
 				}
 			}
 			if test.extra != "" {
@@ -420,6 +439,7 @@ mode=${FAKE_GH_MODE:?FAKE_GH_MODE is required}
   printf 'fake gh: unsupported command: %s\n' "$*" >&2
   exit 90
 }
+
 shift
 include=false
 if [[ ${1:-} == --include ]]; then

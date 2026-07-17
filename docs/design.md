@@ -158,14 +158,19 @@ reconciles the PR lifecycle label to `autorelease: tagged`.
 The exact tag push hands the reviewed version and source SHA to
 `build-binaries`. Release publication is owned exclusively by that workflow:
 its tag entry point repeats the release-commit, generated-PR, ancestry,
-manifest, and successful-CI authorization checks before release quality, and
-creates the public GitHub Release only after those gates pass. The Release body is extracted from the exact non-empty
+manifest, and successful-CI authorization checks before accepting the exact
+five-target promotion manifest and artifacts from that CI run. The publisher
+does not rebuild in the steady-state path and creates the public GitHub Release
+only after promotion verification passes. The Release body is extracted from the exact non-empty
 version section in the reviewed `CHANGELOG.md`; it is not regenerated from
-mutable GitHub metadata. A manual dispatch remains a recovery interface and
-can only retry an existing exact tag; new tags remain exclusive to planning.
-Published `v0.0.1`–`v0.0.7` retain a bounded legacy repair path that requires an
-existing stable Release and tag ancestry, while `v0.0.8+` also requires the
-generated-PR authorization. A dispatch without a version is build-only. No
+mutable GitHub metadata. A versioned `releasectl` repair plan remains the
+recovery interface and can only dispatch an existing exact authorized tag
+after digest and remote-precondition verification. Its exact
+`repair_state_digest` is part of the dispatch run identity, making repeat apply
+idempotent without interpreting logs; new tags remain exclusive to planning.
+Historical `v0.0.1`–`v0.0.7` use a separate diagnostic-only legacy
+rebuild workflow whose outputs cannot enter publication. `v0.0.8` is excluded.
+A publisher dispatch without a version is build-only. No
 product version constant is maintained in Go source;
 the reviewed release version is injected into each binary through Go linker
 flags.
@@ -185,15 +190,13 @@ only declared platform skips, valid report formats, and a clean sentinel leak
 scan. The full architecture and feature trace are documented in
 [`docs/e2e.md`](e2e.md).
 
-Every candidate matrix is also compared with the immutable Go 1.22.12 baseline
-identity in [`docs/e2e-baseline.json`](e2e-baseline.json). The gate requires the
-same semantic suite hash, critical scenarios, normalized public contracts and
-exit codes, platform set, and non-decreasing statement coverage. Before the
-cross-source comparison, baseline reports are revalidated (including derived
-coverage regeneration) against the canonical baseline checkout/toolchain while
-candidate reports are revalidated against the candidate checkout/toolchain; a
-production fix cannot make either coverage profile appear invalid merely
-because it belongs to a different source revision.
+Every candidate matrix is also checked against the durable v2 contract in
+[`docs/e2e-baseline.json`](e2e-baseline.json). After one same-source matrix
+validation regenerates derived evidence, the baseline verifier requires the
+same semantic suite hash, exact critical scenario results and normalized public
+contract hashes, the five-platform set, clean leak evidence, exact tool pins,
+and non-decreasing per-platform statement coverage. The gate has no runtime
+dependency on historical workflow artifacts.
 
 Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
 runners with `CGO_ENABLED=1` because the macOS Keychain backend requires
@@ -236,8 +239,12 @@ procedures are documented in `docs/release-external-settings.md`.
 
 Separate manually dispatched `audit-release-planning-app.yml` and
 `audit-release-app.yml` workflows request read-only tokens and fail unless their
-installations contain exactly `env-vault` and `homebrew-tap`, respectively. The
-planning audit adds Administration read to prove repository settings and
+complete current installation permission maps and selection modes match the
+declarative state and their selected sets contain exactly `env-vault` and
+`homebrew-tap`, respectively. They use short-lived App JWTs for installation
+metadata and separate installation tokens for bounded repository enumeration;
+the GET-only operator accepts only the newest successful run on the exact
+current default-branch head. The planning audit adds Administration read to prove repository settings and
 branch/tag ruleset structure and that the App itself cannot bypass them; the tap
 audit remains metadata-only. GitHub exposes global bypass actors only to a
 ruleset writer, so an administrator separately records the required empty lists

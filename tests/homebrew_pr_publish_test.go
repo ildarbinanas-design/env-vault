@@ -185,27 +185,18 @@ func TestPublishHomebrewPRVerifyOnlyChecksPublishedFormulaWithoutWrites(t *testi
 	}
 }
 
-func TestPublishHomebrewPRTreatsExactPublishedFormulaAsLegacyNoOp(t *testing.T) {
+func TestPublishHomebrewPRRejectsPublishedFormulaWithoutDeterministicPR(t *testing.T) {
 	fixture := newHomebrewTapFixture(t, "1.2.3")
 	formula := fixture.writeFormula(t, "target.rb", "1.2.3", "")
 	main := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main")
 
 	output, status := fixture.runPublish(t, nil, releaseTestVersion, formula)
-	if status != 0 {
-		t.Fatalf("published no-op exit status=%d\n%s", status, output)
+	if status == 0 || !strings.Contains(output, "deterministic release pull request is missing") {
+		t.Fatalf("published formula without PR status=%d\n%s", status, output)
 	}
-	values := parseHomebrewPublishOutputs(t, output)
-	assertHomebrewPublishOutputs(t, values, map[string]string{
-		"base_sha":       main,
-		"head_sha":       main,
-		"tap_sha":        main,
-		"pr_number":      "",
-		"pr_url":         "",
-		"merge_sha":      "",
-		"state":          "PUBLISHED",
-		"already_merged": "true",
-		"no_op":          "true",
-	})
+	if got := fixture.gitOutput(t, "--git-dir="+fixture.origin, "rev-parse", "refs/heads/main"); got != main {
+		t.Fatalf("failed closed path changed main: got %s want %s", got, main)
+	}
 	calls := readOptionalFile(t, fixture.ghLog)
 	if strings.Contains(calls, "pr create") {
 		t.Fatalf("already-published formula created a PR:\n%s", calls)

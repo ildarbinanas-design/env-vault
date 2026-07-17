@@ -1,70 +1,38 @@
 package tests
 
 import (
-	"encoding/json"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ildarbinanas-design/env-vault/internal/e2ebaseline"
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"gopkg.in/yaml.v3"
 )
 
-func TestCanonicalE2EBaselineIdentityIsPinned(t *testing.T) {
+func TestCanonicalE2EBaselineIsDurableAndPinned(t *testing.T) {
+	contract, err := releasecontract.LoadCanonical("..")
+	if err != nil {
+		t.Fatalf("load release contract: %v", err)
+	}
+	baseline, err := e2ebaseline.LoadFile("../docs/e2e-baseline.json", contract)
+	if err != nil {
+		t.Fatalf("load canonical baseline: %v", err)
+	}
+	if baseline.Provenance.Repository != "ildarbinanas-design/env-vault" || baseline.Provenance.CommitSHA != "585d4d7e5a9c800debd57198ff9e0e88411630ec" || baseline.Provenance.RunID != "29479484474" || baseline.Provenance.RunAttempt != "1" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
+		t.Fatalf("canonical baseline identity is incomplete or changed: %+v %+v", baseline.Provenance, baseline.Toolchain)
+	}
+	if baseline.SemanticSuite.SourceReportHash != "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" || baseline.SemanticSuite.TransitionCode != e2ebaseline.ReviewedSuiteTransition {
+		t.Fatalf("reviewed suite transition is incomplete: %+v", baseline.SemanticSuite)
+	}
 	data, err := os.ReadFile("../docs/e2e-baseline.json")
 	if err != nil {
-		t.Fatalf("read canonical baseline: %v", err)
+		t.Fatal(err)
 	}
-	var baseline struct {
-		SchemaVersion            int    `json:"schema_version"`
-		Phase                    string `json:"phase"`
-		Repository               string `json:"repository"`
-		CommitSHA                string `json:"commit_sha"`
-		RunID                    string `json:"run_id"`
-		RunURL                   string `json:"run_url"`
-		RunAttempt               string `json:"run_attempt"`
-		GoVersion                string `json:"go_version"`
-		GotestsumVersion         string `json:"gotestsum_version"`
-		SuiteHash                string `json:"suite_hash"`
-		MinimumArtifactExpiresAt string `json:"minimum_artifact_expires_at"`
-		Platforms                map[string]struct {
-			Passed            int      `json:"passed"`
-			Failed            int      `json:"failed"`
-			Skipped           int      `json:"skipped"`
-			ExpectedSkips     []string `json:"expected_skips"`
-			StatementCoverage float64  `json:"statement_coverage"`
-			BinarySHA256      string   `json:"binary_sha256"`
-			ArtifactID        int64    `json:"artifact_id"`
-			ArtifactExpiresAt string   `json:"artifact_expires_at"`
-			ArtifactSHA256    string   `json:"artifact_sha256"`
-		} `json:"platforms"`
-	}
-	if err := json.Unmarshal(data, &baseline); err != nil {
-		t.Fatalf("parse canonical baseline: %v", err)
-	}
-	if baseline.SchemaVersion != 1 || baseline.Phase != "baseline" || baseline.Repository != "ildarbinanas-design/env-vault" || baseline.CommitSHA != "7a044bdbf73aa592016bbb3a02d81f314f08fe63" || baseline.RunID != "29441160687" || baseline.RunURL != "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" || baseline.RunAttempt != "1" || baseline.GoVersion != "go1.22.12" || baseline.GotestsumVersion != "v1.12.2" || baseline.SuiteHash != "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" || baseline.MinimumArtifactExpiresAt != "2026-08-14T18:37:53Z" {
-		t.Fatalf("canonical baseline identity is incomplete or changed: %+v", baseline)
-	}
-	wantPlatforms := map[string]bool{"linux-amd64": false, "linux-arm64": false, "darwin-amd64": false, "darwin-arm64": false, "windows-amd64": false}
-	for platform, report := range baseline.Platforms {
-		if _, ok := wantPlatforms[platform]; !ok {
-			t.Fatalf("unexpected canonical baseline platform %q", platform)
-		}
-		if report.Failed != 0 || report.Passed == 0 || report.StatementCoverage < 60 || len(report.BinarySHA256) != 64 || report.ArtifactID == 0 || report.ArtifactExpiresAt == "" || len(report.ArtifactSHA256) != 64 {
-			t.Fatalf("invalid canonical baseline report for %s: %+v", platform, report)
-		}
-		if platform == "windows-amd64" {
-			if report.Skipped != 2 || !slices.Equal(report.ExpectedSkips, []string{"EXEC_SIGNAL_FORWARDING", "PROFILE_SYMLINK_REJECTED"}) {
-				t.Fatalf("Windows expected skips=%v count=%d", report.ExpectedSkips, report.Skipped)
-			}
-		} else if report.Skipped != 0 || len(report.ExpectedSkips) != 0 {
-			t.Fatalf("unexpected non-Windows skips for %s: %+v", platform, report)
-		}
-		wantPlatforms[platform] = true
-	}
-	for platform, found := range wantPlatforms {
-		if !found {
-			t.Fatalf("canonical baseline missing %s", platform)
+	for _, forbidden := range []string{"artifact_id", "artifact_expires_at", "minimum_artifact_expires_at"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("durable baseline depends on expiring artifact field %q", forbidden)
 		}
 	}
 }

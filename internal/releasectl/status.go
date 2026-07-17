@@ -2,12 +2,16 @@ package releasectl
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 const (
@@ -16,7 +20,6 @@ const (
 )
 
 var (
-	versionPattern    = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	shaPattern        = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
@@ -43,17 +46,19 @@ type query struct {
 }
 
 type document struct {
-	Schema     string      `json:"schema"`
-	OK         bool        `json:"ok"`
-	ObservedAt time.Time   `json:"observed_at"`
-	Query      query       `json:"query"`
-	Overall    *overall    `json:"overall,omitempty"`
-	Identity   *identity   `json:"identity,omitempty"`
-	Stages     *stages     `json:"stages,omitempty"`
-	FailedJobs []failedJob `json:"failed_jobs,omitempty"`
-	NextAction *nextAction `json:"next_action,omitempty"`
-	Watch      *watchInfo  `json:"watch,omitempty"`
-	Error      *errorInfo  `json:"error,omitempty"`
+	Schema        string         `json:"schema"`
+	OK            bool           `json:"ok"`
+	ObservedAt    time.Time      `json:"observed_at"`
+	Query         query          `json:"query"`
+	Overall       *overall       `json:"overall,omitempty"`
+	Identity      *identity      `json:"identity,omitempty"`
+	Stages        *stages        `json:"stages,omitempty"`
+	FailedJobs    []failedJob    `json:"failed_jobs,omitempty"`
+	NextAction    *nextAction    `json:"next_action,omitempty"`
+	Watch         *watchInfo     `json:"watch,omitempty"`
+	AttemptMatrix *attemptMatrix `json:"attempt_matrix,omitempty"`
+	RepairRuns    []runEvidence  `json:"manual_repair_runs,omitempty"`
+	Error         *errorInfo     `json:"error,omitempty"`
 }
 
 type overall struct {
@@ -79,23 +84,27 @@ type stages struct {
 }
 
 type stage struct {
-	State   stageState       `json:"state"`
-	Reason  string           `json:"reason,omitempty"`
-	SHA     string           `json:"sha,omitempty"`
-	Run     *runEvidence     `json:"run,omitempty"`
-	Job     *jobEvidence     `json:"job,omitempty"`
-	Release *releaseEvidence `json:"release,omitempty"`
+	State        stageState           `json:"state"`
+	Reason       string               `json:"reason,omitempty"`
+	SHA          string               `json:"sha,omitempty"`
+	Run          *runEvidence         `json:"run,omitempty"`
+	Job          *jobEvidence         `json:"job,omitempty"`
+	Release      *releaseEvidence     `json:"release,omitempty"`
+	Attestations *attestationEvidence `json:"attestations,omitempty"`
+	Homebrew     *homebrewEvidence    `json:"homebrew,omitempty"`
 }
 
 type runEvidence struct {
-	ID         int64  `json:"id"`
-	Attempt    int    `json:"attempt"`
-	Event      string `json:"event"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion,omitempty"`
-	HeadBranch string `json:"head_branch"`
-	HeadSHA    string `json:"head_sha"`
-	URL        string `json:"url"`
+	ID           int64  `json:"id"`
+	Attempt      int    `json:"attempt"`
+	Event        string `json:"event"`
+	Status       string `json:"status"`
+	Conclusion   string `json:"conclusion,omitempty"`
+	HeadBranch   string `json:"head_branch"`
+	HeadSHA      string `json:"head_sha"`
+	WorkflowPath string `json:"workflow_path,omitempty"`
+	RepairMode   string `json:"repair_mode,omitempty"`
+	URL          string `json:"url"`
 }
 
 type jobEvidence struct {
@@ -115,11 +124,13 @@ type releaseEvidence struct {
 }
 
 type assetEvidence struct {
-	ExpectedCount int      `json:"expected_count"`
-	ObservedCount int      `json:"observed_count"`
-	Missing       []string `json:"missing"`
-	Unexpected    []string `json:"unexpected"`
-	Duplicates    []string `json:"duplicates"`
+	ExpectedCount  int                    `json:"expected_count"`
+	ObservedCount  int                    `json:"observed_count"`
+	Missing        []string               `json:"missing"`
+	Unexpected     []string               `json:"unexpected"`
+	Duplicates     []string               `json:"duplicates"`
+	DigestComplete bool                   `json:"digest_complete"`
+	Digests        []releaseAssetEvidence `json:"digests"`
 }
 
 type failedJob struct {
@@ -182,8 +193,9 @@ func (realClock) Sleep(ctx context.Context, delay time.Duration) error {
 }
 
 type collector struct {
-	github githubGetter
-	clock  clock
+	github   githubGetter
+	clock    clock
+	contract releasecontract.Contract
 }
 
 type tagRefResponse struct {
@@ -191,7 +203,8 @@ type tagRefResponse struct {
 }
 
 type repositoryResponse struct {
-	FullName string `json:"full_name"`
+	FullName      string `json:"full_name"`
+	DefaultBranch string `json:"default_branch"`
 }
 
 type annotatedTagResponse struct {
@@ -204,39 +217,50 @@ type gitObject struct {
 }
 
 type workflowRunsResponse struct {
+	TotalCount   int           `json:"total_count"`
 	WorkflowRuns []workflowRun `json:"workflow_runs"`
 }
 
 type workflowRun struct {
-	ID           int64  `json:"id"`
-	RunAttempt   int    `json:"run_attempt"`
-	Event        string `json:"event"`
-	Status       string `json:"status"`
-	Conclusion   string `json:"conclusion"`
-	HeadBranch   string `json:"head_branch"`
-	HeadSHA      string `json:"head_sha"`
-	HTMLURL      string `json:"html_url"`
-	DisplayTitle string `json:"display_title"`
+	ID           int64     `json:"id"`
+	RunAttempt   int       `json:"run_attempt"`
+	Event        string    `json:"event"`
+	Status       string    `json:"status"`
+	Conclusion   string    `json:"conclusion"`
+	HeadBranch   string    `json:"head_branch"`
+	HeadSHA      string    `json:"head_sha"`
+	Path         string    `json:"path"`
+	HTMLURL      string    `json:"html_url"`
+	DisplayTitle string    `json:"display_title"`
+	CreatedAt    time.Time `json:"created_at"`
+	RunStartedAt time.Time `json:"run_started_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type jobsResponse struct {
-	Jobs []workflowJob `json:"jobs"`
+	TotalCount int           `json:"total_count"`
+	Jobs       []workflowJob `json:"jobs"`
 }
 
 type workflowJob struct {
-	ID         int64          `json:"id"`
-	Name       string         `json:"name"`
-	Status     string         `json:"status"`
-	Conclusion string         `json:"conclusion"`
-	HTMLURL    string         `json:"html_url"`
-	Steps      []workflowStep `json:"steps"`
+	ID          int64          `json:"id"`
+	Name        string         `json:"name"`
+	Status      string         `json:"status"`
+	Conclusion  string         `json:"conclusion"`
+	HTMLURL     string         `json:"html_url"`
+	RunAttempt  int            `json:"run_attempt"`
+	StartedAt   time.Time      `json:"started_at"`
+	CompletedAt time.Time      `json:"completed_at"`
+	Steps       []workflowStep `json:"steps"`
 }
 
 type workflowStep struct {
-	Number     int    `json:"number"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
+	Number      int       `json:"number"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	Conclusion  string    `json:"conclusion"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 type releaseResponse struct {
@@ -248,24 +272,23 @@ type releaseResponse struct {
 }
 
 type releaseAsset struct {
-	Name string `json:"name"`
-}
-
-var expectedAssets = []string{
-	"env-vault-darwin-amd64.tar.gz",
-	"env-vault-darwin-amd64.tar.gz.sha256",
-	"env-vault-darwin-arm64.tar.gz",
-	"env-vault-darwin-arm64.tar.gz.sha256",
-	"env-vault-linux-amd64.tar.gz",
-	"env-vault-linux-amd64.tar.gz.sha256",
-	"env-vault-linux-arm64.tar.gz",
-	"env-vault-linux-arm64.tar.gz.sha256",
-	"env-vault-windows-amd64.zip",
-	"env-vault-windows-amd64.zip.sha256",
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Size   int64  `json:"size"`
+	Digest string `json:"digest"`
 }
 
 func (c collector) snapshot(ctx context.Context, request query) (document, error) {
-	doc := document{Schema: statusSchema, OK: true, ObservedAt: c.clock.Now().UTC(), Query: request}
+	contract, err := c.releaseDefinition()
+	if err != nil {
+		return document{}, err
+	}
+	schema := contract.Schemas["release_status"]
+	if schema == "" {
+		return document{}, &observationError{code: "CONTRACT_INVALID", operation: releasecontract.CanonicalPath, cause: errors.New("release_status schema is missing")}
+	}
+	doc := document{Schema: schema, OK: true, ObservedAt: c.clock.Now().UTC(), Query: request}
 	resultStages := stages{
 		Tag:           stage{State: stateWaiting, Reason: "tag_not_found"},
 		MainCI:        stage{State: stateNotStarted, Reason: "source_sha_unknown"},
@@ -298,8 +321,11 @@ func (c collector) snapshot(ctx context.Context, request query) (document, error
 	}
 	doc.Identity = &identity{SourceSHA: sourceSHA, Source: sourceKind}
 
+	var ciRun workflowRun
+	var ciFound bool
+	var repairRuns []workflowRun
 	if sourceSHA != "" {
-		ciRun, found, err := c.findRun(ctx, request.Repository, "ci.yml", map[string]string{
+		ciRun, ciFound, err = c.findRun(ctx, request.Repository, workflowFile(contract, "ci"), map[string]string{
 			"branch": "main", "event": "push", "head_sha": sourceSHA, "per_page": "100",
 		}, func(run workflowRun) bool {
 			return run.Event == "push" && run.HeadBranch == "main" && run.HeadSHA == sourceSHA
@@ -307,16 +333,22 @@ func (c collector) snapshot(ctx context.Context, request query) (document, error
 		if err != nil {
 			return document{}, err
 		}
-		if found {
+		if ciFound {
 			resultStages.MainCI, err = stageFromRun(ciRun)
 			if err != nil {
 				return document{}, err
 			}
+			artifacts, artifactErr := getWorkflowArtifacts(ctx, c.github, request.Repository, ciRun.ID)
+			if artifactErr != nil {
+				return document{}, artifactErr
+			}
+			matrix := classifyAttemptMatrix(ciRun, artifacts, contract)
+			doc.AttemptMatrix = &matrix
 		} else {
 			resultStages.MainCI = stage{State: stateWaiting, Reason: "main_ci_not_found"}
 		}
 
-		planningRun, found, err := c.findRun(ctx, request.Repository, "release-please.yml", map[string]string{
+		planningRun, found, err := c.findRun(ctx, request.Repository, workflowFile(contract, "planning"), map[string]string{
 			"branch": "main", "event": "workflow_run", "head_sha": sourceSHA, "per_page": "100",
 		}, func(run workflowRun) bool {
 			return run.Event == "workflow_run" && run.HeadBranch == "main" && run.HeadSHA == sourceSHA
@@ -332,13 +364,28 @@ func (c collector) snapshot(ctx context.Context, request query) (document, error
 		} else {
 			resultStages.Planning = stage{State: stateWaiting, Reason: "planning_run_not_found"}
 		}
+		if resultStages.Tag.State == stateSucceeded {
+			repairRuns, err = c.findRuns(ctx, request.Repository, workflowFile(contract, "publisher"), map[string]string{
+				"branch": request.Version, "event": "workflow_dispatch", "head_sha": sourceSHA, "per_page": "100",
+			}, func(run workflowRun) bool {
+				return run.Event == "workflow_dispatch" && run.HeadBranch == request.Version && run.HeadSHA == sourceSHA && matchesManualReleaseRun(run, request.Version, contract)
+			})
+			if err != nil {
+				return document{}, err
+			}
+			for _, run := range repairRuns {
+				evidence := evidenceFromRun(run)
+				evidence.RepairMode, _ = manualRepairMode(run, request.Version, contract)
+				doc.RepairRuns = append(doc.RepairRuns, *evidence)
+			}
+		}
 	}
 
 	var publisherRun workflowRun
 	var publisherFound bool
 	var jobs []workflowJob
 	if tagFound && resultStages.Tag.State == stateSucceeded {
-		publisherRun, publisherFound, err = c.findRun(ctx, request.Repository, "build-binaries.yml", map[string]string{
+		publisherRun, publisherFound, err = c.findRun(ctx, request.Repository, workflowFile(contract, "publisher"), map[string]string{
 			"branch": request.Version, "event": "push", "head_sha": tagSHA, "per_page": "100",
 		}, func(run workflowRun) bool {
 			return run.Event == "push" && run.HeadBranch == request.Version && run.HeadSHA == tagSHA
@@ -351,7 +398,7 @@ func (c collector) snapshot(ctx context.Context, request query) (document, error
 			if err != nil {
 				return document{}, err
 			}
-			jobs, err = c.getJobs(ctx, request.Repository, publisherRun.ID)
+			jobs, err = c.getJobs(ctx, request.Repository, publisherRun.ID, publisherRun.RunAttempt)
 			if err != nil {
 				return document{}, err
 			}
@@ -372,11 +419,273 @@ func (c collector) snapshot(ctx context.Context, request query) (document, error
 			return document{}, err
 		}
 	}
-	resultStages.GitHubRelease = reduceReleaseStage(request.Version, releaseRecord, releaseFound, jobs, resultStages.Publisher, tagFound)
+	resultStages.GitHubRelease = reduceReleaseStage(request.Version, releaseRecord, releaseFound, jobs, resultStages.Publisher, tagFound, contract.Assets)
+	if len(repairRuns) > 0 {
+		repairFailures, foldErr := c.foldManualRepairs(
+			ctx, request.Repository, request.Version, contract, repairRuns,
+			releaseRecord, releaseFound, tagFound, &resultStages,
+		)
+		if foldErr != nil {
+			return document{}, foldErr
+		}
+		if resultStages.Publisher.Reason == "manual_repair_reconciled" {
+			doc.FailedJobs = repairFailures
+		} else {
+			doc.FailedJobs = mergeFailedJobs(doc.FailedJobs, repairFailures)
+		}
+	}
+	if releaseFound && resultStages.Tag.State == stateSucceeded && resultStages.GitHubRelease.State == stateSucceeded && resultStages.GitHubRelease.Release != nil {
+		if resultStages.SupplyChain.State == stateSucceeded {
+			attestations, observeErr := c.observeAttestations(
+				ctx, request.Repository, sourceSHA, contract, resultStages.GitHubRelease.Release.Assets,
+			)
+			if observeErr != nil {
+				return document{}, observeErr
+			}
+			resultStages.SupplyChain.Attestations = &attestations
+			if !attestations.Complete {
+				resultStages.SupplyChain.State = stateInconsistent
+				resultStages.SupplyChain.Reason = attestations.ReasonCode
+			}
+		}
+
+		if resultStages.SupplyChain.State == stateSucceeded && homebrewEvidenceRequired(resultStages.Homebrew.State) {
+			homebrew, observeErr := c.observeHomebrew(ctx, request.Repository, request.Version, sourceSHA, contract)
+			if observeErr != nil {
+				return document{}, observeErr
+			}
+			resultStages.Homebrew.Homebrew = &homebrew
+			if !homebrew.Complete {
+				resultStages.Homebrew.State = stateInconsistent
+				resultStages.Homebrew.Reason = homebrew.ReasonCode
+			}
+		}
+	}
 	doc.Stages = &resultStages
 	doc.Overall = reduceOverall(resultStages)
 	doc.NextAction = reduceNextAction(resultStages, doc.Overall)
+	if action, ok := homebrewRepairNextAction(resultStages.Homebrew); ok {
+		doc.NextAction = &nextAction{Code: action}
+	}
+	if doc.AttemptMatrix != nil && !doc.AttemptMatrix.Complete &&
+		ciFound && ciRun.Status == "completed" && isFailureConclusion(ciRun.Conclusion) &&
+		doc.Overall != nil && doc.Overall.State == "failed" && doc.Overall.Reason == "main_ci_failed" {
+		doc.NextAction = &nextAction{Code: "rerun_all_jobs"}
+	}
 	return doc, nil
+}
+
+func homebrewEvidenceRequired(state stageState) bool {
+	switch state {
+	case stateSucceeded, stateFailed, stateCancelled, stateInconsistent:
+		return true
+	default:
+		return false
+	}
+}
+
+func homebrewRepairNextAction(homebrew stage) (string, bool) {
+	if homebrew.Homebrew == nil || (homebrew.State != stateFailed && homebrew.State != stateCancelled && homebrew.State != stateInconsistent) {
+		return "", false
+	}
+	evidence := homebrew.Homebrew
+	if evidence.Complete {
+		return "replan_publisher", true
+	}
+	if evidence.ReasonCode == "homebrew_pr_not_merged" {
+		return "replan_publisher", true
+	}
+	var run *runEvidence
+	failedAction := ""
+	switch evidence.ReasonCode {
+	case "homebrew_pr_head_ci_not_successful":
+		run, failedAction = evidence.PRHeadCI, "rerun_tap_pr_ci_all_jobs"
+	case "homebrew_post_merge_ci_not_successful":
+		run, failedAction = evidence.PostMergeCI, "rerun_tap_post_merge_ci_all_jobs"
+	default:
+		return "", false
+	}
+	if run == nil {
+		return "", false
+	}
+	switch run.Status {
+	case "queued", "requested", "waiting", "pending", "in_progress":
+		return "wait_tap_ci", true
+	case "completed":
+		if run.Conclusion == "success" {
+			return "replan_publisher", true
+		}
+		if isFailureConclusion(run.Conclusion) {
+			return failedAction, true
+		}
+	}
+	return "", false
+}
+
+func matchesManualReleaseRun(run workflowRun, version string, contract releasecontract.Contract) bool {
+	_, ok := manualRepairMode(run, version, contract)
+	return ok
+}
+
+func manualRepairMode(run workflowRun, version string, contract releasecontract.Contract) (string, bool) {
+	if run.Path != ".github/workflows/"+workflowFile(contract, "publisher") {
+		return "", false
+	}
+	prefix := "env-vault-publication event=workflow_dispatch version=" + version + " repair="
+	if !strings.HasPrefix(run.DisplayTitle, prefix) {
+		return "", false
+	}
+	modeAndState := strings.TrimPrefix(run.DisplayTitle, prefix)
+	mode, stateDigest, hasState := strings.Cut(modeAndState, " state=")
+	if hasState {
+		decoded, err := hex.DecodeString(stateDigest)
+		if err != nil || len(decoded) != 32 || stateDigest != strings.ToLower(stateDigest) {
+			return "", false
+		}
+	}
+	for _, repair := range contract.RepairModes {
+		if mode == repair.Code {
+			return mode, true
+		}
+	}
+	return "", false
+}
+
+var manualRepairStageIDs = map[string]string{
+	"github_release": "publication",
+	"supply_chain":   "supply_chain",
+	"homebrew":       "homebrew",
+	"health":         "health",
+}
+
+func (c collector) foldManualRepairs(
+	ctx context.Context,
+	repository string,
+	version string,
+	contract releasecontract.Contract,
+	runs []workflowRun,
+	release releaseResponse,
+	releaseFound bool,
+	tagFound bool,
+	result *stages,
+) ([]failedJob, error) {
+	selected := make(map[string]workflowRun, len(manualRepairStageIDs))
+	for _, run := range runs {
+		mode, ok := manualRepairMode(run, version, contract)
+		if !ok {
+			continue
+		}
+		for statusStage, contractStage := range manualRepairStageIDs {
+			if _, exists := selected[statusStage]; exists {
+				continue
+			}
+			if repairModeCovers(contract, mode, contractStage) {
+				selected[statusStage] = run
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return nil, nil
+	}
+
+	jobsByRun := make(map[int64][]workflowJob, len(selected))
+	selectedRuns := make(map[int64]workflowRun, len(selected))
+	for _, run := range selected {
+		selectedRuns[run.ID] = run
+	}
+	for runID, run := range selectedRuns {
+		jobs, err := c.getJobs(ctx, repository, runID, run.RunAttempt)
+		if err != nil {
+			return nil, err
+		}
+		jobsByRun[runID] = jobs
+	}
+
+	for statusStage, run := range selected {
+		runStage, err := stageFromRun(run)
+		if err != nil {
+			return nil, err
+		}
+		jobs := jobsByRun[run.ID]
+		switch statusStage {
+		case "github_release":
+			result.GitHubRelease = reduceReleaseStage(version, release, releaseFound, jobs, runStage, tagFound, contract.Assets)
+		case "supply_chain":
+			result.SupplyChain = stageFromNamedJob(jobs, "supply_chain", runStage)
+		case "homebrew":
+			result.Homebrew = stageFromNamedJob(jobs, "homebrew", runStage)
+		case "health":
+			result.Health = stageFromNamedJob(jobs, "health", runStage)
+		}
+	}
+
+	if result.GitHubRelease.State == stateSucceeded &&
+		result.SupplyChain.State == stateSucceeded &&
+		result.Homebrew.State == stateSucceeded &&
+		result.Health.State == stateSucceeded {
+		latest := workflowRun{}
+		for _, run := range selectedRuns {
+			if run.ID > latest.ID {
+				latest = run
+			}
+		}
+		evidence := evidenceFromRun(latest)
+		evidence.RepairMode, _ = manualRepairMode(latest, version, contract)
+		result.Publisher = stage{State: stateSucceeded, Reason: "manual_repair_reconciled", Run: evidence}
+	}
+
+	failed := []failedJob{}
+	for _, run := range selectedRuns {
+		failed = append(failed, collectFailedJobs(jobsByRun[run.ID])...)
+	}
+	return mergeFailedJobs(failed), nil
+}
+
+func repairModeCovers(contract releasecontract.Contract, modeCode, targetStage string) bool {
+	resumeStage := ""
+	for _, mode := range contract.RepairModes {
+		if mode.Code == modeCode {
+			resumeStage = mode.ResumeStage
+			break
+		}
+	}
+	resumeOrdinal, targetOrdinal := 0, 0
+	for _, releaseStage := range contract.ReleaseStages {
+		if releaseStage.ID == resumeStage {
+			resumeOrdinal = releaseStage.Ordinal
+		}
+		if releaseStage.ID == targetStage {
+			targetOrdinal = releaseStage.Ordinal
+		}
+	}
+	return resumeOrdinal > 0 && targetOrdinal > 0 && resumeOrdinal <= targetOrdinal
+}
+
+func (c collector) releaseDefinition() (releasecontract.Contract, error) {
+	if c.contract.SchemaID != "" {
+		if err := c.contract.Validate(); err != nil {
+			return releasecontract.Contract{}, &observationError{code: "CONTRACT_INVALID", operation: releasecontract.CanonicalPath, cause: err}
+		}
+		return c.contract, nil
+	}
+	path, err := findRepositoryFile(".", releasecontract.CanonicalPath)
+	if err != nil {
+		return releasecontract.Contract{}, &observationError{code: "CONTRACT_INVALID", operation: releasecontract.CanonicalPath, cause: err}
+	}
+	contract, err := releasecontract.LoadFile(path)
+	if err != nil {
+		return releasecontract.Contract{}, &observationError{code: "CONTRACT_INVALID", operation: releasecontract.CanonicalPath, cause: err}
+	}
+	return contract, nil
+}
+
+func workflowFile(contract releasecontract.Contract, id string) string {
+	for _, workflow := range contract.Workflows {
+		if workflow.ID == id {
+			return workflow.File
+		}
+	}
+	return ""
 }
 
 func (c collector) resolveTag(ctx context.Context, repository, version string) (string, bool, error) {
@@ -427,43 +736,90 @@ func (c collector) resolveTag(ctx context.Context, repository, version string) (
 }
 
 func (c collector) findRun(ctx context.Context, repository, workflow string, query map[string]string, matches func(workflowRun) bool) (workflowRun, bool, error) {
-	endpoint := "repos/" + repository + "/actions/workflows/" + workflow + "/runs"
-	var response workflowRunsResponse
-	if err := c.github.Get(ctx, endpoint, query, &response); err != nil {
+	runs, err := c.findRuns(ctx, repository, workflow, query, matches)
+	if err != nil || len(runs) == 0 {
 		return workflowRun{}, false, err
 	}
-	if response.WorkflowRuns == nil {
-		return workflowRun{}, false, malformed(endpoint, "workflow_runs is missing")
+	return runs[0], true, nil
+}
+
+func (c collector) findRuns(ctx context.Context, repository, workflow string, query map[string]string, matches func(workflowRun) bool) ([]workflowRun, error) {
+	endpoint := "repos/" + repository + "/actions/workflows/" + workflow + "/runs"
+	expectedPath := ".github/workflows/" + workflow
+	requestQuery := make(map[string]string, len(query)+1)
+	for key, value := range query {
+		requestQuery[key] = value
 	}
-	var selected workflowRun
-	found := false
-	for _, run := range response.WorkflowRuns {
+	requestQuery["per_page"] = "100"
+	allRuns := []workflowRun{}
+	totalCount := -1
+	seenIDs := map[int64]struct{}{}
+	for page := 1; ; page++ {
+		if page > 100 {
+			return nil, malformed(endpoint, "workflow run pagination exceeds the deterministic bound")
+		}
+		requestQuery["page"] = strconv.Itoa(page)
+		var response workflowRunsResponse
+		if err := c.github.Get(ctx, endpoint, requestQuery, &response); err != nil {
+			return nil, err
+		}
+		if response.WorkflowRuns == nil || response.TotalCount < 0 {
+			return nil, malformed(endpoint, "workflow_runs or total_count is missing")
+		}
+		if totalCount == -1 {
+			totalCount = response.TotalCount
+		} else if response.TotalCount != totalCount {
+			return nil, malformed(endpoint, "workflow run total_count changed during pagination")
+		}
+		if len(response.WorkflowRuns) == 0 && len(allRuns) < totalCount {
+			return nil, malformed(endpoint, "workflow run pagination ended before total_count")
+		}
+		for _, run := range response.WorkflowRuns {
+			if err := validateRun(run, endpoint); err != nil {
+				return nil, err
+			}
+			if run.Path != expectedPath {
+				return nil, malformed(endpoint, "workflow run path does not match the requested workflow")
+			}
+			if _, duplicate := seenIDs[run.ID]; duplicate {
+				return nil, malformed(endpoint, "workflow run pagination contains duplicate ids")
+			}
+			seenIDs[run.ID] = struct{}{}
+			allRuns = append(allRuns, run)
+		}
+		if len(allRuns) > totalCount {
+			return nil, malformed(endpoint, "workflow run pagination exceeds total_count")
+		}
+		if len(allRuns) == totalCount {
+			break
+		}
+	}
+	selected := []workflowRun{}
+	for _, run := range allRuns {
 		if !matches(run) {
 			continue
 		}
-		if err := validateRun(run, endpoint); err != nil {
-			return workflowRun{}, false, err
-		}
-		if !found || run.ID > selected.ID {
-			selected = run
-			found = true
-		}
+		selected = append(selected, run)
 	}
-	return selected, found, nil
+	sort.Slice(selected, func(i, j int) bool { return selected[i].ID > selected[j].ID })
+	return selected, nil
 }
 
-func (c collector) getJobs(ctx context.Context, repository string, runID int64) ([]workflowJob, error) {
-	endpoint := "repos/" + repository + "/actions/runs/" + strconv.FormatInt(runID, 10) + "/jobs"
+func (c collector) getJobs(ctx context.Context, repository string, runID int64, attempt int) ([]workflowJob, error) {
+	endpoint := "repos/" + repository + "/actions/runs/" + strconv.FormatInt(runID, 10) + "/attempts/" + strconv.Itoa(attempt) + "/jobs"
 	var response jobsResponse
-	if err := c.github.Get(ctx, endpoint, map[string]string{"filter": "latest", "per_page": "100"}, &response); err != nil {
+	if err := c.github.Get(ctx, endpoint, map[string]string{"per_page": "100"}, &response); err != nil {
 		return nil, err
 	}
-	if response.Jobs == nil {
-		return nil, malformed(endpoint, "jobs is missing")
+	if response.Jobs == nil || response.TotalCount != 0 && response.TotalCount != len(response.Jobs) {
+		return nil, malformed(endpoint, "jobs are missing or require unsupported pagination")
 	}
 	for _, job := range response.Jobs {
 		if err := validateJob(job, endpoint); err != nil {
 			return nil, err
+		}
+		if job.RunAttempt != 0 && job.RunAttempt != attempt {
+			return nil, malformed(endpoint, "job belongs to a different attempt")
 		}
 	}
 	return response.Jobs, nil
@@ -482,8 +838,8 @@ func (c collector) getRelease(ctx context.Context, repository, version string) (
 		return releaseResponse{}, false, malformed(endpoint, "release fields are missing")
 	}
 	for _, asset := range response.Assets {
-		if asset.Name == "" {
-			return releaseResponse{}, false, malformed(endpoint, "release asset name is missing")
+		if asset.ID <= 0 || asset.Name == "" || asset.State != "uploaded" || asset.Size <= 0 || !releaseAssetDigestPattern.MatchString(asset.Digest) {
+			return releaseResponse{}, false, malformed(endpoint, "release asset identity or digest is malformed")
 		}
 	}
 	return response, true, nil
@@ -500,7 +856,8 @@ func stageFromRun(run workflowRun) (stage, error) {
 func evidenceFromRun(run workflowRun) *runEvidence {
 	return &runEvidence{
 		ID: run.ID, Attempt: run.RunAttempt, Event: run.Event, Status: run.Status,
-		Conclusion: run.Conclusion, HeadBranch: run.HeadBranch, HeadSHA: run.HeadSHA, URL: run.HTMLURL,
+		Conclusion: run.Conclusion, HeadBranch: run.HeadBranch, HeadSHA: run.HeadSHA,
+		WorkflowPath: run.Path, URL: run.HTMLURL,
 	}
 }
 
@@ -536,7 +893,7 @@ func stageFromNamedJob(jobs []workflowJob, name string, publisher stage) stage {
 	}}
 }
 
-func reduceReleaseStage(version string, release releaseResponse, found bool, jobs []workflowJob, publisher stage, tagFound bool) stage {
+func reduceReleaseStage(version string, release releaseResponse, found bool, jobs []workflowJob, publisher stage, tagFound bool, expectedAssets []string) stage {
 	if !tagFound {
 		return stage{State: stateNotStarted, Reason: "tag_not_found"}
 	}
@@ -557,12 +914,12 @@ func reduceReleaseStage(version string, release releaseResponse, found bool, job
 	}
 	evidence := releaseEvidence{
 		TagName: release.TagName, Draft: release.Draft, Prerelease: release.Prerelease,
-		URL: release.HTMLURL, Assets: compareAssets(release.Assets),
+		URL: release.HTMLURL, Assets: compareAssets(release.Assets, expectedAssets),
 	}
 	if release.TagName != version || release.Draft || release.Prerelease {
 		return stage{State: stateInconsistent, Reason: "release_metadata_mismatch", Release: &evidence}
 	}
-	if len(evidence.Assets.Missing) == 0 && len(evidence.Assets.Unexpected) == 0 && len(evidence.Assets.Duplicates) == 0 {
+	if evidence.Assets.DigestComplete && len(evidence.Assets.Missing) == 0 && len(evidence.Assets.Unexpected) == 0 && len(evidence.Assets.Duplicates) == 0 {
 		return stage{State: stateSucceeded, Release: &evidence}
 	}
 	switch releaseJob.State {
@@ -575,7 +932,7 @@ func reduceReleaseStage(version string, release releaseResponse, found bool, job
 	}
 }
 
-func compareAssets(assets []releaseAsset) assetEvidence {
+func compareAssets(assets []releaseAsset, expectedAssets []string) assetEvidence {
 	want := make(map[string]struct{}, len(expectedAssets))
 	for _, name := range expectedAssets {
 		want[name] = struct{}{}
@@ -584,7 +941,10 @@ func compareAssets(assets []releaseAsset) assetEvidence {
 	for _, asset := range assets {
 		counts[asset.Name]++
 	}
-	result := assetEvidence{ExpectedCount: len(expectedAssets), ObservedCount: len(assets), Missing: []string{}, Unexpected: []string{}, Duplicates: []string{}}
+	result := assetEvidence{
+		ExpectedCount: len(expectedAssets), ObservedCount: len(assets), Missing: []string{},
+		Unexpected: []string{}, Duplicates: []string{}, Digests: []releaseAssetEvidence{},
+	}
 	for _, name := range expectedAssets {
 		if counts[name] == 0 {
 			result.Missing = append(result.Missing, name)
@@ -598,9 +958,19 @@ func compareAssets(assets []releaseAsset) assetEvidence {
 			result.Duplicates = append(result.Duplicates, name)
 		}
 	}
+	for _, asset := range assets {
+		if _, expected := want[asset.Name]; !expected || counts[asset.Name] != 1 {
+			continue
+		}
+		result.Digests = append(result.Digests, releaseAssetEvidence{
+			ID: asset.ID, Name: asset.Name, SHA256: strings.TrimPrefix(asset.Digest, "sha256:"), Size: asset.Size,
+		})
+	}
+	sort.Slice(result.Digests, func(i, j int) bool { return result.Digests[i].Name < result.Digests[j].Name })
 	sort.Strings(result.Missing)
 	sort.Strings(result.Unexpected)
 	sort.Strings(result.Duplicates)
+	result.DigestComplete = len(result.Digests) == len(expectedAssets) && len(result.Missing) == 0 && len(result.Unexpected) == 0 && len(result.Duplicates) == 0
 	return result
 }
 
@@ -618,6 +988,26 @@ func collectFailedJobs(jobs []workflowJob) []failedJob {
 		}
 		sort.Slice(failed.FailedSteps, func(i, j int) bool { return failed.FailedSteps[i].Number < failed.FailedSteps[j].Number })
 		result = append(result, failed)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name == result[j].Name {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+func mergeFailedJobs(groups ...[]failedJob) []failedJob {
+	byID := make(map[int64]failedJob)
+	for _, group := range groups {
+		for _, job := range group {
+			byID[job.ID] = job
+		}
+	}
+	result := make([]failedJob, 0, len(byID))
+	for _, job := range byID {
+		result = append(result, job)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Name == result[j].Name {
@@ -822,7 +1212,7 @@ func validateQuery(value query) error {
 	if !repositoryPattern.MatchString(value.Repository) {
 		return fmt.Errorf("repository must have the form OWNER/REPO")
 	}
-	if !versionPattern.MatchString(value.Version) {
+	if !releasecontract.IsVersion(value.Version) {
 		return fmt.Errorf("version must match vMAJOR.MINOR.PATCH")
 	}
 	if value.SourceSHA != "" && !shaPattern.MatchString(value.SourceSHA) {

@@ -79,6 +79,8 @@ jq -e --arg repository "$repository" '
   .source_type == "Repository" and
   .source == $repository and
   .enforcement == "active" and
+  (.bypass_actors | type) == "array" and
+  .bypass_actors == [] and
   .current_user_can_bypass == "never" and
   .conditions.ref_name.include == ["refs/heads/main"] and
   .conditions.ref_name.exclude == [] and
@@ -132,6 +134,8 @@ jq -e --arg repository "$repository" '
   .source_type == "Repository" and
   .source == $repository and
   .enforcement == "active" and
+  (.bypass_actors | type) == "array" and
+  .bypass_actors == [] and
   .current_user_can_bypass == "never" and
   .conditions.ref_name.include == ["refs/tags/v*"] and
   .conditions.ref_name.exclude == [] and

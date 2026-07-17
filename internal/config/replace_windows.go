@@ -75,8 +75,46 @@ func readConfigFile(path string) ([]byte, error) {
 		configFilesystemRetryTimeout,
 		configFilesystemRetryDelay,
 		defaultConfigReplaceOperations(),
-		os.ReadFile,
+		readConfigFileOnce,
 	)
+}
+
+// readConfigFileOnce allows the config pathname to be atomically replaced
+// while this handle continues reading the prior complete file. os.ReadFile's
+// Windows handle omits FILE_SHARE_DELETE, which can otherwise make a
+// concurrent MoveFileEx(MOVEFILE_REPLACE_EXISTING) exhaust its bounded retry.
+func readConfigFileOnce(path string) ([]byte, error) {
+	file, err := openConfigFileForRead(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
+}
+
+func openConfigFileForRead(path string) (*os.File, error) {
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	handle, err := windows.CreateFile(
+		pathPointer,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, &os.PathError{Op: "open", Path: path, Err: windows.ERROR_INVALID_HANDLE}
+	}
+	return file, nil
 }
 
 func readConfigFileWithRetry(

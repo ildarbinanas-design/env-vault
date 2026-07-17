@@ -90,7 +90,22 @@ type workflowStrategy struct {
 }
 
 type workflowMatrix struct {
-	Include []workflowTarget `yaml:"include"`
+	Include    []workflowTarget `yaml:"include"`
+	Expression string           `yaml:"-"`
+}
+
+func (matrix *workflowMatrix) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		matrix.Expression = node.Value
+		return nil
+	}
+	type plainMatrix workflowMatrix
+	var decoded plainMatrix
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*matrix = workflowMatrix(decoded)
+	return nil
 }
 
 type workflowTarget struct {
@@ -265,7 +280,7 @@ func TestReleasePlanningAppScopeAuditIsReadOnly(t *testing.T) {
 			t.Fatalf("planning scope audit missing %q", snippet)
 		}
 	}
-	if verify.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
+	if len(verify.Env) != 1 || verify.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
 		t.Fatalf("planning scope audit verify env=%v", verify.Env)
 	}
 }
@@ -331,6 +346,58 @@ func TestReleasePleaseWaitsForExactGreenMainAndDefersPublishing(t *testing.T) {
 			t.Fatalf("release classifier missing %q", snippet)
 		}
 	}
+	promotionSetup := namedStep(t, plan, "Set up Go for promotion verification")
+	if promotionSetup.If != "steps.classify.outputs.publish == 'true'" || promotionSetup.Uses != "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16" || promotionSetup.With["go-version-file"] != "go.mod" {
+		t.Fatalf("promotion verification setup=%+v", promotionSetup)
+	}
+	promotionDownload := namedStep(t, plan, "Download exact promotion manifest from triggering CI attempt")
+	if promotionDownload.If != "steps.classify.outputs.publish == 'true'" || promotionDownload.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
+		t.Fatalf("promotion manifest download=%+v", promotionDownload)
+	}
+	for key, want := range map[string]string{
+		"name":         "env-vault-promotion-${{ steps.classify.outputs.source_sha }}-attempt-${{ github.event.workflow_run.run_attempt }}",
+		"path":         "promotion",
+		"github-token": "${{ github.token }}",
+		"repository":   "${{ github.repository }}",
+		"run-id":       "${{ github.event.workflow_run.id }}",
+	} {
+		if promotionDownload.With[key] != want {
+			t.Fatalf("promotion manifest download %s=%q, want %q", key, promotionDownload.With[key], want)
+		}
+	}
+	promotionVerify := namedStep(t, plan, "Verify exact promotion manifest before authorization and tag")
+	if promotionVerify.If != "steps.classify.outputs.publish == 'true'" {
+		t.Fatalf("promotion verification if=%q", promotionVerify.If)
+	}
+	for _, snippet := range []string{
+		"go run ./cmd/release-promotion verify",
+		"--manifest promotion/promotion-manifest.json",
+		`--source-sha "${{ steps.classify.outputs.source_sha }}"`,
+		`--version "${{ steps.classify.outputs.version }}"`,
+		`--run-id "${{ github.event.workflow_run.id }}"`,
+		`--run-attempt "${{ github.event.workflow_run.run_attempt }}"`,
+	} {
+		if !strings.Contains(promotionVerify.Run, snippet) {
+			t.Fatalf("promotion verification missing %q", snippet)
+		}
+	}
+	preTagInventory := namedStep(t, plan, "Recheck exact promotion artifact inventory immediately before tag")
+	if preTagInventory.If != "steps.classify.outputs.publish == 'true'" || preTagInventory.Env["GH_TOKEN"] != "${{ github.token }}" {
+		t.Fatalf("pre-tag inventory=%+v", preTagInventory)
+	}
+	for _, snippet := range []string{
+		"actions/runs/${CI_RUN_ID}",
+		"actions/runs/${CI_RUN_ID}/artifacts?per_page=100",
+		"go run ./cmd/release-promotion inventory",
+		"--run-json ci-run.json",
+		"--artifacts-json ci-artifacts.json",
+		`--source-sha "$SOURCE_SHA"`,
+		`--run-attempt "$CI_RUN_ATTEMPT"`,
+	} {
+		if !strings.Contains(preTagInventory.Run, snippet) {
+			t.Fatalf("pre-tag inventory missing %q", snippet)
+		}
+	}
 	current := namedStep(t, plan, "Require the planning commit to remain current")
 	if current.ID != "current" || current.Env["GH_TOKEN"] != "${{ github.token }}" || current.Env["EXPECTED_SHA"] != "${{ github.event.workflow_run.head_sha }}" {
 		t.Fatalf("release planning current-head step=%+v", current)
@@ -361,7 +428,7 @@ func TestReleasePleaseWaitsForExactGreenMainAndDefersPublishing(t *testing.T) {
 		"client-id":                 "${{ vars.RELEASE_APP_CLIENT_ID }}",
 		"private-key":               "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
 		"owner":                     "${{ github.repository_owner }}",
-		"repositories":              "env-vault",
+		"repositories":              "${{ github.event.repository.name }}",
 		"permission-administration": "read",
 		"permission-contents":       "write",
 		"permission-issues":         "write",
@@ -372,7 +439,7 @@ func TestReleasePleaseWaitsForExactGreenMainAndDefersPublishing(t *testing.T) {
 		}
 	}
 	identity := namedStep(t, plan, "Require the exact release planning App identity")
-	if identity.If != "steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'" || identity.Env["ACTUAL_APP_SLUG"] != "${{ steps.release-token.outputs.app-slug }}" || !strings.Contains(identity.Run, `"$ACTUAL_APP_SLUG" != "env-vault-release-planning"`) {
+	if identity.If != "steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'" || identity.Env["ACTUAL_APP_SLUG"] != "${{ steps.release-token.outputs.app-slug }}" || !strings.Contains(identity.Run, `.apps[] | select(.id == "release_planning")`) || !strings.Contains(identity.Run, `"$ACTUAL_APP_SLUG" != "$expected_slug"`) {
 		t.Fatalf("release planning App identity step=%+v", identity)
 	}
 	settings := namedStep(t, plan, "Verify repository release settings and bypass policy")
@@ -423,6 +490,17 @@ func TestReleasePleaseWaitsForExactGreenMainAndDefersPublishing(t *testing.T) {
 		if !strings.Contains(tag.Run, snippet) {
 			t.Fatalf("release tag step missing %q", snippet)
 		}
+	}
+	positions := make(map[string]int, len(plan.Steps))
+	for index, step := range plan.Steps {
+		positions[step.Name] = index
+	}
+	if !(positions["Classify the exact green main commit"] < positions["Download exact promotion manifest from triggering CI attempt"] &&
+		positions["Download exact promotion manifest from triggering CI attempt"] < positions["Verify exact promotion manifest before authorization and tag"] &&
+		positions["Verify exact promotion manifest before authorization and tag"] < positions["Verify generated release pull request authorization"] &&
+		positions["Verify generated release pull request authorization"] < positions["Recheck exact promotion artifact inventory immediately before tag"] &&
+		positions["Recheck exact promotion artifact inventory immediately before tag"]+1 == positions["Create or verify the exact release tag"]) {
+		t.Fatalf("promotion must verify before authorization/tag, step positions=%v", positions)
 	}
 	allSteps := fmt.Sprintf("%v", plan.Steps)
 	for _, forbidden := range []string{"gh release create", "--generate-notes", "TAP_APP_PRIVATE_KEY"} {
@@ -588,7 +666,7 @@ func TestSemverComparisonHandlesLargeNumericComponents(t *testing.T) {
 
 func TestManualReleaseInputAndGates(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
-	const wantRunName = "env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }}"
+	const wantRunName = "env-vault-publication event=${{ github.event_name }} version=${{ github.event.inputs.version || github.ref_name }} repair=${{ github.event.inputs.repair || 'none' }} state=${{ github.event.inputs.repair_state_digest || 'automatic' }}"
 	if wf.RunName != wantRunName {
 		t.Fatalf("build-binaries run-name=%q, want %q", wf.RunName, wantRunName)
 	}
@@ -610,6 +688,10 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	if !repair.Required || repair.Default != "none" || repair.Type != "choice" || !slices.Equal(repair.Options, wantRepairOptions) {
 		t.Fatalf("repair input required=%v default=%q type=%q options=%v", repair.Required, repair.Default, repair.Type, repair.Options)
 	}
+	repairState, ok := wf.On.WorkflowDispatch.Inputs["repair_state_digest"]
+	if !ok || repairState.Required || repairState.Default != "" || repairState.Type != "string" {
+		t.Fatalf("repair_state_digest input=%+v present=%v", repairState, ok)
+	}
 
 	metadata := wf.Jobs["metadata"]
 	checkout := usesStep(t, metadata, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
@@ -624,18 +706,20 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	}
 	resolve := namedStep(t, metadata, "Resolve build version and release mode")
 	for _, snippet := range []string{
-		"refs/heads/${DEFAULT_BRANCH}",
-		"vMAJOR.MINOR.PATCH",
+		"refs/tags/${INPUT_VERSION}",
+		"manual repairs must run from the exact immutable release tag ref",
+		`"$GITHUB_SHA" != "$source_sha"`,
 		"GITHUB_OUTPUT",
 		"publish=false",
 		"repair mode requires an explicit version",
+		"repair mode requires an exact lowercase 64-hex repair_state_digest",
+		"repair_state_digest is only valid for an explicit repair mode",
+		"manual steady-state publication requires a plan-derived repair mode",
 		"scripts/release/resolve-tag-sha.sh",
 		"publishing requires an existing exact tag created by release planning",
 		`semver-compare.sh "${version#v}" "0.0.7"`,
-		"get-release-state.sh",
-		"legacy repair requires an existing stable GitHub Release",
-		`compare/${source_sha}...${main_sha}`,
-		`legacy_release" != "true`,
+		"outside the steady-state publisher",
+		"releasectl release legacy-rebuild plan/apply",
 		"run_release",
 		"run_homebrew",
 		"source_sha",
@@ -645,25 +729,46 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 		"sleep 5",
 		`"$authorized" != "true"`,
 		"tag source is not a deterministic release commit",
+		"v0.0.8 is an intentionally failed immutable tag",
+		"actions/workflows/ci.yml/runs?event=push&status=success&head_sha=${source_sha}",
+		`.head_repository.full_name == $repository`,
+		`.path == ".github/workflows/ci.yml"`,
+		`"$(jq 'length' <<< "$matches")" == "1"`,
+		"ci_run_attempt",
+		"use_promotion=true",
+		`version="ci-${source_sha}"`,
 	} {
 		if !strings.Contains(resolve.Run, snippet) {
 			t.Fatalf("metadata resolution missing %q", snippet)
 		}
 	}
-	if resolve.Env["RELEASE_APP_SLUG"] != "env-vault-release-planning" {
-		t.Fatalf("release metadata App slug=%q", resolve.Env["RELEASE_APP_SLUG"])
+	if resolve.Env["RELEASE_APP_SLUG"] != "" || !strings.Contains(resolve.Run, `.apps[] | select(.id == "release_planning")`) || !strings.Contains(resolve.Run, "release/contract.v1.json") || !strings.Contains(resolve.Run, "export RELEASE_APP_SLUG") {
+		t.Fatalf("release metadata does not derive the App slug from the contract: env=%q run=%q", resolve.Env["RELEASE_APP_SLUG"], resolve.Run)
 	}
-	if !strings.Contains(resolve.Run, "^v(0|[1-9][0-9]*)") {
-		t.Fatal("metadata resolution missing strict semantic version gate")
+	if !strings.Contains(resolve.Run, "source scripts/release/lib.sh") || !strings.Contains(resolve.Run, `release_require_version "$version"`) {
+		t.Fatal("metadata resolution does not use the declarative release version policy")
+	}
+	for key, want := range map[string]string{
+		"use_promotion":        "${{ steps.resolve.outputs.use_promotion }}",
+		"ci_run_id":            "${{ steps.resolve.outputs.ci_run_id }}",
+		"ci_run_attempt":       "${{ steps.resolve.outputs.ci_run_attempt }}",
+		"tap_repository":       "${{ steps.resolve.outputs.tap_repository }}",
+		"tap_repository_owner": "${{ steps.resolve.outputs.tap_repository_owner }}",
+		"tap_repository_name":  "${{ steps.resolve.outputs.tap_repository_name }}",
+		"tap_ci_workflow":      "${{ steps.resolve.outputs.tap_ci_workflow }}",
+	} {
+		if metadata.Outputs[key] != want {
+			t.Fatalf("metadata output %s=%q, want %q", key, metadata.Outputs[key], want)
+		}
 	}
 
 	release := wf.Jobs["release"]
-	for _, need := range []string{"metadata", "preflight", "quality"} {
+	for _, need := range []string{"metadata", "preflight", "quality", "promotion"} {
 		if !slices.Contains(release.Needs, need) {
 			t.Fatalf("release needs=%v, missing %q", release.Needs, need)
 		}
 	}
-	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "needs.preflight.result == 'success'", "run_release == 'true'", "needs.quality.result == 'success'"} {
+	for _, snippet := range []string{"always()", "!cancelled()", "needs.metadata.result == 'success'", "needs.preflight.result == 'success'", "run_release == 'true'", "use_promotion == 'true'", "needs.quality.result == 'skipped'", "needs.promotion.result == 'success'"} {
 		if !strings.Contains(release.If, snippet) {
 			t.Fatalf("release if=%q, missing %q", release.If, snippet)
 		}
@@ -682,6 +787,111 @@ func TestManualReleaseInputAndGates(t *testing.T) {
 	}
 }
 
+func TestPublisherConsumesOneVerifiedCIPromotionAttemptWithoutSteadyStateRebuild(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
+	metadata := wf.Jobs["metadata"]
+	resolve := namedStep(t, metadata, "Resolve build version and release mode")
+	if strings.Contains(resolve.Run, "legacy_release") {
+		t.Fatal("steady-state publisher still contains a legacy rebuild path")
+	}
+	for _, snippet := range []string{
+		`ci_run_id="$(jq -er '.[0].id`,
+		`ci_run_attempt="$(jq -er '.[0].run_attempt`,
+		`use_promotion=true`,
+		`if [[ "$repair" == "none" || "$repair" == "release-assets" ]]`,
+		`run_build=false`,
+	} {
+		if !strings.Contains(resolve.Run, snippet) {
+			t.Fatalf("publisher metadata missing promotion/rebuild split %q", snippet)
+		}
+	}
+
+	quality := wf.Jobs["quality"]
+	if quality.If != "needs.metadata.outputs.run_build == 'true'" {
+		t.Fatalf("fallback quality condition=%q", quality.If)
+	}
+	promotion := wf.Jobs["promotion"]
+	if promotion.If != "needs.metadata.outputs.use_promotion == 'true'" || !slices.Equal(promotion.Needs, []string{"metadata"}) || promotion.RunsOn != "ubuntu-latest" {
+		t.Fatalf("promotion job if=%q needs=%v runner=%q", promotion.If, promotion.Needs, promotion.RunsOn)
+	}
+	if len(promotion.Permissions) != 2 || promotion.Permissions["actions"] != "read" || promotion.Permissions["contents"] != "read" || promotion.Environment != "" {
+		t.Fatalf("promotion job permission boundary=%v environment=%q", promotion.Permissions, promotion.Environment)
+	}
+	checkout := usesStep(t, promotion, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
+	if checkout.With["ref"] != "${{ needs.metadata.outputs.source_sha }}" || checkout.With["persist-credentials"] != "false" {
+		t.Fatalf("promotion checkout=%v", checkout.With)
+	}
+	inventory := namedStep(t, promotion, "Require exact current-attempt CI artifact inventory")
+	for _, snippet := range []string{
+		"actions/runs/${CI_RUN_ID}",
+		"actions/runs/${CI_RUN_ID}/artifacts?per_page=100",
+		"go run ./cmd/release-promotion inventory",
+		"--run-json ci-run.json",
+		"--artifacts-json ci-artifacts.json",
+		`--source-sha "$SOURCE_SHA"`,
+		`--run-attempt "$CI_RUN_ATTEMPT"`,
+	} {
+		if !strings.Contains(inventory.Run, snippet) {
+			t.Fatalf("promotion inventory missing %q", snippet)
+		}
+	}
+	manifestDownload := namedStep(t, promotion, "Download exact promotion manifest from CI")
+	for key, want := range map[string]string{
+		"name":       "env-vault-promotion-${{ needs.metadata.outputs.source_sha }}-attempt-${{ needs.metadata.outputs.ci_run_attempt }}",
+		"run-id":     "${{ needs.metadata.outputs.ci_run_id }}",
+		"repository": "${{ github.repository }}",
+	} {
+		if manifestDownload.With[key] != want {
+			t.Fatalf("promotion manifest download %s=%q, want %q", key, manifestDownload.With[key], want)
+		}
+	}
+	artifactsDownload := namedStep(t, promotion, "Download five exact native release artifacts from CI")
+	if artifactsDownload.With["pattern"] != "env-vault-release-*-attempt-${{ needs.metadata.outputs.ci_run_attempt }}" || artifactsDownload.With["run-id"] != "${{ needs.metadata.outputs.ci_run_id }}" || artifactsDownload.With["merge-multiple"] != "true" {
+		t.Fatalf("promotion artifacts download=%v", artifactsDownload.With)
+	}
+	verify := namedStep(t, promotion, "Verify promotion and stage exact publisher bundle")
+	for _, snippet := range []string{
+		"go run ./cmd/release-promotion verify",
+		"--manifest promotion-manifest/promotion-manifest.json",
+		`--source-sha "$SOURCE_SHA"`,
+		`--version "$VERSION"`,
+		`--run-id "$CI_RUN_ID"`,
+		`--run-attempt "$CI_RUN_ATTEMPT"`,
+		"--artifacts promotion-artifacts",
+		`[[ "$(find verified-bundle -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "11" ]]`,
+	} {
+		if !strings.Contains(verify.Run, snippet) {
+			t.Fatalf("promotion bundle verification missing %q", snippet)
+		}
+	}
+	bundleUpload := namedStep(t, promotion, "Upload publisher-local verified bundle")
+	if bundleUpload.With["name"] != "env-vault-publisher-bundle-${{ needs.metadata.outputs.source_sha }}-attempt-${{ github.run_attempt }}" || bundleUpload.With["path"] != "verified-bundle" || bundleUpload.With["if-no-files-found"] != "error" {
+		t.Fatalf("verified publisher bundle upload=%v", bundleUpload.With)
+	}
+
+	release := wf.Jobs["release"]
+	promotionBundle := namedStep(t, release, "Download publisher-local verified promotion bundle")
+	if promotionBundle.If != "needs.metadata.outputs.use_promotion == 'true'" || promotionBundle.With["name"] != "env-vault-publisher-bundle-${{ needs.metadata.outputs.source_sha }}-attempt-${{ github.run_attempt }}" {
+		t.Fatalf("release promotion bundle download=%+v", promotionBundle)
+	}
+	for _, step := range release.Steps {
+		if step.Name == "Download legacy rebuild artifacts" || strings.Contains(step.If, "legacy_release") {
+			t.Fatalf("steady-state release retains legacy artifact path: %+v", step)
+		}
+	}
+	for _, step := range release.Steps {
+		if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "" && step.With["pattern"] == "" {
+			t.Fatalf("release contains unscoped artifact download: %+v", step)
+		}
+	}
+	for _, jobName := range []string{"homebrew", "health"} {
+		job := wf.Jobs[jobName]
+		if !slices.Contains(job.Needs, "promotion") || !strings.Contains(job.If, "needs.metadata.outputs.use_promotion != 'true' || needs.promotion.result == 'success'") {
+			t.Fatalf("%s does not fail closed on new-version promotion: needs=%v if=%q", jobName, job.Needs, job.If)
+		}
+	}
+}
+
 func TestHomebrewMonotonicPreflightRunsBeforeReleaseMutation(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
 	preflight := wf.Jobs["preflight"]
@@ -695,7 +905,7 @@ func TestHomebrewMonotonicPreflightRunsBeforeReleaseMutation(t *testing.T) {
 	}
 	guard := namedStep(t, preflight, "Guard Homebrew version monotonicity")
 	for _, snippet := range []string{
-		"https://github.com/ildarbinanas-design/homebrew-tap.git",
+		`"https://github.com/${TAP_REPOSITORY}.git"`,
 		"semver-compare.sh",
 		"refusing release downgrade",
 		"exit 1",
@@ -703,6 +913,9 @@ func TestHomebrewMonotonicPreflightRunsBeforeReleaseMutation(t *testing.T) {
 		if !strings.Contains(guard.Run, snippet) {
 			t.Fatalf("preflight guard missing %q", snippet)
 		}
+	}
+	if guard.Env["TAP_REPOSITORY"] != "${{ needs.metadata.outputs.tap_repository }}" || strings.Contains(guard.Run, "ildarbinanas-design/homebrew-tap") {
+		t.Fatalf("preflight does not use the contract-derived tap repository: env=%v run=%q", guard.Env, guard.Run)
 	}
 	if !slices.Contains(wf.Jobs["release"].Needs, "preflight") {
 		t.Fatal("release mutation is not gated by monotonic preflight")
@@ -727,8 +940,8 @@ func TestResolvedVersionFeedsAllReleaseStages(t *testing.T) {
 	}
 
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	build := reusable.Jobs["build"]
-	if step := namedStep(t, build, "Build"); step.Env["VERSION"] != "${{ inputs.version }}" {
+	build := reusable.Jobs["native"]
+	if step := namedStep(t, build, "Build native release artifact"); step.Env["VERSION"] != "${{ needs.resolve.outputs.version }}" {
 		t.Fatalf("reusable build VERSION=%q", step.Env["VERSION"])
 	}
 	checks := []struct {
@@ -808,6 +1021,12 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 			t.Fatalf("workflow_call input %s required=%v type=%q", inputName, input.Required, input.Type)
 		}
 	}
+	for _, inputName := range []string{"event_name", "pull_request_head_ref", "pull_request_head_sha"} {
+		input, ok := reusable.On.WorkflowCall.Inputs[inputName]
+		if !ok || input.Required || input.Type != "string" || input.Default != "" {
+			t.Fatalf("optional workflow_call input %s=%+v", inputName, input)
+		}
+	}
 
 	ci := readWorkflow(t, "../.github/workflows/ci.yml")
 	if !slices.Equal(ci.On.Push.Branches, []string{"main"}) {
@@ -816,8 +1035,8 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if !slices.Equal(ci.On.PullRequest.Types, []string{"opened", "synchronize", "reopened"}) {
 		t.Fatalf("CI pull_request types=%v, want code-bearing events only", ci.On.PullRequest.Types)
 	}
-	if ci.Concurrency.Group != "ci-${{ github.event.pull_request.number || github.ref }}" || !ci.Concurrency.CancelInProgress {
-		t.Fatalf("CI concurrency=%+v, want stale full runs cancelled per pull request or branch", ci.Concurrency)
+	if ci.Concurrency.Group != "ci-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || github.event.pull_request.number || github.ref }}" || !ci.Concurrency.CancelInProgress {
+		t.Fatalf("CI concurrency=%+v, want manual runs isolated from automatic branch runs", ci.Concurrency)
 	}
 	if len(ci.Jobs) != 2 {
 		t.Fatalf("CI has %d jobs, want reusable quality caller and stable gate", len(ci.Jobs))
@@ -843,6 +1062,12 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if prTitle.RunsOn != "ubuntu-latest" {
 		t.Fatalf("PR title runner=%q", prTitle.RunsOn)
 	}
+	// The edited event must rerun the same required context. In particular, the
+	// adversarial sequence invalid title -> body-only edit cannot reuse a stale
+	// successful context or skip the job that previously failed.
+	if prTitle.If != "" {
+		t.Fatalf("PR title job has conditional skip %q; body edits must rerun validation", prTitle.If)
+	}
 	titleCheck := namedStep(t, prTitle, "Require a Conventional Commit pull request title")
 	if titleCheck.Uses != "" {
 		t.Fatalf("PR title check uses external action %q, want shell-only validation", titleCheck.Uses)
@@ -859,7 +1084,10 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	if ciQuality.Uses != "./.github/workflows/reusable-quality.yml" {
 		t.Fatalf("CI quality uses=%q", ciQuality.Uses)
 	}
-	if ciQuality.With["source_sha"] != "${{ github.sha }}" || ciQuality.With["version"] != "ci-${{ github.sha }}" {
+	if ciQuality.With["source_sha"] != "${{ github.sha }}" || ciQuality.With["version"] != "auto" ||
+		ciQuality.With["event_name"] != "${{ github.event_name }}" ||
+		ciQuality.With["pull_request_head_ref"] != "${{ github.event.pull_request.head.ref || '' }}" ||
+		ciQuality.With["pull_request_head_sha"] != "${{ github.event.pull_request.head.sha || '' }}" {
 		t.Fatalf("CI quality inputs=%v", ciQuality.With)
 	}
 	if len(ciQuality.Permissions) != 2 || ciQuality.Permissions["contents"] != "read" || ciQuality.Permissions["actions"] != "read" {
@@ -887,6 +1115,11 @@ func TestCIAndReleaseCallReusableQuality(t *testing.T) {
 	}
 	if len(quality.Permissions) != 2 || quality.Permissions["contents"] != "read" || quality.Permissions["actions"] != "read" {
 		t.Fatalf("release reusable quality permissions=%v, want contents/actions read", quality.Permissions)
+	}
+
+	dependencyReview := readWorkflow(t, "../.github/workflows/dependency-review.yml")
+	if dependencyReview.Concurrency.Group != "dependency-review-${{ github.event.pull_request.number }}" || !dependencyReview.Concurrency.CancelInProgress {
+		t.Fatalf("dependency review concurrency=%+v", dependencyReview.Concurrency)
 	}
 	for _, removed := range []string{"verify", "license", "build", "smoke"} {
 		if _, ok := release.Jobs[removed]; ok {
@@ -943,113 +1176,109 @@ func TestReusableQualityRunsPinnedLicenseGateNatively(t *testing.T) {
 }
 
 func TestReusableQualityRequiresTidyVerifiedModules(t *testing.T) {
-	module := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "module")
-	if module.RunsOn != "ubuntu-latest" || module.Env["GOTOOLCHAIN"] != "local" {
-		t.Fatalf("module job runner=%q env=%v", module.RunsOn, module.Env)
+	resolve := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "resolve")
+	if resolve.Name != "resolve-source-quality" || resolve.RunsOn != "ubuntu-latest" || resolve.Env["GOTOOLCHAIN"] != "local" {
+		t.Fatalf("resolve/source-quality job name=%q runner=%q env=%v", resolve.Name, resolve.RunsOn, resolve.Env)
 	}
-	checkout := usesStep(t, module, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
+	checkout := usesStep(t, resolve, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
-		t.Fatalf("module checkout ref=%q", checkout.With["ref"])
+		t.Fatalf("resolve checkout ref=%q", checkout.With["ref"])
 	}
-	setup := usesStep(t, module, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
+	if checkout.With["fetch-depth"] != "3" {
+		t.Fatalf("resolve checkout depth=%q, want synthetic merge, PR head, and its parent for deterministic classification", checkout.With["fetch-depth"])
+	}
+	setup := usesStep(t, resolve, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
-		t.Fatalf("module setup-go inputs=%v", setup.With)
+		t.Fatalf("resolve setup-go inputs=%v", setup.With)
 	}
-	if namedStep(t, module, "Require tidy module files").Run != "go mod tidy -diff" {
+	version := namedStep(t, resolve, "Resolve exact candidate version")
+	for _, snippet := range []string{
+		"release-please--branches--main--components--env-vault",
+		"classify-release-commit.sh",
+		`"${source_parents[2]}" != "$PR_HEAD_SHA"`,
+		`resolved="ci-${SOURCE_SHA}"`,
+		"release_candidate=true",
+	} {
+		if !strings.Contains(version.Run, snippet) {
+			t.Fatalf("exact version resolver missing %q", snippet)
+		}
+	}
+	contract := namedStep(t, resolve, "Validate release contract and resolve native matrix")
+	for _, snippet := range []string{"go run ./cmd/release-contract matrix --json", "length == 5", "GITHUB_OUTPUT"} {
+		if !strings.Contains(contract.Run, snippet) {
+			t.Fatalf("release contract resolver missing %q", snippet)
+		}
+	}
+	if resolve.Outputs["matrix"] != "${{ steps.contract.outputs.matrix }}" || resolve.Outputs["version"] != "${{ steps.version.outputs.version }}" {
+		t.Fatalf("resolve outputs=%v", resolve.Outputs)
+	}
+	race := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "race")
+	if namedStep(t, race, "Require tidy module files").Run != "go mod tidy -diff" {
 		t.Fatal("module job must fail on a non-idempotent go mod tidy")
 	}
-	if namedStep(t, module, "Verify module cache").Run != "go mod verify" {
+	if namedStep(t, race, "Verify module cache").Run != "go mod verify" {
 		t.Fatal("module job must verify downloaded modules")
+	}
+	if namedStep(t, race, "Run source tests").Run != "go test ./..." || namedStep(t, race, "Vet source").Run != "go vet ./..." || namedStep(t, race, "Run source smoke tests").Run != "scripts/smoke.sh" || namedStep(t, race, "Run source race tests").Run != "go test -race ./..." {
+		t.Fatal("source-quality job must retain tests, vet, and smoke guarantees")
+	}
+	for _, expensive := range []string{"Require tidy module files", "Verify module cache", "Run source tests", "Vet source", "Run source smoke tests"} {
+		for _, step := range resolve.Steps {
+			if step.Name == expensive {
+				t.Fatalf("resolve serializes expensive source gate %q ahead of the native matrix", expensive)
+			}
+		}
 	}
 }
 
 func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	e2e, ok := reusable.Jobs["e2e"]
+	native, ok := reusable.Jobs["native"]
 	if !ok {
-		t.Fatal("reusable quality workflow is missing e2e job")
+		t.Fatal("reusable quality workflow is missing native artifact-quality job")
 	}
-	if e2e.Name != "e2e-${{ matrix.goos }}-${{ matrix.goarch }}" {
-		t.Fatalf("e2e name=%q", e2e.Name)
+	if native.Name != "artifact-quality-${{ matrix.goos }}-${{ matrix.goarch }}" {
+		t.Fatalf("native name=%q", native.Name)
 	}
-	if !slices.Equal(e2e.Needs, []string{"build"}) {
-		t.Fatalf("e2e needs=%v, want build artifacts", e2e.Needs)
+	if !slices.Equal(native.Needs, []string{"resolve"}) {
+		t.Fatalf("native needs=%v, want resolved contract and exact version", native.Needs)
 	}
-	if e2e.RunsOn != "${{ matrix.runner }}" || e2e.TimeoutMinutes != 90 {
-		t.Fatalf("e2e runner=%q timeout=%d", e2e.RunsOn, e2e.TimeoutMinutes)
+	if native.RunsOn != "${{ matrix.runner }}" || native.TimeoutMinutes != 90 {
+		t.Fatalf("native runner=%q timeout=%d", native.RunsOn, native.TimeoutMinutes)
 	}
-	if e2e.Env["GOTOOLCHAIN"] != "local" {
-		t.Fatalf("e2e GOTOOLCHAIN=%q, want local", e2e.Env["GOTOOLCHAIN"])
+	if native.Env["GOTOOLCHAIN"] != "local" {
+		t.Fatalf("native GOTOOLCHAIN=%q, want local", native.Env["GOTOOLCHAIN"])
 	}
-	if e2e.Strategy.FailFast == nil || *e2e.Strategy.FailFast {
-		t.Fatalf("e2e fail-fast=%v, want explicit false", e2e.Strategy.FailFast)
+	if native.Strategy.FailFast == nil || *native.Strategy.FailFast || native.Strategy.Matrix.Expression != "${{ fromJSON(needs.resolve.outputs.matrix) }}" {
+		t.Fatalf("native strategy fail-fast=%v matrix=%q", native.Strategy.FailFast, native.Strategy.Matrix.Expression)
 	}
-
-	type targetContract struct {
-		runner  string
-		cgo     string
-		archive string
-	}
-	wantTargets := map[string]targetContract{
-		"linux/amd64":   {runner: "ubuntu-latest", cgo: "0", archive: "tar.gz"},
-		"linux/arm64":   {runner: "ubuntu-24.04-arm", cgo: "0", archive: "tar.gz"},
-		"darwin/amd64":  {runner: "macos-15-intel", cgo: "1", archive: "tar.gz"},
-		"darwin/arm64":  {runner: "macos-15", cgo: "1", archive: "tar.gz"},
-		"windows/amd64": {runner: "windows-latest", cgo: "0", archive: "zip"},
-	}
-	if len(e2e.Strategy.Matrix.Include) != len(wantTargets) {
-		t.Fatalf("e2e targets=%d, want %d", len(e2e.Strategy.Matrix.Include), len(wantTargets))
-	}
-	for _, target := range e2e.Strategy.Matrix.Include {
-		key := target.GOOS + "/" + target.GOARCH
-		want, ok := wantTargets[key]
-		if !ok {
-			t.Fatalf("unexpected or duplicate e2e target %q", key)
-		}
-		if target.Runner != want.runner || target.CGO != want.cgo || target.Archive != want.archive {
-			t.Fatalf("e2e %s=%+v, want runner=%q cgo=%q archive=%q", key, target, want.runner, want.cgo, want.archive)
-		}
-		delete(wantTargets, key)
-	}
-	if len(wantTargets) != 0 {
-		t.Fatalf("e2e matrix missing native targets: %v", wantTargets)
-	}
-
-	checkout := usesStep(t, e2e, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
+	checkout := usesStep(t, native, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
-		t.Fatalf("e2e checkout ref=%q", checkout.With["ref"])
+		t.Fatalf("native checkout ref=%q", checkout.With["ref"])
 	}
-	setup := usesStep(t, e2e, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
+	setup := usesStep(t, native, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
 	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
-		t.Fatalf("e2e setup-go inputs=%v, want project Go baseline", setup.With)
+		t.Fatalf("native setup-go inputs=%v, want project Go baseline", setup.With)
 	}
-	nativeConfig := namedStep(t, e2e, "Run native platform config tests")
-	if nativeConfig.Run != "go test ./internal/config -count=1" || nativeConfig.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
+	nativeConfig := namedStep(t, native, "Run native platform config tests")
+	if nativeConfig.Run != "go test -v ./internal/config -count=1" || nativeConfig.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
 		t.Fatalf("native platform config test=%+v", nativeConfig)
 	}
-	windowsConfigBurnIn := namedStep(t, e2e, "Burn in Windows config concurrency")
+	windowsConfigBurnIn := namedStep(t, native, "Burn in Windows config concurrency")
 	if windowsConfigBurnIn.If != "matrix.goos == 'windows'" ||
 		windowsConfigBurnIn.Run != "go test ./internal/config -run '^TestConcurrentSavePublishesOnlyCompleteConfigs$' -count=10" ||
 		windowsConfigBurnIn.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
 		t.Fatalf("Windows config concurrency burn-in=%+v", windowsConfigBurnIn)
 	}
-	download := namedStep(t, e2e, "Download release-like artifact")
-	if download.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
-		t.Fatalf("e2e download action=%q", download.Uses)
-	}
-	if download.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" || download.With["path"] != "dist" {
-		t.Fatalf("e2e artifact download inputs=%v", download.With)
-	}
-
-	run := namedStep(t, e2e, "Run E2E and finalize reports")
+	run := namedStep(t, native, "Run E2E and finalize reports")
 	for _, snippet := range []string{
 		"go run ./e2e/cmd/e2e-runner run",
 		"--phase candidate",
 		"--coverage-floor 60",
 		"--command-timeout 3m",
 		"--test-timeout 5m",
-		`--artifact "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}"`,
-		`--checksum "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256"`,
+		`--artifact "dist/${{ matrix.archive }}"`,
+		`--checksum "dist/${{ matrix.checksum }}"`,
 	} {
 		if !strings.Contains(run.Run, snippet) {
 			t.Fatalf("e2e runner missing %q in %q", snippet, run.Run)
@@ -1059,7 +1288,7 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 		"CGO_ENABLED":              "${{ matrix.cgo }}",
 		"ENV_VAULT_E2E_GOOS":       "${{ matrix.goos }}",
 		"ENV_VAULT_E2E_GOARCH":     "${{ matrix.goarch }}",
-		"ENV_VAULT_E2E_VERSION":    "${{ inputs.version }}",
+		"ENV_VAULT_E2E_VERSION":    "${{ needs.resolve.outputs.version }}",
 		"ENV_VAULT_E2E_COMMIT_SHA": "${{ inputs.source_sha }}",
 	} {
 		if got := run.Env[key]; got != want {
@@ -1070,12 +1299,12 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 		t.Fatal("E2E workflow must execute only the built public CLI binary")
 	}
 
-	upload := namedStep(t, e2e, "Upload E2E reports")
+	upload := namedStep(t, native, "Upload E2E reports")
 	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
 		t.Fatalf("e2e upload if=%q uses=%q", upload.If, upload.Uses)
 	}
 	for key, want := range map[string]string{
-		"name":              "env-vault-e2e-candidate-${{ matrix.goos }}-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}",
+		"name":              "env-vault-e2e-candidate-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
 		"path":              "reports/e2e/candidate",
 		"if-no-files-found": "error",
 		"retention-days":    "30",
@@ -1086,16 +1315,57 @@ func TestReusableQualityRunsE2EAgainstEveryNativeReleaseArtifact(t *testing.T) {
 	}
 }
 
+func TestReleasePleaseSyntheticMergeRequiresThreeCommitFetchDepth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("local file URL shallow-clone proof is exercised by source-quality on Linux")
+	}
+	root := t.TempDir()
+	origin := filepath.Join(root, "origin.git")
+	run := func(stdin string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Stdin = strings.NewReader(stdin)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=env-vault-test", "GIT_AUTHOR_EMAIL=test@example.invalid",
+			"GIT_COMMITTER_NAME=env-vault-test", "GIT_COMMITTER_EMAIL=test@example.invalid",
+		)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	run("", "init", "--bare", origin)
+	tree := run("", "--git-dir", origin, "mktree")
+	base := run("", "--git-dir", origin, "commit-tree", tree, "-m", "base")
+	releaseHead := run("", "--git-dir", origin, "commit-tree", tree, "-p", base, "-m", "release head")
+	merge := run("", "--git-dir", origin, "commit-tree", tree, "-p", base, "-p", releaseHead, "-m", "synthetic merge")
+	run("", "--git-dir", origin, "update-ref", "refs/heads/main", merge)
+
+	clone := func(depth string) string {
+		t.Helper()
+		destination := filepath.Join(root, "depth"+depth)
+		run("", "clone", "--quiet", "--depth", depth, "--branch", "main", "file://"+filepath.ToSlash(origin), destination)
+		return run("", "-C", destination, "rev-list", "--parents", "-n", "1", releaseHead)
+	}
+	if got := clone("2"); got != releaseHead {
+		t.Fatalf("depth-2 release head ancestry=%q, want the head to be a shallow boundary", got)
+	}
+	if got := clone("3"); got != releaseHead+" "+base {
+		t.Fatalf("depth-3 release head ancestry=%q, want exact head and parent", got)
+	}
+}
+
 func TestReusableQualityPinsGo126CompatibleE2EReporter(t *testing.T) {
-	e2e := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e")
-	install := namedStep(t, e2e, "Install pinned E2E reporter")
+	native := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "native")
+	install := namedStep(t, native, "Install pinned E2E reporter")
 	if install.Run != "go install gotest.tools/gotestsum@v1.13.0" {
 		t.Fatalf("E2E reporter install=%q, want Go-1.26-compatible gotestsum v1.13.0", install.Run)
 	}
 	if !install.ContinueOnError {
 		t.Fatal("reporter pre-install must allow the runner's pinned fallback to finalize failure reports")
 	}
-	allSteps := fmt.Sprintf("%v", e2e.Steps)
+	allSteps := fmt.Sprintf("%v", native.Steps)
 	for _, forbidden := range []string{"gotestsum@latest", "--rerun-fails"} {
 		if strings.Contains(allSteps, forbidden) {
 			t.Fatalf("E2E workflow contains forbidden reporter option %q", forbidden)
@@ -1105,215 +1375,162 @@ func TestReusableQualityPinsGo126CompatibleE2EReporter(t *testing.T) {
 
 func TestReusableQualityE2EGateFailsClosed(t *testing.T) {
 	gate := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e-gate")
-	if gate.If != "always()" || !slices.Equal(gate.Needs, []string{"e2e"}) {
-		t.Fatalf("e2e gate if=%q needs=%v", gate.If, gate.Needs)
+	if gate.If != "always() && !cancelled()" || !slices.Equal(gate.Needs, []string{"resolve", "race", "license", "native"}) {
+		t.Fatalf("aggregate gate if=%q needs=%v", gate.If, gate.Needs)
 	}
 	if gate.RunsOn != "ubuntu-latest" || gate.TimeoutMinutes != 10 || gate.Env["GOTOOLCHAIN"] != "local" {
-		t.Fatalf("e2e gate runner=%q timeout=%d env=%v", gate.RunsOn, gate.TimeoutMinutes, gate.Env)
+		t.Fatalf("aggregate gate runner=%q timeout=%d env=%v", gate.RunsOn, gate.TimeoutMinutes, gate.Env)
+	}
+	require := namedStep(t, gate, "Require every quality stage")
+	for _, key := range []string{"SOURCE_QUALITY_RESULT", "RACE_RESULT", "LICENSE_RESULT", "NATIVE_RESULT"} {
+		if require.Env[key] == "" {
+			t.Fatalf("aggregate gate does not inspect %s", key)
+		}
+	}
+	if !strings.Contains(require.Run, `[[ "$result" == "success" ]]`) {
+		t.Fatalf("aggregate upstream check does not fail closed: %q", require.Run)
 	}
 	checkout := usesStep(t, gate, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 	if checkout.With["ref"] != "${{ inputs.source_sha }}" {
-		t.Fatalf("e2e gate checkout ref=%q", checkout.With["ref"])
+		t.Fatalf("aggregate checkout ref=%q", checkout.With["ref"])
 	}
-	setup := usesStep(t, gate, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
-	if setup.With["go-version-file"] != "go.mod" || setup.With["go-version"] != "" {
-		t.Fatalf("e2e gate setup-go inputs=%v", setup.With)
-	}
-	download := namedStep(t, gate, "Download E2E report artifacts")
-	if download.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
-		t.Fatalf("e2e gate download action=%q", download.Uses)
-	}
+	download := namedStep(t, gate, "Download current-attempt E2E reports")
 	for key, want := range map[string]string{
 		"pattern":        "env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}",
 		"path":           "reports-download",
 		"merge-multiple": "true",
 	} {
-		if got := download.With[key]; got != want {
-			t.Fatalf("e2e gate download %s=%q, want %q", key, got, want)
+		if download.With[key] != want {
+			t.Fatalf("aggregate report download %s=%q, want %q", key, download.With[key], want)
 		}
 	}
 	validate := namedStep(t, gate, "Validate complete E2E report matrix")
-	if validate.If != "always()" {
-		t.Fatalf("e2e matrix validation if=%q, want always()", validate.If)
-	}
 	for _, snippet := range []string{
 		"go run ./e2e/cmd/e2e-runner validate-matrix",
 		"--reports reports-download",
 		"--phase candidate",
 		`--expected-commit "${{ inputs.source_sha }}"`,
 		`--expected-run-id "${{ github.run_id }}"`,
-		`--expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"`,
 		`--expected-run-attempt "${{ github.run_attempt }}"`,
-		`--expected-repository "${{ github.repository }}"`,
 		`--expected-reporter "v1.13.0"`,
 	} {
 		if !strings.Contains(validate.Run, snippet) {
-			t.Fatalf("e2e matrix validation missing %q in %q", snippet, validate.Run)
+			t.Fatalf("complete matrix validation missing %q", snippet)
 		}
 	}
-	upload := namedStep(t, gate, "Upload matrix validation")
-	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
-		t.Fatalf("matrix validation upload=%+v", upload)
-	}
-}
-
-func TestReusableQualityComparesExactCanonicalBaseline(t *testing.T) {
-	compare := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "e2e-compare")
-	if compare.If != "always()" || !slices.Equal(compare.Needs, []string{"e2e", "e2e-gate"}) || compare.RunsOn != "ubuntu-latest" || compare.TimeoutMinutes != 20 {
-		t.Fatalf("compare job if=%q needs=%v runner=%q timeout=%d", compare.If, compare.Needs, compare.RunsOn, compare.TimeoutMinutes)
-	}
-	if len(compare.Permissions) != 2 || compare.Permissions["contents"] != "read" || compare.Permissions["actions"] != "read" {
-		t.Fatalf("compare permissions=%v, want contents/actions read", compare.Permissions)
-	}
-	if compare.Env["GOTOOLCHAIN"] != "local" {
-		t.Fatalf("compare GOTOOLCHAIN=%q", compare.Env["GOTOOLCHAIN"])
-	}
-	candidateCheckout := namedStep(t, compare, "Check out candidate source")
-	if candidateCheckout.Uses != "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" || candidateCheckout.With["ref"] != "${{ inputs.source_sha }}" {
-		t.Fatalf("candidate checkout=%+v", candidateCheckout)
-	}
-	baselineCheckout := namedStep(t, compare, "Check out canonical baseline source")
-	for key, want := range map[string]string{
-		"repository":          "ildarbinanas-design/env-vault",
-		"ref":                 "7a044bdbf73aa592016bbb3a02d81f314f08fe63",
-		"path":                "baseline-source",
-		"persist-credentials": "false",
-	} {
-		if baselineCheckout.With[key] != want {
-			t.Fatalf("baseline checkout %s=%q, want %q", key, baselineCheckout.With[key], want)
-		}
-	}
-	setup := usesStep(t, compare, "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16")
-	if setup.With["go-version-file"] != "go.mod" {
-		t.Fatalf("compare setup-go inputs=%v", setup.With)
-	}
-	preload := namedStep(t, compare, "Preload recorded comparison toolchains")
-	if preload.Shell != "bash" {
-		t.Fatalf("comparison toolchain preload shell=%q", preload.Shell)
-	}
-	for _, snippet := range []string{"GOTOOLCHAIN=go1.22.12 go version", "GOTOOLCHAIN=go1.26.5 go version"} {
-		if !strings.Contains(preload.Run, snippet) {
-			t.Fatalf("comparison toolchain preload missing %q in %q", snippet, preload.Run)
-		}
-	}
-	candidateDownload := namedStep(t, compare, "Download candidate E2E reports")
-	if !candidateDownload.ContinueOnError || candidateDownload.With["pattern"] != "env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}" || candidateDownload.With["path"] != "candidate-download" || candidateDownload.With["merge-multiple"] != "true" {
-		t.Fatalf("candidate report download=%+v", candidateDownload)
-	}
-	baselineDownload := namedStep(t, compare, "Download canonical baseline E2E reports")
-	if !baselineDownload.ContinueOnError || baselineDownload.Uses != "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
-		t.Fatalf("baseline report download=%+v", baselineDownload)
-	}
-	for key, want := range map[string]string{
-		"github-token":   "${{ github.token }}",
-		"repository":     "ildarbinanas-design/env-vault",
-		"run-id":         "29441160687",
-		"pattern":        "env-vault-e2e-baseline-*-attempt-1",
-		"path":           "baseline-download",
-		"merge-multiple": "true",
-	} {
-		if baselineDownload.With[key] != want {
-			t.Fatalf("baseline report download %s=%q, want %q", key, baselineDownload.With[key], want)
-		}
-	}
-	baselineValidate := namedStep(t, compare, "Validate canonical baseline against baseline source")
-	if baselineValidate.ID != "baseline_source_validation" || baselineValidate.If != "always()" || !baselineValidate.ContinueOnError || baselineValidate.Shell != "bash" {
-		t.Fatalf("baseline source validation=%+v", baselineValidate)
-	}
+	verify := namedStep(t, gate, "Verify validated matrix against durable baseline")
 	for _, snippet := range []string{
-		"cd baseline-source",
-		`rm -f -- \`,
-		`"$GITHUB_WORKSPACE/baseline-download/matrix-validation.json"`,
-		"GOTOOLCHAIN=go1.22.12 go run ./e2e/cmd/e2e-runner validate-matrix",
-		`--reports "$GITHUB_WORKSPACE/baseline-download"`,
-		"--phase baseline",
-		`--expected-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63"`,
-		`--expected-run-id "29441160687"`,
-		`--expected-reporter "v1.12.2"`,
-	} {
-		if !strings.Contains(baselineValidate.Run, snippet) {
-			t.Fatalf("baseline source validation missing %q in %q", snippet, baselineValidate.Run)
-		}
-	}
-	if strings.Index(baselineValidate.Run, "matrix-validation.json") >= strings.Index(baselineValidate.Run, "go run ./e2e/cmd/e2e-runner validate-matrix") {
-		t.Fatal("baseline stale matrix validation must be removed before source validation")
-	}
-	candidateValidate := namedStep(t, compare, "Validate candidate against candidate source")
-	if candidateValidate.ID != "candidate_source_validation" || candidateValidate.If != "always()" || !candidateValidate.ContinueOnError || candidateValidate.Shell != "bash" {
-		t.Fatalf("candidate source validation=%+v", candidateValidate)
-	}
-	for _, snippet := range []string{
-		"GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix",
-		`"$GITHUB_WORKSPACE/candidate-download/matrix-validation.json"`,
-		`--reports "$GITHUB_WORKSPACE/candidate-download"`,
+		"go run ./cmd/e2e-baseline verify",
+		"--baseline docs/e2e-baseline.json",
+		"--proof reports-download/matrix-validation.json",
+		"--output baseline-verification",
 		"--phase candidate",
 		`--expected-commit "${{ inputs.source_sha }}"`,
 		`--expected-run-id "${{ github.run_id }}"`,
-		`--expected-reporter "v1.13.0"`,
+		`--expected-run-attempt "${{ github.run_attempt }}"`,
+		`--expected-repository "${{ github.repository }}"`,
 	} {
-		if !strings.Contains(candidateValidate.Run, snippet) {
-			t.Fatalf("candidate source validation missing %q in %q", snippet, candidateValidate.Run)
+		if !strings.Contains(verify.Run, snippet) {
+			t.Fatalf("durable baseline verification missing %q", snippet)
 		}
 	}
-	if strings.Index(candidateValidate.Run, "matrix-validation.json") >= strings.Index(candidateValidate.Run, "go run ./e2e/cmd/e2e-runner validate-matrix") {
-		t.Fatal("candidate stale matrix validation must be removed before source validation")
+	if strings.Contains(verify.Run, "--reports") || strings.Contains(verify.Run, "--matrix-validation") {
+		t.Fatalf("baseline verifier must consume only the sealed proof, not raw reports: %q", verify.Run)
 	}
-	run := namedStep(t, compare, "Compare candidate with canonical baseline")
-	if run.If != "always()" || run.Shell != "bash" {
-		t.Fatalf("comparison execution if=%q shell=%q", run.If, run.Shell)
+	upload := namedStep(t, gate, "Upload durable baseline verification")
+	if upload.If != "always()" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
+		t.Fatalf("durable baseline evidence upload=%+v", upload)
 	}
-	if run.Env["CANDIDATE_VERSION"] != "${{ inputs.version }}" {
-		t.Fatalf("comparison candidate version env=%q", run.Env["CANDIDATE_VERSION"])
+	if upload.With["name"] != "env-vault-e2e-baseline-verification-attempt-${{ github.run_attempt }}" ||
+		!strings.Contains(upload.With["path"], "matrix-validation.json") ||
+		!strings.Contains(upload.With["path"], "matrix-validation.md") ||
+		!strings.Contains(upload.With["path"], "baseline-verification.json") ||
+		!strings.Contains(upload.With["path"], "baseline-verification.md") {
+		t.Fatalf("durable baseline evidence identity=%v", upload.With)
+	}
+}
+
+func TestReusableQualityUsesCheckedInDurableBaseline(t *testing.T) {
+	workflowData, err := os.ReadFile("../.github/workflows/reusable-quality.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(workflowData)
+	for _, forbidden := range []string{
+		"29441160687",
+		"7a044bdbf73aa592016bbb3a02d81f314f08fe63",
+		"baseline-download",
+		"./cmd/e2e-compare",
+		"e2e-compare:",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("reusable quality still contains migration-only comparator state %q", forbidden)
+		}
+	}
+	if strings.Count(text, "go run ./cmd/e2e-baseline verify") != 1 {
+		t.Fatalf("durable baseline verifier must run exactly once")
+	}
+	if strings.Count(text, "go run ./e2e/cmd/e2e-runner validate-matrix") != 1 {
+		t.Fatalf("candidate report matrix must be regenerated and validated exactly once")
+	}
+}
+
+func TestReusableQualityRecordsEveryPlatformAndPromotesOnlyExactPushReleaseAttempts(t *testing.T) {
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	native := reusable.Jobs["native"]
+	record := namedStep(t, native, "Verify checksum and literal version; record platform evidence")
+	wantIf := "needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'"
+	if record.If != "" {
+		t.Fatalf("platform evidence must cover release and source-bound CI builds, if=%q", record.If)
 	}
 	for _, snippet := range []string{
-		"GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare",
-		`--baseline "$GITHUB_WORKSPACE/baseline-download"`,
-		`--candidate "$GITHUB_WORKSPACE/candidate-download"`,
-		"--coverage-tolerance 0",
-		`--expected-suite-hash "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf"`,
-		`--baseline-validation-outcome "${{ steps.baseline_source_validation.outcome }}"`,
-		`--candidate-validation-outcome "${{ steps.candidate_source_validation.outcome }}"`,
-		`--baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63"`,
-		`--baseline-run-id "29441160687"`,
-		`--baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687"`,
-		`--baseline-run-attempt "1"`,
-		`--baseline-repository "ildarbinanas-design/env-vault"`,
-		`--baseline-reporter "v1.12.2"`,
-		`--candidate-reporter "v1.13.0"`,
-		`--candidate-version "$CANDIDATE_VERSION"`,
+		"go run ./cmd/release-promotion record-platform",
+		`--platform "$PLATFORM_ID"`,
+		`--source-sha "$SOURCE_SHA"`,
+		`--version "$VERSION"`,
+		`--run-id "$GITHUB_RUN_ID"`,
+		`--run-attempt "$GITHUB_RUN_ATTEMPT"`,
+		`--archive "dist/$ARCHIVE"`,
+		`--checksum "dist/$CHECKSUM"`,
+		`--binary "dist/${name}/${BINARY}"`,
+		"--reports reports/e2e/candidate",
+		`--artifact-name "env-vault-release-${PLATFORM_ID}-attempt-${GITHUB_RUN_ATTEMPT}"`,
+		`--e2e-artifact-name "env-vault-e2e-candidate-${PLATFORM_ID}-attempt-${GITHUB_RUN_ATTEMPT}"`,
 	} {
-		if !strings.Contains(run.Run, snippet) {
-			t.Fatalf("comparison command missing %q in %q", snippet, run.Run)
+		if !strings.Contains(record.Run, snippet) {
+			t.Fatalf("platform promotion record missing %q", snippet)
 		}
 	}
-	positions := make(map[string]int)
-	for index, step := range compare.Steps {
-		positions[step.Name] = index
+	evidenceUpload := namedStep(t, native, "Upload platform quality evidence")
+	if evidenceUpload.If != "" || evidenceUpload.With["name"] != "env-vault-promotion-platform-${{ matrix.id }}-attempt-${{ github.run_attempt }}" || evidenceUpload.With["if-no-files-found"] != "error" {
+		t.Fatalf("platform promotion evidence upload=%+v", evidenceUpload)
 	}
-	for before, after := range map[string]string{
-		"Preload recorded comparison toolchains":              "Validate canonical baseline against baseline source",
-		"Download canonical baseline E2E reports":             "Validate canonical baseline against baseline source",
-		"Download candidate E2E reports":                      "Validate candidate against candidate source",
-		"Validate canonical baseline against baseline source": "Compare candidate with canonical baseline",
-		"Validate candidate against candidate source":         "Compare candidate with canonical baseline",
+
+	gate := reusable.Jobs["e2e-gate"]
+	download := namedStep(t, gate, "Download current-attempt platform promotion evidence")
+	if download.If != wantIf || download.With["pattern"] != "env-vault-promotion-platform-*-attempt-${{ github.run_attempt }}" || download.With["merge-multiple"] != "true" {
+		t.Fatalf("aggregate promotion evidence download=%+v", download)
+	}
+	assemble := namedStep(t, gate, "Assemble exact promotion manifest")
+	if assemble.If != wantIf {
+		t.Fatalf("promotion assemble if=%q", assemble.If)
+	}
+	for _, snippet := range []string{
+		"go run ./cmd/release-promotion assemble",
+		`[[ ${#evidence[@]} -eq 5 ]]`,
+		`created_at="$(git show -s --format=%cI "$SOURCE_SHA")"`,
+		`--run-id "$GITHUB_RUN_ID"`,
+		`--run-attempt "$GITHUB_RUN_ATTEMPT"`,
+		"--event push",
+		"--output promotion/promotion-manifest.json",
 	} {
-		if positions[before] >= positions[after] {
-			t.Fatalf("comparison step %q must precede %q", before, after)
+		if !strings.Contains(assemble.Run, snippet) {
+			t.Fatalf("promotion assembly missing %q", snippet)
 		}
 	}
-	identity := namedStep(t, compare, "Verify exact migration identity")
-	for _, snippet := range []string{"ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf", `"go1.22.12"`, `"go1.26.5"`} {
-		if identity.If != "always()" || !strings.Contains(identity.Run, snippet) {
-			t.Fatalf("exact migration identity missing %q in %+v", snippet, identity)
-		}
-	}
-	summary := namedStep(t, compare, "Add comparison to job summary")
-	if summary.If != "always()" || !strings.Contains(summary.Run, "GITHUB_STEP_SUMMARY") {
-		t.Fatalf("comparison summary=%+v", summary)
-	}
-	upload := namedStep(t, compare, "Upload baseline comparison")
-	if upload.If != "always()" || upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["if-no-files-found"] != "error" || upload.With["retention-days"] != "30" {
-		t.Fatalf("comparison upload=%+v", upload)
+	manifestUpload := namedStep(t, gate, "Upload exact promotion manifest")
+	if manifestUpload.If != wantIf || manifestUpload.With["name"] != "env-vault-promotion-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}" || manifestUpload.With["path"] != "promotion/promotion-manifest.json" || manifestUpload.With["if-no-files-found"] != "error" {
+		t.Fatalf("promotion manifest upload=%+v", manifestUpload)
 	}
 }
 
@@ -1324,8 +1541,8 @@ func TestGeneratedHomebrewFormulaPreservesDistributionContract(t *testing.T) {
 		t.Fatal("workflow must use the tested Homebrew formula generator")
 	}
 	quality := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	archiveBuild := namedStep(t, quality.Jobs["build"], "Build")
-	archiveDocs := `cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/env-vault-${GOOS}-${GOARCH}/"`
+	archiveBuild := namedStep(t, quality.Jobs["native"], "Build native release artifact")
+	archiveDocs := `cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/${name}/"`
 	if strings.Count(archiveBuild.Run, archiveDocs) != 1 {
 		t.Fatalf("release build must archive all formula-installed documentation exactly once; build step:\n%s", archiveBuild.Run)
 	}
@@ -1426,8 +1643,14 @@ func TestHomebrewPublishesThroughScopedAppPRAndAwaitsExactCI(t *testing.T) {
 	if homebrew.Environment != "release" || homebrew.TimeoutMinutes != 55 {
 		t.Fatalf("homebrew environment=%q timeout=%d", homebrew.Environment, homebrew.TimeoutMinutes)
 	}
-	if len(homebrew.Permissions) != 1 || homebrew.Permissions["contents"] != "read" {
+	if len(homebrew.Permissions) != 2 || homebrew.Permissions["contents"] != "read" || homebrew.Permissions["attestations"] != "read" {
 		t.Fatalf("homebrew permissions=%v", homebrew.Permissions)
+	}
+	attestations := namedStep(t, homebrew, "Require exact-source release attestations before tap mutation")
+	for _, snippet := range []string{"artifact-attestation-state.sh", `"$SOURCE_SHA"`, `complete|complete`} {
+		if !strings.Contains(attestations.Run, snippet) {
+			t.Fatalf("Homebrew attestation precondition missing %q", snippet)
+		}
 	}
 	for output, want := range map[string]string{
 		"publication_state": "${{ steps.tap-result.outputs.publication_state }}",
@@ -1448,8 +1671,8 @@ func TestHomebrewPublishesThroughScopedAppPRAndAwaitsExactCI(t *testing.T) {
 	for key, want := range map[string]string{
 		"client-id":                "${{ vars.TAP_APP_CLIENT_ID }}",
 		"private-key":              "${{ secrets.TAP_APP_PRIVATE_KEY }}",
-		"owner":                    "${{ github.repository_owner }}",
-		"repositories":             "homebrew-tap",
+		"owner":                    "${{ needs.metadata.outputs.tap_repository_owner }}",
+		"repositories":             "${{ needs.metadata.outputs.tap_repository_name }}",
 		"permission-actions":       "read",
 		"permission-contents":      "write",
 		"permission-pull-requests": "write",
@@ -1461,25 +1684,37 @@ func TestHomebrewPublishesThroughScopedAppPRAndAwaitsExactCI(t *testing.T) {
 	if _, ok := token.With["skip-token-revoke"]; ok {
 		t.Fatal("Homebrew App token must be revoked by the action post-step")
 	}
+	identity := namedStep(t, homebrew, "Require exact Homebrew App mutation identity and scope")
+	for _, snippet := range []string{"release/contract.v1.json", `select(.id == "homebrew_tap")`, `"$ACTUAL_APP_SLUG" == "$expected_slug"`, "installation/repositories", `"${#repositories[@]}" == "1"`, `"$expected_repository"`} {
+		if !strings.Contains(identity.Run, snippet) {
+			t.Fatalf("Homebrew App inline precondition missing %q", snippet)
+		}
+	}
+	if identity.Env["ACTUAL_APP_SLUG"] != "${{ steps.tap-token.outputs.app-slug }}" || identity.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" {
+		t.Fatalf("Homebrew App identity env=%v", identity.Env)
+	}
 
 	publish := namedStep(t, homebrew, "Create or reuse Homebrew pull request")
-	for _, snippet := range []string{"publish-homebrew-pr.sh", "tap-out/env-vault.rb", "ildarbinanas-design/homebrew-tap", "GITHUB_OUTPUT"} {
+	for _, snippet := range []string{"publish-homebrew-pr.sh", "tap-out/env-vault.rb", `"$TAP_REPOSITORY"`, "GITHUB_OUTPUT"} {
 		if !strings.Contains(publish.Run, snippet) {
 			t.Fatalf("Homebrew PR publication missing %q", snippet)
 		}
 	}
-	if publish.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" || publish.Env["SOURCE_SHA"] != "${{ needs.metadata.outputs.source_sha }}" {
+	if publish.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" || publish.Env["SOURCE_SHA"] != "${{ needs.metadata.outputs.source_sha }}" || publish.Env["TAP_REPOSITORY"] != "${{ needs.metadata.outputs.tap_repository }}" {
 		t.Fatalf("Homebrew PR publication env=%v", publish.Env)
 	}
 
 	prCI := namedStep(t, homebrew, "Wait for exact Homebrew pull request CI")
-	if prCI.If != "steps.publish-tap-pr.outputs.state == 'OPEN'" {
+	if prCI.If != "steps.publish-tap-pr.outputs.state == 'OPEN' || steps.publish-tap-pr.outputs.state == 'MERGED'" {
 		t.Fatalf("Homebrew PR CI if=%q", prCI.If)
 	}
-	for _, snippet := range []string{"wait-tap-ci.sh", "test-formula.yml", `"$HEAD_SHA"`, "pull_request", "GITHUB_OUTPUT"} {
+	for _, snippet := range []string{"wait-tap-ci.sh", `"$TAP_CI_WORKFLOW"`, `"$TAP_REPOSITORY"`, `"$HEAD_SHA"`, "pull_request", "GITHUB_OUTPUT"} {
 		if !strings.Contains(prCI.Run, snippet) {
 			t.Fatalf("Homebrew PR CI missing %q", snippet)
 		}
+	}
+	if prCI.Env["TAP_CI_WORKFLOW"] != "${{ needs.metadata.outputs.tap_ci_workflow }}" || prCI.Env["TAP_REPOSITORY"] != "${{ needs.metadata.outputs.tap_repository }}" {
+		t.Fatalf("Homebrew PR CI does not use contract-derived identities: env=%v", prCI.Env)
 	}
 
 	merge := namedStep(t, homebrew, "Merge exact Homebrew pull request head")
@@ -1488,12 +1723,18 @@ func TestHomebrewPublishesThroughScopedAppPRAndAwaitsExactCI(t *testing.T) {
 			t.Fatalf("Homebrew merge missing %q", snippet)
 		}
 	}
+	if merge.Env["TAP_REPOSITORY"] != "${{ needs.metadata.outputs.tap_repository }}" || !strings.Contains(merge.Run, `"$TAP_REPOSITORY"`) {
+		t.Fatalf("Homebrew merge does not use the contract-derived repository: env=%v run=%q", merge.Env, merge.Run)
+	}
 
 	pushCI := namedStep(t, homebrew, "Wait for exact Homebrew default-branch CI")
-	for _, snippet := range []string{"wait-tap-ci.sh", "test-formula.yml", `"$TAP_SHA"`, "push", "GITHUB_OUTPUT"} {
+	for _, snippet := range []string{"wait-tap-ci.sh", `"$TAP_CI_WORKFLOW"`, `"$TAP_REPOSITORY"`, `"$TAP_SHA"`, "push", "GITHUB_OUTPUT"} {
 		if !strings.Contains(pushCI.Run, snippet) {
 			t.Fatalf("Homebrew push CI missing %q", snippet)
 		}
+	}
+	if pushCI.Env["TAP_CI_WORKFLOW"] != "${{ needs.metadata.outputs.tap_ci_workflow }}" || pushCI.Env["TAP_REPOSITORY"] != "${{ needs.metadata.outputs.tap_repository }}" {
+		t.Fatalf("Homebrew push CI does not use contract-derived identities: env=%v", pushCI.Env)
 	}
 
 	allSteps := fmt.Sprintf("%v", homebrew.Steps)
@@ -1515,7 +1756,7 @@ func TestRepairBuildsUseTheResolvedTagCommit(t *testing.T) {
 	}
 
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	for _, jobName := range []string{"module", "test", "race", "smoke", "license", "build", "e2e", "e2e-gate", "e2e-compare"} {
+	for _, jobName := range []string{"resolve", "race", "license", "native", "e2e-gate"} {
 		job := reusable.Jobs[jobName]
 		checkout := usesStep(t, job, "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
 		if checkout.With["ref"] != "${{ inputs.source_sha }}" {
@@ -1562,14 +1803,18 @@ func TestReleaseReusesTagAndReleaseAndReconcilesAssets(t *testing.T) {
 	reconcileScript := string(reconcileData)
 	for _, snippet := range []string{
 		`archive_count" == "1" && "$checksum_count" == "1`,
-		"release_write_checksum_pair",
-		`release_verify_checksum_pair "$local_dir/$archive" "$pair_dir/$checksum"`,
-		`gh release upload "$version" "$local_dir/$archive" "$local_dir/$checksum"`,
+		`release_verify_checksum_pair "$local_dir/$archive" "$local_dir/$checksum"`,
+		`cmp -s -- "$local_dir/$archive" "$remote_dir/$archive"`,
+		`cmp -s -- "$local_dir/$asset" "$verified_dir/$asset"`,
+		`gh release upload "$version" "$local_dir/$archive"`,
 		"download-release-assets.sh",
 	} {
 		if !strings.Contains(reconcileScript, snippet) {
 			t.Fatalf("asset reconciliation missing critical case %q", snippet)
 		}
+	}
+	if strings.Contains(reconcileScript, "release_write_checksum_pair") {
+		t.Fatal("reconciliation must never derive a checksum from remote bytes")
 	}
 }
 
@@ -1593,11 +1838,11 @@ func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 		"verify-artifact-attestations.sh",
 		"verify-homebrew-formula.sh",
 		"wait-tap-ci.sh",
-		"test-formula.yml",
+		`"$TAP_CI_WORKFLOW"`,
 		"push",
 		"GITHUB_STEP_SUMMARY",
 		"/releases/tag/${VERSION}",
-		"/homebrew-tap/commit/${tap_sha}",
+		"/${TAP_REPOSITORY}/commit/${tap_sha}",
 		"/actions/runs/${GITHUB_RUN_ID}",
 		"/${GITHUB_REPOSITORY}/attestations",
 		"Source commit",
@@ -1608,6 +1853,9 @@ func TestRepairHealthValidatesTagReleaseAssetsAndFormula(t *testing.T) {
 		if !strings.Contains(verify.Run, snippet) {
 			t.Fatalf("health verification missing %q", snippet)
 		}
+	}
+	if verify.Env["TAP_REPOSITORY"] != "${{ needs.metadata.outputs.tap_repository }}" || verify.Env["TAP_CI_WORKFLOW"] != "${{ needs.metadata.outputs.tap_ci_workflow }}" || strings.Contains(verify.Run, "ildarbinanas-design/homebrew-tap") {
+		t.Fatalf("health does not use contract-derived tap identities: env=%v run=%q", verify.Env, verify.Run)
 	}
 	if health.Environment != "" {
 		t.Fatalf("read-only health job unexpectedly uses environment %q", health.Environment)
@@ -1717,20 +1965,17 @@ func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
 		t.Fatalf("SBOM artifact name is not retry-safe: %q", upload.With["name"])
 	}
 
-	wantSubjects := []string{
-		"release-dist/env-vault-linux-amd64.tar.gz",
-		"release-dist/env-vault-linux-arm64.tar.gz",
-		"release-dist/env-vault-darwin-amd64.tar.gz",
-		"release-dist/env-vault-darwin-arm64.tar.gz",
-		"release-dist/env-vault-windows-amd64.zip",
+	subjects := namedStep(t, supply, "Resolve attestation subjects from release contract")
+	if !strings.Contains(subjects.Run, `.platforms[].archive | "release-dist/" + .`) || !strings.Contains(subjects.Run, `>> "$GITHUB_OUTPUT"`) {
+		t.Fatalf("attestation subjects are not derived from the release contract: %q", subjects.Run)
 	}
 	for _, stepName := range []string{"Attest build provenance", "Attest SPDX SBOM"} {
 		step := namedStep(t, supply, stepName)
 		if step.Uses != "actions/attest@a1948c3f048ba23858d222213b7c278aabede763" {
 			t.Fatalf("%s uses=%q", stepName, step.Uses)
 		}
-		if got := strings.Fields(step.With["subject-path"]); !slices.Equal(got, wantSubjects) {
-			t.Fatalf("%s subjects=%v, want %v", stepName, got, wantSubjects)
+		if got := step.With["subject-path"]; got != "${{ steps.attestation-subjects.outputs.paths }}" {
+			t.Fatalf("%s subjects=%q, want contract-derived output", stepName, got)
 		}
 	}
 	provenanceAttestation := namedStep(t, supply, "Attest build provenance")
@@ -1759,83 +2004,72 @@ func TestReleasePublishesIdempotentSupplyChainEvidence(t *testing.T) {
 	}
 }
 
-func TestReleaseDarwinBuildUsesMacOSRunnerAndCGO(t *testing.T) {
-	build := readWorkflowJob(t, "../.github/workflows/reusable-quality.yml", "build")
-	assertBuildMatrix(t, build)
+func TestReleaseDarwinBuildUsesContractResolvedNativeMatrix(t *testing.T) {
+	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	native := reusable.Jobs["native"]
+	if native.RunsOn != "${{ matrix.runner }}" || native.Strategy.Matrix.Expression != "${{ fromJSON(needs.resolve.outputs.matrix) }}" {
+		t.Fatalf("native job does not consume contract matrix: runs-on=%q matrix=%q", native.RunsOn, native.Strategy.Matrix.Expression)
+	}
+	contract := namedStep(t, reusable.Jobs["resolve"], "Validate release contract and resolve native matrix")
+	if !strings.Contains(contract.Run, "go run ./cmd/release-contract matrix --json") {
+		t.Fatalf("native matrix is not sourced from release contract: %q", contract.Run)
+	}
+	build := namedStep(t, native, "Build native release artifact")
+	if build.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" || build.Env["GOOS"] != "${{ matrix.goos }}" || build.Env["GOARCH"] != "${{ matrix.goarch }}" {
+		t.Fatalf("native build target env=%v", build.Env)
+	}
 }
 
 func TestReleaseArtifactsRunOnNativeRunnersAndReportExactVersion(t *testing.T) {
 	reusable := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
-	build := reusable.Jobs["build"]
-	upload := namedStep(t, build, "Upload artifact")
-	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || upload.With["name"] != "env-vault-${{ matrix.goos }}-${{ matrix.goarch }}" {
-		t.Fatalf("build artifact upload uses=%q with=%v", upload.Uses, upload.With)
+	if len(reusable.Jobs) != 5 {
+		t.Fatalf("reusable quality has %d logical jobs, want resolve/race/license/native/aggregate", len(reusable.Jobs))
 	}
-	smoke := reusable.Jobs["native-smoke"]
-	if !slices.Contains(smoke.Needs, "build") {
-		t.Fatalf("smoke needs=%v, missing build", smoke.Needs)
-	}
-	if smoke.RunsOn != "${{ matrix.runner }}" {
-		t.Fatalf("smoke runs-on=%q", smoke.RunsOn)
-	}
-	wantRunners := map[string]string{
-		"linux/amd64":   "ubuntu-latest",
-		"linux/arm64":   "ubuntu-24.04-arm",
-		"darwin/amd64":  "macos-15-intel",
-		"darwin/arm64":  "macos-15",
-		"windows/amd64": "windows-latest",
-	}
-	if len(smoke.Strategy.Matrix.Include) != len(wantRunners) {
-		t.Fatalf("smoke targets=%d, want %d", len(smoke.Strategy.Matrix.Include), len(wantRunners))
-	}
-	for _, target := range smoke.Strategy.Matrix.Include {
-		key := target.GOOS + "/" + target.GOARCH
-		if target.Runner != wantRunners[key] {
-			t.Fatalf("smoke %s runner=%q, want %q", key, target.Runner, wantRunners[key])
-		}
-		delete(wantRunners, key)
-	}
-	if len(wantRunners) != 0 {
-		t.Fatalf("missing native smoke targets: %v", wantRunners)
-	}
-
-	wantVersion := "${{ inputs.version }}"
-	unix := namedStep(t, smoke, "Verify exact version on Unix")
-	if unix.If != "runner.os != 'Windows'" || unix.Env["VERSION"] != wantVersion {
-		t.Fatalf("unix smoke if=%q VERSION=%q", unix.If, unix.Env["VERSION"])
-	}
-	for _, snippet := range []string{
-		`printf '%s\n' "$VERSION"`,
-		`"$binary" --version`,
-		`"$binary" version`,
-		"diff -u expected-version.txt version-flag.txt",
-		"diff -u expected-version.txt version-command.txt",
-	} {
-		if !strings.Contains(unix.Run, snippet) {
-			t.Fatalf("unix version smoke missing %q", snippet)
+	for _, removed := range []string{"module", "test", "smoke", "build", "native-smoke", "e2e", "e2e-compare"} {
+		if _, ok := reusable.Jobs[removed]; ok {
+			t.Fatalf("reusable quality retains duplicate job %q", removed)
 		}
 	}
 
-	windows := namedStep(t, smoke, "Verify exact version on Windows")
-	if windows.If != "runner.os == 'Windows'" || windows.Env["VERSION"] != wantVersion {
-		t.Fatalf("windows smoke if=%q VERSION=%q", windows.If, windows.Env["VERSION"])
+	native := reusable.Jobs["native"]
+	upload := namedStep(t, native, "Upload native release artifact")
+	if upload.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" {
+		t.Fatalf("native artifact upload uses=%q", upload.Uses)
+	}
+	if upload.With["name"] != "env-vault-release-${{ matrix.id }}-attempt-${{ github.run_attempt }}" {
+		t.Fatalf("native artifact name=%q, want attempt-qualified identity", upload.With["name"])
+	}
+	if got, want := strings.Split(strings.TrimSpace(upload.With["path"]), "\n"), []string{"dist/${{ matrix.archive }}", "dist/${{ matrix.checksum }}"}; !slices.Equal(got, want) {
+		t.Fatalf("native artifact paths=%v, want only archive and checksum %v", got, want)
+	}
+	if upload.With["if-no-files-found"] != "error" {
+		t.Fatalf("native artifact upload does not fail closed: %v", upload.With)
+	}
+
+	wantVersion := "${{ needs.resolve.outputs.version }}"
+	record := namedStep(t, native, "Verify checksum and literal version; record platform evidence")
+	if record.If != "" || record.Env["VERSION"] != wantVersion {
+		t.Fatalf("cross-platform exact-version gate if=%q VERSION=%q", record.If, record.Env["VERSION"])
 	}
 	for _, snippet := range []string{
-		"& $binary --version",
-		"& $binary version",
-		".Count -ne 1",
-		"-cne $env:VERSION",
+		"go run ./cmd/release-promotion record-platform",
+		`--version "$VERSION"`,
+		`--archive "dist/$ARCHIVE"`,
+		`--checksum "dist/$CHECKSUM"`,
+		`--binary "dist/${name}/${BINARY}"`,
 	} {
-		if !strings.Contains(windows.Run, snippet) {
-			t.Fatalf("windows version smoke missing %q", snippet)
+		if !strings.Contains(record.Run, snippet) {
+			t.Fatalf("cross-platform exact-version gate missing %q", snippet)
 		}
 	}
 
 	release := readWorkflowJob(t, "../.github/workflows/build-binaries.yml", "release")
-	if !slices.Contains(release.Needs, "quality") || !strings.Contains(release.If, "needs.quality.result == 'success'") {
-		t.Fatalf("release is not gated by reusable quality: needs=%v if=%q", release.Needs, release.If)
+	if !slices.Contains(release.Needs, "quality") || !slices.Contains(release.Needs, "promotion") ||
+		!strings.Contains(release.If, "needs.quality.result == 'skipped'") ||
+		!strings.Contains(release.If, "needs.promotion.result == 'success'") {
+		t.Fatalf("release is not gated by exact promotion: needs=%v if=%q", release.Needs, release.If)
 	}
-	download := usesStep(t, release, "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
+	download := namedStep(t, release, "Download publisher-local verified promotion bundle")
 	if download.With["path"] != "dist" || download.With["merge-multiple"] != "true" {
 		t.Fatalf("release artifact download with=%v", download.With)
 	}
@@ -1862,55 +2096,6 @@ func readWorkflow(t *testing.T, path string) workflow {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 	return wf
-}
-
-func assertBuildMatrix(t *testing.T, build workflowJob) {
-	t.Helper()
-	if build.RunsOn != "${{ matrix.runner }}" {
-		t.Fatalf("build runs-on=%q", build.RunsOn)
-	}
-	if len(build.Strategy.Matrix.Include) != 5 {
-		t.Fatalf("build targets=%d, want 5", len(build.Strategy.Matrix.Include))
-	}
-	targets := map[string]workflowTarget{}
-	for _, target := range build.Strategy.Matrix.Include {
-		targets[target.GOOS+"/"+target.GOARCH] = target
-	}
-
-	assertTarget(t, targets["darwin/amd64"], "macos-15-intel", "1")
-	assertTarget(t, targets["darwin/arm64"], "macos-15", "1")
-	for _, key := range []string{"linux/amd64", "linux/arm64", "windows/amd64"} {
-		assertTarget(t, targets[key], "ubuntu-latest", "0")
-	}
-
-	step := buildStep(t, build)
-	if step.Env["CGO_ENABLED"] != "${{ matrix.cgo }}" {
-		t.Fatalf("CGO_ENABLED=%q", step.Env["CGO_ENABLED"])
-	}
-}
-
-func assertTarget(t *testing.T, target workflowTarget, runner, cgo string) {
-	t.Helper()
-	if target.GOOS == "" || target.GOARCH == "" {
-		t.Fatalf("missing workflow target")
-	}
-	if target.Runner != runner {
-		t.Fatalf("%s/%s runner=%q", target.GOOS, target.GOARCH, target.Runner)
-	}
-	if target.CGO != cgo {
-		t.Fatalf("%s/%s cgo=%q", target.GOOS, target.GOARCH, target.CGO)
-	}
-}
-
-func buildStep(t *testing.T, build workflowJob) workflowStep {
-	t.Helper()
-	for _, step := range build.Steps {
-		if step.Name == "Build" || step.Run == "go build ./cmd/env-vault" {
-			return step
-		}
-	}
-	t.Fatalf("build step not found")
-	return workflowStep{}
 }
 
 func namedStep(t *testing.T, job workflowJob, name string) workflowStep {

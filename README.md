@@ -125,9 +125,10 @@ GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
 Binary archives are built by the `build-binaries` GitHub Actions workflow.
 Both release builds and pull-request CI call the same `reusable-quality.yml`
 workflow, including native license scans and binary-only E2E verification on
-Linux, macOS, and Windows. Candidate reports are compared without coverage or
-contract tolerance to the preserved Go 1.22.12 baseline from
-[run 29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687).
+Linux, macOS, and Windows. Candidate reports are checked without coverage or
+contract tolerance against the durable, checked-in five-platform baseline;
+steady-state CI does not download a historical run or invoke a migration
+comparator.
 
 - Release planning: after `ci` succeeds for a current `main` push, Release
   Please v5 opens or updates a release pull request. Stale completed runs are
@@ -145,18 +146,23 @@ contract tolerance to the preserved Go 1.22.12 baseline from
   PR-only Release Please action itself never creates a tag or Release.
 - Release publication: the tag starts `build-binaries`, the only workflow
   allowed to create the public GitHub Release. The tag entry point repeats the
-  same release-authorization checks, then reruns the complete quality and native
-  artifact gates before publishing archives, attestations, and the Homebrew
-  update.
+  same release-authorization checks, then consumes the exact successful
+  five-target promotion manifest and artifacts from the source commit's `ci`
+  run. It does not rebuild the release in the normal path.
 - Planning and publication share one non-cancelling concurrency group, so the
   publisher starts only after lifecycle-label reconciliation and a later
   proposal waits until the active release finishes.
 - Build only: open **Actions** -> **build-binaries** -> **Run workflow** and
   leave the optional version input blank.
-- Manual dispatch can retry only an existing authorized tag; it cannot create
-  or select a new version. Historical `v0.0.1`–`v0.0.7` repairs use an explicit
-  legacy existing-Release boundary, while `v0.0.8+` requires generated-PR
-  authorization.
+- Versioned `releasectl release repair plan/apply` documents are the mutation
+  interface for retrying an existing authorized tag; apply is dry-run unless
+  explicitly enabled and rechecks its digest and remote preconditions. The
+  derived `repair_state_digest` makes repeated application an exact no-op;
+  direct steady-state repair dispatches are non-canonical and rejected.
+- Historical `v0.0.1`–`v0.0.7` may be rebuilt only by the separate diagnostic
+  `legacy-rebuild` plan/apply path. Those artifacts are permanently marked
+  publication-ineligible. `v0.0.8` remains a failed immutable tag without a
+  GitHub Release.
 
 Pull request titles follow Conventional Commits because the squash title is
 the input to version and changelog generation. See [CONTRIBUTING.md](CONTRIBUTING.md)

@@ -1,0 +1,483 @@
+name: legacy-rebuild
+run-name: legacy-rebuild version=${{ inputs.version }} source=${{ inputs.source_sha }} plan=${{ inputs.plan_digest }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing legacy tag v0.0.1 through v0.0.7"
+        required: true
+        type: string
+      source_sha:
+        description: "Exact 40-character commit SHA resolved from the tag"
+        required: true
+        type: string
+      control_sha:
+        description: "Exact main SHA containing this workflow and release contract"
+        required: true
+        type: string
+      plan_digest:
+        description: "Exact releasectl legacy rebuild plan SHA-256"
+        required: true
+        type: string
+      release_state_digest:
+        description: "Exact remote tag/release/assets/workflow precondition digest"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: env-vault-legacy-rebuild-${{ inputs.version }}-${{ inputs.plan_digest }}
+  cancel-in-progress: false
+
+jobs:
+  idempotency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      decision: ${{ steps.decision.outputs.decision }}
+      prior_run_id: ${{ steps.decision.outputs.prior_run_id }}
+      reason_code: ${{ steps.decision.outputs.reason_code }}
+    steps:
+      - id: decision
+        name: Classify the exact plan digest before allocating native runners
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_TITLE: legacy-rebuild version=${{ inputs.version }} source=${{ inputs.source_sha }} plan=${{ inputs.plan_digest }}
+          CONTROL_SHA: ${{ inputs.control_sha }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          runs="$(gh api \
+            --method GET \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/legacy-rebuild.yml/runs" \
+            --raw-field branch=main \
+            --raw-field event=workflow_dispatch \
+            --raw-field per_page=100)"
+          jq -e '
+            (.total_count | type) == "number" and
+            .total_count >= 0 and .total_count <= 100 and
+            (.workflow_runs | type) == "array" and
+            .total_count == (.workflow_runs | length)
+          ' <<< "$runs" >/dev/null
+          jq -e \
+            --argjson current_run_id "$CURRENT_RUN_ID" \
+            --arg title "$EXPECTED_TITLE" \
+            --arg control_sha "$CONTROL_SHA" '
+              [.workflow_runs[] | select(.id == $current_run_id)] as $current |
+              ($current | length) == 1 and
+              $current[0].display_title == $title and
+              $current[0].event == "workflow_dispatch" and
+              $current[0].head_branch == "main" and
+              $current[0].head_sha == $control_sha and
+              $current[0].path == ".github/workflows/legacy-rebuild.yml"
+            ' <<< "$runs" >/dev/null
+          jq -e \
+            --argjson current_run_id "$CURRENT_RUN_ID" \
+            --arg title "$EXPECTED_TITLE" \
+            --arg control_sha "$CONTROL_SHA" '
+              all(
+                .workflow_runs[] |
+                select(.id != $current_run_id and .display_title == $title);
+                .event == "workflow_dispatch" and
+                .head_branch == "main" and
+                .head_sha == $control_sha and
+                .path == ".github/workflows/legacy-rebuild.yml" and
+                (.status == "queued" or .status == "requested" or .status == "waiting" or .status == "pending" or .status == "in_progress" or .status == "completed")
+              )
+            ' <<< "$runs" >/dev/null
+
+          mapfile -t candidates < <(jq -r \
+            --argjson current_run_id "$CURRENT_RUN_ID" \
+            --arg title "$EXPECTED_TITLE" '
+              .workflow_runs[] |
+              select(.id != $current_run_id and .display_title == $title) |
+              [.id, .status] | @tsv
+            ' <<< "$runs")
+          for record in "${candidates[@]}"; do
+            IFS=$'\t' read -r candidate status <<< "$record"
+            case "$status" in
+              queued|requested|waiting|pending)
+                continue
+                ;;
+              in_progress)
+                # Exact-plan workflow concurrency permits only this run to be
+                # in progress. A second running identity is unsafe ambiguity.
+                exit 1
+                ;;
+              completed)
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
+            jobs="$(gh api \
+              --method GET \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate}/jobs" \
+              --raw-field filter=all \
+              --raw-field per_page=100)"
+            jq -e '
+              (.total_count | type) == "number" and
+              .total_count >= 0 and .total_count <= 100 and
+              (.jobs | type) == "array" and
+              .total_count == (.jobs | length)
+            ' <<< "$jobs" >/dev/null
+            [[ "$(jq '[.jobs[] | select(.name == "preflight")] | length' <<< "$jobs")" == "1" ]]
+            preflight_conclusion="$(jq -r '.jobs[] | select(.name == "preflight") | .conclusion' <<< "$jobs")"
+            case "$preflight_conclusion" in
+              success)
+                {
+                  printf 'decision=no_op\n'
+                  printf 'prior_run_id=%s\n' "$candidate"
+                  printf 'reason_code=legacy_exact_plan_already_started\n'
+                } >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              failure|cancelled|skipped|timed_out|action_required|startup_failure|stale)
+                # The native matrix requires preflight success, so this exact
+                # run could not have allocated native build jobs.
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
+          done
+          {
+            printf 'decision=build\n'
+            printf 'prior_run_id=0\n'
+            printf 'reason_code=legacy_exact_plan_not_started\n'
+          } >> "$GITHUB_OUTPUT"
+
+  preflight:
+    needs: [idempotency]
+    if: needs.idempotency.outputs.decision == 'build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.contract.outputs.matrix }}
+      go_version: ${{ steps.legacy.outputs.go_version }}
+      literal_version_supported: ${{ steps.legacy.outputs.literal_version_supported }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.control_sha }}
+          path: control
+
+      - name: Verify exact plan and control identity
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CONTROL_SHA: ${{ inputs.control_sha }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          RELEASE_STATE_DIGEST: ${{ inputs.release_state_digest }}
+          EVENT_SHA: ${{ github.sha }}
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^v0\.0\.[1-7]$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PLAN_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RELEASE_STATE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EVENT_REF" == "refs/heads/main" ]]
+          [[ "$EVENT_SHA" == "$CONTROL_SHA" ]]
+          [[ "$(git -C control rev-parse HEAD)" == "$CONTROL_SHA" ]]
+
+      - id: legacy
+        name: Validate version, source, toolchain, and proof boundary from the contract
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          entry="$(jq -ce --arg version "$VERSION" --arg source_sha "$SOURCE_SHA" '.version_policy.legacy_rebuild.versions[] | select(.version == $version and .tag_sha == $source_sha)' control/release/contract.v1.json)"
+          jq -e '.version_policy.legacy_rebuild.publication_eligible == false' control/release/contract.v1.json >/dev/null
+          go_version="$(jq -r '.version_policy.legacy_rebuild.go_version' control/release/contract.v1.json)"
+          [[ "$go_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          {
+            printf 'go_version=%s\n' "$go_version"
+            printf 'literal_version_supported=%s\n' "$(jq -r '.literal_version_supported' <<< "$entry")"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: control/go.mod
+          cache-dependency-path: control/go.sum
+
+      - id: contract
+        name: Resolve the five native targets from the release contract
+        working-directory: control
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(go run ./cmd/release-contract matrix --json)"
+          jq -e '.include | type == "array" and length == 5' <<< "$matrix" >/dev/null
+          printf 'matrix=%s\n' "$(jq -c . <<< "$matrix")" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [preflight]
+    name: legacy-build-${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.preflight.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          path: source
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ needs.preflight.outputs.go_version }}
+          check-latest: false
+          cache-dependency-path: source/go.sum
+
+      - name: Verify immutable tag resolves to the exact source
+        working-directory: source
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          git fetch --force origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+          [[ "$(git rev-parse "${VERSION}^{commit}")" == "$SOURCE_SHA" ]]
+
+      - name: Verify historical module content
+        working-directory: source
+        run: go mod verify
+
+      - name: Build exact-version diagnostic binary
+        working-directory: source
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          VERSION: ${{ inputs.version }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          name="env-vault-${GOOS}-${GOARCH}"
+          mkdir -p "dist/${name}"
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X github.com/ildarbinanas-design/env-vault/internal/cli.Version=${VERSION}" \
+            -o "dist/${name}/${BINARY}" \
+            ./cmd/env-vault
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/${name}/"
+
+      - name: Package diagnostic artifact on Unix
+        if: runner.os != 'Windows'
+        working-directory: source
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ARCHIVE: ${{ matrix.archive }}
+          CHECKSUM: ${{ matrix.checksum }}
+        run: |
+          set -euo pipefail
+          name="env-vault-${GOOS}-${GOARCH}"
+          cd dist
+          tar -czf "$ARCHIVE" "$name"
+          shasum -a 256 "$ARCHIVE" > "$CHECKSUM"
+          shasum -a 256 -c "$CHECKSUM"
+
+      - name: Package diagnostic artifact on Windows
+        if: runner.os == 'Windows'
+        working-directory: source
+        shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          ARCHIVE: ${{ matrix.archive }}
+          CHECKSUM: ${{ matrix.checksum }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "env-vault-$env:GOOS-$env:GOARCH"
+          $archive = Join-Path "dist" $env:ARCHIVE
+          Compress-Archive -LiteralPath (Join-Path "dist" $name) -DestinationPath $archive
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:ARCHIVE" | Set-Content -LiteralPath (Join-Path "dist" $env:CHECKSUM) -Encoding ascii
+          $recorded = ((Get-Content -LiteralPath (Join-Path "dist" $env:CHECKSUM)) -split "\\s+")[0]
+          if ($recorded -ne (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()) {
+            throw "checksum verification failed"
+          }
+
+      - name: Verify tag-era version surfaces and record the proof boundary
+        working-directory: source
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ matrix.id }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          BINARY: ${{ matrix.binary }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          RELEASE_STATE_DIGEST: ${{ inputs.release_state_digest }}
+          LITERAL_VERSION_SUPPORTED: ${{ needs.preflight.outputs.literal_version_supported }}
+          TOOLCHAIN: go${{ needs.preflight.outputs.go_version }}
+        run: |
+          set -euo pipefail
+          binary="dist/env-vault-${GOOS}-${GOARCH}/${BINARY}"
+          [[ "$("$binary" version)" == "$VERSION" ]]
+          json_version="$("$binary" --json version)"
+          jq -e --arg version "$VERSION" '.ok == true and .command == "version" and .data.version == $version' <<< "$json_version" >/dev/null
+          literal_supported="$LITERAL_VERSION_SUPPORTED"
+          if [[ "$literal_supported" == "true" ]]; then
+            [[ "$("$binary" --version)" == "$VERSION" ]]
+          elif [[ "$literal_supported" == "false" ]]; then
+            if "$binary" --version >/dev/null 2>&1; then
+              echo "historically unavailable --version unexpectedly succeeded" >&2
+              exit 1
+            fi
+          else
+            echo "contract returned malformed literal version support" >&2
+            exit 1
+          fi
+          mkdir -p legacy-evidence
+          jq -n \
+            --arg schema "env-vault.legacy-build-platform.v1" \
+            --arg platform "$PLATFORM" \
+            --arg version "$VERSION" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg plan_digest "$PLAN_DIGEST" \
+            --arg release_state_digest "$RELEASE_STATE_DIGEST" \
+            --arg toolchain "$TOOLCHAIN" \
+            --argjson literal_version_supported "$literal_supported" \
+            '{schema:$schema,platform:$platform,version:$version,source_sha:$source_sha,plan_digest:$plan_digest,release_state_digest:$release_state_digest,toolchain:$toolchain,version_command:true,json_version:true,literal_version_supported:$literal_version_supported,publication_eligible:false,reason_code:"LEGACY_PROMOTION_PROOF_UNAVAILABLE"}' \
+            > "legacy-evidence/${PLATFORM}.json"
+
+      - name: Upload attempt-qualified diagnostic artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-legacy-${{ matrix.id }}-attempt-${{ github.run_attempt }}
+          path: |
+            source/dist/${{ matrix.archive }}
+            source/dist/${{ matrix.checksum }}
+            source/legacy-evidence/${{ matrix.id }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  legacy-gate:
+    if: always() && !cancelled()
+    needs: [idempotency, preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require one build or one deterministic exact-plan no-op
+        shell: bash
+        env:
+          IDEMPOTENCY_RESULT: ${{ needs.idempotency.result }}
+          DECISION: ${{ needs.idempotency.outputs.decision }}
+          PRIOR_RUN_ID: ${{ needs.idempotency.outputs.prior_run_id }}
+          REASON_CODE: ${{ needs.idempotency.outputs.reason_code }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          [[ "$IDEMPOTENCY_RESULT" == "success" ]]
+          case "$DECISION" in
+            build)
+              [[ "$REASON_CODE" == "legacy_exact_plan_not_started" ]]
+              [[ "$PRIOR_RUN_ID" == "0" ]]
+              [[ "$PREFLIGHT_RESULT" == "success" ]]
+              [[ "$BUILD_RESULT" == "success" ]]
+              ;;
+            no_op)
+              [[ "$REASON_CODE" == "legacy_exact_plan_already_started" ]]
+              [[ "$PRIOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+              [[ "$PREFLIGHT_RESULT" == "skipped" ]]
+              [[ "$BUILD_RESULT" == "skipped" ]]
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.idempotency.outputs.decision == 'build'
+        with:
+          ref: ${{ inputs.control_sha }}
+          path: control
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.idempotency.outputs.decision == 'build'
+        with:
+          pattern: env-vault-legacy-*-attempt-${{ github.run_attempt }}
+          path: legacy-download
+          merge-multiple: true
+
+      - name: Validate the complete current-attempt matrix
+        if: needs.idempotency.outputs.decision == 'build'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          RELEASE_STATE_DIGEST: ${{ inputs.release_state_digest }}
+        run: |
+          set -euo pipefail
+          mapfile -t platforms < <(jq -r '.platforms[].id' control/release/contract.v1.json | LC_ALL=C sort)
+          [[ ${#platforms[@]} -eq 5 ]]
+          for platform in "${platforms[@]}"; do
+            archive="$(jq -r --arg id "$platform" '.platforms[] | select(.id == $id) | .archive' control/release/contract.v1.json)"
+            checksum="$(jq -r --arg id "$platform" '.platforms[] | select(.id == $id) | .checksum' control/release/contract.v1.json)"
+            evidence="legacy-download/${platform}.json"
+            [[ -f "legacy-download/${archive}" && -f "legacy-download/${checksum}" && -f "$evidence" ]]
+            jq -e \
+              --arg platform "$platform" \
+              --arg version "$VERSION" \
+              --arg source_sha "$SOURCE_SHA" \
+              --arg plan_digest "$PLAN_DIGEST" \
+              --arg release_state_digest "$RELEASE_STATE_DIGEST" \
+              '.schema == "env-vault.legacy-build-platform.v1" and .platform == $platform and .version == $version and .source_sha == $source_sha and .plan_digest == $plan_digest and .release_state_digest == $release_state_digest and .publication_eligible == false' \
+              "$evidence" >/dev/null
+          done
+          [[ "$(find legacy-download -maxdepth 1 -type f | wc -l | tr -d ' ')" == "15" ]]
+
+      - name: Record diagnostic-only quality scope
+        if: needs.idempotency.outputs.decision == 'build'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PLAN_DIGEST: ${{ inputs.plan_digest }}
+          RELEASE_STATE_DIGEST: ${{ inputs.release_state_digest }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg schema "env-vault.legacy-build-scope.v1" \
+            --arg version "$VERSION" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg plan_digest "$PLAN_DIGEST" \
+            --arg release_state_digest "$RELEASE_STATE_DIGEST" \
+            '{schema:$schema,version:$version,source_sha:$source_sha,run_id:env.GITHUB_RUN_ID,run_attempt:(env.GITHUB_RUN_ATTEMPT|tonumber),plan_digest:$plan_digest,release_state_digest:$release_state_digest,platform_count:5,publication_eligible:false,reason_code:"LEGACY_PROMOTION_PROOF_UNAVAILABLE",limitations:["historical_e2e_contract_absent","historical_exact_build_toolchain_unrecorded"]}' \
+            > legacy-download/legacy-build-scope.json
+
+      - name: Upload diagnostic-only scope evidence
+        if: needs.idempotency.outputs.decision == 'build'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-legacy-scope-attempt-${{ github.run_attempt }}
+          path: legacy-download/legacy-build-scope.json
+          if-no-files-found: error
+          retention-days: 14

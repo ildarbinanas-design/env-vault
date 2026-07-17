@@ -150,10 +150,12 @@ tag, Release, pull request, or workflow run is absent.
 ## Machine-readable release status
 
 `releasectl` is a repository operator tool; it is not part of the distributed
-`env-vault` command surface. It observes the exact release chain through
-read-only `gh api --method GET` requests and emits one versioned JSON document.
-It never merges a pull request, reruns a workflow, creates or moves a tag,
-uploads an asset, or changes Homebrew state.
+`env-vault` command surface. Observation commands receive a GET-only GitHub
+capability and emit one versioned JSON document. Mutation commands use a
+separate capability, are dry-run by default, require a versioned plan and its
+canonical SHA-256 digest, re-read exact remote preconditions immediately before
+apply, and are idempotent. No command merges a release pull request, creates or
+moves a tag, overwrites an asset, or analyzes free-form logs.
 
 Inspect one snapshot with the exact reviewed release identity when it is known:
 
@@ -188,11 +190,12 @@ go run ./cmd/releasectl release watch \
 The schema identifier is `env-vault.release-status.v1`. The document binds the
 tag, exact-SHA `main` CI and planning runs, tag-triggered publisher, GitHub
 Release asset set, and the publisher's `supply_chain`, `homebrew`, and `health`
-jobs. `failed_jobs[].failed_steps` identifies a deterministic failure without
-requiring log interpretation. `next_action.code` is a stable machine value;
-it is never free-form LLM guidance. Manual repair-run correlation and an
-independent reimplementation of attestation or tap verification are outside
-v1; the successful publisher jobs remain the evidence for those checks.
+jobs. It also records exact-source manual repair runs and the publisher's
+attempt-qualified five-platform artifact matrix. `failed_jobs[].failed_steps`
+identifies a deterministic failure without requiring log interpretation.
+`next_action.code` is a stable machine value; it is never free-form LLM
+guidance. An incomplete completed attempt reports its run ID, attempt, missing
+targets, reason `ATTEMPT_MATRIX_INCOMPLETE`, and action `rerun_all_jobs`.
 
 Exit statuses are part of the operator contract:
 
@@ -203,10 +206,137 @@ Exit statuses are part of the operator contract:
 | `2` | invalid command or identity input |
 | `3` | dependency, authentication, transport, API, or response-schema failure |
 | `4` | `watch` timed out and emitted its last valid snapshot |
+| `5` | plan digest or exact remote precondition changed; create a new plan |
+| `6` | mutation is blocked or is not safely represented by the plan schema |
 
 An explicit HTTP 404 or an empty exact-filter result may represent an absent
 stage. Authentication, rate-limit, network, server, and malformed-response
 errors produce `ok=false` and never become `not_found`.
+
+The other deterministic release commands are:
+
+```sh
+go run ./cmd/releasectl release plan \
+  --repo "$REPOSITORY" --version "$VERSION" --source-sha "$SOURCE_SHA" --json
+go run ./cmd/releasectl release verify \
+  --repo "$REPOSITORY" --version "$VERSION" --source-sha "$SOURCE_SHA" --json
+go run ./cmd/releasectl release metrics \
+  --repo "$REPOSITORY" --run-id RUN_ID --json
+```
+
+`release metrics` reads the complete bounded attempt and job inventory for one
+exact workflow run. It reports the latest graph size separately from total
+executed jobs, queue and wall seconds, per-attempt and aggregate runner-seconds,
+retry count, critical-path elapsed seconds, and the duration of explicitly
+named cache and artifact-transfer steps across all attempts. Missing timestamps
+remain machine-readable unavailable reason codes; they are not estimated.
+
+### Automatic release evidence
+
+Every completed tag-push `build-binaries` run and every canonical deterministic
+repair run starts the separate read-only `release-evidence` workflow. Its
+identity is re-read from the API and bound to the triggering publisher run ID,
+attempt, tag name, and source SHA. A repair additionally requires the exact
+`workflow_dispatch` run-name protocol, repair mode, 64-hex remote-state digest,
+tag ref, and tag source SHA. Build-only and malformed manual publisher runs do
+not satisfy that protocol.
+
+The collector uses only GitHub GET requests and local `gh attestation verify`
+operations. A failed publisher produces exact-attempt timing evidence without
+guessing that a release is absent. A successful publisher must prove all of
+the following before any evidence artifact is uploaded:
+
+- the tag resolves to the exact source SHA and the generated release PR tuple;
+- the attempt-qualified successful main-CI promotion manifest contains the
+  same ten asset digests as the GitHub Release;
+- all ten contract assets have GitHub SHA-256 digests matching the downloaded
+  bytes, and every checksum file binds its exact archive name and digest;
+- provenance and SPDX attestations cryptographically verify for the five
+  contract archives at the exact source SHA (checksum assets are bound by
+  their checked content and the promotion manifest);
+- the deterministic Homebrew PR, its exact PR head, merged formula version,
+  formula digest and four contract archive URL/checksum pairs, exact PR-head
+  CI, and exact post-merge CI all match.
+
+The attempt-qualified artifact contains authoritative
+`env-vault.release-evidence.v1` JSON plus a generated Markdown index. Metrics
+record the latest graph size separately from `executed_job_count`, per-attempt
+job/runner totals, and `aggregate_runner_seconds` across every workflow
+attempt. Cache and artifact-transfer seconds likewise include every attempt,
+so retry cost is not hidden. A successful repair evidence document also retains
+the ordered tag-publisher and exact-state repair-run lineage, including the
+original failure. Missing timestamps are stable unavailable reason codes and
+are never estimated. The same artifact can be reproduced without prose or log
+analysis:
+
+```sh
+mkdir -p release-assets evidence-out
+gh release download "$VERSION" --repo "$REPOSITORY" --dir release-assets --clobber
+gh run download "$CI_RUN_ID" --repo "$REPOSITORY" \
+  --name "env-vault-promotion-${SOURCE_SHA}-attempt-${CI_RUN_ATTEMPT}" \
+  --dir promotion-manifest
+go run ./cmd/release-evidence collect \
+  --repo "$REPOSITORY" \
+  --version "$VERSION" \
+  --source-sha "$SOURCE_SHA" \
+  --publisher-run-id "$PUBLISHER_RUN_ID" \
+  --publisher-run-attempt "$PUBLISHER_RUN_ATTEMPT" \
+  --assets release-assets \
+  --promotion-manifest promotion-manifest/promotion-manifest.json \
+  --output "evidence-out/release-${VERSION}-run-${PUBLISHER_RUN_ID}-attempt-${PUBLISHER_RUN_ATTEMPT}.evidence.json"
+go run ./cmd/release-evidence index --directory evidence-out --output evidence-out/README.md
+```
+
+For an incomplete rerun attempt, create a repair plan and preserve its exact
+bytes:
+
+```sh
+go run ./cmd/releasectl release repair plan \
+  --repo "$REPOSITORY" --run-id RUN_ID --json > /tmp/env-vault-repair-plan.json
+PLAN_DIGEST="$(jq -er '.plan_digest' /tmp/env-vault-repair-plan.json)"
+go run ./cmd/releasectl release repair apply \
+  --plan /tmp/env-vault-repair-plan.json --plan-digest "$PLAN_DIGEST" --json
+```
+
+The last command is a precondition-checking dry run. Repeat it with `--apply`
+to execute the only attempt-recovery mutation: full
+`POST /actions/runs/{run_id}/rerun`. The tool never calls
+`rerun-failed-jobs` and never combines artifacts from different attempts.
+
+Publisher-stage recovery uses the same command surface, but is selected by the
+exact release identity instead of a run ID:
+
+```sh
+go run ./cmd/releasectl release repair plan \
+  --repo "$REPOSITORY" --version "$VERSION" --source-sha "$SOURCE_SHA" \
+  --json > /tmp/env-vault-publisher-repair-plan.json
+PLAN_DIGEST="$(jq -er '.plan_digest' /tmp/env-vault-publisher-repair-plan.json)"
+go run ./cmd/releasectl release repair apply \
+  --plan /tmp/env-vault-publisher-repair-plan.json \
+  --plan-digest "$PLAN_DIGEST" --json
+```
+
+The plan derives exactly one of `release-assets`, `homebrew`, or `health` from
+machine release status. Apply is a dry run by default; repeat with `--apply`
+to dispatch. The exact immutable tag ref/source SHA, workflow identity,
+release stage graph, and `repair_state_digest` are rechecked before
+mutation. The digest is also carried in the workflow run identity, so applying
+the same plan again is an exact no-op while a plan for changed remote state is
+distinct.
+
+If the exact Homebrew PR-head or post-merge tap run failed, the same plan
+command returns `kind=tap_ci_attempt` before it permits a publisher dispatch.
+Its action is respectively `rerun_tap_pr_ci_all_jobs` or
+`rerun_tap_post_merge_ci_all_jobs`, bound to the exact tap repository, workflow,
+run ID, attempt, event, branch, and head SHA. Apply uses only
+`POST /actions/runs/{run_id}/rerun`; it never uses `rerun-failed-jobs` or mixes
+workflow attempts. After applying, run `release watch` until the machine action
+changes from `wait_tap_ci` to `replan_publisher`, then generate a fresh
+version/source repair plan. That new plan may safely dispatch the `homebrew`
+publisher stage to merge the already-green PR or resume after green post-merge
+CI. The operator credential performing apply needs Actions write access to the
+tap repository; the release workflow's short-lived Homebrew App permissions
+remain unchanged and do not gain rerun capability.
 
 ## Build-only validation
 
@@ -248,12 +378,15 @@ pull request is open. After the merge:
    the default branch, checks out that exact SHA, and skips stale planning-only
    runs whose SHA is no longer the current head.
 3. For a release merge it validates the deterministic commit and generated PR,
-   then creates or verifies the exact tag and marks the PR
+   re-fetches the exact CI run plus its complete unexpired six-artifact
+   promotion inventory immediately before the state change, then creates or
+   verifies the exact tag and marks the PR
    `autorelease: tagged`. The tag push starts `build-binaries`.
-4. `build-binaries` repeats release quality, checks Homebrew monotonicity, and
-   only then creates the GitHub Release. Its notes are the non-empty exact
-   version section extracted from the reviewed `CHANGELOG.md`, not regenerated
-   from mutable GitHub metadata.
+4. `build-binaries` consumes and re-verifies the exact-version promotion
+   manifest and five native artifacts from that CI attempt, checks Homebrew
+   monotonicity, and only then creates the GitHub Release. Its notes are the
+   non-empty exact version section extracted from the reviewed `CHANGELOG.md`,
+   not regenerated from mutable GitHub metadata.
 5. The same run publishes attestations, updates Homebrew through its protected
    pull request, and finishes with the health verification.
 
@@ -263,22 +396,12 @@ health evidence must remain identical.
 
 If planning fails before creating the tag, rerun that exact `release-please`
 workflow after fixing the cause; `build-binaries` cannot replace the tag
-handoff. After the authorized tag exists and the PR is `autorelease: tagged`, a
-manual full retry may be dispatched from the repository default branch:
-
-```sh
-export VERSION=vX.Y.Z
-export REPOSITORY=ildarbinanas-design/env-vault
-gh workflow run build-binaries.yml --repo "$REPOSITORY" \
-  --ref main \
-  -f version="$VERSION" \
-  -f repair=none
-```
-
-Use GitHub's actual default branch in place of `main` if it changes. The
-dispatch resolves the existing tag, repeats deterministic release-PR
-authorization for `v0.0.8` and later, and never creates or moves a tag. A tag
-push is an event trigger, not an authorization mechanism.
+handoff. After the authorized tag exists, recovery must use the canonical
+`releasectl release repair plan/digest/apply` flow above. Direct publisher
+dispatch is not a supported steady-state recovery interface. The resulting
+bounded dispatch resolves the existing tag, repeats deterministic release-PR
+authorization, and never creates or moves a tag. A tag push is an event
+trigger, not an authorization mechanism.
 
 Record the workflow URL and wait for it to finish. A failed run is a partial
 release until remote state has been inspected; do not immediately create a new
@@ -286,39 +409,32 @@ tag or upload replacement files.
 
 ## Repair modes
 
-Every repair is a manual dispatch from the default branch and requires the
-exact existing version. The workflow resolves the source SHA from that tag.
+Every steady-state repair is planned from the exact existing version and tag
+source SHA, then dispatched at that immutable tag ref. Direct repair
+dispatches without a machine plan are rejected because they
+lack the required 64-hex `repair_state_digest`.
 
-Releases `v0.0.1` through `v0.0.7` predate the Release Please manifest. Their
-manual repair compatibility path requires an existing stable GitHub Release,
-an exact tag contained in current `main`, and never creates a tag. Starting at
-`v0.0.8`, every retry additionally requires the deterministic generated-PR and
-`autorelease: tagged` authorization. This legacy boundary exists only for
-already published versions; it cannot authorize a new release.
+Releases `v0.0.1` through `v0.0.7` are outside this publisher path and use the
+separate diagnostic-only [`legacy-rebuild` plan/apply guide](docs/legacy-rebuild.md).
+Its outputs are publication-ineligible. `v0.0.8` is blocked and remains an
+immutable failed tag without a GitHub Release.
 
 | Mode | Rebuilds | Release assets | Homebrew | Health check | Use when |
 | --- | --- | --- | --- | --- | --- |
-| `none` | yes | reconcile | PR/update or exact no-op | yes | complete idempotent retry after the authorized tag exists |
-| `release-assets` | yes | reconcile | PR/update or exact no-op | yes | the tag is correct but the Release, assets, or attestations are incomplete |
+| `none` | no | automatic tag-triggered publication only | PR/update or exact no-op | yes | normal publisher entry point; not a repair action |
+| `release-assets` | no | reconcile from exact promoted artifacts | PR/update or exact no-op | yes | the tag is correct but the Release, assets, or attestations are incomplete |
 | `homebrew` | no | verify/download | resume PR or exact no-op | yes | Release assets and attestations are complete and the tap stage must be resumed |
 | `health` | no | verify/download | read-only verification | yes | publication is complete and only health evidence must be repeated |
 
-Dispatch a repair with:
-
-```sh
-export VERSION=vX.Y.Z
-export REPOSITORY=ildarbinanas-design/env-vault
-gh workflow run build-binaries.yml --repo "$REPOSITORY" \
-  --ref main \
-  -f version="$VERSION" \
-  -f repair=release-assets
-```
-
-Replace `release-assets` only after matching the observed remote state to the
-table. A tag-triggered run cannot select repair mode. Missing attestations can
-be minted only when the workflow's own source SHA equals the release tag SHA.
-If `main` has advanced, rerun the original failed workflow attempt at that SHA;
-the workflow deliberately refuses to claim provenance from a later commit.
+Use the version/source repair-plan command above; do not choose a mode by
+interpreting logs or dispatch the workflow directly. A tag-triggered run cannot
+select repair mode. Missing attestations can be minted only when the promoted
+artifacts and manifest bind every subject to the exact release tag source SHA.
+If any observed release state changes, the old plan fails its remote
+preconditions and a new plan is required. Advancing `main` does not invalidate
+repair: the workflow dispatch remains pinned to the immutable release tag, so
+release assets, provenance, SBOM, Homebrew, and health evidence retain the
+exact release source SHA.
 
 The `none`, `release-assets`, and `homebrew` modes schedule the `homebrew` job,
 which alone declares `environment: release` and mints the short-lived tap App
@@ -329,13 +445,14 @@ permissions.
 
 ### Safe retry rules
 
-1. Inspect the failed job and remote tag, Release, and asset state first.
-2. For an infrastructure-only failure before any publication, rerunning failed
-   jobs is acceptable:
-
-   ```sh
-   gh run rerun RUN_ID --repo "$REPOSITORY" --failed
-   ```
+1. Generate `release status --json` and `release repair plan --json`; do not
+   diagnose a repair mode from narrative logs.
+2. For an infrastructure-only failure before any publication, use the run-ID
+   repair plan. Unless the current attempt contains both the archive and
+   promotion evidence for all five attempt-qualified platform targets, require
+   action `rerun_all_jobs` and
+   apply the plan as documented above. Do not use “rerun failed jobs”: a new
+   attempt containing only one platform cannot satisfy the aggregate matrix.
 
 3. Once a tag or Release exists, prefer an explicit repair dispatch. The
    repair scripts accept an existing tag only when it resolves to the expected
@@ -384,25 +501,19 @@ A release is healthy only when all of the following are true for the same
    `$SOURCE_SHA`.
 2. The GitHub Release is publicly visible, has `tagName == $VERSION`, and is
    neither a draft nor a prerelease.
-3. The Release contains exactly these ten assets, with no duplicate or extra
-   names:
+3. The Release contains exactly the ten names in the validated
+   `release/contract.v1.json` `assets` array, with no duplicate or extra names.
+   Inspect the canonical set without maintaining a second list:
 
-   ```text
-   env-vault-linux-amd64.tar.gz
-   env-vault-linux-amd64.tar.gz.sha256
-   env-vault-linux-arm64.tar.gz
-   env-vault-linux-arm64.tar.gz.sha256
-   env-vault-darwin-amd64.tar.gz
-   env-vault-darwin-amd64.tar.gz.sha256
-   env-vault-darwin-arm64.tar.gz
-   env-vault-darwin-arm64.tar.gz.sha256
-   env-vault-windows-amd64.zip
-   env-vault-windows-amd64.zip.sha256
+   ```sh
+   go run ./cmd/release-contract validate
+   jq -er '.assets | select(length == 10) | .[]' release/contract.v1.json
    ```
 
    Every checksum file contains one SHA-256 record naming its paired archive,
-   and every archive matches that record. The native smoke jobs have verified
-   that both version commands print exactly `$VERSION`.
+   and every archive matches that record. Each native artifact-quality job has
+   explicitly verified checksum and literal `--version`, `version`, and JSON
+   version output against `$VERSION`.
 4. `homebrew-tap/Formula/env-vault.rb` is byte-for-byte the formula generated
    from those published assets. Its version, tag URLs, and four platform
    checksums are exact. It declares macOS Sequoia as the minimum, uses
@@ -535,12 +646,9 @@ attestations require the SPDX predicate type.
 
 ```sh
 export SIGNER_WORKFLOW=ildarbinanas-design/env-vault/.github/workflows/build-binaries.yml
-for archive in \
-  env-vault-linux-amd64.tar.gz \
-  env-vault-linux-arm64.tar.gz \
-  env-vault-darwin-amd64.tar.gz \
-  env-vault-darwin-arm64.tar.gz \
-  env-vault-windows-amd64.zip
+mapfile -t archives < <(jq -er '.platforms[].archive' release/contract.v1.json)
+[[ "${#archives[@]}" == "5" ]]
+for archive in "${archives[@]}"
 do
   path="$HEALTH_DIR/assets/$archive"
   gh release verify-asset "$VERSION" "$path" --repo "$REPOSITORY"

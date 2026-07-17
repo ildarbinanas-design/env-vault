@@ -64,7 +64,7 @@ func (r Renderer) Success(command string, data any, warnings []string) error {
 		return err
 	}
 	if r.options.JSON || r.options.JSONL {
-		return writeMachine(r.stdout, env, r.options.JSONL)
+		return writeMachine(r.stdout, env)
 	}
 	if r.options.Quiet {
 		return nil
@@ -89,7 +89,7 @@ func (r Renderer) Error(command string, err *apperrors.AppError) error {
 		fmt.Fprintf(r.stderr, "OUTPUT_WRITE_FAILED: %s\n", r.redactor.String(fileErr.Error()))
 	}
 	if r.options.JSON || r.options.JSONL {
-		return writeMachine(r.stdout, env, r.options.JSONL)
+		return writeMachine(r.stdout, env)
 	}
 	_, writeErr := fmt.Fprintf(r.stderr, "code=%s\nmessage=%s\nremediation=%s\n",
 		env.Error.Code, env.Error.Message, env.Error.Remediation)
@@ -119,12 +119,9 @@ func (r Renderer) envelope(ok bool, command string, data any, warnings []string,
 	}
 }
 
-func writeMachine(w io.Writer, env Envelope, jsonl bool) error {
+func writeMachine(w io.Writer, env Envelope) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
-	if jsonl {
-		return encoder.Encode(env)
-	}
 	return encoder.Encode(env)
 }
 

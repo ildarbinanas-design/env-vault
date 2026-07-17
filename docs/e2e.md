@@ -12,21 +12,20 @@ The canonical scenario manifest is [`e2e/scenarios.json`](../e2e/scenarios.json)
 It is the machine-readable source for
 `feature/requirement -> scenario ID -> Go test -> platforms -> result`.
 All listed scenarios are critical. A missing or unexpected skip fails the job.
-The manifest retains the legacy `atomic` scenario ID and requirement wording so
-the post-migration suite hash stays identical to the reviewed Go 1.22 baseline.
+The manifest retains the legacy `atomic` scenario ID and requirement wording
+because those names remain part of the reviewed compatibility contract.
 On Windows those scenarios assert complete readable YAML, preservation of the
 prior file before replacement, and removal of temporary siblings; they do not
 claim an operating-system atomicity guarantee that Go does not provide.
 The suite hash covers the scenario/harness sources and the semantic runner,
-normalization, report validation, and same-source comparison logic. In the
+normalization, and report validation logic. In the
 isolated reporting-tool file only the two version-string values are
 canonicalized; every other byte remains hashed. A Phase 2 reporter
 compatibility update therefore does not masquerade as a scenario change,
-while executable or semantic runner code cannot hide beside the pin. The
-cross-source migration comparator lives outside `e2e/`: it accepts only two
-independently passing matrix validations anchored to this exact suite hash,
-then rechecks identities, scenarios, contracts, coverage, and leak evidence.
-Its behavior is protected by dedicated unit and workflow-contract tests.
+while executable or semantic runner code cannot hide beside the pin. Durable
+non-regression floors live in the versioned machine contract described below;
+there is no historical-artifact download or cross-source comparator in the
+steady-state gate.
 
 ## Isolation and secret safety
 
@@ -162,36 +161,33 @@ skip instead of silently dropping the platform.
 | Unique sentinel per scenario and no output/artifact leakage | all scenarios | `TestE2E/*` plus runner leak gate | P5 |
 | Real user keyrings remain untouched | all scenarios | isolated triple-gated harness | P5 |
 
-## Canonical Go 1.22 baseline
+## Durable compatibility baseline
 
-Phase 1 was merged before any toolchain or production dependency change. Its
-canonical `main` evidence is [Actions run 29441160687](https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687)
-at commit `7a044bdbf73aa592016bbb3a02d81f314f08fe63`, run attempt `1`, with
-Go `go1.22.12`, gotestsum `v1.12.2`, and semantic suite hash
+[`docs/e2e-baseline.json`](e2e-baseline.json) uses schema
+`env-vault.e2e-baseline.v2`. It was deterministically derived from the five
+fully validated PR #20 reports for source
+`585d4d7e5a9c800debd57198ff9e0e88411630ec`, Actions run `29479484474`,
+attempt `1`, Go `go1.26.5`, and gotestsum `v1.13.0`. It preserves, per native
+platform, the canonical public-contract hash, zero-tolerance statement
+coverage floor, every critical scenario result and declared skip, and the
+exact passing leak expectation. The provenance tuple remains reviewable, but
+the contract contains no artifact ID, expiry, binary digest, or other field
+that requires the source workflow artifacts to remain downloadable.
+
+The source reports used suite hash
 `ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf`.
-Linux and Darwin passed all 22 scenarios at 71.1% statement coverage; Windows
-passed 20 with only the two declared skips at 70.7%. The exact artifact IDs,
-SHA-256 values, binary digests, and expiry are pinned in
-[`docs/e2e-baseline.json`](e2e-baseline.json).
-
-Candidate CI downloads reports from that exact run and compares them with the
-current five-platform matrix at zero coverage tolerance. The baseline matrix
-is revalidated from the baseline source with Go 1.22.12, including regeneration
-of derived coverage evidence; the candidate matrix is independently
-revalidated from the candidate source with Go 1.26.5. Only then does the
-source-neutral comparator read the two passing matrix attestations and compare
-their public evidence. This prevents either
-coverage profile from being regenerated against the wrong revision when a
-migration also fixes production code. The report artifacts are retained for
-30 days; establish and pin a new canonical baseline before their documented
-expiry instead of silently regenerating the old identity.
+The reviewed independent-second-secret sentinel fix and removal of the two
+migration-only comparator implementations produced the current semantic hash
+recorded in the contract. The one-time `independent_second_secret_sentinel`
+transition accepts the old hash only in `--source-proof` mode and only with
+the exact provenance tuple above. Ordinary candidate verification accepts
+only the current semantic hash. This records the equivalence proof without
+retaining an expiring runtime dependency.
 
 ## Running locally
 
-Install the pinned reporting tool outside the module; it is not a production
-dependency. The baseline retains `v1.12.2`; candidates use stable `v1.13.0`,
-whose newer `x/tools` graph builds with Go 1.26.5 while preserving JSONL, JUnit,
-and test exit-code behavior:
+Install the exact baseline reporting tool outside the module; it is not a
+production dependency:
 
 ```sh
 GOTOOLCHAIN=go1.26.5 go install gotest.tools/gotestsum@v1.13.0
@@ -261,15 +257,14 @@ files, human-readable reports are regenerated exactly from their machine
 evidence, `coverage.txt` and full `coverage.html` are regenerated from
 `coverage.out` with the report's exact Go patch toolchain, package percentages
 are independently recomputed, and immutable report digests are rechecked.
-`e2e-gate` fails closed if a
-platform or required file is missing, malformed, leaked, skipped unexpectedly,
-does not have 100% critical scenario coverage, or falls below the conservative
-60% cross-platform statement-coverage floor. The migration comparison remains
-the stronger non-regression gate: it permits no decrease from the preserved
-per-platform baseline. Matrix validation and comparison also recompute the
-semantic suite hash from their exact checkout and reject reports created by a
-different runner/scenario implementation, even if every report in that stale
-set agrees with every other one.
+`e2e-gate` fails closed if a platform or required file is missing, malformed,
+leaked, skipped unexpectedly, does not have 100% critical scenario coverage,
+or falls below the conservative 60% cross-platform statement-coverage floor.
+This is the only deep parse of raw reports. It seals the exact source/run/suite,
+platform, toolchain, archive/checksum, contract, coverage, scenario, leak, and
+raw-evidence digests into the versioned `matrix-validation.json` proof. The
+durable verifier consumes only that proof and applies the stronger per-platform
+floors and exact expectations; it cannot rediscover or reinterpret raw reports.
 
 Validate a downloaded five-platform set with:
 
@@ -283,56 +278,39 @@ GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
   --expected-reporter "v1.13.0"
 ```
 
-Compare a migration candidate to the preserved baseline with no coverage
-tolerance:
+After the matrix validator writes the sealed `matrix-validation.json`, verify
+the durable baseline with the same exact run identity:
 
 ```sh
-workspace="$PWD"
-(
-  cd baseline-source
-  GOTOOLCHAIN=go1.22.12 go run ./e2e/cmd/e2e-runner validate-matrix \
-    --reports "$workspace/baseline-download" --phase baseline \
-    --expected-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
-    --expected-run-id "29441160687" \
-    --expected-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
-    --expected-run-attempt "1" \
-    --expected-repository "ildarbinanas-design/env-vault" \
-    --expected-reporter "v1.12.2"
-)
-GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
-  --reports "$workspace/candidate-download" --phase candidate \
+GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline verify \
+  --baseline docs/e2e-baseline.json \
+  --proof reports-download/matrix-validation.json \
+  --phase candidate \
   --expected-commit "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
   --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
   --expected-run-attempt "$GITHUB_RUN_ATTEMPT" \
-  --expected-repository "$GITHUB_REPOSITORY" --expected-reporter "v1.13.0"
-GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-compare \
-  --baseline "$workspace/baseline-download" --candidate "$workspace/candidate-download" \
-  --output "$workspace/comparison-report" --coverage-tolerance 0 \
-  --expected-suite-hash "ace01466c8b504af9a1a2af2ec2ba3bcd9446e637044d94b4ce7d5dffa842fcf" \
-  --baseline-validation-outcome success --candidate-validation-outcome success \
-  --baseline-commit "7a044bdbf73aa592016bbb3a02d81f314f08fe63" \
-  --baseline-run-id "29441160687" \
-  --baseline-run-url "https://github.com/ildarbinanas-design/env-vault/actions/runs/29441160687" \
-  --baseline-run-attempt "1" \
-  --baseline-repository "ildarbinanas-design/env-vault" --baseline-reporter "v1.12.2" \
-  --candidate-commit "$GITHUB_SHA" --candidate-run-id "$GITHUB_RUN_ID" \
-  --candidate-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --candidate-run-attempt "$GITHUB_RUN_ATTEMPT" \
-  --candidate-repository "$GITHUB_REPOSITORY" --candidate-reporter "v1.13.0" \
-  --candidate-version "$VERSION"
+  --expected-repository "$GITHUB_REPOSITORY"
 ```
 
-The comparison requires the same platform set and suite hash, the same
-critical scenario IDs and pass/expected-skip results, byte-equivalent
-normalized stdout/stderr/exit-code and JSON/JSONL contracts, a passing leak
-gate, and no statement-coverage decrease. The comparison report itself records
-both exact commit/run identities, repositories, reporter pins, and Go versions.
-For a strict `vMAJOR.MINOR.PATCH` candidate, the comparator additionally
-requires the three exact `CLI_VERSION_FORMS` output shapes and canonicalizes
-only their exact expected version before the byte comparison. Other scenarios
-and embedded version-like text remain byte-sensitive. Independently, the native
-smoke jobs require the literal candidate version on every platform; the shared
-quality gate requires both checks, so a wrong binary version cannot be masked.
+`baseline-verification.json` and its generated Markdown rendering contain
+stable check codes, the baseline digest, and the exact matrix-proof digest. The
+verifier requires the same platform set and semantic suite, exact critical
+results, canonical normalized stdout/stderr/exit-code and JSON/JSONL contract
+hashes, passing leak evidence, and no coverage decrease. Native platform jobs
+separately require the literal candidate version in all three version output
+forms, so normalization cannot mask a wrong release version.
+
+Update the contract only from one already validated five-platform set. The
+command writes both the new canonical JSON and a deterministic before/after
+machine diff for review:
+
+```sh
+GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline update \
+  --proof reports-download/matrix-validation.json \
+  --baseline docs/e2e-baseline.json \
+  --output docs/e2e-baseline.json \
+  --diff-output /tmp/e2e-baseline.diff.json
+```
 
 The current symlink contract rejects unsafe final config and lock targets. It
 does not claim protection from a hostile same-user process or a pre-existing
