@@ -121,7 +121,7 @@ jobs:
             exit 1
           }
           scripts/release/gh-api-read.sh "$RUNNER_TEMP/control-ci-runs.json" \
-            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            --paginate --slurp --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
             -f "head_sha=${GITHUB_SHA}" -f event=push -F per_page=100
           control_ci_tuple=$(jq -er --arg repository "$GITHUB_REPOSITORY" --arg control "$GITHUB_SHA" \
             --arg branch "$DEFAULT_BRANCH" '
@@ -189,7 +189,7 @@ jobs:
             --workflow-path .github/workflows/ci.yml --event push \
             --head-sha "$SOURCE_SHA" --head-ref "$DEFAULT_BRANCH"
           scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/source-ci-runs.json" \
-            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            --paginate --slurp --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
             -f "head_sha=${SOURCE_SHA}" -f event=push -F per_page=100
           jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_SHA" --arg branch "$DEFAULT_BRANCH" \
             --argjson run_id "$CI_RUN_ID" --argjson attempt "$CI_RUN_ATTEMPT" '
@@ -221,7 +221,7 @@ jobs:
             --workflow-path .github/workflows/build-binaries.yml --event push \
             --head-sha "$SOURCE_SHA" --head-ref "$VERSION" --conclusion failure
           scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/publisher-runs.json" \
-            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/build-binaries.yml/runs" \
+            --paginate --slurp --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/build-binaries.yml/runs" \
             -f "head_sha=${SOURCE_SHA}" -f event=push -F per_page=100
           jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_SHA" --arg version "$VERSION" \
             --argjson run_id "$PUBLISHER_RUN_ID" --argjson attempt "$PUBLISHER_RUN_ATTEMPT" '

@@ -14,10 +14,19 @@ emits no values, so jq exited `4` and the script misclassified the response as
 malformed. The exact failure is recorded in the operator incident matrix; no
 asset, attestation, Homebrew, or durable-evidence mutation followed it.
 
-Changing `main` cannot repair the workflow and scripts frozen in the immutable
-tag. Moving the tag, deleting/recreating the Release, manually uploading all
-assets, or blindly rerunning the failed job would either violate immutability
-or execute the same deterministic defect.
+The first reviewed bootstrap dispatch, run `29615817787` attempt 1 at control
+SHA `6989b737c0e0a7407b5b7949840b0e139f406f16`, also stopped before mutation.
+Its control-plane read supplied query fields without the transport's mandatory
+explicit `--method GET`, so typed validation returned `INPUT_INVALID`. The
+Release remained at exactly zero assets. This is a safe wiring failure, not a
+transient authorization to rerun the old control SHA: a fresh dispatch is
+allowed only after the explicit-GET fix is reviewed, merged, and green on
+`main`.
+
+Changing `main` cannot repair the publisher workflow and scripts frozen in the
+immutable tag. Moving the tag, deleting/recreating the Release, manually
+uploading all assets, or blindly rerunning the failed job would either violate
+immutability or execute the same deterministic defect.
 
 ## Decision
 
