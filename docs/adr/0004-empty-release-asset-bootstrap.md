@@ -102,3 +102,11 @@ The bootstrap is not authorization for an arbitrary historical repair. Any
 future invocation must supply a newly reviewed exact incident tuple and must
 begin from the same zero-asset/no-conflict state. A nonempty Release is a hard
 stop.
+
+The corrected fresh bootstrap later succeeded as run `29617861201` attempt 1,
+job `88006715813`, result artifact `8421133392`. The following immutable-tag
+`release-assets` repair produced the exact ten assets and attestations, then
+encountered the separate informational-`Link` transport defect before any
+Homebrew formula/App/tap mutation. That later boundary is governed by
+[ADR 0005](0005-informational-link-and-homebrew-bridge.md); it does not change
+this bootstrap's zero-to-two-asset decision.

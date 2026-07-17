@@ -404,6 +404,34 @@ first asset mutation and stops if it no longer equals the dispatched reviewed
 control SHA. A response file containing more than one top-level JSON value is
 malformed even when every value independently has a valid Release shape.
 
+### Protected-main Homebrew-only recovery
+
+If an immutable tag has already produced the exact stable ten-asset Release
+and complete provenance/SPDX attestations but its Homebrew job failed in
+source-frozen tooling before formula/App/tap mutation, do not rerun the same
+deterministic path. Merge the reviewed transport/bridge fix with exact-head and
+main CI green, then dispatch `publish-homebrew-bridge.yml` from that exact
+protected `main` commit. Every control/source/bootstrap/publisher/job/Release
+and artifact coordinate is a required input; there are no incident defaults.
+
+The bridge's source permissions remain read-only. It verifies contract and
+formula parity, exact bootstrap-result pair bytes, the seven-job failed
+publisher graph, all ten assets and attestations, and absence of a deterministic
+tap branch/PR in every state/base. It rechecks protected main and tap absence
+before minting the release-environment App token, then enforces the exact tap
+base again inside `publish-homebrew-pr.sh` before branch/PR mutation. The App
+is still limited to one tap repository with Actions read, Contents write, and
+Pull requests write.
+
+Accept only an `env-vault.homebrew-publication-bridge.v1` result whose control,
+source, bootstrap, failed publisher, PR/head/merge, both tap CI attempts, and
+final tap snapshot all match. Its `next_action` must be exactly
+`dispatch_tag_scoped_health`. Then dispatch one normal `repair=health` at the
+immutable tag and require health plus durable evidence success. The bridge
+must never create/move tags, create/edit Releases, upload/replace assets, create
+attestations, write evidence refs, or broaden App permissions. See
+[ADR 0005](docs/adr/0005-informational-link-and-homebrew-bridge.md).
+
 ## Legacy and blocked versions
 
 `v0.0.1` through `v0.0.7` may be rebuilt only for diagnostics through

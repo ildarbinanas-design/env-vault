@@ -145,6 +145,7 @@
     { "id": "planning", "name": "release-please", "file": "release-please.yml" },
     { "id": "publisher", "name": "build-binaries", "file": "build-binaries.yml" },
     { "id": "release_assets_bootstrap", "name": "bootstrap-release-assets", "file": "bootstrap-release-assets.yml" },
+    { "id": "homebrew_bridge", "name": "publish-homebrew-bridge", "file": "publish-homebrew-bridge.yml" },
     { "id": "release_evidence", "name": "release-evidence", "file": "release-evidence.yml" },
     { "id": "legacy_rebuild", "name": "legacy-rebuild", "file": "legacy-rebuild.yml" },
     { "id": "planning_app_audit", "name": "audit-release-planning-app", "file": "audit-release-planning-app.yml" },

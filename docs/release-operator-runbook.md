@@ -889,6 +889,82 @@ A fresh dispatch is permitted only after the explicit-GET correction has a
 reviewed exact-head PR, a green merge, and green `main` CI; then re-observe the
 zero-asset state and exact incident tuple before dispatch.
 
+#### 13b. Protected-main Homebrew bridge after a source-frozen transport failure
+
+Use this incident-only path only when the immutable tag already has the exact
+stable ten-asset Release and complete exact-source provenance/SPDX attestations,
+but its Homebrew job failed before formula generation, App-token minting, PR,
+or tap mutation. First merge the reviewed transport/bridge PR and require its
+exact-head and new `main` CI to succeed. Read every coordinate afresh, including
+the bootstrap result artifact digest; do not copy a value from this narrative
+as an operational default.
+
+```sh
+gh workflow run publish-homebrew-bridge.yml \
+  --repo "$REPOSITORY" --ref main \
+  -f control_sha="$CONTROL_SHA" \
+  -f control_ci_run_id="$CONTROL_CI_RUN_ID" \
+  -f control_ci_run_attempt="$CONTROL_CI_RUN_ATTEMPT" \
+  -f version="$VERSION" \
+  -f source_sha="$SOURCE_SHA" \
+  -f source_ci_run_id="$SOURCE_CI_RUN_ID" \
+  -f source_ci_run_attempt="$SOURCE_CI_RUN_ATTEMPT" \
+  -f release_id="$RELEASE_ID" \
+  -f bootstrap_control_sha="$BOOTSTRAP_CONTROL_SHA" \
+  -f bootstrap_run_id="$BOOTSTRAP_RUN_ID" \
+  -f bootstrap_run_attempt="$BOOTSTRAP_RUN_ATTEMPT" \
+  -f bootstrap_job_id="$BOOTSTRAP_JOB_ID" \
+  -f bootstrap_result_artifact_id="$BOOTSTRAP_RESULT_ARTIFACT_ID" \
+  -f bootstrap_result_artifact_sha256="$BOOTSTRAP_RESULT_ARTIFACT_SHA256" \
+  -f failed_publisher_run_id="$FAILED_PUBLISHER_RUN_ID" \
+  -f failed_publisher_run_attempt="$FAILED_PUBLISHER_RUN_ATTEMPT" \
+  -f metadata_job_id="$METADATA_JOB_ID" \
+  -f promotion_job_id="$PROMOTION_JOB_ID" \
+  -f preflight_job_id="$PREFLIGHT_JOB_ID" \
+  -f release_job_id="$RELEASE_JOB_ID" \
+  -f supply_chain_job_id="$SUPPLY_CHAIN_JOB_ID" \
+  -f failed_homebrew_job_id="$FAILED_HOMEBREW_JOB_ID" \
+  -f health_job_id="$HEALTH_JOB_ID"
+```
+
+The 23 top-level inputs are separate required strings. The source workflow
+token has only Actions, Attestations, and Contents read. Before the tap secret
+is accessed, the workflow binds the protected-main SHA/CI, source CI/tag,
+current/source contract and formula parity, stable Release ID and ten exact
+asset/checksum bytes, complete signer/source attestations, successful bootstrap
+run/job/result ID/digest/pair bytes, and exact seven-job failed publisher graph.
+The failed run must be `workflow_dispatch`, have diagnostic coordinate
+`repair=release-assets`, and show Homebrew failing at the attestation gate with
+all formula/App/PR/merge steps skipped.
+
+The deterministic tap head is searched across every PR state and base. The
+tap formula must still be lower and both branch and PR absent. Protected main
+and this unpublished state are re-read immediately before token minting; the
+one-repository App token then rechecks the same exact tap base, and the
+publisher enforces that base again inside its mutation boundary. Stop on any
+drift. A release head appearing during that race window is reusable only when
+it is one formula-only commit whose sole parent is the exact expected tap base;
+stale or merge heads fail before PR mutation. Do not redispatch blindly.
+
+Require one exact `env-vault.homebrew-publication-bridge.v1` result artifact.
+It must bind the bridge run/control CI, source CI, bootstrap identity/result,
+failed publisher/job map, formula digest, PR number/head, PR-head CI identity,
+merge SHA, post-merge CI identity, and final verified tap SHA. Require
+`next_action=dispatch_tag_scoped_health`. Only then make the ordinary
+immutable-tag health dispatch:
+
+```sh
+gh workflow run build-binaries.yml \
+  --repo "$REPOSITORY" --ref "$VERSION" \
+  -f version="$VERSION" -f repair=health
+```
+
+Capture that new run ID atomically. Require the tag-scoped health job to
+succeed and its resulting automatic `release-evidence` run to publish and
+replay the durable bundle offline. Never use this bridge to create or edit a
+Release, upload or replace assets, create attestations, change evidence refs,
+or request Workflows/administration permission. See ADR 0005.
+
 ### 14. Provenance, SBOM, Homebrew, and both tap CI gates
 
 **Command.** Verify the published assets and both attestation predicate types,
@@ -1347,6 +1423,7 @@ credentials, semantic authorization, or release truth.
 | 20. Valid replay could not create the first protected evidence ref | health repair `29569706872` succeeded; evidence run `29569819553` attempt 1; `assemble` `87850701462` succeeded; `publish` `87850792886` failed with `Resource not accessible by integration (HTTP 403)` at `POST git/refs`; candidate replay digest `124a7706b4129c053fd3b76588b2591296bdda26c31235e98589ba898eabcb0c` | The absent-branch path inherited the release source tree and parent, making ten `.github/workflows/*` files reachable through the new ref. GitHub therefore required `Workflows: write`; the deliberately narrow workflow token had only `Contents: write`. The ruleset allowed creation and fast-forward and was not the cause | Treat `release-evidence` as one-time repository infrastructure: bootstrap it without force at the exact first release source; enforce that source with exact operator pre/post checks; fail before Git-object writes when absent; keep subsequent writes as `force:false` fast-forwards. Track an automated evidence-only root ledger as refactor backlog rather than granting a broad token | Preserve the 403 and branch 404, audit token permissions/ruleset, bootstrap only exact `c42a92144a82c19edea41c76328ec7fd1e408ceb`, then rerun the whole evidence workflow so attempt-qualified artifacts are rebuilt | Run the exact absence/ruleset checks, `git push origin "${SOURCE_SHA}:refs/heads/release-evidence"`, verify the ref, then `gh run rerun 29569819553`; never use `--failed`, `--force`, current `main`, or a different SHA | One authenticated one-time branch creation; steady-state workflow remains `actions: read`, `contents: write`; no App permission, bypass, tag, Release, asset, or tap change | Attempt 2: `assemble` `87853060534` and `publish` `87853170330` succeeded; evidence commit `68547bd880a4d49f44389476b77046aac2ab1675` fast-forwarded from the source; replay artifact `8402901139`; exact tuple verifies offline | Historical one-time bootstrap resolution only. Fresh-ledger automation was later implemented by ADR 0003; the production legacy root remains unchanged |
 | 21. Valid new `v0.0.16` Release with `assets: []` was reported as malformed | publisher `29610907056` attempt 1; `release` job `87985286552`; “No-clobber reconcile all ten release assets”; source `ddfd38c3144ed3d0968d2c5e7e4b2acfef841478`; Release `355905998` | The combined jq program selected a valid shape and immediately iterated `.assets[].name`; an empty array emitted no value, so `jq -e` exited `4` and the shell treated valid empty state as malformed. The Release had no partial assets and downstream supply-chain/Homebrew/health jobs were skipped | Validate response shape separately, allow zero extracted names only in reconciliation, retain exact-ten enforcement in the downloader, and reconcile every upload response by a fresh inventory. Because the fix cannot alter the tag-frozen script, use the ADR-0004 protected-main bootstrap to upload only one source-bound pair, then resume the frozen tag-scoped `release-assets` path | Preserve the exact run/job/Release/bundle tuple, merge the reviewed fix, dispatch card 13a once, inspect its versioned result, then dispatch the standard tag repair | Card 13a with source CI `29610157051/1`, failed publisher `29610907056/1`, failed job `87985286552`, bundle artifact `8418684412` and its recorded digest; values are incident inputs, never defaults | Bootstrap uses `actions: read`, `contents: write`, shared release concurrency, and protected `release` environment; standard repair keeps existing scoped permissions | Brand-new empty fixture uploads/re-downloads all ten exact bytes; malformed/null/wrong-type/bad/duplicate/unexpected/concurrent/ambiguous cases fail closed; real bootstrap and subsequent publisher/evidence must be observed before this row can claim completion | One-time immutable-tag bridge; separated parsing and ambiguity-safe reconciliation are steady-state |
 | 22. First protected-main empty-Release bootstrap was rejected before mutation | bootstrap `29615817787` attempt 1; job `88000569653`; control SHA `6989b737c0e0a7407b5b7949840b0e139f406f16`; “Validate protected-main control plane, contracts, tag, and empty Release” | The first control-CI runs-list read passed `-f`/`-F` query fields without explicit `--method GET`; typed transport intentionally rejected the ambiguous method with exit `2`, `INPUT_INVALID`. Review found the same latent omission in the two later source-CI and publisher reads, which never executed | Add explicit GET to all three reads and enforce the rule over every workflow `gh-api-read.sh` logical command, including multiline continuations and all field aliases | Preserve the failed run; do not rerun it. Merge a reviewed fix, require green new `main`, re-observe the Release still has zero assets, then make one fresh dispatch from the new control SHA | Workflow parser regression plus typed transport tests; Release `355905998` zero-asset observation is external pre-dispatch evidence | Read-only failure before the bootstrap mutation step; no Release, asset, attestation, Homebrew, evidence, tag, or tap change | Exact-head and new `main` CI must pass; a later fresh bootstrap must emit the versioned two-asset result before tag-scoped repair | Safe pre-mutation wiring incident; explicit GET is a permanent workflow invariant |
+| 23. Exact attestations read returned a deprecation Link and blocked Homebrew before tap mutation | bootstrap `29617861201/1`, job `88006715813`, result artifact `8421133392`; release-assets repair publisher `29617982467/1`; metadata `88007079781`, promotion `88007175909`, preflight `88007175949`, release `88007263020`, supply-chain `88007373760` succeeded; Homebrew `88007538165` failed; health `88007598538` skipped | Public Attestations REST returned HTTP 200 plus an informational `Link` with `rel="deprecation"`, `Deprecation`, and `Sunset`. Frozen transport ran pagination parsing for every read and rejected the non-pagination relation as `PAGINATION_INVALID`. Formula/App/PR/tap steps were skipped; their execution was not observed | Non-paginated reads do not interpret Link. Paginated reads parse RFC link-values, ignore informational/anchored contexts, and follow only one trusted invariant-preserving next. Because the immutable tag cannot consume that fix, use card 13b's exact-input protected-main Homebrew-only bridge, then one tag-scoped health repair | Preserve the failed repair and exact ten assets/attestations; merge the reviewed bridge; re-read every input/artifact digest; dispatch once; verify typed result; dispatch health once | Exact observed header fixtures; relative/quoted-comma/coexisting/anchored/duplicate/unsafe next tests; bridge workflow/contract/scripts tests; live inputs remain dispatch data | Bridge source token is read-only; only the one-repository release App has Actions read, Contents write, PR write. No tag/Release/asset/attestation/evidence mutation | Exact-head and main CI green; bridge result binds PR/head/merge/both tap CI/final tap; health and durable evidence then succeed. Until live completion, do not mark this row resolved | One-time immutable-tag Homebrew bridge; correct informational-Link separation is steady-state |
 
 ## Honest `v0.0.12` and `v0.0.13` record
 

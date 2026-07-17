@@ -81,6 +81,27 @@ func TestReadPreservesRawBodyAndPinsTransport(t *testing.T) {
 	}
 }
 
+func TestNonPaginatedReadDoesNotInterpretInformationalLinkMetadata(t *testing.T) {
+	observed := "Link: <https://docs.github.com/en/rest/about-the-rest-api/api-versions>; rel=\"deprecation\"; type=\"text/html\"\r\n" +
+		"Deprecation: Tue, 10 Mar 2026 00:00:00 GMT\r\n" +
+		"Sunset: Fri, 10 Mar 2028 00:00:00 GMT\r\n"
+	for name, header := range map[string]string{
+		"observed deprecation metadata": observed,
+		"malformed irrelevant link":     "Link: not-a-link-value\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{responses: []CommandResult{liveResponse(200, header, `{"attestations":[{"id":1}]}`)}}
+			var sleeps []time.Duration
+			data, transportErr := testClient(runner, &sleeps).Read(context.Background(), ReadRequest{
+				Endpoint: "repos/example/repo/attestations/sha256:abc", Fields: []string{"predicate_type=https://slsa.dev/provenance/v1"},
+			})
+			if transportErr != nil || string(data) != `{"attestations":[{"id":1}]}` || len(runner.apiCalls) != 1 {
+				t.Fatalf("data=%s error=%+v calls=%d", data, transportErr, len(runner.apiCalls))
+			}
+		})
+	}
+}
+
 func TestReadRetriesSeriallyAndHonorsRetryAfter(t *testing.T) {
 	first := liveResponse(429, "Retry-After: 7\r\n", `{"message":"rate limited"}`)
 	first.Err = errors.New("gh exited 1")
@@ -345,6 +366,91 @@ func TestReadRequiresCompleteUniquePaginationAndDoesNotRepeatFields(t *testing.T
 			})
 			if err == nil || err.Code != "PAGINATION_INVALID" || !strings.Contains(err.Message, testCase.message) || len(runner.apiCalls) != 2 {
 				t.Fatalf("error=%+v calls=%d", err, len(runner.apiCalls))
+			}
+		})
+	}
+}
+
+func TestPaginationIgnoresWellFormedInformationalLinkRelations(t *testing.T) {
+	next := `<https://api.github.com/repos/example/repo/actions/runs?event=push&per_page=1&page=2>; rel="next"`
+	deprecation := `<https://docs.github.com/en/rest/about-the-rest-api/api-versions>; rel="deprecation"; type="text/html"; title="API versions, deprecation schedule"`
+	relativeDeprecation := `<../about-the-rest-api/api-versions>; rel="deprecation"; reviewed`
+	multilingualDeprecation := `<../docs>; rel="deprecation"; hreflang=en; hreflang=ru`
+	anchoredAmbiguous := `<https://api.github.com/repos/example/repo/actions/runs?event=push&per_page=1&page=99>; rel="next"; rel="deprecation"; anchor="https://api.github.com/repos/example/other"`
+	for name, firstLink := range map[string]string{
+		"informational before next":               deprecation + ", " + next,
+		"informational after next":                next + ", " + deprecation,
+		"relative informational":                  relativeDeprecation + ", " + next,
+		"repeated informational target attribute": multilingualDeprecation + ", " + next,
+		"anchored ambiguous relation":             anchoredAmbiguous + ", " + next,
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{responses: []CommandResult{
+				liveResponse(200, "Link: "+firstLink+"\r\nDeprecation: Tue, 10 Mar 2026 00:00:00 GMT\r\nSunset: Fri, 10 Mar 2028 00:00:00 GMT\r\n", `{"total_count":2,"workflow_runs":[{"id":1}]}`),
+				liveResponse(200, "Link: "+deprecation+"\r\n", `{"total_count":2,"workflow_runs":[{"id":2}]}`),
+			}}
+			var sleeps []time.Duration
+			data, transportErr := testClient(runner, &sleeps).Read(context.Background(), ReadRequest{
+				Endpoint: "repos/example/repo/actions/runs?per_page=1", Fields: []string{"event=push"}, Paginate: true, Slurp: true,
+			})
+			if transportErr != nil || len(runner.apiCalls) != 2 || !strings.Contains(string(data), `"id":2`) {
+				t.Fatalf("data=%s error=%+v calls=%d", data, transportErr, len(runner.apiCalls))
+			}
+		})
+	}
+}
+
+func TestPaginationNeverFollowsAlternateAnchorContext(t *testing.T) {
+	anchoredNext := `<https://api.github.com/repos/example/repo/actions/runs?per_page=1&page=2>; rel="next"; anchor="https://api.github.com/repos/example/other"`
+	for name, testCase := range map[string]struct {
+		totalCount int
+		wantError  bool
+	}{
+		"complete current context":  {totalCount: 1},
+		"truncated current context": {totalCount: 2, wantError: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{responses: []CommandResult{
+				liveResponse(200, "Link: "+anchoredNext+"\r\n", fmt.Sprintf(`{"total_count":%d,"workflow_runs":[{"id":1}]}`, testCase.totalCount)),
+			}}
+			var sleeps []time.Duration
+			data, transportErr := testClient(runner, &sleeps).Read(context.Background(), ReadRequest{
+				Endpoint: "repos/example/repo/actions/runs?per_page=1", Paginate: true, Slurp: true,
+			})
+			if testCase.wantError {
+				if transportErr == nil || transportErr.Code != "PAGINATION_INVALID" || !strings.Contains(transportErr.Message, "truncated") {
+					t.Fatalf("data=%s error=%+v", data, transportErr)
+				}
+			} else if transportErr != nil || !strings.Contains(string(data), `"id":1`) {
+				t.Fatalf("data=%s error=%+v", data, transportErr)
+			}
+			if len(runner.apiCalls) != 1 {
+				t.Fatalf("anchored next was followed: calls=%d", len(runner.apiCalls))
+			}
+		})
+	}
+}
+
+func TestPaginationRejectsMalformedOrAmbiguousLinkRelations(t *testing.T) {
+	base := "https://api.github.com/repos/example/repo/actions/runs?page=2"
+	for name, link := range map[string]string{
+		"duplicate rel parameter":   `<` + base + `>; rel="next"; rel="deprecation"`,
+		"next mixed with other rel": `<` + base + `>; rel="next deprecation"`,
+		"duplicate next token":      `<` + base + `>; rel="next next"`,
+		"noncanonical next":         `<` + base + `>; rel="Next"`,
+		"unterminated quoted value": `<https://docs.github.com/en/rest>; rel="deprecation"; title="broken, <` + base + `>; rel="next"`,
+		"empty link value":          `<https://docs.github.com/en/rest>; rel="deprecation", , <` + base + `>; rel="next"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{responses: []CommandResult{
+				liveResponse(200, "Link: "+link+"\r\n", `{"total_count":2,"workflow_runs":[{"id":1}]}`),
+			}}
+			var sleeps []time.Duration
+			_, transportErr := testClient(runner, &sleeps).Read(context.Background(), ReadRequest{
+				Endpoint: "repos/example/repo/actions/runs", Paginate: true, Slurp: true,
+			})
+			if transportErr == nil || transportErr.Code != "PAGINATION_INVALID" || len(runner.apiCalls) != 1 {
+				t.Fatalf("error=%+v calls=%d", transportErr, len(runner.apiCalls))
 			}
 		})
 	}

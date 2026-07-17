@@ -21,9 +21,29 @@ require_nonnegative_integer() {
 }
 
 cleanup() {
+  if [[ -n ${identity_temp:-} ]]; then
+    rm -f -- "$identity_temp"
+  fi
   if [[ -n ${probe_dir:-} && -d "$probe_dir" ]]; then
     rm -rf -- "$probe_dir"
   fi
+}
+
+publish_identity() {
+  local source=$1 output=$2 output_parent
+  [[ ! -e "$output" && ! -L "$output" ]] ||
+    tap_ci_die "typed identity output already exists"
+  output_parent=$(dirname -- "$output")
+  [[ -d "$output_parent" && ! -L "$output_parent" ]] ||
+    tap_ci_die "typed identity output parent must be an existing non-symlink directory"
+  identity_temp=$(mktemp "$output_parent/.env-vault-tap-ci-identity.XXXXXX") ||
+    tap_ci_die "cannot allocate typed identity output"
+  chmod 0600 "$identity_temp"
+  cp -- "$source" "$identity_temp" || tap_ci_die "cannot stage typed identity output"
+  ln -- "$identity_temp" "$output" || tap_ci_die "cannot publish typed identity output without clobber"
+  cmp -s -- "$source" "$output" || tap_ci_die "published typed identity output differs"
+  rm -f -- "$identity_temp"
+  identity_temp=''
 }
 
 [[ $# -le 6 ]] || usage
@@ -58,6 +78,8 @@ expected_url_prefix="https://github.com/$repository/actions/runs/"
 probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-tap-ci.XXXXXX")
 probe_error="$probe_dir/error"
 probe_sequence=0
+identity_output=${TAP_CI_IDENTITY_OUTPUT:-}
+identity_temp=''
 trap cleanup EXIT
 
 # The REST filters narrow the response server-side. The jq expression repeats
@@ -164,6 +186,9 @@ while true; do
             --head-sha "$commit_sha" \
             --head-ref "$head_ref" ||
             tap_ci_die "typed workflow run identity verification failed"
+          if [[ -n "$identity_output" ]]; then
+            publish_identity "$identity_file" "$identity_output"
+          fi
           printf '%s\n' "$run_url"
           exit 0
         fi

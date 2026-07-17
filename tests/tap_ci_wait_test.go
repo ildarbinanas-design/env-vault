@@ -19,16 +19,18 @@ const (
 func TestTapCIWaitsForExactSuccessfulRun(t *testing.T) {
 	root := t.TempDir()
 	fakeBin, stateFile, callLog := installTapCIFakeGH(t, root)
+	identityOutput := filepath.Join(root, "tap-ci-identity.json")
 
 	stdout, stderr, status := runTapCIWait(
 		t,
 		[]string{tapCIRepository, tapCIWorkflow, tapCISHA, "pull_request", "5", "0"},
 		map[string]string{
-			"FAKE_TAP_CI_MODE":  "sequence-success",
-			"FAKE_TAP_CI_STATE": stateFile,
-			"FAKE_GH_CALL_LOG":  callLog,
-			"PATH":              fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
-			"TMPDIR":            root,
+			"FAKE_TAP_CI_MODE":       "sequence-success",
+			"FAKE_TAP_CI_STATE":      stateFile,
+			"FAKE_GH_CALL_LOG":       callLog,
+			"PATH":                   fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"TAP_CI_IDENTITY_OUTPUT": identityOutput,
+			"TMPDIR":                 root,
 		},
 	)
 	if status != 0 {
@@ -63,6 +65,42 @@ func TestTapCIWaitsForExactSuccessfulRun(t *testing.T) {
 	}
 	if strings.Contains(calls, "--jq") {
 		t.Fatalf("transport must leave strict projection offline:\n%s", calls)
+	}
+	identity := readOptionalFile(t, identityOutput)
+	for _, expected := range []string{
+		`"schema_id":"env-vault.github-actions-identity.v1"`,
+		`"run_id":12345`, `"run_attempt":1`,
+		`"workflow_path":".github/workflows/test-formula.yml"`,
+		`"event":"pull_request"`, `"head_sha":"` + tapCISHA + `"`,
+	} {
+		if !strings.Contains(identity, expected) {
+			t.Fatalf("typed identity missing %q:\n%s", expected, identity)
+		}
+	}
+}
+
+func TestTapCITypedIdentityOutputIsNoClobber(t *testing.T) {
+	root := t.TempDir()
+	fakeBin, stateFile, callLog := installTapCIFakeGH(t, root)
+	identityOutput := filepath.Join(root, "tap-ci-identity.json")
+	if err := os.WriteFile(identityOutput, []byte("sentinel\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, status := runTapCIWait(t,
+		[]string{tapCIRepository, tapCIWorkflow, tapCISHA, "pull_request", "5", "0"},
+		map[string]string{
+			"FAKE_TAP_CI_MODE":       "success",
+			"FAKE_TAP_CI_STATE":      stateFile,
+			"FAKE_GH_CALL_LOG":       callLog,
+			"PATH":                   fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"TAP_CI_IDENTITY_OUTPUT": identityOutput,
+			"TMPDIR":                 root,
+		})
+	if status == 0 || stdout != "" || !strings.Contains(stderr, "typed identity output already exists") {
+		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout, stderr)
+	}
+	if got := readOptionalFile(t, identityOutput); got != "sentinel\n" {
+		t.Fatalf("existing typed identity output changed: %q", got)
 	}
 }
 
