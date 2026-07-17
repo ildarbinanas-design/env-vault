@@ -135,8 +135,8 @@ The same baseline line definitions show that env-vault workflows changed from
 10 files / 25 jobs / 3,646 physical / 3,395 nonblank lines to 10 / 25 / 3,847 /
 3,581 (+201/+186 lines). Release shell/jq changed from 28 files / 4,450 physical
 / 4,008 nonblank to 29 / 4,521 / 4,083 (+1 file, +71/+75 lines). The typed
-transport adds nine Go files / 2,795 physical / 2,632 nonblank lines (1,841
-physical non-test and 954 physical test); `internal/strictjson/strictjson.go`
+transport adds nine Go files / 2,833 physical / 2,669 nonblank lines (1,852
+physical non-test and 981 physical test); `internal/strictjson/strictjson.go`
 adds 15 physical / 14 nonblank lines. Therefore the original 200-350 shell-LOC
 reduction was not achieved in Stage 2. Release engineering owns cleanup and
 graph consolidation in Stage 4; these current measurements are not folded into

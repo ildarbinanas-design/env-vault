@@ -234,10 +234,10 @@ Stage 2 source-surface delta is:
 | --- | --- | --- | --- |
 | env-vault workflows | 10 files / 25 jobs / 3,646 physical / 3,395 nonblank | 10 / 25 / 3,847 / 3,581 | 0 files / 0 jobs / +201 / +186 |
 | `scripts/release` shell and jq | 28 files / 4,450 physical / 4,008 nonblank | 29 / 4,521 / 4,083 | +1 file / +71 / +75 |
-| new `cmd/releasetransport` + `internal/githubtransport` Go | 0 | 9 files / 2,795 physical / 2,632 nonblank | +9 / +2,795 / +2,632 |
+| new `cmd/releasetransport` + `internal/githubtransport` Go | 0 | 9 files / 2,833 physical / 2,669 nonblank | +9 / +2,833 / +2,669 |
 | changed `internal/strictjson/strictjson.go` | 1 file / 250 physical / 230 nonblank | 1 / 265 / 244 | 0 files / +15 / +14 |
 
-The new transport Go surface splits into 1,841 physical non-test lines and 954
+The new transport Go surface splits into 1,852 physical non-test lines and 981
 physical test lines. It is reported separately rather than folded into the
 historical operational shell/workflow baseline. The original Stage 2 target of
 removing 200–350 shell lines was not achieved: release shell/jq grew by 71
