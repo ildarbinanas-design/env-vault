@@ -33,7 +33,7 @@ var reporterPinLine = regexp.MustCompile(`^([ \t]*(?:gotestsumModuleVersion|gote
 //
 // Test implementations, scenario declarations, platform helpers, the test
 // helper, execution, normalization, renderers, and validators remain covered.
-// Only the two reporter-pin string values in tooling.go are canonicalized;
+// Only the two reporter version pin values in tooling.go are canonicalized;
 // executable code cannot hide beside them. Paths and LF-normalized bytes are
 // hashed in sorted order so the result is portable across native runners.
 func Hash(repositoryRoot string) (string, error) {

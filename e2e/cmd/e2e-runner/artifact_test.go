@@ -38,6 +38,7 @@ func TestVerifyChecksumSidecar(t *testing.T) {
 		{name: "wrong filename", record: actual + "  other.tar.gz\n", wantErr: true},
 		{name: "wrong digest", record: strings.Repeat("b", sha256.Size*2) + "  " + artifactBase + "\n", wantErr: true},
 		{name: "invalid digest", record: strings.Repeat("z", sha256.Size*2) + "  " + artifactBase + "\n", wantErr: true},
+		{name: "extra record", record: actual + "  " + artifactBase + "\njunk\n", wantErr: true},
 	}
 	for _, test := range tests {
 		test := test

@@ -355,8 +355,11 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	assertJobIDs(t, wf, "resolve", "source-quality", "license", "native", "e2e-gate")
 
 	resolve := wf.Jobs["resolve"]
+	if resolve.TimeoutMinutes != 15 {
+		t.Fatalf("resolve reporter bootstrap timeout=%d, want 15 minutes", resolve.TimeoutMinutes)
+	}
 	contractStep := namedStep(t, resolve, "Validate release contract and resolve native matrix")
-	if !containsAll(contractStep.Run, "releasecheck validate-contract", "releasecheck contract matrix --json", "length == 5") {
+	if !containsAll(contractStep.Run, "releasecheck validate-contract", "releasecheck contract matrix --json", "length == 5", "env-vault-native-matrix.json") {
 		t.Fatalf("resolve step does not derive the five-target matrix from the validated contract")
 	}
 	if countJobRunsContaining(wf, "releasecheck contract matrix --json") != 1 {
@@ -364,6 +367,29 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	}
 	if resolve.Outputs["matrix"] != "${{ steps.contract.outputs.matrix }}" {
 		t.Fatalf("resolved matrix output=%q", resolve.Outputs["matrix"])
+	}
+	var resolveSetup workflowStep
+	for _, step := range resolve.Steps {
+		if step.Uses == setupGoAction {
+			resolveSetup = step
+			break
+		}
+	}
+	if !containsAll(resolveSetup.With["cache-dependency-path"], "go.sum", "tools/e2e-reporter/go.sum") {
+		t.Fatalf("resolve Go cache does not include the isolated reporter graph: %v", resolveSetup.With)
+	}
+	reporterBuild := namedStep(t, resolve, "Build exact E2E reporter bundle once")
+	if !containsAll(reporterBuild.Run, "build-e2e-reporters.sh", "env-vault-native-matrix.json", "reporter-tools") {
+		t.Fatalf("resolve does not build the five reporters from the single resolved matrix: %q", reporterBuild.Run)
+	}
+	for _, platform := range readReleaseContract(t).Platforms {
+		upload := namedStep(t, resolve, "Upload "+platform.ID+" current-attempt E2E reporter")
+		wantName := "env-vault-tooling-gotestsum-" + platform.ID + "-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}"
+		if upload.Uses != uploadArtifactAction ||
+			upload.With["name"] != wantName ||
+			upload.With["path"] != "reporter-tools/"+platform.ID {
+			t.Fatalf("%s reporter artifact is not exact-source/current-attempt qualified: uses=%q with=%v", platform.ID, upload.Uses, upload.With)
+		}
 	}
 
 	native := wf.Jobs["native"]
@@ -375,6 +401,34 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	}
 	if native.Strategy.FailFast == nil || *native.Strategy.FailFast {
 		t.Fatalf("native fail-fast=%v", native.Strategy.FailFast)
+	}
+	reporterDownload := namedStep(t, native, "Download exact current-attempt E2E reporter")
+	if reporterDownload.Uses != downloadAction ||
+		reporterDownload.With["name"] != "env-vault-tooling-gotestsum-${{ matrix.id }}-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}" ||
+		reporterDownload.With["path"] != "reporter-tool" {
+		t.Fatalf("native reporter download is not bound to the current source/attempt: uses=%q with=%v", reporterDownload.Uses, reporterDownload.With)
+	}
+	runE2E := namedStep(t, native, "Run E2E and finalize reports")
+	if runE2E.Shell != "bash" ||
+		!containsAll(runE2E.Run, "reporter_name=gotestsum", "gotestsum.exe", "chmod 0755", "export GOPROXY=off", "go run ./e2e/cmd/e2e-runner run", "--reporter", "--reporter-checksum") ||
+		strings.Contains(runE2E.Run, "export PATH=") ||
+		strings.Contains(runE2E.Run, "GOSUMDB=off") {
+		t.Fatalf("native E2E does not use the exact verified offline reporter: shell=%q run=%q", runE2E.Shell, runE2E.Run)
+	}
+	assertStepOrder(t, native,
+		"Upload current-attempt native release artifact",
+		"Download exact current-attempt E2E reporter",
+		"Run E2E and finalize reports",
+	)
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			if strings.Contains(step.Run, "go install gotest.tools/gotestsum") || strings.Contains(step.Run, "go run gotest.tools/gotestsum") {
+				t.Fatalf("workflow retains a matrix-time network reporter fallback: %q", step.Run)
+			}
+			if step.ContinueOnError && strings.Contains(strings.ToLower(step.Name), "reporter") {
+				t.Fatalf("reporter bootstrap may not continue on error: %q", step.Name)
+			}
+		}
 	}
 	if step := namedStep(t, native, "Burn in Windows config concurrency"); step.If != "matrix.goos == 'windows'" || !containsAll(step.Run, "TestConcurrentSavePublishesOnlyCompleteConfigs", "-count=10") {
 		t.Fatalf("Windows concurrency burn-in was weakened: if=%q run=%q", step.If, step.Run)
@@ -417,6 +471,18 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	baseline := namedStep(t, gate, "Verify sealed matrix against durable baseline")
 	if !containsAll(baseline.Run, "e2e-baseline verify", "docs/e2e-baseline.json", "matrix-validation.json") {
 		t.Fatalf("durable baseline verification missing")
+	}
+	baselineUpload := namedStep(t, gate, "Upload durable baseline verification")
+	wantBaselinePaths := []string{
+		"reports-download/matrix-validation.json",
+		"reports-download/matrix-validation.md",
+		"baseline-verification/baseline-verification.json",
+		"baseline-verification/baseline-verification.md",
+	}
+	if baselineUpload.If != "always()" || baselineUpload.Uses != uploadArtifactAction ||
+		!slices.Equal(strings.Fields(baselineUpload.With["path"]), wantBaselinePaths) ||
+		baselineUpload.With["if-no-files-found"] != "error" {
+		t.Fatalf("durable baseline proof is not always uploaded exactly: if=%q uses=%q with=%v", baselineUpload.If, baselineUpload.Uses, baselineUpload.With)
 	}
 	manifest := namedStep(t, gate, "Assemble exact promotion manifest")
 	if !containsAll(manifest.Run, "releasecheck promotion assemble", "--platform-proof", "--matrix-proof", "--run-attempt") {

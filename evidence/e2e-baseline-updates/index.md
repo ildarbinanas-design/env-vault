@@ -1,5 +1,40 @@
 # Durable E2E baseline update
 
+## Deterministic E2E reporter transition
+
+The baseline was updated from the sealed five-platform candidate matrix
+produced by workflow run
+[`29549118082`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29549118082),
+attempt `1`, source `80fb5fb6e802d3d603bc22c6e2f97e29931987f7`, for pull
+request head `51862c4b4e502269f041ea47eeb157e6cae0e000`.
+
+The pre-update verifier failed exactly one check, `semantic_suite`. Matrix
+schema and digest, platform set, exact run identity, archived migration,
+normalized evidence, toolchain, all five public contracts, coverage floors,
+critical scenarios, and leak expectations passed. The deterministic diff
+changes only the semantic suite hash and exact run provenance; no accepted
+contract, coverage, scenario, expected-skip, tool-version, or leak value
+changed.
+
+Machine bindings:
+
+- baseline-verifier matrix proof digest:
+  `a6f4c8023004d41a311782f6313c45851a0aecd0143e687660a9f9bb768ddea7`;
+- matrix proof file SHA-256:
+  `4597fc77433f9f0ba76c48fcfc10840ee649e9f567add6a09e7906a453c1fbce`;
+- baseline proof artifact ID and archive digest:
+  `8395144007`,
+  `sha256:d33e271e7f39aa410dab3686eb63c3b1a8359a38e46c1c44224320a01e998e4b`;
+- updated baseline semantic digest:
+  `ce2b2b7e319817b848e95e6c3faa8722064eabb6e444dd503c5a3df05e05d7ff`;
+- updated baseline file SHA-256:
+  `d2b33b29802950835ac127dd854728f10f5617c00a0b4f7cf4b64a415e594fcf`;
+- reviewable diff file SHA-256:
+  `52f49db3a9255e9c3bb513e9215e03001ca477872de4b42c837f0e2ebe5f88b9`.
+
+The deterministic update is recorded in
+`run-29549118082-attempt-1.diff.json`.
+
 ## Release-version contract normalization
 
 The baseline was updated from the sealed five-platform candidate matrix

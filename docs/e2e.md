@@ -19,7 +19,8 @@ claim an operating-system atomicity guarantee that Go does not provide.
 The semantic suite hash covers the scenario/harness sources plus the runner,
 normalization, validation, and rendering code that interprets their reports.
 Generated reports are excluded. In the isolated reporting-tool file, only the
-two pinned version strings are canonicalized; every other byte remains hashed.
+two version pin values are canonicalized; the checksum pin and every other byte
+remain hashed.
 The checked-in durable baseline therefore rejects a semantic test change even
 when a stale report set is internally consistent.
 
@@ -227,30 +228,55 @@ are preserved under
 
 ## Running locally
 
-Install the pinned reporting tool outside the module; it is not a production
-dependency. The baseline retains `v1.12.2`; candidates use stable `v1.13.0`,
-whose newer `x/tools` graph builds with Go 1.26.5 while preserving JSONL, JUnit,
-and test exit-code behavior:
+CI does not fetch the reporting tool inside native matrix jobs. The isolated
+[`tools/e2e-reporter`](../tools/e2e-reporter) module pins its complete checksum
+graph. The resolve job downloads that graph with three bounded attempts, then
+builds all five `CGO_ENABLED=0` reporters once and uploads source-SHA- and
+attempt-qualified artifacts. Each native job verifies the downloaded binary's
+SHA-256, Go build information, target, and exact `--version` output before
+running with `GOPROXY=off`. A missing or incompatible reporter therefore fails
+closed without a second network fallback or artifacts from another attempt.
+
+Build the checksum-pinned reporting tool outside the product module; it is not
+a production dependency. The durable baseline and candidates both require
+stable `v1.13.0`, whose `x/tools` graph builds with Go 1.26.5 while preserving
+JSONL, JUnit, and test exit-code behavior. The same builder used by CI emits all
+five target binaries and their exact checksum sidecars:
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go install gotest.tools/gotestsum@v1.13.0
+GOTOOLCHAIN=go1.26.5 go run ./cmd/releasecheck contract matrix --json \
+  > /tmp/env-vault-native-matrix.json
+toolchain="$(GOTOOLCHAIN=go1.26.5 go env GOROOT)"
+PATH="$toolchain/bin:$PATH" scripts/release/build-e2e-reporters.sh \
+  /tmp/env-vault-native-matrix.json /tmp/env-vault-e2e-reporters
 ```
 
 Run every functional, coverage, full burn-in, and locking burn-in pass. With no
-binary option, the runner builds the release-like binary itself:
+binary option, the runner builds the release-like binary itself. Select the
+native platform directory (`gotestsum.exe` on Windows) and keep module network
+access disabled during execution:
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate
+reporter=/tmp/env-vault-e2e-reporters/darwin-arm64/gotestsum
+PATH="$toolchain/bin:$PATH" GOTOOLCHAIN=local GOPROXY=off \
+  go run ./e2e/cmd/e2e-runner run \
+  --phase candidate \
+  --reporter "$reporter" \
+  --reporter-checksum "$reporter.sha256"
 ```
 
 Use an already built native binary or release archive without changing the
 suite:
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate --binary ./env-vault
-GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner run --phase candidate \
+PATH="$toolchain/bin:$PATH" GOTOOLCHAIN=local GOPROXY=off \
+  go run ./e2e/cmd/e2e-runner run --phase candidate \
+  --binary ./env-vault --reporter "$reporter" --reporter-checksum "$reporter.sha256"
+PATH="$toolchain/bin:$PATH" GOTOOLCHAIN=local GOPROXY=off \
+  go run ./e2e/cmd/e2e-runner run --phase candidate \
   --artifact ./dist/env-vault-darwin-arm64.tar.gz \
-  --checksum ./dist/env-vault-darwin-arm64.tar.gz.sha256
+  --checksum ./dist/env-vault-darwin-arm64.tar.gz.sha256 \
+  --reporter "$reporter" --reporter-checksum "$reporter.sha256"
 ```
 
 The raw Go suite also deliberately accepts a prebuilt binary directly:
