@@ -289,6 +289,56 @@ func TestCanonicalStoredGZIPGoldenVectorAndBlockBoundary(t *testing.T) {
 	}
 }
 
+func TestDeterministicGZIPCapacityRejectsIntegerOverflow(t *testing.T) {
+	tests := []struct {
+		name       string
+		dataLength int
+		want       int
+	}{
+		{name: "empty", dataLength: 0, want: 23},
+		{name: "one byte", dataLength: 1, want: 24},
+		{name: "one full block", dataLength: 65535, want: 65558},
+		{name: "two blocks", dataLength: 65536, want: 65564},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := deterministicGZIPCapacity(test.dataLength)
+			if err != nil || got != test.want {
+				t.Fatalf("deterministicGZIPCapacity(%d)=%d, %v; want %d", test.dataLength, got, err, test.want)
+			}
+		})
+	}
+	if _, err := deterministicGZIPCapacity(-1); err == nil {
+		t.Fatal("negative gzip input length was accepted")
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	low, high := 0, maxInt
+	for low < high {
+		delta := high - low
+		midpoint := low + delta/2
+		if delta%2 != 0 {
+			midpoint++
+		}
+		if _, err := deterministicGZIPCapacity(midpoint); err == nil {
+			low = midpoint
+		} else {
+			high = midpoint - 1
+		}
+	}
+	largest := low
+	capacity, err := deterministicGZIPCapacity(largest)
+	if err != nil || capacity > maxInt {
+		t.Fatalf("largest safe gzip capacity input=%d capacity=%d error=%v", largest, capacity, err)
+	}
+	if largest == maxInt {
+		t.Fatal("gzip capacity boundary unexpectedly equals max int")
+	}
+	if _, err := deterministicGZIPCapacity(largest + 1); err == nil {
+		t.Fatalf("gzip input immediately above safe capacity boundary %d was accepted", largest)
+	}
+}
+
 func TestBundleV2RejectsDigestCollisionAndResourceLimitDescriptors(t *testing.T) {
 	fixture := newEvidenceFixture(t)
 	evidence, err := Assemble(fixture.contract, fixture.authorization, fixture.manifest, fixture.ci, fixture.publisher, fixture.observation, fixture.attestationBundle)

@@ -599,11 +599,11 @@ func sha256Text(data []byte) string {
 func deterministicGZIP(data []byte) ([]byte, error) {
 	// A stored-block DEFLATE stream has one canonical byte representation and
 	// does not depend on the Go flate encoder or compression heuristics.
-	blocks := (len(data) + 65534) / 65535
-	if blocks == 0 {
-		blocks = 1
+	capacity, err := deterministicGZIPCapacity(len(data))
+	if err != nil {
+		return nil, err
 	}
-	output := make([]byte, 0, 10+5*blocks+len(data)+8)
+	output := make([]byte, 0, capacity)
 	output = append(output, 0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff)
 	remaining := data
 	for {
@@ -629,6 +629,27 @@ func deterministicGZIP(data []byte) ([]byte, error) {
 	output = binary.LittleEndian.AppendUint32(output, crc32.ChecksumIEEE(data))
 	output = binary.LittleEndian.AppendUint32(output, uint32(len(data)))
 	return output, nil
+}
+
+func deterministicGZIPCapacity(dataLength int) (int, error) {
+	if dataLength < 0 {
+		return 0, errors.New("gzip input length is negative")
+	}
+	blocks := dataLength / 65535
+	if dataLength%65535 != 0 || blocks == 0 {
+		blocks++
+	}
+	const fixedOverhead = 10 + 8
+	maxInt := int(^uint(0) >> 1)
+	if dataLength > maxInt-fixedOverhead {
+		return 0, errors.New("gzip output capacity overflows int")
+	}
+	capacity := dataLength + fixedOverhead
+	if blocks > (maxInt-capacity)/5 {
+		return 0, errors.New("gzip output capacity overflows int")
+	}
+	capacity += blocks * 5
+	return capacity, nil
 }
 
 func strictGunzip(compressed []byte, declaredSize int64) ([]byte, error) {
@@ -680,7 +701,7 @@ func strictGunzip(compressed []byte, declaredSize int64) ([]byte, error) {
 }
 
 func deterministicExportArchiveSize(files BundleFiles, auxiliary map[string][]byte) (int64, error) {
-	entries := make(map[string][]byte, len(files.Objects)+len(auxiliary)+1)
+	entries := make(map[string][]byte)
 	entries[BundleRootName] = files.Root
 	for name, data := range files.Objects {
 		entries[name] = data
