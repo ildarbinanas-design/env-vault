@@ -24,10 +24,10 @@ func TestCanonicalBaselineAndArchivedMigrationAreDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if baseline.Provenance.CommitSHA != "054d7b1c3f1c3a63e8a2ed162f72f3ad2f28a9b9" || baseline.Provenance.RunID != "29526068945" || baseline.Provenance.RunAttempt != "1" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
+	if baseline.Provenance.CommitSHA != "80fb5fb6e802d3d603bc22c6e2f97e29931987f7" || baseline.Provenance.RunID != "29549118082" || baseline.Provenance.RunAttempt != "1" || baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" {
 		t.Fatalf("baseline identity=%+v toolchain=%+v", baseline.Provenance, baseline.Toolchain)
 	}
-	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "edf35d2b5f2c69e61ebb2aa58226ceba27e55826ebe694710fb2974737d096f1" || baseline.SemanticSuite.SourceReportHash != baseline.SemanticSuite.Hash || baseline.Migration != nil {
+	if baseline.SemanticSuite.Algorithm != e2esuite.SchemaID || baseline.SemanticSuite.Hash != "baeb9237bfc57a546c890d2c5c6393d029cbb388d546c4981dddea606f4f02b8" || baseline.SemanticSuite.SourceReportHash != baseline.SemanticSuite.Hash || baseline.Migration != nil {
 		t.Fatalf("semantic suite=%+v", baseline.SemanticSuite)
 	}
 	migratedBaselinePath := filepath.Join(repositoryRoot, filepath.FromSlash(CanonicalMigratedBaseline))
