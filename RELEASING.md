@@ -184,11 +184,13 @@ for the exact run and commit identities.
 
 The shared `env-vault-release` concurrency group covers planning,
 publication, and durable evidence with cancellation disabled and
-`queue: max`; GitHub queues up to 100 pending runs in arrival order instead of
-discarding an older pending release stage. Manual CI dispatch has its own
-identity and cannot cancel an automatic green-`main` run. A full CI rerun also
-uses an attempt-qualified concurrency identity, so it cannot cancel a newer
-automatic `main` run.
+`queue: max`; GitHub retains up to 100 pending runs, but does not guarantee
+their dispatch order. Correctness therefore depends on every stage
+revalidating the exact repository/workflow/run/job/attempt/source identity,
+not on queue arrival order. Manual CI dispatch has its own identity and cannot
+cancel an automatic green-`main` run. A full CI rerun also uses an
+attempt-qualified concurrency identity, so it cannot cancel a newer automatic
+`main` run.
 
 ## CI topology
 
