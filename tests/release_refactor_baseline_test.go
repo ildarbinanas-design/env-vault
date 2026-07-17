@@ -386,6 +386,9 @@ func assertStaticBaselineArithmetic(t *testing.T, surface baselineStaticSourceSu
 		surface.ReleaseGoCore.PhysicalLines != surface.ReleaseGoCore.NonTestPhysicalLines+surface.ReleaseGoCore.UnitTestPhysicalLines {
 		t.Fatalf("release source baseline is inconsistent: scripts=%+v go=%+v", surface.ReleaseScripts, surface.ReleaseGoCore)
 	}
+	if surface.ReleaseOperatorIntegrationTests.GoFileCount != 12 || surface.ReleaseOperatorIntegrationTests.PhysicalLines != 6804 {
+		t.Fatalf("release operator integration-test baseline drifted: %+v", surface.ReleaseOperatorIntegrationTests)
+	}
 	repositories := map[string]struct{ files, jobs int }{}
 	seenFiles := map[string]bool{}
 	for _, workflow := range surface.WorkflowStaticJobs {

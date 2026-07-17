@@ -122,7 +122,7 @@ The Go core is exactly `cmd/releasecheck`, `cmd/release-extract`,
 `cmd/release-version-probe`, and the `internal/releasearchive`,
 `releasecontract`, `releaseevidence`, `releasemetrics`, `releasepromotion`, and
 `releasesettings` packages. Its 13,433 lines split into 8,617 non-test and 4,816
-unit-test lines. Thirteen release-operator integration test files add 6,804
+unit-test lines. Twelve release-operator integration test files add 6,804
 lines; `tests/process_config_test.go` is excluded as product behavior. The
 durable E2E-baseline tool is adjacent but deliberately separate: nine files,
 2,090 physical lines, and 1,963 nonblank lines.

@@ -123,7 +123,7 @@
     },
     "release_operator_integration_tests": {
       "scope": "tests/*.go excluding tests/process_config_test.go",
-      "go_file_count": 13,
+      "go_file_count": 12,
       "physical_lines": 6804
     },
     "adjacent_e2e_baseline": {
