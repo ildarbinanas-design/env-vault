@@ -261,6 +261,16 @@ deletion, have no bypass actor, and allow initial branch creation plus ordinary
 fast-forward commits. Evidence links use exact commit SHAs; this ruleset also
 prevents the durable evidence history from being rewritten or removed.
 
+Before the first durable publication only, create that ref without force at
+the exact source SHA of the release whose evidence will initialize the branch.
+The operator must prove the exact absence, push, and resulting remote equality;
+the evidence workflow requires the pre-created ref and thereafter writes only
+fast-forward evidence commits. Do not replace `GITHUB_TOKEN` with a
+workflows-capable App/PAT or broaden either release App: creating a new ref
+directly at a tree that contains `.github/workflows` needs that broader
+permission, while updating the pre-created ref with evidence-only changes needs
+only `Contents: write`.
+
 Observe each real check context from a pull request before adding it to the
 ruleset. Do not guess from a display label. The dedicated lightweight
 `pr-title` workflow accepts the forms documented in `CONTRIBUTING.md` and

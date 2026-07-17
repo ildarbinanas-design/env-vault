@@ -31,13 +31,32 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 		publisherEvent   string
 	}{
 		{
-			name:             "creates first evidence branch commit and verifies raw blobs",
-			mode:             "create",
-			wantOutput:       evidencePublishOutput(evidenceNewSHA, "created", "none"),
+			name:           "missing evidence branch fails before every mutation",
+			mode:           "missing",
+			wantStatus:     1,
+			wantOutput:     "evidence reference must be bootstrapped at the exact source SHA",
+			repairMode:     "none",
+			publisherEvent: "push",
+		},
+		{
+			name:             "bootstrapped source ref receives the first evidence commit",
+			mode:             "bootstrap",
+			wantOutput:       evidencePublishOutput(evidenceNewSHA, "updated", "none"),
 			wantBlobCreates:  4,
 			wantTreeCreates:  1,
 			wantCommitCreate: 1,
-			wantRefCreates:   1,
+			wantRefUpdates:   1,
+			repairMode:       "none",
+			publisherEvent:   "push",
+		},
+		{
+			name:             "initialized ledger receives the first tuple for a new version",
+			mode:             "new-version",
+			wantOutput:       evidencePublishOutput(evidenceNewSHA, "updated", "none"),
+			wantBlobCreates:  4,
+			wantTreeCreates:  1,
+			wantCommitCreate: 1,
+			wantRefUpdates:   1,
 			repairMode:       "none",
 			publisherEvent:   "push",
 		},
@@ -185,7 +204,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/refs ", test.wantRefCreates)
 			assertEvidenceCallCount(t, calls, "--method PATCH repos/example/env-vault/git/refs/heads/release-evidence", test.wantRefUpdates)
 
-			if test.mode == "create" || test.mode == "append" {
+			if test.mode == "bootstrap" || test.mode == "new-version" || test.mode == "append" {
 				for index, sha := range evidenceBlobSHAs() {
 					remote, err := os.ReadFile(filepath.Join(remoteDir, sha))
 					if err != nil {
@@ -448,7 +467,7 @@ new_sha=5555555555555555555555555555555555555555
 full_ref=refs/heads/release-evidence
 
 branch_present=true
-if [[ $mode == create && ! -f $ref_state ]]; then
+if [[ $mode == missing && ! -f $ref_state ]]; then
   branch_present=false
 fi
 
@@ -464,6 +483,11 @@ fi
 
 emit_ref() {
   local sha=$base_sha
+  case $mode in
+    bootstrap|invalid-base64|trailing-base64-garbage|missing-base64-padding|extra-base64-padding|noncanonical-base64-pad-bits)
+      sha=$source_sha
+      ;;
+  esac
   if [[ -f $ref_state ]]; then
     sha=$new_sha
   fi
@@ -495,6 +519,7 @@ emit_evidence_tree() {
     ["6666666666666666666666666666666666666666","7777777777777777777777777777777777777777",
      "8888888888888888888888888888888888888888","9999999999999999999999999999999999999999"] as $prior_shas |
     "evidence/releases/v1.2.3" as $version |
+    "evidence/releases/v1.2.2" as $previous_version |
     [dir("evidence"),dir("evidence/releases"),dir($version)] as $ancestors |
     (files($version;$current_shas)) as $current_root |
     (files($version;$prior_shas)) as $prior_root |
@@ -506,11 +531,20 @@ emit_evidence_tree() {
       dir($version + "/publisher-runs/run-41"),
       dir($version + "/publisher-runs/run-41/attempt-1")] +
       files($version + "/publisher-runs/run-41/attempt-1";$prior_shas)) as $prior |
+    ([dir($previous_version)] + files($previous_version;$prior_shas) +
+      [dir($previous_version + "/publisher-runs"),
+       dir($previous_version + "/publisher-runs/run-41"),
+       dir($previous_version + "/publisher-runs/run-41/attempt-1")] +
+      files($previous_version + "/publisher-runs/run-41/attempt-1";$prior_shas)) as $previous |
     ($prior + [dir($version + "/publisher-runs/run-4242"),dir($version + "/publisher-runs/run-4242/attempt-2")] +
       files($version + "/publisher-runs/run-4242/attempt-2";$current_shas)) as $appended |
     if $variant == "current" then {truncated:false,tree:($ancestors + $current_root + $current)}
     elif $variant == "prior" then {truncated:false,tree:($ancestors + $prior_root + $prior)}
     elif $variant == "appended" then {truncated:false,tree:($ancestors + $prior_root + $appended)}
+    elif $variant == "previous-version" then
+      {truncated:false,tree:([dir("evidence"),dir("evidence/releases")] + $previous)}
+    elif $variant == "new-version" then
+      {truncated:false,tree:($ancestors + $previous + $current_root + $current)}
     elif $variant == "partial" then {truncated:false,tree:($ancestors + $current_root + $current[0:-1])}
     elif $variant == "unexpected" then
       {truncated:false,tree:($ancestors + $current_root + $current +
@@ -540,7 +574,7 @@ case "$method:$endpoint" in
     emit_commit "$base_sha" "$base_tree" "$source_sha"
     ;;
   GET:repos/example/env-vault/git/commits/$new_sha)
-    if [[ $mode == create ]]; then parent=$source_sha; else parent=$base_sha; fi
+    if [[ $mode == bootstrap ]]; then parent=$source_sha; else parent=$base_sha; fi
     emit_commit "$new_sha" "$new_tree" "$parent"
     ;;
   GET:repos/example/env-vault/git/trees/$source_tree?recursive=1)
@@ -549,13 +583,18 @@ case "$method:$endpoint" in
   GET:repos/example/env-vault/git/trees/$base_tree?recursive=1)
     case $mode in
       noop|mismatch) emit_evidence_tree current ;;
+      new-version) emit_evidence_tree previous-version ;;
       append|race) emit_evidence_tree prior ;;
       partial|unexpected|case-collision|unsafe-numeric) emit_evidence_tree "$mode" ;;
       *) jq -n '{truncated:false,tree:[]}' ;;
     esac
     ;;
   GET:repos/example/env-vault/git/trees/$new_tree?recursive=1)
-    if [[ $mode == create ]]; then emit_evidence_tree current; else emit_evidence_tree appended; fi
+    case $mode in
+      bootstrap) emit_evidence_tree current ;;
+      new-version) emit_evidence_tree new-version ;;
+      *) emit_evidence_tree appended ;;
+    esac
     ;;
   GET:repos/example/env-vault/git/blobs/*)
     sha=${endpoint##*/}
@@ -615,8 +654,8 @@ case "$method:$endpoint" in
     ;;
   POST:repos/example/env-vault/git/trees)
     expected_base=$base_tree
-    if [[ $mode == create ]]; then expected_base=$source_tree; fi
-    if [[ $mode == create ]]; then
+    if [[ $mode == bootstrap ]]; then expected_base=$source_tree; fi
+    if [[ $mode == bootstrap || $mode == new-version ]]; then
       jq -e --arg base "$expected_base" '
         .base_tree == $base and
         [.tree[].path] == [
@@ -653,17 +692,11 @@ case "$method:$endpoint" in
     ;;
   POST:repos/example/env-vault/git/commits)
     expected_parent=$base_sha
-    if [[ $mode == create ]]; then expected_parent=$source_sha; fi
+    if [[ $mode == bootstrap ]]; then expected_parent=$source_sha; fi
     jq -e --arg parent "$expected_parent" --arg tree "$new_tree" '
       .message == "chore(evidence): publish v1.2.3" and .tree == $tree and .parents == [$parent]
     ' "$input" >/dev/null || exit 99
     jq -n --arg sha "$new_sha" '{sha:$sha}'
-    ;;
-  POST:repos/example/env-vault/git/refs)
-    [[ $mode == create && $branch_present == false ]] || exit 100
-    jq -e --arg ref "$full_ref" --arg sha "$new_sha" '. == {ref:$ref,sha:$sha}' "$input" >/dev/null || exit 101
-    : > "$ref_state"
-    emit_ref
     ;;
   PATCH:repos/example/env-vault/git/refs/heads/release-evidence)
     jq -e --arg sha "$new_sha" '. == {sha:$sha,force:false}' "$input" >/dev/null || exit 103
@@ -671,7 +704,7 @@ case "$method:$endpoint" in
       printf 'gh: Update is not a fast forward (HTTP 422)\n' >&2
       exit 1
     fi
-    [[ $mode == append ]] || exit 102
+    [[ $mode == append || $mode == bootstrap || $mode == new-version ]] || exit 102
     : > "$ref_state"
     emit_ref
     ;;

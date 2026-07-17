@@ -429,6 +429,18 @@ bytes fails closed; a later repair appends its own tuple directory without
 rewriting the initial snapshot. Evidence must not contain credentials or
 secret values.
 
+`release-evidence` is repository infrastructure and must exist before its
+first publication. Bootstrap it once, without force, at the exact release
+source SHA that will receive the first evidence commit; verify the remote ref
+before rerunning the complete evidence workflow. The publisher then performs
+only ordinary fast-forwards and fails before creating Git objects when the ref
+is absent. The operator's exact absence, push, and equality checks are the
+fail-closed trust boundary for the one-time genesis. This keeps the workflow
+token at `contents: write`: creating a new ref whose inherited tree contains
+`.github/workflows` would otherwise require a workflows-capable credential.
+Do not replace `GITHUB_TOKEN` with such an App/PAT, broaden either release App,
+or add a ruleset bypass to avoid the one-time bootstrap.
+
 Metrics are derived from a saved complete `gh run view` document:
 
 ```sh
