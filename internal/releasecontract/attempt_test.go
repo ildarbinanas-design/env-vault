@@ -32,6 +32,15 @@ func TestClassifyAttemptCompleteSuccess(t *testing.T) {
 	assertFailedOnlyRerunProhibited(t, result)
 }
 
+func TestClassifyAttemptTreatsCustomRunNameAsDiagnosticOnly(t *testing.T) {
+	contract := loadCanonicalForTest(t)
+	run := replaceJSONField(t, testRunJSON(t, "completed", "success", 3), "name", "custom release title")
+	result, err := ClassifyAttempt(run, testArtifactsJSON(t, contract, 3, nil), contract)
+	if err != nil || !result.OK || result.WorkflowName != "ci" || result.WorkflowPath != ".github/workflows/ci.yml" {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+}
+
 func TestClassifyAttemptIgnoresCurrentReporterToolingArtifacts(t *testing.T) {
 	contract := loadCanonicalForTest(t)
 	const attempt = 3
@@ -189,10 +198,6 @@ func TestClassifyAttemptRejectsInvalidOrIncompatibleSnapshots(t *testing.T) {
 	}{
 		"wrong workflow": {
 			run:       replaceJSONField(t, validRun, "path", ".github/workflows/build-binaries.yml"),
-			artifacts: validArtifacts, code: "ATTEMPT_STATE_INCONSISTENT",
-		},
-		"wrong workflow name": {
-			run:       replaceJSONField(t, validRun, "name", "other"),
 			artifacts: validArtifacts, code: "ATTEMPT_STATE_INCONSISTENT",
 		},
 		"workflow path with ref suffix": {

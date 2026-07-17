@@ -16,6 +16,22 @@ jobs:
     timeout-minutes: 5
     environment: release
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build the strict GitHub release transport once
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - id: app-token
         name: Mint metadata-only installation token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -31,10 +47,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t repositories < <(
-            gh api --paginate installation/repositories \
-              --jq '.repositories[].full_name'
-          )
+          scripts/release/gh-api-read.sh installation-repositories.json \
+            --paginate --slurp installation/repositories
+          mapfile -t repositories < <(jq -r '.[]?.repositories[]?.full_name' installation-repositories.json)
           if [[ "${#repositories[@]}" != "1" || "${repositories[0]:-}" != "ildarbinanas-design/homebrew-tap" ]]; then
             echo "release App installation scope must contain only homebrew-tap" >&2
             exit 1

@@ -16,6 +16,21 @@ import (
 
 var rawMessageType = reflect.TypeOf(json.RawMessage{})
 
+// Validate accepts exactly one bounded JSON value and rejects duplicate or
+// case-variant object members at every depth. It is intended for untrusted
+// transport responses whose vendor-owned field set may grow over time.
+func Validate(data []byte, limit int) error {
+	if len(data) == 0 || len(data) > limit {
+		return fmt.Errorf("JSON size %d is outside 1..%d", len(data), limit)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := consumeOpaqueValue(decoder, "$"); err != nil {
+		return err
+	}
+	return requireEOF(decoder)
+}
+
 // Decode validates one bounded JSON value against destination's exact field
 // shape before performing the typed decode. Struct fields must use their exact
 // json tag spelling. Maps and json.RawMessage values remain schema-opaque, but

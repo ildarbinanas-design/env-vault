@@ -112,6 +112,36 @@ work completed by the documentation release.
 
 ## 4. Typed GitHub transport and CLI compatibility boundary
 
+**Implemented in refactor Stage 2 (2026-07-17).** The accepted design is
+recorded in [ADR 0002](adr/0002-release-github-transport.md). Operational
+source moved from 44 direct `gh api` sites (35 REST reads, one GraphQL read,
+and eight mutations) to nine registered sites: zero direct REST reads, the
+same eight explicit mutations, and the same one read-only GraphQL ruleset
+observation. Bounded helper usage grew from
+37 sites in six callers to 62 sites in 19 callers, and 17 operational call
+sites now resolve typed Actions run/job/attempt identity. The checked registry
+is `release/github-transport-boundary.v1.json`; additions or count drift fail
+tests.
+
+The predicted 20-40 second workflow setup reduction cannot be claimed before
+an exact successful Actions comparison. Two single observed local runs of
+`go test ./tests -run '^TestPublishReleaseEvidenceIsNoClobberAndRaceSafe$' -count=1`
+changed from 91.251 seconds to 14.978 seconds (-76.273 seconds, -83.6%) after
+removing per-call Go cold builds. Host/tool/cache metadata and repetitions were
+not recorded; this is directional evidence, not a benchmark, hosted-runner
+metric, or release-pipeline metric.
+
+The same baseline line definitions show that env-vault workflows changed from
+10 files / 25 jobs / 3,646 physical / 3,395 nonblank lines to 10 / 25 / 3,847 /
+3,581 (+201/+186 lines). Release shell/jq changed from 28 files / 4,450 physical
+/ 4,008 nonblank to 29 / 4,521 / 4,083 (+1 file, +71/+75 lines). The typed
+transport adds nine Go files / 2,795 physical / 2,632 nonblank lines (1,841
+physical non-test and 954 physical test); `internal/strictjson/strictjson.go`
+adds 15 physical / 14 nonblank lines. Therefore the original 200-350 shell-LOC
+reduction was not achieved in Stage 2. Release engineering owns cleanup and
+graph consolidation in Stage 4; these current measurements are not folded into
+or substituted for the immutable baseline JSON.
+
 - **Problem and evidence:** release scripts individually combine `gh api`,
   pagination, retry, jq, and shell parsing. Operator history includes a CLI
   flag incompatibility (`gh config set --hostname` versus `-h`), sandbox DNS
@@ -128,6 +158,17 @@ work completed by the documentation release.
 - **Guarantee preserved:** reads may use bounded retries; mutations are never
   blindly retried; JSON is atomic and schema checked; credentials never enter
   evidence.
+- **Implemented bounds and residual:** each page has at most five attempts; one
+  read has at most 100 pages, 500 REST requests, and 120 seconds cumulative
+  retry wait; each `gh` process permits at most 64 MiB stdout and 256 KiB
+  stderr. Pagination preserves the complete initial query scope and permits
+  only exactly consecutive canonical `page` controls for the endpoints in
+  scope. The CLI still has no own per-request/end-to-end deadline beyond signal
+  cancellation and its enclosing workflow timeout, and page aggregation has no
+  separate total-byte cap (up to 6,400 MiB of accepted page bodies before
+  overhead in theory). Stage 4 release-engineering targets are 60 seconds per
+  request, 300 seconds end to end, and 256 MiB aggregate response bytes, with
+  adversarial timeout/cancellation/overflow tests before claiming those bounds.
 - **Proposed architecture:** a small release-only transport executable reports
   a versioned capability/preflight JSON, performs atomic read pagination, and
   classifies authentication, permission, rate-limit, sandbox/DNS, and malformed
@@ -140,9 +181,11 @@ work completed by the documentation release.
   transport wrapping, decode fail-closed, and compare declared size and exact
   bytes. Mutations remain explicit commands with postcondition probes and
   idempotency identities.
-- **Expected reduction:** 200-350 shell LOC, 20-40 seconds of repeated setup per
+- **Original target:** 200-350 shell LOC, 20-40 seconds of repeated setup per
   full release, and fewer non-deterministic operator retries; no required job
-  reduction.
+  reduction. Stage 2 did not meet the shell-LOC target and has no Actions timing
+  claim; the verified source counts and single-run local test observation are
+  recorded above.
 - **Risk:** central transport code becomes security critical and could hide a
   partial mutation if read and write policies are conflated.
 - **Required tests:** recorded HTTP fixtures, truncated pagination, retry-after,
@@ -155,8 +198,8 @@ work completed by the documentation release.
 - **Dependencies and order:** specify codes and exit statuses; implement reads;
   migrate one verifier at a time; design mutation postconditions only after read
   parity is proven.
-- **Acceptance criteria:** every release script consumes the same preflight and
-  error/identity schema; unsupported CLI syntax fails before action; custom
+- **Acceptance criteria (met):** every release script consumes the same
+  preflight and error/identity schema; unsupported CLI syntax fails before action; custom
   names and missing post-merge associations cannot break a valid exact tuple;
   a transport-unknown mutation is classified for inspection rather than
   retried.

@@ -871,8 +871,8 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 		"RELEASE_AUTHORIZATION_OUTPUT", "confirmation", "generated_release_pr_head_sha",
 		`.path == ".github/workflows/build-binaries.yml"`, ".head_sha == $release_pr_head",
 		"publisher run identity mismatch", "release PR CI run identity mismatch", "release planning run identity mismatch",
-		`^([1-9][0-9]*)/job/([1-9][0-9]*)$`, "actions/jobs/${pr_ci_job_id}", "snapshots/pr-ci-job.json",
-		`.run_attempt == $attempt`, `.html_url == $quality_link`, "release PR quality-gate job identity mismatch",
+		`^([1-9][0-9]*)/job/([1-9][0-9]*)$`, "releasetransport.sh actions identity", "snapshots/pr-ci-identity.json",
+		"--job-id", "--job-name quality-gate", `--job-url "$quality_link"`, "--run-attempt",
 		"release-authorization.json", "attestation-verifications.json", "repository_release_settings", "settings verify",
 		"actions/runs/${planning_run_id}", "snapshots/planning-run.json") {
 		t.Fatalf("evidence identity resolution is missing an exact tuple gate")
@@ -934,11 +934,13 @@ func TestReleaseEvidenceActionsIdentityPredicatesUseStableExactFields(t *testing
 		source     = "1111111111111111111111111111111111111111"
 		prHead     = "2222222222222222222222222222222222222222"
 		branch     = "release-please--branches--main--components--env-vault"
-		qualityURL = "https://github.com/example/env-vault/actions/runs/92/job/93"
 	)
 
 	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
 	identityRun := namedStep(t, wf.Jobs["assemble"], "Resolve exact CI, release PR, and PR-head CI identities").Run
+	if !containsAll(identityRun, "releasetransport.sh actions identity", "--job-id", "--job-name quality-gate", "--job-url", "snapshots/pr-ci-identity.json") || strings.Contains(identityRun, "actions/jobs/") {
+		t.Fatalf("release evidence does not use attempt-qualified typed job identity")
+	}
 	publisherPredicate := workflowJQProgram(t, identityRun, "snapshots/publisher-run.json")
 	publisher := map[string]any{
 		"id": 91, "run_attempt": 1,
@@ -949,14 +951,6 @@ func TestReleaseEvidenceActionsIdentityPredicatesUseStableExactFields(t *testing
 	}
 	publisherArgs := []string{"--arg", "repository", repository, "--arg", "source", source, "--arg", "version", version, "--argjson", "run_id", "91", "--argjson", "attempt", "1"}
 	assertJQIdentityPredicate(t, publisherPredicate, publisher, publisherArgs, true)
-
-	jobPredicate := workflowJQProgram(t, identityRun, "snapshots/pr-ci-job.json")
-	job := map[string]any{
-		"id": 93, "run_id": 92, "run_attempt": 2, "head_sha": prHead,
-		"name": "quality-gate", "workflow_name": "ci", "status": "completed", "conclusion": "success", "html_url": qualityURL,
-	}
-	jobArgs := []string{"--arg", "quality_link", qualityURL, "--arg", "release_pr_head", prHead, "--argjson", "job_id", "93", "--argjson", "run_id", "92", "--argjson", "attempt", "2"}
-	assertJQIdentityPredicate(t, jobPredicate, job, jobArgs, true)
 
 	runPredicate := workflowJQProgram(t, identityRun, "snapshots/pr-ci-run.json")
 	prRun := map[string]any{
@@ -978,10 +972,6 @@ func TestReleaseEvidenceActionsIdentityPredicatesUseStableExactFields(t *testing
 		"publisher wrong path":        {publisherPredicate, publisher, publisherArgs, "path", ".github/workflows/other.yml"},
 		"publisher wrong head":        {publisherPredicate, publisher, publisherArgs, "head_sha", prHead},
 		"publisher wrong head repo":   {publisherPredicate, publisher, publisherArgs, "head_repository", map[string]any{"full_name": "other/env-vault"}},
-		"quality job wrong ID":        {jobPredicate, job, jobArgs, "id", 94},
-		"quality job wrong attempt":   {jobPredicate, job, jobArgs, "run_attempt", 3},
-		"quality job wrong head":      {jobPredicate, job, jobArgs, "head_sha", source},
-		"quality job stale URL":       {jobPredicate, job, jobArgs, "html_url", "https://github.com/example/env-vault/actions/runs/92/job/94"},
 		"PR CI run wrong attempt":     {runPredicate, prRun, runArgs, "run_attempt", 1},
 		"PR CI run wrong direct head": {runPredicate, prRun, runArgs, "head_sha", source},
 		"PR CI run wrong path":        {runPredicate, prRun, runArgs, "path", ".github/workflows/other.yml"},
@@ -1075,8 +1065,8 @@ func TestReleaseAppAuditWorkflowsKeepNarrowTokenScopes(t *testing.T) {
 		"permission-administration": "read",
 		"permission-metadata":       "read",
 	})
-	buildSettingsChecker := namedStep(t, planningScope, "Build the offline release settings checker")
-	if !containsAll(buildSettingsChecker.Run, "go build", "./cmd/releasecheck", "$RUNNER_TEMP/releasecheck") {
+	buildSettingsChecker := namedStep(t, planningScope, "Build the offline checker and strict GitHub release transport once")
+	if !containsAll(buildSettingsChecker.Run, "go build", "./cmd/releasecheck", "$RUNNER_TEMP/releasecheck", "./cmd/releasetransport", "RELEASE_TRANSPORT_BIN") {
 		t.Fatalf("planning App audit does not build the offline settings checker: %q", buildSettingsChecker.Run)
 	}
 	verifySettings := namedStep(t, planningScope, "Verify repository release settings and bypass policy")

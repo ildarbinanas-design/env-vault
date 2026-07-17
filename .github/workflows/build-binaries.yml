@@ -63,6 +63,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - name: Validate the canonical release contract
         run: go run ./cmd/releasecheck validate-contract --json
 
@@ -172,13 +178,14 @@ jobs:
             scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged >/dev/null
           fi
 
-          gh api --paginate --slurp --method GET \
+          scripts/release/gh-api-read.sh ci-runs.json \
+            --paginate --slurp --method GET \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
             -f "head_sha=$source_sha" \
             -f "branch=$DEFAULT_BRANCH" \
             -f 'event=push' \
             -f 'status=completed' \
-            -F per_page=100 > ci-runs.json
+            -F per_page=100
           matches="$(jq -c \
             --arg source "$source_sha" \
             --arg branch "$DEFAULT_BRANCH" \
@@ -190,7 +197,6 @@ jobs:
                 .event == "push" and
                 .status == "completed" and
                 .conclusion == "success" and
-                .name == "ci" and
                 .path == ".github/workflows/ci.yml"
               )]
             ' ci-runs.json)"
@@ -200,13 +206,23 @@ jobs:
           }
           ci_run_id="$(jq -er '.[0].id | select(type == "number" and . > 0 and floor == .)' <<< "$matches")"
           ci_run_attempt="$(jq -er '.[0].run_attempt | select(type == "number" and . > 0 and floor == .)' <<< "$matches")"
+          scripts/release/releasetransport.sh actions identity \
+            --output ci-run-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$ci_run_id" \
+            --run-attempt "$ci_run_attempt" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$source_sha" \
+            --head-ref "$DEFAULT_BRANCH"
 
-          gh api --paginate --slurp --method GET \
+          scripts/release/gh-api-read.sh planning-runs.json \
+            --paginate --slurp --method GET \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/release-please.yml/runs" \
             -f "head_sha=$source_sha" \
             -f 'event=workflow_run' \
             -f 'status=completed' \
-            -F per_page=100 > planning-runs.json
+            -F per_page=100
           planning_matches="$(jq -c \
             --arg source "$source_sha" \
             --arg repository "$GITHUB_REPOSITORY" '
@@ -218,7 +234,6 @@ jobs:
                 .event == "workflow_run" and
                 .status == "completed" and
                 .conclusion == "success" and
-                .name == "release-please" and
                 .path == ".github/workflows/release-please.yml" and
                 (.id | type == "number" and . > 0 and floor == .) and
                 (.run_attempt | type == "number" and . > 0 and floor == .)
@@ -230,11 +245,20 @@ jobs:
           }
           planning_run_id="$(jq -er '.[0].id' <<< "$planning_matches")"
           planning_run_attempt="$(jq -er '.[0].run_attempt' <<< "$planning_matches")"
+          scripts/release/releasetransport.sh actions identity \
+            --output planning-run-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$planning_run_id" \
+            --run-attempt "$planning_run_attempt" \
+            --workflow-path .github/workflows/release-please.yml \
+            --event workflow_run \
+            --head-sha "$source_sha" \
+            --head-ref main
           settings_proof_artifact_name="env-vault-release-settings-${source_sha}-attempt-${planning_run_attempt}"
 
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${planning_run_id}/artifacts?per_page=100" \
-            > planning-artifacts.json
+          scripts/release/gh-api-read.sh planning-artifacts.json \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${planning_run_id}/artifacts?per_page=100"
           settings_proof_artifact_id="$(jq -L scripts/release -er \
             --arg name "$settings_proof_artifact_name" \
             --arg source "$source_sha" \
@@ -341,6 +365,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - name: Save and classify the exact current CI attempt
         env:
           GH_TOKEN: ${{ github.token }}
@@ -349,10 +379,20 @@ jobs:
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}" > ci-run.json
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100" \
-            > ci-artifacts.json
+          scripts/release/gh-api-read.sh ci-run.json \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}"
+          scripts/release/gh-api-read.sh ci-artifacts.json \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
+          scripts/release/releasetransport.sh actions identity \
+            --output ci-run-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$SOURCE_SHA" \
+            --head-ref main
           set +e
           go run ./cmd/releasecheck classify-attempt \
             --run ci-run.json \
@@ -479,6 +519,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - name: Download publisher-local verified promotion bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -533,9 +579,11 @@ jobs:
             }
             echo "release ${VERSION} already exists; reconciling exact assets"
           elif [[ "$release_status" == "4" ]]; then
-            gh api \
-              --header 'Accept: application/vnd.github.raw+json' \
-              "repos/${GITHUB_REPOSITORY}/contents/CHANGELOG.md?ref=${SOURCE_SHA}" > source-CHANGELOG.md
+            scripts/release/releasetransport.sh contents read \
+              --output source-CHANGELOG.md \
+              --repository "$GITHUB_REPOSITORY" \
+              --path CHANGELOG.md \
+              --ref "$SOURCE_SHA"
             scripts/release/extract-changelog-section.sh "$VERSION" source-CHANGELOG.md > release-notes.md
             gh release create "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
@@ -575,6 +623,16 @@ jobs:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
 
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - name: Download canonical release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -613,12 +671,6 @@ jobs:
             printf 'create_provenance=%s\n' "$create_provenance"
             printf 'create_sbom=%s\n' "$create_sbom"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Set up Go for safe extraction
-        if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
 
       - name: Safely extract packages for SBOM
         if: steps.attestation-state.outputs.create_sbom == 'true'
@@ -724,6 +776,16 @@ jobs:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
 
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - name: Download and verify published assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -775,7 +837,9 @@ jobs:
           expected_slug="$(jq -er '.slug | select(type == "string" and length > 0)' <<< "$app")"
           expected_repository="$(jq -er '.repository | select(type == "string" and length > 0)' <<< "$app")"
           [[ "$ACTUAL_APP_SLUG" == "$expected_slug" ]] || { echo "unexpected Homebrew App identity" >&2; exit 1; }
-          mapfile -t repositories < <(gh api --paginate installation/repositories --jq '.repositories[].full_name')
+          scripts/release/gh-api-read.sh installation-repositories.json \
+            --paginate --slurp installation/repositories
+          mapfile -t repositories < <(jq -r '.[]?.repositories[]?.full_name' installation-repositories.json)
           [[ "${#repositories[@]}" == "1" && "${repositories[0]:-}" == "$expected_repository" ]] || {
             echo "Homebrew App installation scope differs from the release contract" >&2
             exit 1
@@ -935,6 +999,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - name: Download the exact pre-tag repository settings proof
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -994,11 +1064,14 @@ jobs:
           set -euo pipefail
           tag_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
           [[ "$tag_sha" == "$SOURCE_SHA" ]] || { echo "release tag source mismatch" >&2; exit 1; }
-          tag_ref_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '.object.sha')"
+          scripts/release/gh-api-read.sh tag-ref.json \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}"
+          tag_ref_sha="$(jq -er '.object.sha | select(type == "string")' tag-ref.json)"
           [[ "$tag_ref_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "release tag ref object is malformed" >&2; exit 1; }
           state="$(scripts/release/get-release-state.sh "$VERSION")"
           [[ "$state" == "${VERSION}|false|false" ]] || { echo "release is not stable: $state" >&2; exit 1; }
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" > release-state.json
+          scripts/release/gh-api-read.sh release-state.json \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}"
           jq -e --arg version "$VERSION" '
             .tag_name == $version and .draft == false and .prerelease == false and
             (.assets | type == "array" and length == 10) and
@@ -1072,8 +1145,10 @@ jobs:
             echo "Homebrew CI URLs do not contain exact run IDs" >&2
             exit 1
           }
-          gh api "repos/${TAP_REPOSITORY}/actions/runs/${pr_ci_run_id}" > tap-pr-ci.json
-          gh api "repos/${TAP_REPOSITORY}/actions/runs/${tap_ci_run_id}" > tap-post-merge-ci.json
+          scripts/release/gh-api-read.sh tap-pr-ci.json \
+            "repos/${TAP_REPOSITORY}/actions/runs/${pr_ci_run_id}"
+          scripts/release/gh-api-read.sh tap-post-merge-ci.json \
+            "repos/${TAP_REPOSITORY}/actions/runs/${tap_ci_run_id}"
           jq -e --arg repo "$TAP_REPOSITORY" --arg workflow ".github/workflows/${TAP_CI_WORKFLOW}" --arg sha "$pr_head_sha" --arg url "$pr_ci_url" '
             .repository.full_name == $repo and .path == $workflow and .event == "pull_request" and
             .head_sha == $sha and .status == "completed" and .conclusion == "success" and
@@ -1086,6 +1161,24 @@ jobs:
           ' tap-post-merge-ci.json >/dev/null
           pr_ci_attempt="$(jq -er '.run_attempt' tap-pr-ci.json)"
           tap_ci_attempt="$(jq -er '.run_attempt' tap-post-merge-ci.json)"
+          scripts/release/releasetransport.sh actions identity \
+            --output tap-pr-ci-identity.json \
+            --repository "$TAP_REPOSITORY" \
+            --run-id "$pr_ci_run_id" \
+            --run-attempt "$pr_ci_attempt" \
+            --workflow-path ".github/workflows/${TAP_CI_WORKFLOW}" \
+            --event pull_request \
+            --head-sha "$pr_head_sha" \
+            --head-ref "$branch"
+          scripts/release/releasetransport.sh actions identity \
+            --output tap-post-merge-ci-identity.json \
+            --repository "$TAP_REPOSITORY" \
+            --run-id "$tap_ci_run_id" \
+            --run-attempt "$tap_ci_attempt" \
+            --workflow-path ".github/workflows/${TAP_CI_WORKFLOW}" \
+            --event push \
+            --head-sha "$merge_sha" \
+            --head-ref main
 
           blocked_versions='[]'
           while IFS= read -r blocked; do

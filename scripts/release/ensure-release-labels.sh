@@ -14,20 +14,27 @@ source "$SCRIPT_DIR/lib.sh"
 repository=${GITHUB_REPOSITORY:-}
 release_require_repository "$repository"
 release_require_command gh
+release_require_command jq
+
+probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-labels.XXXXXX")
+trap 'rm -rf -- "$probe_dir"' EXIT
 
 ensure_label() {
   local name=$1
   local encoded_name=$2
   local color=$3
   local description=$4
-  local record
+  local record response
 
   gh label create "$name" \
     --repo "$repository" \
     --color "$color" \
     --description "$description" \
     --force
-  record=$(gh api "repos/$repository/labels/$encoded_name" --jq '[.name, .color, .description] | @tsv')
+  response="$probe_dir/$color.json"
+  "$SCRIPT_DIR/gh-api-read.sh" "$response" "repos/$repository/labels/$encoded_name"
+  record=$(jq -er 'select(type == "object") | [.name, .color, .description] | select(all(.[]; type == "string")) | @tsv' "$response") ||
+    release_die "GitHub returned malformed label data: $name"
   [[ "$record" == "$name"$'\t'"$color"$'\t'"$description" ]] ||
     release_die "release lifecycle label verification failed: $name"
 }

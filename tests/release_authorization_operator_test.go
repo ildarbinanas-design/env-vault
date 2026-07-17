@@ -29,7 +29,7 @@ func TestReleaseAuthorizationOperatorRecordsThenMergesExactTuple(t *testing.T) {
 	}
 
 	if stdout != releaseAuthorizationMergeSHA+"\n" {
-		t.Fatalf("stdout=%q, want exact merge SHA", stdout)
+		t.Fatalf("stdout=%q, want exact merge SHA\nstderr:\n%s", stdout, stderr)
 	}
 
 	calls := readOptionalFile(t, callLog)
@@ -307,6 +307,15 @@ fi
   exit 1
 }
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
+
 mode=${FAKE_RELEASE_AUTH_MODE:?}
 state_dir=${FAKE_RELEASE_AUTH_STATE:?}
 call_log=${FAKE_GH_CALL_LOG:?}
@@ -326,6 +335,44 @@ comment_id=9001
 canonical_body="ПОДТВЕРЖДАЮ RELEASE $version PR #$pr SHA $head"
 pr_body='Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.'
 release_branch=release-please--branches--main--components--env-vault
+
+args="$*"
+if [[ "$args" == *"api --include --hostname github.com --method GET"* ]]; then
+  transport_tmp=$(mktemp "${TMPDIR:-/tmp}/fake-release-auth-gh.XXXXXX")
+  server_date='Thu, 16 Jul 2026 22:00:00 GMT'
+  if [[ "$args" == *"repos/$repository/issues/comments/$comment_id"* ]]; then
+    count=0
+    [[ -f "$state_dir/date-count" ]] && read -r count < "$state_dir/date-count"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$state_dir/date-count"
+    second=00
+    if [[ "$mode" == backward-date && $count -eq 1 ]]; then
+      second=02
+    elif [[ "$mode" != stalled-date && $count -ge 2 ]]; then
+      second=01
+    fi
+    server_date="Thu, 16 Jul 2026 22:00:$second GMT"
+  fi
+  exec 3>&1
+  exec >"$transport_tmp"
+  finish_transport() {
+    status=$?
+    trap - EXIT
+    exec 1>&3
+    if [[ $status == 0 ]]; then
+      if [[ "$args" == *"Accept: application/vnd.github.raw+json"* ]]; then
+        content_type='application/vnd.github.raw+json; charset=utf-8'
+      else
+        content_type='application/vnd.github+json; charset=utf-8'
+      fi
+      printf 'HTTP/2 200 OK\r\nDate: %s\r\nContent-Type: %s\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n' "$server_date" "$content_type"
+    fi
+    cat -- "$transport_tmp"
+    rm -f -- "$transport_tmp"
+    exit "$status"
+  }
+  trap finish_transport EXIT
+fi
 
 has_arg() {
   local expected=$1
@@ -360,7 +407,7 @@ comment_json() {
     --argjson id "$comment_id" \
     '{id:$id,html_url:("https://github.com/"+$repository+"/pull/"+($pr|tostring)+"#issuecomment-"+($id|tostring)),body:$body,user:{login:$actor,type:"User"},author_association:$association,created_at:"2026-07-16T22:00:00Z",updated_at:$updated_at}')
   if [[ "$mode" == malformed-trusted-comment ]]; then
-    record=$(jq -c '.id="not-an-integer"' <<< "$record")
+    record=$(jq -c '.author_association=1' <<< "$record")
   fi
   printf '%s\n' "$record"
 }
@@ -377,18 +424,18 @@ pull_json() {
       jq -cn \
         --arg repository "$repository" --arg head "$observed_head" --arg base "$base" \
         --arg branch "$release_branch" --arg body "$pr_body" --argjson pr "$pr" \
-        '{number:$pr,state:"closed",merged:false,draft:false,merged_at:null,merge_commit_sha:null,base:{ref:"main",sha:$base,repo:{full_name:$repository}},head:{ref:$branch,sha:$head,repo:{full_name:$repository}},user:{login:"env-vault-release-planning[bot]"},title:"chore(main): release env-vault v0.0.13",body:$body,labels:[{name:"autorelease: pending"}]}'
+        '{id:4200,number:$pr,state:"closed",merged:false,draft:false,merged_at:null,merge_commit_sha:null,base:{ref:"main",sha:$base,repo:{full_name:$repository}},head:{ref:$branch,sha:$head,repo:{full_name:$repository}},user:{login:"env-vault-release-planning[bot]"},title:"chore(main): release env-vault v0.0.13",body:$body,labels:[{name:"autorelease: pending"}]}'
       return
     fi
     jq -cn \
       --arg repository "$repository" --arg head "$observed_head" --arg base "$base" --arg merge "$merge" \
       --arg branch "$release_branch" --arg body "$pr_body" --argjson pr "$pr" \
-      '{number:$pr,state:"closed",merged:true,draft:false,merged_at:"2026-07-16T22:00:02Z",merge_commit_sha:$merge,base:{ref:"main",sha:$base,repo:{full_name:$repository}},head:{ref:$branch,sha:$head,repo:{full_name:$repository}},user:{login:"env-vault-release-planning[bot]"},title:"chore(main): release env-vault v0.0.13",body:$body,labels:[{name:"autorelease: pending"}]}'
+      '{id:4200,number:$pr,state:"closed",merged:true,draft:false,merged_at:"2026-07-16T22:00:02Z",merge_commit_sha:$merge,base:{ref:"main",sha:$base,repo:{full_name:$repository}},head:{ref:$branch,sha:$head,repo:{full_name:$repository}},user:{login:"env-vault-release-planning[bot]"},title:"chore(main): release env-vault v0.0.13",body:$body,labels:[{name:"autorelease: pending"}]}'
   else
     jq -cn \
       --arg repository "$repository" --arg head "$observed_head" --arg base "$base" \
       --arg branch "$release_branch" --arg body "$pr_body" --argjson pr "$pr" \
-      '{number:$pr,state:"open",merged:false,draft:false,merged_at:null,merge_commit_sha:null,base:{ref:"main",sha:$base,repo:{full_name:$repository}},head:{ref:$branch,sha:$head,repo:{full_name:$repository}},user:{login:"env-vault-release-planning[bot]"},title:"chore(main): release env-vault v0.0.13",body:$body,labels:[{name:"autorelease: pending"}]}'
+      '{id:4200,number:$pr,state:"open",merged:false,draft:false,merged_at:null,merge_commit_sha:null,base:{ref:"main",sha:$base,repo:{full_name:$repository}},head:{ref:$branch,sha:$head,repo:{full_name:$repository}},user:{login:"env-vault-release-planning[bot]"},title:"chore(main): release env-vault v0.0.13",body:$body,labels:[{name:"autorelease: pending"}]}'
   fi
 }
 
@@ -404,9 +451,9 @@ if [[ ${1:-} == pr && ${2:-} == checks ]]; then
   [[ -f "$state_dir/check-count" ]] && read -r count < "$state_dir/check-count"
   count=$((count + 1))
   printf '%s\n' "$count" > "$state_dir/check-count"
-  quality_link=https://github.com/test/quality
+  quality_link="https://github.com/$repository/actions/runs/8001/job/8002"
   if [[ "$mode" == check-set-drift && $count -ge 2 ]]; then
-    quality_link=https://github.com/test/quality-changed
+    quality_link="https://github.com/$repository/actions/runs/8001/job/8003"
   fi
   jq -cn --arg quality "$quality_link" --arg mode "$mode" '[
     {name:"Analyze (actions)",state:"SUCCESS",bucket:"pass",link:"https://github.com/test/actions",workflow:"CodeQL",event:"dynamic"},
@@ -439,7 +486,7 @@ fi
 }
 args=" $* "
 
-if [[ "$args" == " api user " ]]; then
+if [[ "$args" == *" user "* ]]; then
   jq -cn --arg actor "$actor" '{login:$actor,type:"User"}'
   exit 0
 fi
@@ -451,7 +498,7 @@ fi
 
 if [[ "$args" == *" repos/$repository/pulls "* ]]; then
   record=$(pull_json)
-  printf '[[%s]]\n' "$record"
+  printf '[%s]\n' "$record"
   exit 0
 fi
 
@@ -523,7 +570,22 @@ if [[ "$args" == *" repos/$repository/compare/$merge...$next "* ]]; then
 fi
 
 if [[ "$args" == *" repos/$repository/actions/workflows/ci.yml/runs "* ]]; then
-  jq -cn --arg base "$base" '{workflow_runs:[{head_sha:$base,head_branch:"main",event:"push",conclusion:"success"}]}'
+  jq -cn --arg base "$base" --arg repository "$repository" '{total_count:1,workflow_runs:[{id:7001,run_attempt:1,repository:{full_name:$repository},head_repository:{full_name:$repository},head_sha:$base,head_branch:"main",event:"push",path:".github/workflows/ci.yml",status:"completed",conclusion:"success",html_url:("https://github.com/"+$repository+"/actions/runs/7001"),name:"custom diagnostic title"}]}'
+  exit 0
+fi
+
+if [[ "$args" == *" repos/$repository/actions/runs/7001/attempts/1 "* ]]; then
+  jq -cn --arg base "$base" --arg repository "$repository" '{id:7001,run_attempt:1,repository:{full_name:$repository},head_repository:{full_name:$repository},head_sha:$base,head_branch:"main",event:"push",path:".github/workflows/ci.yml",status:"completed",conclusion:"success",html_url:("https://github.com/"+$repository+"/actions/runs/7001"),name:"custom diagnostic title"}'
+  exit 0
+fi
+
+if [[ "$args" == *" repos/$repository/actions/runs/8001/attempts/1/jobs?per_page=100 "* ]]; then
+  jq -cn --arg head "$head" --arg repository "$repository" '{total_count:2,jobs:[{id:8002,run_id:8001,run_attempt:1,head_sha:$head,name:"quality-gate",workflow_name:"custom diagnostic title",status:"completed",conclusion:"success",html_url:("https://github.com/"+$repository+"/actions/runs/8001/job/8002")},{id:8003,run_id:8001,run_attempt:1,head_sha:$head,name:"quality-gate",workflow_name:"custom diagnostic title",status:"completed",conclusion:"success",html_url:("https://github.com/"+$repository+"/actions/runs/8001/job/8003")} ]}'
+  exit 0
+fi
+
+if [[ "$args" == *" repos/$repository/actions/runs/8001/attempts/1 "* || "$args" == *" repos/$repository/actions/runs/8001 "* ]]; then
+  jq -cn --arg head "$head" --arg branch "$release_branch" --arg repository "$repository" '{id:8001,run_attempt:1,repository:{full_name:$repository},head_repository:{full_name:$repository},head_sha:$head,head_branch:$branch,event:"pull_request",path:".github/workflows/ci.yml",status:"completed",conclusion:"success",html_url:("https://github.com/"+$repository+"/actions/runs/8001"),name:"custom diagnostic title"}'
   exit 0
 fi
 
@@ -564,19 +626,19 @@ if [[ "$args" == *" repos/$repository/issues/$pr/comments?per_page=100 "* ]]; th
     exit 1
   fi
   if [[ "$mode" == deleted-after-merge && -f "$state_dir/merged" ]]; then
-    printf '[[]]\n'
+    printf '[]\n'
   elif [[ "$mode" == duplicate-comment ]]; then
     first=$(comment_json)
     second=$(comment_json | jq -c --arg repository "$repository" --argjson pr "$pr" '.id=9002 | .html_url=("https://github.com/"+$repository+"/pull/"+($pr|tostring)+"#issuecomment-9002")')
-    printf '[[%s,%s]]\n' "$first" "$second"
+    printf '[%s,%s]\n' "$first" "$second"
   elif [[ "$mode" == existing-comment || "$mode" == already-merged || "$mode" == already-merged-invalid-proposal || "$mode" == malformed-trusted-comment || -f "$state_dir/comment" ]]; then
     variant=normal
     [[ "$mode" == edited-comment && $count -ge 3 ]] && variant=edited
     [[ "$mode" == edited-after-merge && -f "$state_dir/merged" ]] && variant=edited-after-merge
     record=$(comment_json "$variant")
-    printf '[[%s]]\n' "$record"
+    printf '[%s]\n' "$record"
   else
-    printf '[[]]\n'
+    printf '[]\n'
   fi
   exit 0
 fi
@@ -596,23 +658,12 @@ if [[ "$args" == *" --method POST repos/$repository/issues/$pr/comments "* ]]; t
   exit 0
 fi
 
-if [[ "$args" == *" --include repos/$repository/issues/comments/$comment_id "* ]]; then
-  count=0
-  [[ -f "$state_dir/date-count" ]] && read -r count < "$state_dir/date-count"
-  count=$((count + 1))
-  printf '%s\n' "$count" > "$state_dir/date-count"
-  second=00
-  if [[ "$mode" == backward-date && $count -eq 1 ]]; then
-    second=02
-  elif [[ "$mode" != stalled-date && $count -ge 2 ]]; then
-    second=01
-  fi
-  printf 'HTTP/2 200 OK\r\nDate: Thu, 16 Jul 2026 22:00:%s GMT\r\nContent-Type: application/json\r\n\r\n' "$second"
+if [[ "$args" == *" repos/$repository/issues/comments/$comment_id "* ]]; then
   comment_json
   exit 0
 fi
 
-if [[ "$args" == " api repos/$repository " ]]; then
+if [[ "$args" == *" repos/$repository "* ]]; then
   owner=$actor
   [[ "$mode" == untrusted-viewer ]] && owner=someone-else
   jq -cn --arg owner "$owner" '{owner:{login:$owner,type:"User"}}'

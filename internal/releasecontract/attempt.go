@@ -183,9 +183,6 @@ func parseRun(data []byte, contract Contract) (parsedRun, error) {
 	if !ok || raw.Path == nil || *raw.Path != expectedPath {
 		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.path", errors.New("run is not the contract CI workflow"))
 	}
-	if raw.Name == nil || *raw.Name != workflow.Name {
-		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.name", errors.New("run name is not the contract CI workflow"))
-	}
 	if !repositoryOK || raw.Repository == nil || raw.Repository.FullName == nil || *raw.Repository.FullName != expectedRepository {
 		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.repository.full_name", errors.New("run is not bound to the contract repository"))
 	}

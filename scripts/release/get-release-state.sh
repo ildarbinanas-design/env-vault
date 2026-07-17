@@ -25,30 +25,32 @@ repository=${2:-${GITHUB_REPOSITORY:-}}
 release_require_repository "$repository"
 release_require_version "$version"
 release_require_command gh
+release_require_command jq
 
 probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-probe.XXXXXX")
 trap cleanup EXIT
-probe_headers="$probe_dir/response"
-probe_error="$probe_dir/error"
+response="$probe_dir/release.json"
 endpoint="repos/$repository/releases/tags/$version"
 
-if ! gh api --include "$endpoint" >"$probe_headers" 2>"$probe_error"; then
-  http_status=$(LC_ALL=C awk '
-    /^HTTP\/[0-9.]+ [0-9][0-9][0-9]( |$)/ { status = $2 }
-    match($0, /\(HTTP [0-9][0-9][0-9]\)/) { status = substr($0, RSTART + 6, 3) }
-    END { print status }
-  ' "$probe_headers" "$probe_error")
-  if [[ "$http_status" == "404" ]]; then
+set +e
+"$SCRIPT_DIR/gh-api-read.sh" "$response" "$endpoint"
+status=$?
+set -e
+case "$status" in
+  0) ;;
+  4)
     printf 'release: GitHub Release not found: %s\n' "$version" >&2
     exit 4
-  fi
-  if [[ -n "$http_status" ]]; then
-    release_die "failed to query GitHub Release (HTTP $http_status)"
-  fi
-  release_die "failed to query GitHub Release (no HTTP response)"
-fi
+    ;;
+  *) release_die "failed to query GitHub Release" ;;
+esac
 
-record=$(gh api "$endpoint" --jq '[.tag_name, (.draft | tostring), (.prerelease | tostring)] | @tsv')
+record=$(jq -er '
+  select(type == "object" and (.tag_name | type) == "string" and
+    (.draft | type) == "boolean" and (.prerelease | type) == "boolean") |
+  [.tag_name, (.draft | tostring), (.prerelease | tostring)] | @tsv
+' "$response") ||
+  release_die "GitHub returned malformed release data"
 tag_name=''
 is_draft=''
 is_prerelease=''

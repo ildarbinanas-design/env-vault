@@ -44,12 +44,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build and identify the offline release checker
+      - name: Build the offline checker and strict GitHub release transport once
         env:
           RELEASECHECK: ${{ runner.temp }}/releasecheck
         run: |
           set -euo pipefail
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
           "$RELEASECHECK" --version --json
           "$RELEASECHECK" validate-contract --json
 
@@ -69,6 +71,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISHER_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          PUBLISHER_EVENT: ${{ github.event.workflow_run.event }}
           PUBLISHER_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
         run: |
@@ -105,7 +108,8 @@ jobs:
             --checked-at "$settings_checked_at" \
             --json > snapshots/repository-release-settings-verification.json
 
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISHER_RUN_ID}" > snapshots/publisher-run.json
+          scripts/release/gh-api-read.sh snapshots/publisher-run.json \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISHER_RUN_ID}"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg source "$source_sha" \
@@ -122,11 +126,20 @@ jobs:
               echo "publisher run identity mismatch" >&2
               exit 1
             }
+          scripts/release/releasetransport.sh actions identity \
+            --output snapshots/publisher-run-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$PUBLISHER_RUN_ID" \
+            --run-attempt "$PUBLISHER_ATTEMPT" \
+            --workflow-path .github/workflows/build-binaries.yml \
+            --event "$PUBLISHER_EVENT" \
+            --head-sha "$source_sha" \
+            --head-ref "$version"
 
-          gh api --paginate --slurp --method GET \
+          scripts/release/gh-api-read.sh snapshots/ci-runs.json \
+            --paginate --slurp --method GET \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
-            -f "head_sha=$source_sha" -f branch=main -f event=push -f status=completed -F per_page=100 \
-            > snapshots/ci-runs.json
+            -f "head_sha=$source_sha" -f branch=main -f event=push -f status=completed -F per_page=100
           ci_matches="$(jq -c --arg repository "$GITHUB_REPOSITORY" --arg source "$source_sha" '
             [.[]?.workflow_runs[]? | select(
               .repository.full_name == $repository and .head_repository.full_name == $repository and
@@ -138,10 +151,20 @@ jobs:
           [[ "$(jq 'length' <<< "$ci_matches")" == "1" ]] || { echo "exact successful main CI run is ambiguous" >&2; exit 1; }
           ci_run_id="$(jq -er '.[0].id' <<< "$ci_matches")"
           ci_attempt="$(jq -er '.[0].run_attempt' <<< "$ci_matches")"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}" > snapshots/ci-run.json
-          gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts?per_page=100" \
-            > snapshots/ci-artifacts.json
+          scripts/release/releasetransport.sh actions identity \
+            --output snapshots/ci-run-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$ci_run_id" \
+            --run-attempt "$ci_attempt" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$source_sha" \
+            --head-ref main
+          scripts/release/gh-api-read.sh snapshots/ci-run.json \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
+          scripts/release/gh-api-read.sh snapshots/ci-artifacts.json \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts?per_page=100"
           "$RELEASECHECK" classify-attempt \
             --run snapshots/ci-run.json --artifacts snapshots/ci-artifacts.json --json \
             > snapshots/ci-classification.json
@@ -157,7 +180,8 @@ jobs:
           export RELEASE_APP_SLUG="$release_app_slug"
           export RELEASE_AUTHORIZATION_OUTPUT="snapshots/release-authorization-checkpoint.json"
           release_pr_number="$(scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged)"
-          gh api "repos/${GITHUB_REPOSITORY}/pulls/${release_pr_number}" > snapshots/release-pr.json
+          scripts/release/gh-api-read.sh snapshots/release-pr.json \
+            "repos/${GITHUB_REPOSITORY}/pulls/${release_pr_number}"
           release_pr_head_sha="$(jq -er \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg source "$source_sha" \
@@ -206,22 +230,21 @@ jobs:
             echo "release PR quality-gate URL shape is malformed" >&2
             exit 1
           fi
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${pr_ci_run_id}" > snapshots/pr-ci-run.json
-          gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${pr_ci_job_id}" > snapshots/pr-ci-job.json
-          pr_ci_attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and floor == .)' snapshots/pr-ci-job.json)"
-          jq -e \
-            --arg quality_link "$quality_link" \
-            --arg release_pr_head "$release_pr_head_sha" \
-            --argjson job_id "$pr_ci_job_id" \
-            --argjson run_id "$pr_ci_run_id" \
-            --argjson attempt "$pr_ci_attempt" '
-              .id == $job_id and .run_id == $run_id and .run_attempt == $attempt and
-              .head_sha == $release_pr_head and .name == "quality-gate" and .workflow_name == "ci" and
-              .status == "completed" and .conclusion == "success" and .html_url == $quality_link
-          ' snapshots/pr-ci-job.json >/dev/null || {
-            echo "release PR quality-gate job identity mismatch" >&2
-            exit 1
-          }
+          scripts/release/gh-api-read.sh snapshots/pr-ci-run.json \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${pr_ci_run_id}"
+          pr_ci_attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and floor == .)' snapshots/pr-ci-run.json)"
+          scripts/release/releasetransport.sh actions identity \
+            --output snapshots/pr-ci-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$pr_ci_run_id" \
+            --run-attempt "$pr_ci_attempt" \
+            --workflow-path .github/workflows/ci.yml \
+            --event pull_request \
+            --head-sha "$release_pr_head_sha" \
+            --head-ref release-please--branches--main--components--env-vault \
+            --job-id "$pr_ci_job_id" \
+            --job-name quality-gate \
+            --job-url "$quality_link"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg branch "release-please--branches--main--components--env-vault" \
@@ -239,7 +262,8 @@ jobs:
           }
           pr_ci_head_sha="$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' snapshots/pr-ci-run.json)"
 
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${planning_run_id}" > snapshots/planning-run.json
+          scripts/release/gh-api-read.sh snapshots/planning-run.json \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${planning_run_id}"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg source "$source_sha" \
@@ -254,6 +278,15 @@ jobs:
               echo "release planning run identity mismatch" >&2
               exit 1
             }
+          scripts/release/releasetransport.sh actions identity \
+            --output snapshots/planning-run-identity.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$planning_run_id" \
+            --run-attempt "$planning_attempt" \
+            --workflow-path .github/workflows/release-please.yml \
+            --event workflow_run \
+            --head-sha "$source_sha" \
+            --head-ref main
 
           jq -n \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -390,6 +423,13 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+
+      - name: Build the strict GitHub release transport once
+        working-directory: evidence-tooling
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
 
       - name: Download the exact read-scoped evidence candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

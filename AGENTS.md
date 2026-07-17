@@ -19,6 +19,12 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - GitHub transport and mutations use `gh` or the GitHub API. Repository
   checkers consume saved files offline, hold no credentials, and fail closed on
   unknown, incomplete, invalid, or unsupported input.
+- Release REST reads must go through `scripts/release/releasetransport.sh` (or
+  its `gh-api-read.sh` GET adapter). Actions authority uses attempt-qualified
+  typed identity; run `.name`, job `workflow_name`, and `.pull_requests` are
+  diagnostic only. Direct/high-level `gh` exceptions must remain enumerated in
+  `release/github-transport-boundary.v1.json`; mutations are never blindly
+  retried after an ambiguous transport result.
 - Do not commit, push, tag, release, create a remote, or publish without explicit approval.
   A generated Release Please pull request may be merged only after the operator
   records the exact authorization tuple as a comment on that pull request,

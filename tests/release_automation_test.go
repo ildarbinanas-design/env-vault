@@ -330,7 +330,7 @@ func TestVerifyReleaseProposal(t *testing.T) {
 func TestMarkReleasePullRequestTagged(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
 	state := filepath.Join(t.TempDir(), "labels.json")
-	if err := os.WriteFile(state, []byte(`[{"name":"autorelease: pending"},{"name":"documentation"}]`), 0o600); err != nil {
+	if err := os.WriteFile(state, []byte(`[{"id":1,"name":"autorelease: pending"},{"id":2,"name":"documentation"}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	env := []string{
@@ -346,7 +346,7 @@ func TestMarkReleasePullRequestTagged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(data)); got != `[{"name":"documentation"},{"name":"autorelease: tagged"}]` {
+	if got := strings.TrimSpace(string(data)); got != `[{"id":2,"name":"documentation"},{"id":3,"name":"autorelease: tagged"}]` {
 		t.Fatalf("final labels=%s", got)
 	}
 
@@ -660,14 +660,46 @@ func installFakeReleaseGH(t *testing.T) string {
 set -euo pipefail
 args="$*"
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
+
+if [[ "$args" == *"api --include --hostname github.com --method GET"* ]]; then
+  transport_tmp=$(mktemp "${TMPDIR:-/tmp}/fake-release-gh.XXXXXX")
+  exec 3>&1
+  exec >"$transport_tmp"
+  finish_transport() {
+    status=$?
+    trap - EXIT
+    exec 1>&3
+    if [[ $status == 0 ]]; then
+      if [[ "$args" == *"Accept: application/vnd.github.raw+json"* ]]; then
+        content_type='application/vnd.github.raw+json; charset=utf-8'
+      else
+        content_type='application/vnd.github+json; charset=utf-8'
+      fi
+      printf 'HTTP/2 200 OK\r\nContent-Type: %s\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n' "$content_type"
+    fi
+    cat -- "$transport_tmp"
+    rm -f -- "$transport_tmp"
+    exit "$status"
+  }
+  trap finish_transport EXIT
+fi
+
 if [[ "$args" == *"issues/42/labels"* ]]; then
   state="${FAKE_LABEL_STATE:?}"
   if [[ "$args" == *"--method POST"* ]]; then
-    printf '%s\n' '[{"name":"autorelease: pending"},{"name":"documentation"},{"name":"autorelease: tagged"}]' > "$state"
+    printf '%s\n' '[{"id":1,"name":"autorelease: pending"},{"id":2,"name":"documentation"},{"id":3,"name":"autorelease: tagged"}]' > "$state"
     exit 0
   fi
   if [[ "$args" == *"--method DELETE"* ]]; then
-    printf '%s\n' '[{"name":"documentation"},{"name":"autorelease: tagged"}]' > "$state"
+    printf '%s\n' '[{"id":2,"name":"documentation"},{"id":3,"name":"autorelease: tagged"}]' > "$state"
     exit 0
   fi
   cat "$state"
@@ -680,17 +712,17 @@ if [[ "$args" == label\ create* ]]; then
 fi
 if [[ "$args" == *"labels/autorelease%3A%20pending"* ]]; then
   printf '%s\n' "$args" >> "${FAKE_LABEL_CALL_LOG:?}"
-  printf '%s\n' $'autorelease: pending\tfbca04\tRelease Please proposal awaiting reviewed publication'
+  printf '%s\n' '{"name":"autorelease: pending","color":"fbca04","description":"Release Please proposal awaiting reviewed publication"}'
   exit 0
 fi
 if [[ "$args" == *"labels/autorelease%3A%20tagged"* ]]; then
   printf '%s\n' "$args" >> "${FAKE_LABEL_CALL_LOG:?}"
-  printf '%s\n' $'autorelease: tagged\t0e8a16\tReviewed Release Please proposal with an exact release tag'
+  printf '%s\n' '{"name":"autorelease: tagged","color":"0e8a16","description":"Reviewed Release Please proposal with an exact release tag"}'
   exit 0
 fi
 if [[ "$args" == *"labels/autorelease%3A%20abandoned"* ]]; then
   printf '%s\n' "$args" >> "${FAKE_LABEL_CALL_LOG:?}"
-  printf '%s\n' $'autorelease: abandoned\tb60205\tMerged Release Please proposal permanently abandoned before tagging'
+  printf '%s\n' '{"name":"autorelease: abandoned","color":"b60205","description":"Merged Release Please proposal permanently abandoned before tagging"}'
   exit 0
 fi
 
@@ -738,11 +770,11 @@ case "$args" in
     fi
     printf '{"data":{"repository":{"defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":%s,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY","rulesets":{"totalCount":3,"pageInfo":{"hasNextPage":%s},"nodes":[{"databaseId":7,"name":"Protect env-vault main","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":%s},{"databaseId":8,"name":"Protect env-vault release tags","enforcement":"ACTIVE","target":"TAG","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}},{"databaseId":9,"name":"Protect env-vault release evidence","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}}]}}}%s}\n' "${FAKE_ALLOW_REBASE:-false}" "${FAKE_GRAPHQL_RULESETS_PAGINATED:-false}" "$main_bypass" "$errors"
     ;;
-  "api repos/example/env-vault")
+  *"repos/example/env-vault")
     printf '{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":%s,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n' "${FAKE_ALLOW_REBASE:-false}"
     ;;
   *"rulesets?per_page=100"*)
-    printf '[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"},{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","enforcement":"active"}]]\n'
+    printf '[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"},{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","enforcement":"active"}]\n'
     ;;
   *"rulesets/7"*)
     if [[ "${FAKE_RULESET_ALLOW_REBASE:-false}" == "true" ]]; then
@@ -785,8 +817,8 @@ case "$args" in
     fi
     printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
     ;;
-  *"api --paginate --slurp --method GET repos/example/env-vault/pulls"*)
-    printf '[[{"number":43,"base":{"ref":"main","sha":"%s","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
+  *"repos/example/env-vault/pulls"*)
+    printf '[{"id":4300,"number":43,"base":{"ref":"main","sha":"%s","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]\n' \
       "${FAKE_PROPOSAL_PARENT_SHA:?}" "${FAKE_PROPOSAL_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *"git/commits/"*)
@@ -821,13 +853,17 @@ case "$args" in
   *"contents/CHANGELOG.md"*)
     printf '%s\n' '# Changelog' '' '## [0.0.8](https://example.invalid/release) (2026-07-16)' '' '- Release.'
     ;;
+  *"actions/runs/7001/attempts/1"*)
+    printf '{"id":7001,"run_attempt":1,"repository":{"full_name":"example/env-vault"},"head_repository":{"full_name":"example/env-vault"},"head_sha":"%s","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"%s","html_url":"https://github.com/example/env-vault/actions/runs/7001","name":"custom diagnostic title"}\n' \
+      "${FAKE_CI_HEAD_SHA:-${FAKE_SOURCE_SHA:?}}" "${FAKE_CI_CONCLUSION:?}"
+    ;;
   *"actions/workflows/ci.yml/runs"*)
-    printf '{"workflow_runs":[{"head_sha":"%s","head_branch":"main","event":"push","conclusion":"%s"}]}\n' \
+    printf '{"total_count":1,"workflow_runs":[{"id":7001,"run_attempt":1,"repository":{"full_name":"example/env-vault"},"head_repository":{"full_name":"example/env-vault"},"head_sha":"%s","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"%s","html_url":"https://github.com/example/env-vault/actions/runs/7001","name":"custom diagnostic title"}]}\n' \
       "${FAKE_CI_HEAD_SHA:-${FAKE_SOURCE_SHA:?}}" "${FAKE_CI_CONCLUSION:?}"
     ;;
   *"issues/42/comments?per_page=100"*)
     if [[ "${FAKE_CONFIRMATION_MISSING:-false}" == "true" ]]; then
-      printf '%s\n' '[[]]'
+      printf '%s\n' '[]'
       exit 0
     fi
     canonical_body="ПОДТВЕРЖДАЮ RELEASE v0.0.8 PR #42 SHA ${FAKE_PR_HEAD_SHA:?}"
@@ -849,13 +885,13 @@ case "$args" in
         --arg created_at "${FAKE_CONFIRMATION_CREATED_AT:?}" \
         --arg updated_at "${FAKE_CONFIRMATION_UPDATED_AT:?}" \
         '{id:9002,html_url:"https://github.com/example/env-vault/pull/42#issuecomment-9002",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
-      printf '[[%s,%s]]\n' "$comment" "$duplicate"
+      printf '[%s,%s]\n' "$comment" "$duplicate"
     else
-      printf '[[%s]]\n' "$comment"
+      printf '[%s]\n' "$comment"
     fi
     ;;
   *"commits/"*"/pulls"*)
-    printf '[[{"number":42,"state":"closed","merged_at":"%s","merge_commit_sha":"%s","base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]]\n' \
+    printf '[{"id":4200,"number":42,"state":"closed","merged_at":"%s","merge_commit_sha":"%s","base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]\n' \
       "${FAKE_PR_MERGED_AT:?}" "${FAKE_SOURCE_SHA:?}" "${FAKE_PR_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *)

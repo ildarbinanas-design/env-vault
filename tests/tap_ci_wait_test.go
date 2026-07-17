@@ -52,15 +52,17 @@ func TestTapCIWaitsForExactSuccessfulRun(t *testing.T) {
 
 	calls := readOptionalFile(t, callLog)
 	for _, exactArgument := range []string{
-		"api --method GET repos/example/homebrew-tap/actions/workflows/test-formula.yml/runs",
-		"-f head_sha=" + tapCISHA,
-		"-f event=pull_request",
-		"-F per_page=100",
-		"--jq",
+		"api --include --hostname github.com --method GET",
+		"--raw-field head_sha=" + tapCISHA,
+		"--raw-field event=pull_request",
+		"--raw-field per_page=100",
 	} {
 		if !strings.Contains(calls, exactArgument) {
 			t.Fatalf("gh calls missing %q:\n%s", exactArgument, calls)
 		}
+	}
+	if strings.Contains(calls, "--jq") {
+		t.Fatalf("transport must leave strict projection offline:\n%s", calls)
 	}
 }
 
@@ -83,7 +85,7 @@ func TestTapCIAcceptsEnvironmentInputsAndPushEvent(t *testing.T) {
 	if status != 0 || stdout != tapCIRunURL+"\n" || stderr != "" {
 		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout, stderr)
 	}
-	if calls := readOptionalFile(t, callLog); !strings.Contains(calls, "-f event=push") {
+	if calls := readOptionalFile(t, callLog); !strings.Contains(calls, "--raw-field event=push") {
 		t.Fatalf("gh call does not use the push event:\n%s", calls)
 	}
 }
@@ -98,13 +100,13 @@ func TestTapCIFailsClosedForRunAndTransportStates(t *testing.T) {
 		{name: "terminal failure", mode: "terminal-failure", timeout: "5", wantOutput: "completed unsuccessfully: conclusion=failure"},
 		{name: "no run timeout", mode: "no-run", timeout: "0", wantOutput: "last state: no matching run"},
 		{name: "queued timeout", mode: "queued", timeout: "0", wantOutput: "last state: queued"},
-		{name: "malformed structured output", mode: "malformed-output", timeout: "5", wantOutput: "malformed workflow run data"},
-		{name: "malformed API object", mode: "malformed-jq", timeout: "5", wantOutput: "malformed workflow run data"},
-		{name: "wrong SHA", mode: "wrong-sha", timeout: "5", wantOutput: "unexpected SHA or event"},
+		{name: "malformed structured output", mode: "malformed-output", timeout: "5", wantOutput: "PAGINATION_INVALID"},
+		{name: "malformed API object", mode: "malformed-jq", timeout: "5", wantOutput: "PAGINATION_INVALID"},
+		{name: "wrong SHA is not a match", mode: "wrong-sha", timeout: "0", wantOutput: "last state: no matching run"},
 		{name: "completed without conclusion", mode: "missing-conclusion", timeout: "5", wantOutput: "completed workflow run has no conclusion"},
 		{name: "unknown status", mode: "unknown-status", timeout: "5", wantOutput: "unknown workflow run status"},
-		{name: "HTTP API failure", mode: "api-503", timeout: "5", wantOutput: "API request failed (HTTP 503)"},
-		{name: "network failure", mode: "network", timeout: "5", wantOutput: "network failure (no HTTP response)"},
+		{name: "HTTP API failure", mode: "api-503", timeout: "5", wantOutput: "TRANSPORT_FAILED"},
+		{name: "network failure", mode: "network", timeout: "5", wantOutput: "TRANSPORT_FAILED"},
 	}
 
 	for _, test := range tests {
@@ -179,6 +181,14 @@ func installTapCIFakeGH(t *testing.T, root string) (binDir, stateFile, callLog s
 	writeExecutable(t, filepath.Join(binDir, "gh"), `#!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
 mode=${FAKE_TAP_CI_MODE:?}
 state_file=${FAKE_TAP_CI_STATE:?}
 call_log=${FAKE_GH_CALL_LOG:?}
@@ -200,33 +210,66 @@ for argument in "$@"; do
   esac
 done
 
-record() {
-  printf 'RUN|12345|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5"
+headers() {
+  printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
 }
+
+record() {
+  local returned_sha=$1 returned_event=$2 status=$3 conclusion=$4
+  local head_ref=release/env-vault-v1.2.3
+  [[ $returned_event == push ]] && head_ref=main
+  printf '%s\n' "$returned_event" > "$state_file.event"
+  printf '%s\n' "$head_ref" > "$state_file.head-ref"
+  headers
+  if [[ -n $conclusion ]]; then
+    conclusion_json=\"$conclusion\"
+  else
+    conclusion_json=null
+  fi
+  printf '{"total_count":1,"workflow_runs":[{"id":12345,"run_attempt":1,"repository":{"full_name":"example/homebrew-tap"},"head_repository":{"full_name":"example/homebrew-tap"},"head_sha":"%s","head_branch":"%s","path":".github/workflows/test-formula.yml","event":"%s","status":"%s","conclusion":%s,"html_url":"%s"}]}\n' \
+    "$returned_sha" "$head_ref" "$returned_event" "$status" "$conclusion_json" "$url"
+}
+
+none() {
+  headers
+  printf '{"total_count":0,"workflow_runs":[]}\n'
+}
+
+if [[ "$*" == *"repos/example/homebrew-tap/actions/runs/12345/attempts/1"* ]]; then
+  selected_event=$(<"$state_file.event")
+  selected_head_ref=$(<"$state_file.head-ref")
+  headers
+  printf '{"id":12345,"run_attempt":1,"repository":{"full_name":"example/homebrew-tap"},"head_repository":{"full_name":"example/homebrew-tap"},"head_sha":"%s","head_branch":"%s","path":".github/workflows/test-formula.yml","event":"%s","status":"completed","conclusion":"success","html_url":"%s","name":"custom diagnostic title"}\n' \
+    "$sha" "$selected_head_ref" "$selected_event" "$url"
+  exit 0
+fi
 
 case "$mode" in
   sequence-success)
     case "$count" in
-      1) printf 'NONE\n' ;;
-      2) record "$sha" "$event" queued '' "$url" ;;
-      3) record "$sha" "$event" in_progress '' "$url" ;;
-      *) record "$sha" "$event" completed success "$url" ;;
+      1) none ;;
+      2) record "$sha" "$event" queued '' ;;
+      3) record "$sha" "$event" in_progress '' ;;
+      *) record "$sha" "$event" completed success ;;
     esac
     ;;
-  success) record "$sha" "$event" completed success "$url" ;;
-  terminal-failure) record "$sha" "$event" completed failure "$url" ;;
-  no-run) printf 'NONE\n' ;;
-  queued) record "$sha" "$event" queued '' "$url" ;;
-  malformed-output) printf 'BROKEN\n' ;;
-  malformed-jq)
-    printf 'jq: error: ENV_VAULT_MALFORMED_WORKFLOW_RUNS_RESPONSE\n' >&2
-    exit 1
+  success) record "$sha" "$event" completed success ;;
+  terminal-failure) record "$sha" "$event" completed failure ;;
+  no-run) none ;;
+  queued) record "$sha" "$event" queued '' ;;
+  malformed-output)
+    headers
+    printf '{"total_count":1,"workflow_runs":"BROKEN"}\n'
     ;;
-  wrong-sha) record 4444444444444444444444444444444444444444 "$event" completed success "$url" ;;
-  missing-conclusion) record "$sha" "$event" completed '' "$url" ;;
-  unknown-status) record "$sha" "$event" surprising '' "$url" ;;
+  malformed-jq)
+    headers
+    printf '{"total_count":1,"workflow_runs":[{"id":"bad","head_sha":"%s","event":"%s","status":"completed","conclusion":"success","html_url":"%s"}]}\n' "$sha" "$event" "$url"
+    ;;
+  wrong-sha) record 4444444444444444444444444444444444444444 "$event" completed success ;;
+  missing-conclusion) record "$sha" "$event" completed '' ;;
+  unknown-status) record "$sha" "$event" surprising '' ;;
   api-503)
-    printf 'gh: Service Unavailable (HTTP 503)\n' >&2
+    printf 'HTTP/2 503 Service Unavailable\r\nContent-Type: application/vnd.github+json\r\nRetry-After: 0\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Service Unavailable"}\n'
     exit 1
     ;;
   network)

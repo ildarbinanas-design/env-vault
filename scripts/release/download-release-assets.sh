@@ -25,6 +25,7 @@ repository=${3:-${GITHUB_REPOSITORY:-}}
 release_require_repository "$repository"
 release_require_version "$version"
 release_require_command gh
+release_require_command jq
 
 if [[ -e "$destination" ]]; then
   [[ -d "$destination" && ! -L "$destination" ]] ||
@@ -42,7 +43,10 @@ staging=$(mktemp -d "$parent/.env-vault-release-download.XXXXXX")
 trap cleanup EXIT
 
 remote_names="$staging/.remote-asset-names"
-gh api "repos/$repository/releases/tags/$version" --jq '.assets[].name' > "$remote_names"
+release_state="$staging/.release-state.json"
+"$SCRIPT_DIR/gh-api-read.sh" "$release_state" "repos/$repository/releases/tags/$version"
+jq -er 'select(type == "object" and (.assets | type) == "array" and all(.assets[]; type == "object" and (.name | type) == "string")) | .assets[].name' \
+  "$release_state" > "$remote_names" || release_die "GitHub returned malformed release asset data"
 remote_count=$(LC_ALL=C awk 'END { print NR }' "$remote_names")
 [[ "$remote_count" == "${#RELEASE_ASSETS[@]}" ]] ||
   release_die "release must contain exactly ${#RELEASE_ASSETS[@]} assets"
@@ -53,13 +57,13 @@ for asset in "${RELEASE_ASSETS[@]}"; do
   count=$(LC_ALL=C grep -Fxc -- "$asset" "$remote_names" || true)
   [[ "$count" == "1" ]] || release_die "release asset is missing or duplicated: $asset"
 done
-rm -f -- "$remote_names"
+rm -f -- "$remote_names" "$release_state"
 
-download_args=(release download "$version" --repo "$repository" --dir "$staging")
+download_patterns=()
 for asset in "${RELEASE_ASSETS[@]}"; do
-  download_args+=(--pattern "$asset")
+  download_patterns+=(--pattern "$asset")
 done
-gh "${download_args[@]}"
+gh release download "$version" --repo "$repository" --dir "$staging" "${download_patterns[@]}"
 
 release_verify_asset_directory "$staging"
 

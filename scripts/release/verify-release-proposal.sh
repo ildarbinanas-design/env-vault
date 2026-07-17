@@ -168,27 +168,45 @@ jq -e '.status == "ahead" or .status == "identical"' "$base_compare" >/dev/null 
   release_die "release proposal base is not contained in current main"
 
 workflow_runs="$probe_dir/workflow-runs.json"
-"$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --method GET \
+"$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --paginate --slurp --method GET \
   "repos/$repository/actions/workflows/ci.yml/runs" \
   --raw-field "head_sha=$parent_sha" \
   --raw-field 'branch=main' \
   --raw-field 'event=push' \
   --raw-field 'status=completed' \
   --raw-field 'per_page=100'
-jq -e --arg sha "$parent_sha" '
-  [.workflow_runs[] |
+ci_identity=$(jq -cer --arg sha "$parent_sha" --arg repository "$repository" '
+  [.[] | .workflow_runs[] |
     select(
+      .repository.full_name == $repository and
+      .head_repository.full_name == $repository and
       .head_sha == $sha and
       .head_branch == "main" and
       .event == "push" and
-      .conclusion == "success"
+      .path == ".github/workflows/ci.yml" and
+      .status == "completed" and
+      .conclusion == "success" and
+      (.id | type == "number" and . > 0 and floor == .) and
+      (.run_attempt | type == "number" and . > 0 and floor == .) and
+      .html_url == ("https://github.com/" + $repository + "/actions/runs/" + (.id | tostring))
     )
-  ] | length >= 1
-' "$workflow_runs" >/dev/null || release_die "release proposal base has no successful main ci push run"
+  ] | select(length >= 1) | max_by(.id)
+' "$workflow_runs") || release_die "release proposal base has no strictly identified successful main ci push run"
+ci_run_id=$(jq -er '.id' <<< "$ci_identity")
+ci_run_attempt=$(jq -er '.run_attempt' <<< "$ci_identity")
+"$SCRIPT_DIR/releasetransport.sh" actions identity \
+  --output "$probe_dir/main-ci-identity.json" \
+  --repository "$repository" \
+  --run-id "$ci_run_id" \
+  --run-attempt "$ci_run_attempt" \
+  --workflow-path .github/workflows/ci.yml \
+  --event push \
+  --head-sha "$parent_sha" \
+  --head-ref main || release_die "release proposal base CI typed identity mismatch"
 
 manifest="$probe_dir/manifest.json"
-"$SCRIPT_DIR/gh-api-read.sh" "$manifest" --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/.release-please-manifest.json?ref=$head_sha"
+"$SCRIPT_DIR/releasetransport.sh" contents read --output "$manifest" --repository "$repository" \
+  --path .release-please-manifest.json --ref "$head_sha"
 jq -e --arg version "$version" '
   type == "object" and
   keys == ["."] and
@@ -196,15 +214,15 @@ jq -e --arg version "$version" '
 ' "$manifest" >/dev/null || release_die "release proposal manifest does not match its title"
 
 readme="$probe_dir/README.md"
-"$SCRIPT_DIR/gh-api-read.sh" "$readme" --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/README.md?ref=$head_sha"
+"$SCRIPT_DIR/releasetransport.sh" contents read --output "$readme" --repository "$repository" \
+  --path README.md --ref "$head_sha"
 readme_line=$(release_readme_version_line "v$version")
 grep -Fqx -- "$readme_line" "$readme" ||
   release_die "release proposal README does not match its manifest"
 
 changelog="$probe_dir/CHANGELOG.md"
-"$SCRIPT_DIR/gh-api-read.sh" "$changelog" --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/CHANGELOG.md?ref=$head_sha"
+"$SCRIPT_DIR/releasetransport.sh" contents read --output "$changelog" --repository "$repository" \
+  --path CHANGELOG.md --ref "$head_sha"
 "$SCRIPT_DIR/extract-changelog-section.sh" "v$version" "$changelog" >/dev/null ||
   release_die "release proposal changelog section is missing or empty"
 

@@ -167,13 +167,13 @@ func TestResolveTagSHAClassifiesGitHubResponses(t *testing.T) {
 			name:       "service unavailable",
 			mode:       "tag-503",
 			wantStatus: 1,
-			wantOutput: "HTTP 503",
+			wantOutput: "TRANSPORT_FAILED",
 		},
 		{
 			name:       "network failure",
 			mode:       "tag-network",
 			wantStatus: 1,
-			wantOutput: "no HTTP response",
+			wantOutput: "TRANSPORT_FAILED",
 		},
 	}
 
@@ -227,7 +227,7 @@ func TestGetReleaseStateClassifiesGitHubResponses(t *testing.T) {
 			name:       "service unavailable",
 			mode:       "release-503",
 			wantStatus: 1,
-			wantOutput: "HTTP 503",
+			wantOutput: "TRANSPORT_FAILED",
 		},
 	}
 
@@ -294,15 +294,15 @@ func TestArtifactAttestationStateIsIdempotentAndFailClosed(t *testing.T) {
 			name:         "API failure is not treated as missing",
 			mode:         "api-503",
 			wantStatus:   1,
-			wantOutput:   "HTTP 503",
-			wantAPICalls: 1,
+			wantOutput:   "TRANSPORT_FAILED",
+			wantAPICalls: 5,
 		},
 		{
 			name:         "network failure is not treated as missing",
 			mode:         "network",
 			wantStatus:   1,
-			wantOutput:   "no HTTP response",
-			wantAPICalls: 1,
+			wantOutput:   "TRANSPORT_FAILED",
+			wantAPICalls: 5,
 		},
 		{
 			name:         "wrong-source existing evidence requests exact replacement",
@@ -352,7 +352,7 @@ func TestArtifactAttestationStateIsIdempotentAndFailClosed(t *testing.T) {
 			}
 
 			calls := readOptionalFile(t, callLog)
-			if got := strings.Count(calls, "api --method GET"); got != test.wantAPICalls {
+			if got := strings.Count(calls, "/attestations/sha256:"); got != test.wantAPICalls {
 				t.Fatalf("API calls=%d, want %d\n%s", got, test.wantAPICalls, calls)
 			}
 			if got := strings.Count(calls, "attestation verify"); got != test.wantVerifies {
@@ -589,6 +589,14 @@ func installAPIFakeGH(t *testing.T) string {
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
 mode=${FAKE_GH_MODE:?FAKE_GH_MODE is required}
 [[ ${1:-} == api ]] || {
   printf 'fake gh: unsupported command: %s\n' "$*" >&2
@@ -596,49 +604,55 @@ mode=${FAKE_GH_MODE:?FAKE_GH_MODE is required}
 }
 
 shift
-include=false
-if [[ ${1:-} == --include ]]; then
-  include=true
-  shift
-fi
-endpoint=${1:-}
-
-if [[ $include == true ]]; then
-  case "$mode" in
-    tag-404|release-404)
-      printf 'HTTP/2 404 Not Found\r\n\r\n'
-      exit 1
-      ;;
-    tag-503|release-503)
-      printf 'HTTP/2 503 Service Unavailable\r\n\r\n'
-      exit 1
-      ;;
-    tag-network)
-      printf 'dial tcp: network is unreachable\n' >&2
-      exit 1
-      ;;
+endpoint=''
+while (($#)); do
+  case "$1" in
+    --include) shift ;;
+    --hostname|--method|--header) shift 2 ;;
     *)
-      printf 'HTTP/2 200 OK\r\n\r\n'
-      exit 0
+      [[ -z $endpoint ]] || { printf 'fake gh: unexpected API argument: %s\n' "$1" >&2; exit 92; }
+      endpoint=$1
+      shift
       ;;
   esac
-fi
+done
+
+emit() {
+  local status=$1 reason=$2 body=$3
+  printf 'HTTP/2 %s %s\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n' "$status" "$reason"
+  printf '%s\n' "$body"
+}
+
+case "$mode" in
+  tag-404|release-404)
+    emit 404 'Not Found' '{"message":"Not Found"}'
+    exit 1
+    ;;
+  tag-503|release-503)
+    printf 'HTTP/2 503 Service Unavailable\r\nContent-Type: application/vnd.github+json\r\nRetry-After: 0\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Service Unavailable"}\n'
+    exit 1
+    ;;
+  tag-network)
+    printf 'dial tcp: network is unreachable\n' >&2
+    exit 1
+    ;;
+esac
 
 case "$mode:$endpoint" in
   tag-lightweight:repos/example/env-vault/git/ref/tags/v1.2.3)
-    printf 'commit\t1111111111111111111111111111111111111111\n'
+    emit 200 OK '{"object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}'
     ;;
   tag-annotated:repos/example/env-vault/git/ref/tags/v1.2.3)
-    printf 'tag\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    emit 200 OK '{"object":{"type":"tag","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
     ;;
   tag-annotated:repos/example/env-vault/git/tags/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
-    printf 'tag\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n'
+    emit 200 OK '{"object":{"type":"tag","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
     ;;
   tag-annotated:repos/example/env-vault/git/tags/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
-    printf 'commit\t2222222222222222222222222222222222222222\n'
+    emit 200 OK '{"object":{"type":"commit","sha":"2222222222222222222222222222222222222222"}}'
     ;;
   release-present:repos/example/env-vault/releases/tags/v1.2.3)
-    printf 'v1.2.3\tfalse\tfalse\n'
+    emit 200 OK '{"tag_name":"v1.2.3","draft":false,"prerelease":false}'
     ;;
   *)
     printf 'fake gh: unsupported API request in mode %s: %s\n' "$mode" "$endpoint" >&2
@@ -656,6 +670,14 @@ func installReleaseAssetsFakeGH(t *testing.T, binDir string) {
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
 remote_dir=${FAKE_GH_REMOTE_DIR:?FAKE_GH_REMOTE_DIR is required}
 call_log=${FAKE_GH_CALL_LOG:?FAKE_GH_CALL_LOG is required}
 upload_log=${FAKE_GH_UPLOAD_LOG:?FAKE_GH_UPLOAD_LOG is required}
@@ -668,14 +690,21 @@ for argument in "$@"; do
 done
 
 if [[ ${1:-} == api ]]; then
+  printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
+  printf '{"assets":['
+  first=true
   shopt -s nullglob
   for path in "$remote_dir"/*; do
     [[ -f $path && ! -L $path ]] || {
       printf 'fake gh: non-regular remote asset: %s\n' "$path" >&2
       exit 93
     }
-    basename -- "$path"
+    name=$(basename -- "$path")
+    if [[ $first == false ]]; then printf ','; fi
+    first=false
+    printf '{"name":"%s"}' "$name"
   done
+  printf ']}\n'
   exit 0
 fi
 
@@ -766,6 +795,14 @@ func installAttestationFakeGH(t *testing.T, binDir string) {
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
 mode=${FAKE_ATTEST_MODE:?FAKE_ATTEST_MODE is required}
 call_log=${FAKE_GH_CALL_LOG:?FAKE_GH_CALL_LOG is required}
 printf '%s\n' "$*" >> "$call_log"
@@ -775,7 +812,7 @@ case ${1:-} in
     predicate=''
     previous=''
     for argument in "$@"; do
-      if [[ $previous == -f && $argument == predicate_type=* ]]; then
+      if [[ $previous == --raw-field && $argument == predicate_type=* ]]; then
         predicate=${argument#predicate_type=}
       fi
       previous=$argument
@@ -783,18 +820,18 @@ case ${1:-} in
     case "$mode" in
       sbom-missing)
         if [[ $predicate == https://spdx.dev/Document/v2.3 ]]; then
-          printf 'gh: Not Found (HTTP 404)\n' >&2
+          printf 'HTTP/2 404 Not Found\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Not Found"}\n'
           exit 1
         fi
         ;;
       provenance-missing)
         if [[ $predicate == https://slsa.dev/provenance/v1 ]]; then
-          printf 'gh: Not Found (HTTP 404)\n' >&2
+          printf 'HTTP/2 404 Not Found\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Not Found"}\n'
           exit 1
         fi
         ;;
       api-503)
-        printf 'gh: Service Unavailable (HTTP 503)\n' >&2
+        printf 'HTTP/2 503 Service Unavailable\r\nContent-Type: application/vnd.github+json\r\nRetry-After: 0\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Service Unavailable"}\n'
         exit 1
         ;;
       network)
@@ -802,7 +839,7 @@ case ${1:-} in
         exit 1
         ;;
     esac
-    printf '1\n'
+    printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"attestations":[{"id":1}]}\n'
     ;;
   attestation)
     [[ ${2:-} == verify ]] || exit 90

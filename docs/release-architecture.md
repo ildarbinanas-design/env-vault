@@ -204,6 +204,54 @@ validator are excluded from literal counts.
   does not exist, and bootstrapping a branch would require separate operator
   work. This is the Stage 3 genesis boundary.
 
+### Stage 2 measured transport delta
+
+The bullets above and `release/refactor-baseline.v1.json` remain the immutable
+pre-change baseline. After Stage 2, the same operational-source measurement is:
+
+| Measure | Before | After Stage 2 | Delta |
+| --- | ---: | ---: | ---: |
+| Direct `gh api` sites | 44 | 9 | -35 |
+| Direct API read sites | 36 | 1 | -35 |
+| Direct REST read sites | 35 | 0 | -35 |
+| Direct REST mutations | 8 | 8 | 0 |
+| Direct GraphQL observation sites | 1 | 1 | 0 |
+| `gh-api-read.sh` call sites | 37 | 62 | +25 |
+| Helper caller files | 6 | 19 | +13 |
+| Typed Actions identity call sites | 0 | 17 | +17 |
+
+The nine remaining direct API sites are exactly the eight historical mutation
+boundaries plus the ruleset GraphQL observation. Their path, operation,
+category, inherited owner `release-engineering`, count, and rationale are
+machine-checked from `release/github-transport-boundary.v1.json`. Dedicated
+high-level `gh` observations/mutations are registered there as well. This is a
+source-boundary measurement; it does not imply an Actions runtime reduction.
+
+The physical/nonblank definitions are unchanged from the baseline. The final
+Stage 2 source-surface delta is:
+
+| Scope | Before | After Stage 2 | Delta |
+| --- | --- | --- | --- |
+| env-vault workflows | 10 files / 25 jobs / 3,646 physical / 3,395 nonblank | 10 / 25 / 3,847 / 3,581 | 0 files / 0 jobs / +201 / +186 |
+| `scripts/release` shell and jq | 28 files / 4,450 physical / 4,008 nonblank | 29 / 4,521 / 4,083 | +1 file / +71 / +75 |
+| new `cmd/releasetransport` + `internal/githubtransport` Go | 0 | 9 files / 2,795 physical / 2,632 nonblank | +9 / +2,795 / +2,632 |
+| changed `internal/strictjson/strictjson.go` | 1 file / 250 physical / 230 nonblank | 1 / 265 / 244 | 0 files / +15 / +14 |
+
+The new transport Go surface splits into 1,841 physical non-test lines and 954
+physical test lines. It is reported separately rather than folded into the
+historical operational shell/workflow baseline. The original Stage 2 target of
+removing 200–350 shell lines was not achieved: release shell/jq grew by 71
+physical lines while callers migrated behind the typed boundary. Cleanup and
+workflow-graph consolidation remain Stage 4 work. The formerly stale
+`actions/setup-go` annotation now matches the reviewed `v6.5.0` pin.
+
+Two single observed local runs of
+`go test ./tests -run '^TestPublishReleaseEvidenceIsNoClobberAndRaceSafe$' -count=1`
+changed from 91.251 seconds to 14.978 seconds (-83.6%) after building the
+transport once per integration-test process. Host/tool/cache metadata and
+repetitions were not recorded, so this is directional evidence rather than a
+benchmark and is not a hosted-runner metric.
+
 ## Preserved invariants and risks
 
 Every stage must retain:
