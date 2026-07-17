@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.16](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.15...v0.0.16) (2026-07-17)
+
+
+### Bug Fixes
+
+* **release:** centralize GitHub transport ([#47](https://github.com/ildarbinanas-design/env-vault/issues/47)) ([2c6932f](https://github.com/ildarbinanas-design/env-vault/commit/2c6932fe10a70b3a7cf22e751965af8aca52cb6b))
+* **release:** compact and anchor durable evidence ([#48](https://github.com/ildarbinanas-design/env-vault/issues/48)) ([fa5e3fd](https://github.com/ildarbinanas-design/env-vault/commit/fa5e3fdfe75c956dbd9e4f70484de1f0ec81de3a))
+
+
+### Documentation
+
+* freeze release refactor baseline ([#45](https://github.com/ildarbinanas-design/env-vault/issues/45)) ([114ab3e](https://github.com/ildarbinanas-design/env-vault/commit/114ab3e35b6948c0d40e5b7f9c97b867f32cf5eb))
+
 ## [0.0.15](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.14...v0.0.15) (2026-07-17)
 
 
