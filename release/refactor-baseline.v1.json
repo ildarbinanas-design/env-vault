@@ -1,0 +1,286 @@
+{
+  "schema_id": "env-vault.release-refactor-baseline.v1",
+  "schema_version": 1,
+  "measurement_date": "2026-07-17",
+  "repositories": {
+    "release": {
+      "name": "ildarbinanas-design/env-vault",
+      "source_sha": "c7dd1fd6176ac2abbea22f226795a0787e774c1b"
+    },
+    "homebrew_tap": {
+      "name": "ildarbinanas-design/homebrew-tap",
+      "source_sha": "71217af8d0c692e27d8c268c9cce5a2a533f4ea9"
+    }
+  },
+  "immutable_release_history": {
+    "published_version": "v0.0.15",
+    "historical_version_states": [
+      {"version": "v0.0.12", "state": "abandoned_no_tag_no_release"},
+      {"version": "v0.0.13", "state": "published_immutable"},
+      {"version": "v0.0.14", "state": "published_immutable"},
+      {"version": "v0.0.15", "state": "published_immutable"}
+    ],
+    "release_source_sha": "c7dd1fd6176ac2abbea22f226795a0787e774c1b",
+    "publisher_run_id": 29576465336,
+    "publisher_run_attempt": 1,
+    "evidence_run_id": 29576963736,
+    "evidence_run_attempt": 1,
+    "evidence_commit_sha": "af521d52b898088cb49f6256964e377e33e95a5d",
+    "evidence_parent_sha": "68547bd880a4d49f44389476b77046aac2ab1675",
+    "homebrew_pull_request_number": 8,
+    "homebrew_pull_request_head_sha": "019c8c721259dc2af8cb9ef19228bb4895378d1e",
+    "homebrew_merge_sha": "71217af8d0c692e27d8c268c9cce5a2a533f4ea9"
+  },
+  "measurement_definitions": {
+    "physical_lines": "newline-delimited records reported by wc -l",
+    "nonblank_lines": "physical lines containing at least one non-whitespace byte",
+    "static_job_definitions": "top-level entries under a workflow jobs mapping before matrix or reusable-workflow expansion",
+    "run_job_count": "length of the jobs array for the exact GitHub Actions run attempt",
+    "wall_seconds": "exact run updatedAt minus startedAt, as computed by env-vault.release-metrics.v1",
+    "aggregate_runner_seconds": "sum of each exact-attempt job completedAt minus startedAt, as computed by env-vault.release-metrics.v1",
+    "logical_path_bytes": "sum of Git tree blob byte sizes while counting every path",
+    "unique_git_blob_uncompressed_bytes": "sum of Git blob byte sizes after deduplicating blob object IDs; this is not network transfer, hosted storage, or billing usage"
+  },
+  "release_contract_inventory": {
+    "contract_path": "release/contract.v1.json",
+    "platform_ids": [
+      "linux-amd64",
+      "linux-arm64",
+      "darwin-amd64",
+      "darwin-arm64",
+      "windows-amd64"
+    ],
+    "platform_count": 5,
+    "release_asset_count": 10,
+    "workflow_identity_count": 10,
+    "release_repository": "ildarbinanas-design/env-vault",
+    "homebrew_repository": "ildarbinanas-design/homebrew-tap",
+    "homebrew_formula_path": "Formula/env-vault.rb",
+    "homebrew_ci_workflow_file": "test-formula.yml"
+  },
+  "product_path_no_change_gate": {
+    "base_sha": "c7dd1fd6176ac2abbea22f226795a0787e774c1b",
+    "paths": [
+      "cmd/env-vault",
+      "e2e",
+      "internal/cli",
+      "internal/config",
+      "internal/errors",
+      "internal/output",
+      "internal/platform",
+      "internal/redact",
+      "internal/runner",
+      "internal/secretstore"
+    ],
+    "expected_changed_path_count": 0
+  },
+  "static_source_surface": {
+    "env_vault_workflows": {
+      "scope": ".github/workflows/*.yml",
+      "file_count": 10,
+      "static_job_definitions": 25,
+      "physical_lines": 3646,
+      "nonblank_lines": 3395
+    },
+    "homebrew_tap_workflows": {
+      "scope": ".github/workflows/*.yml at homebrew-tap source_sha",
+      "file_count": 1,
+      "static_job_definitions": 2,
+      "physical_lines": 57,
+      "nonblank_lines": 47
+    },
+    "combined_workflows": {
+      "file_count": 11,
+      "static_job_definitions": 27,
+      "physical_lines": 3703,
+      "nonblank_lines": 3442
+    },
+    "release_scripts": {
+      "scope": "scripts/release/*.sh and scripts/release/*.jq",
+      "shell_file_count": 26,
+      "jq_file_count": 2,
+      "file_count": 28,
+      "physical_lines": 4450,
+      "nonblank_lines": 4008
+    },
+    "release_go_core": {
+      "scope": [
+        "cmd/releasecheck",
+        "cmd/release-extract",
+        "cmd/release-version-probe",
+        "internal/releasearchive",
+        "internal/releasecontract",
+        "internal/releaseevidence",
+        "internal/releasemetrics",
+        "internal/releasepromotion",
+        "internal/releasesettings"
+      ],
+      "go_file_count": 44,
+      "physical_lines": 13433,
+      "nonblank_lines": 12539,
+      "non_test_physical_lines": 8617,
+      "unit_test_physical_lines": 4816
+    },
+    "release_operator_integration_tests": {
+      "scope": "tests/*.go excluding tests/process_config_test.go",
+      "go_file_count": 13,
+      "physical_lines": 6804
+    },
+    "adjacent_e2e_baseline": {
+      "scope": [
+        "cmd/e2e-baseline",
+        "internal/e2ebaseline"
+      ],
+      "classification": "adjacent durable CI baseline code, excluded from release_go_core",
+      "go_file_count": 9,
+      "physical_lines": 2090,
+      "nonblank_lines": 1963
+    },
+    "workflow_static_jobs": [
+      {"repository": "env-vault", "file": "audit-release-app.yml", "static_job_definitions": 1},
+      {"repository": "env-vault", "file": "audit-release-planning-app.yml", "static_job_definitions": 1},
+      {"repository": "env-vault", "file": "build-binaries.yml", "static_job_definitions": 7},
+      {"repository": "env-vault", "file": "ci.yml", "static_job_definitions": 2},
+      {"repository": "env-vault", "file": "dependency-review.yml", "static_job_definitions": 1},
+      {"repository": "env-vault", "file": "legacy-rebuild.yml", "static_job_definitions": 2},
+      {"repository": "env-vault", "file": "pr-title.yml", "static_job_definitions": 1},
+      {"repository": "env-vault", "file": "release-evidence.yml", "static_job_definitions": 2},
+      {"repository": "env-vault", "file": "release-please.yml", "static_job_definitions": 3},
+      {"repository": "env-vault", "file": "reusable-quality.yml", "static_job_definitions": 5},
+      {"repository": "homebrew-tap", "file": "test-formula.yml", "static_job_definitions": 2}
+    ]
+  },
+  "run_measurements": {
+    "checked_in_historical_comparator": {
+      "source": "release/metrics-baseline.v1.json",
+      "measurements": [
+        {"scenario": "main_ci", "run_id": 29475607744, "run_attempt": 1, "job_count": 25, "wall_seconds": 387, "aggregate_runner_seconds": 1253},
+        {"scenario": "release_pr_ci", "run_id": 29479484474, "run_attempt": 1, "job_count": 25, "wall_seconds": 359, "aggregate_runner_seconds": 1205},
+        {"scenario": "publisher", "run_id": 29475939348, "run_attempt": 1, "job_count": 30, "wall_seconds": 417, "aggregate_runner_seconds": 1280}
+      ],
+      "totals": {"job_count": 80, "wall_seconds": 1163, "aggregate_runner_seconds": 3738}
+    },
+    "current_v0_0_15": {
+      "source": "release-evidence branch commit af521d52b898088cb49f6256964e377e33e95a5d",
+      "measurements": [
+        {"scenario": "main_ci", "run_id": 29576181486, "run_attempt": 1, "head_sha": "c7dd1fd6176ac2abbea22f226795a0787e774c1b", "job_count": 12, "wall_seconds": 240, "aggregate_runner_seconds": 910},
+        {"scenario": "release_pr_ci", "run_id": 29572388235, "run_attempt": 1, "head_sha": "04d91dcfae7dcf26cda7f66e722ff2936502081d", "job_count": 12, "wall_seconds": 270, "aggregate_runner_seconds": 893},
+        {"scenario": "publisher", "run_id": 29576465336, "run_attempt": 1, "head_sha": "c7dd1fd6176ac2abbea22f226795a0787e774c1b", "job_count": 7, "wall_seconds": 546, "aggregate_runner_seconds": 527}
+      ],
+      "totals": {"job_count": 31, "wall_seconds": 1056, "aggregate_runner_seconds": 2330}
+    },
+    "current_minus_historical": {
+      "measurements": [
+        {"scenario": "main_ci", "job_count_change": -13, "wall_seconds_change": -147, "aggregate_runner_seconds_change": -343},
+        {"scenario": "release_pr_ci", "job_count_change": -13, "wall_seconds_change": -89, "aggregate_runner_seconds_change": -312},
+        {"scenario": "publisher", "job_count_change": -23, "wall_seconds_change": 129, "aggregate_runner_seconds_change": -753}
+      ],
+      "totals": {"job_count_change": -49, "wall_seconds_change": -107, "aggregate_runner_seconds_change": -1408}
+    },
+    "evidence_workflow_derived_timing": {
+      "run_id": 29576963736,
+      "run_attempt": 1,
+      "job_count": 2,
+      "workflow_started_to_updated_seconds": 60,
+      "summed_job_active_span_seconds": 56,
+      "timing_note": "derived directly from Actions timestamps; not an env-vault.release-metrics.v1 document"
+    },
+    "homebrew_v0_0_15": {
+      "pull_request_head_ci": {"run_id": 29576677229, "run_attempt": 1, "head_sha": "019c8c721259dc2af8cb9ef19228bb4895378d1e", "event": "pull_request", "conclusion": "success"},
+      "post_merge_ci": {"run_id": 29576768487, "run_attempt": 1, "head_sha": "71217af8d0c692e27d8c268c9cce5a2a533f4ea9", "event": "push", "conclusion": "success"},
+      "runtime_job_count_per_run": 3
+    }
+  },
+  "evidence_snapshot": {
+    "git_commit_sha": "af521d52b898088cb49f6256964e377e33e95a5d",
+    "git_parent_sha": "68547bd880a4d49f44389476b77046aac2ab1675",
+    "release_evidence_json_bytes": 1475191,
+    "v0_0_15_root_and_attempt_projection": {
+      "path_count": 8,
+      "logical_path_bytes": 2964270,
+      "unique_git_blob_count": 4,
+      "unique_git_blob_uncompressed_bytes": 1482135
+    },
+    "full_evidence_namespace": {
+      "path_count": 27,
+      "logical_path_bytes": 5964242,
+      "unique_git_blob_count": 19,
+      "unique_git_blob_uncompressed_bytes": 2999380
+    },
+    "attestation_document_content": {
+      "verification_entry_count": 10,
+      "unique_document_count": 2,
+      "document_bytes_counting_each_entry": 1343205,
+      "document_bytes_after_content_deduplication": 268641,
+      "duplicate_document_bytes": 1074564,
+      "duplicate_fraction_basis_points": 8000
+    },
+    "actions_artifact_archives": {
+      "measurement_source": "GitHub Actions artifacts API for exact evidence run 29576963736 attempt 1",
+      "reported_size_field": "size_in_bytes",
+      "interpretation": "GitHub-reported artifact archive bytes; not inferred network transfer, hosted storage, or billing usage",
+      "artifacts": [
+        {
+          "role": "candidate",
+          "artifact_id": 8405407104,
+          "name": "env-vault-release-evidence-candidate-v0.0.15-c7dd1fd6176ac2abbea22f226795a0787e774c1b-29576963736-1",
+          "reported_archive_bytes": 178515
+        },
+        {
+          "role": "published",
+          "artifact_id": 8405417386,
+          "name": "env-vault-release-evidence-v0.0.15-af521d52b898088cb49f6256964e377e33e95a5d-publisher-29576465336-attempt-1-evidence-29576963736-1",
+          "reported_archive_bytes": 175700
+        }
+      ]
+    },
+    "offline_replay_result": "pass"
+  },
+  "homebrew_snapshot": {
+    "formula_path": "Formula/env-vault.rb",
+    "formula_sha256": "6b1b7710b9b406ac5309aed21a6cd14269129a2142e33690ed15b3a49d882ced",
+    "pull_request_number": 8,
+    "pull_request_head_sha": "019c8c721259dc2af8cb9ef19228bb4895378d1e",
+    "merge_sha": "71217af8d0c692e27d8c268c9cce5a2a533f4ea9",
+    "tap_sha": "71217af8d0c692e27d8c268c9cce5a2a533f4ea9"
+  },
+  "duplication_inventory": {
+    "operational_source_scope": [
+      ".github/workflows/*.yml",
+      "scripts/release/*.sh",
+      "scripts/release/*.jq"
+    ],
+    "transport": {
+      "direct_gh_api_call_sites": 44,
+      "direct_gh_api_files": 17,
+      "direct_gh_api_read_sites": 36,
+      "direct_gh_api_mutation_sites": 8,
+      "direct_read_sites_outside_gh_api_read_helper": 35,
+      "gh_api_read_helper_call_sites": 37,
+      "gh_api_read_helper_caller_files": 6
+    },
+    "literal_occurrences": [
+      {"literal": "ildarbinanas-design/env-vault", "occurrences": 10, "file_count": 5},
+      {"literal": "ildarbinanas-design/homebrew-tap", "occurrences": 2, "file_count": 1},
+      {"literal": "ci.yml", "occurrences": 16, "file_count": 7},
+      {"literal": "release-please.yml", "occurrences": 5, "file_count": 2},
+      {"literal": "build-binaries.yml", "occurrences": 8, "file_count": 4},
+      {"literal": "release-evidence.yml", "occurrences": 1, "file_count": 1},
+      {"literal": "Formula/env-vault.rb", "occurrences": 18, "file_count": 3},
+      {"literal": "release-please--branches--main--components--env-vault", "occurrences": 7, "file_count": 6},
+      {"literal": "linux-amd64", "occurrences": 7, "file_count": 4},
+      {"literal": "linux-arm64", "occurrences": 7, "file_count": 4},
+      {"literal": "darwin-amd64", "occurrences": 7, "file_count": 4},
+      {"literal": "darwin-arm64", "occurrences": 7, "file_count": 4},
+      {"literal": "windows-amd64", "occurrences": 7, "file_count": 3},
+      {"literal": "group: env-vault-release", "occurrences": 3, "file_count": 3}
+    ],
+    "reviewed_pin_annotation_drift": {
+      "action": "actions/setup-go",
+      "sha": "924ae3a1cded613372ab5595356fb5720e22ba16",
+      "v6_5_0_comment_occurrences": 17,
+      "v6_3_0_comment_occurrences": 1
+    },
+    "homebrew_tap_floating_action": "actions/checkout@v7"
+  }
+}
