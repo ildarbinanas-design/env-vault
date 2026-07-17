@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -155,9 +154,18 @@ func runSuite(opts runOptions) error {
 		failures.add(helperCommand.ExitCode, "build subprocess helper: %v", helperErr)
 	}
 
-	gotestsum, probe := resolveGotestsum(repoRoot, opts.commandTimeout)
+	gotestsum, probe, reporterErr := resolveGotestsum(
+		repoRoot,
+		opts.reporter,
+		opts.reporterChecksum,
+		goVersion,
+		opts.commandTimeout,
+	)
 	if probe.Name != "" {
 		metadata.Commands = append(metadata.Commands, probe)
+	}
+	if reporterErr != nil {
+		failures.add(probe.ExitCode, "verify E2E reporter: %v", reporterErr)
 	}
 
 	initialLeaks := []leakFinding{}
@@ -165,7 +173,7 @@ func runSuite(opts runOptions) error {
 	functionalJUnitPrivate := filepath.Join(privateDir, "functional-junit.xml")
 	functionalContracts := filepath.Join(privateDir, "functional-contracts")
 	functionalRegistry := filepath.Join(privateDir, "functional-sentinels.jsonl")
-	if binaryErr == nil && helperErr == nil && manifestErr == nil {
+	if binaryErr == nil && helperErr == nil && manifestErr == nil && reporterErr == nil {
 		env := suiteEnvironment(binary, helper, opts.phase, functionalContracts, functionalRegistry, "", false)
 		result := runGotestsum(gotestsum, repoRoot, env, functionalJUnitPrivate, functionalRawPrivate, opts, 1, "off", "^TestE2E$")
 		result.Name = "functional-e2e: " + result.Name
@@ -224,6 +232,8 @@ func runSuite(opts runOptions) error {
 
 	if nativeRuntimeErr != nil {
 		failures.add(1, "coverage E2E was not started because the runner is not native: %v", nativeRuntimeErr)
+	} else if reporterErr != nil {
+		failures.add(1, "coverage E2E was not started because the reporter prerequisite failed: %v", reporterErr)
 	} else {
 		coverageBinary, coverageBuild := buildCoverageBinary(repoRoot, privateDir, opts)
 		metadata.Commands = append(metadata.Commands, coverageBuild)
@@ -405,61 +415,20 @@ func writeFinalStatusReports(reportDir string, metadata *runMetadata, feature fe
 }
 
 type gotestsumCommand struct {
-	name   string
-	prefix []string
-}
-
-func resolveGotestsum(repoRoot string, timeout time.Duration) (gotestsumCommand, commandResult) {
-	var candidates []string
-	if path, err := exec.LookPath("gotestsum"); err == nil {
-		candidates = append(candidates, path)
-	}
-	if output, result := commandOutput("go", []string{"env", "GOPATH"}, repoRoot, environment(nil), timeout); result.ExitCode == 0 {
-		for _, workspace := range filepath.SplitList(strings.TrimSpace(string(output))) {
-			candidate := filepath.Join(workspace, "bin", executableFilename("gotestsum"))
-			if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && !containsString(candidates, candidate) {
-				candidates = append(candidates, candidate)
-			}
-		}
-	}
-	for _, path := range candidates {
-		output, result := commandOutput(path, []string{"--version"}, repoRoot, environment(nil), timeout)
-		if result.ExitCode == 0 && bytes.Contains(output, []byte(strings.TrimPrefix(gotestsumVersion, "v"))) {
-			return gotestsumCommand{name: path}, result
-		}
-		moduleOutput, moduleResult := commandOutput("go", []string{"version", "-m", path}, repoRoot, environment(nil), timeout)
-		if moduleResult.ExitCode == 0 && bytes.Contains(moduleOutput, []byte("gotest.tools/gotestsum\t"+gotestsumVersion)) {
-			return gotestsumCommand{name: path}, moduleResult
-		}
-	}
-	return gotestsumCommand{name: "go", prefix: []string{"run", gotestsumModuleVersion}}, commandResult{
-		Name:      "gotestsum-resolution",
-		Arguments: []string{"fallback", gotestsumModuleVersion},
-		StartedAt: time.Now().UTC(),
-		EndedAt:   time.Now().UTC(),
-		ExitCode:  0,
-	}
-}
-
-func executableFilename(name string) string {
-	if runtime.GOOS == "windows" {
-		return name + ".exe"
-	}
-	return name
+	name string
 }
 
 func runGotestsum(command gotestsumCommand, repoRoot string, env []string, junit, raw string, opts runOptions, count int, shuffle, runPattern string) commandResult {
-	args := append([]string(nil), command.prefix...)
-	args = append(args,
+	args := []string{
 		"--format=standard-verbose",
 		"--no-color",
 		"--junitfile", junit,
 		"--jsonfile", raw,
 		"--",
-		"-count="+strconv.Itoa(count),
-		"-shuffle="+shuffle,
-		"-timeout="+opts.testTimeout.String(),
-	)
+		"-count=" + strconv.Itoa(count),
+		"-shuffle=" + shuffle,
+		"-timeout=" + opts.testTimeout.String(),
+	}
 	if runPattern != "" {
 		args = append(args, "-run", runPattern)
 	}

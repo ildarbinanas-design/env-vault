@@ -32,6 +32,30 @@ func TestClassifyAttemptCompleteSuccess(t *testing.T) {
 	assertFailedOnlyRerunProhibited(t, result)
 }
 
+func TestClassifyAttemptIgnoresCurrentReporterToolingArtifacts(t *testing.T) {
+	contract := loadCanonicalForTest(t)
+	const attempt = 3
+	artifacts := testArtifactsJSON(t, contract, attempt, func(artifacts *[]map[string]any) {
+		for index, platform := range contract.Platforms {
+			*artifacts = append(*artifacts, map[string]any{
+				"id":      int64(100 + index),
+				"name":    "env-vault-tooling-gotestsum-" + platform.ID + "-" + testSourceSHA + "-attempt-3",
+				"expired": false,
+				"workflow_run": map[string]any{
+					"id": testRunID, "head_sha": testSourceSHA,
+				},
+			})
+		}
+	})
+	result, err := ClassifyAttempt(testRunJSON(t, "completed", "success", attempt), artifacts, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || !result.MatrixComplete || len(result.UnexpectedArtifacts) != 0 || len(result.ObservedArtifacts) != 10 {
+		t.Fatalf("reporter tooling artifacts polluted publication matrix: %+v", result)
+	}
+}
+
 func TestClassifyAttemptCompletedSuccessIncompleteRerunsAll(t *testing.T) {
 	contract := loadCanonicalForTest(t)
 	result, err := ClassifyAttempt(

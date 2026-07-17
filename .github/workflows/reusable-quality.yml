@@ -34,6 +34,7 @@ jobs:
   resolve:
     name: resolve-source-quality
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       GOTOOLCHAIN: local
     outputs:
@@ -52,6 +53,9 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            tools/e2e-reporter/go.sum
 
       - id: version
         name: Resolve exact candidate version
@@ -120,9 +124,58 @@ jobs:
         run: |
           set -euo pipefail
           go run ./cmd/releasecheck validate-contract --json >/dev/null
-          matrix="$(go run ./cmd/releasecheck contract matrix --json)"
+          matrix_file="$RUNNER_TEMP/env-vault-native-matrix.json"
+          go run ./cmd/releasecheck contract matrix --json > "$matrix_file"
+          matrix="$(<"$matrix_file")"
           jq -e '.include | type == "array" and length == 5' <<< "$matrix" >/dev/null
           printf 'matrix=%s\n' "$(jq -c . <<< "$matrix")" >> "$GITHUB_OUTPUT"
+
+      - name: Build exact E2E reporter bundle once
+        shell: bash
+        run: >-
+          scripts/release/build-e2e-reporters.sh
+          "$RUNNER_TEMP/env-vault-native-matrix.json"
+          reporter-tools
+
+      - name: Upload linux-amd64 current-attempt E2E reporter
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-tooling-gotestsum-linux-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: reporter-tools/linux-amd64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload linux-arm64 current-attempt E2E reporter
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-tooling-gotestsum-linux-arm64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: reporter-tools/linux-arm64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload darwin-amd64 current-attempt E2E reporter
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-tooling-gotestsum-darwin-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: reporter-tools/darwin-amd64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload darwin-arm64 current-attempt E2E reporter
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-tooling-gotestsum-darwin-arm64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: reporter-tools/darwin-arm64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload windows-amd64 current-attempt E2E reporter
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-tooling-gotestsum-windows-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: reporter-tools/windows-amd64
+          if-no-files-found: error
+          retention-days: 14
 
   source-quality:
     name: source-quality
@@ -276,25 +329,40 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Install pinned E2E reporter
-        continue-on-error: true
-        run: go install gotest.tools/gotestsum@v1.13.0
+      - name: Download exact current-attempt E2E reporter
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-tooling-gotestsum-${{ matrix.id }}-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: reporter-tool
 
       - name: Run E2E and finalize reports
+        shell: bash
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
           ENV_VAULT_E2E_GOOS: ${{ matrix.goos }}
           ENV_VAULT_E2E_GOARCH: ${{ matrix.goarch }}
           ENV_VAULT_E2E_VERSION: ${{ needs.resolve.outputs.version }}
           ENV_VAULT_E2E_COMMIT_SHA: ${{ inputs.source_sha }}
-        run: >-
-          go run ./e2e/cmd/e2e-runner run
-          --phase candidate
-          --coverage-floor 60
-          --command-timeout 3m
-          --test-timeout 5m
-          --artifact "dist/${{ matrix.archive }}"
-          --checksum "dist/${{ matrix.checksum }}"
+        run: |
+          set -euo pipefail
+          reporter_name=gotestsum
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            reporter_name=gotestsum.exe
+          fi
+          reporter="reporter-tool/$reporter_name"
+          if [[ -f "$reporter" && ! -L "$reporter" ]]; then
+            chmod 0755 "$reporter"
+          fi
+          export GOPROXY=off
+          go run ./e2e/cmd/e2e-runner run \
+            --phase candidate \
+            --coverage-floor 60 \
+            --command-timeout 3m \
+            --test-timeout 5m \
+            --artifact "dist/${{ matrix.archive }}" \
+            --checksum "dist/${{ matrix.checksum }}" \
+            --reporter "$reporter" \
+            --reporter-checksum "$reporter.sha256"
 
       - name: Verify three literal versions and seal native proof
         if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'

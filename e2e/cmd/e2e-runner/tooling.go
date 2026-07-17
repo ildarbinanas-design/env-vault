@@ -7,4 +7,5 @@ package main
 const (
 	gotestsumModuleVersion = "gotest.tools/gotestsum@v1.13.0"
 	gotestsumVersion       = "v1.13.0"
+	gotestsumModuleSum     = "h1:+Lh454O9mu9AMG1APV4o0y7oDYKyik/3kBOiCqiEpRo="
 )

@@ -133,7 +133,10 @@ Pull-request and `main` CI call `reusable-quality.yml`. One graph performs
 source tests/vet/race/smoke, three native license checks, five native
 build/package/E2E jobs, and one complete-matrix gate. The matrix gate verifies
 the checked-in durable baseline; it does not depend on an expiring historical
-workflow artifact.
+workflow artifact. The exact E2E reporter is built once for all five targets
+from an isolated checksum-pinned tool module, then each native job consumes
+only its source-SHA- and attempt-qualified reporter artifact with network
+fallback disabled.
 
 For an exact release merge, a bounded native probe verifies `--version`,
 `version`, and JSON version output on every native target with a scrubbed

@@ -1,10 +1,9 @@
 // Command e2e-runner builds (or verifies) an env-vault binary, runs the
 // black-box E2E suite, and emits deterministic CI reports.
 //
-// The command has no third-party runtime dependency; it uses the Go standard
-// library plus checked-in offline contract/evidence helpers. A verified
-// preinstalled gotestsum is preferred in CI, and local fallback uses a
-// version-qualified `go run` so it never becomes a production dependency.
+// The command uses the Go standard library plus checked-in offline
+// contract/evidence helpers. It executes an exact checksum-pinned gotestsum
+// binary, but never downloads or resolves that reporter from the network.
 package main
 
 import (
@@ -30,6 +29,8 @@ type runOptions struct {
 	binary             string
 	artifact           string
 	checksum           string
+	reporter           string
+	reporterChecksum   string
 	reportsRoot        string
 	testPackage        string
 	scenariosPath      string
@@ -102,6 +103,8 @@ func parseRunFlags(args []string) (runOptions, error) {
 	fs.StringVar(&opts.binary, "binary", "", "prebuilt native env-vault binary")
 	fs.StringVar(&opts.artifact, "artifact", "", "native release .tar.gz or .zip artifact")
 	fs.StringVar(&opts.checksum, "checksum", "", "optional SHA-256 sidecar for --artifact")
+	fs.StringVar(&opts.reporter, "reporter", "", "exact prebuilt native gotestsum binary")
+	fs.StringVar(&opts.reporterChecksum, "reporter-checksum", "", "SHA-256 sidecar for --reporter")
 	fs.StringVar(&opts.reportsRoot, "reports", "reports/e2e", "root report directory")
 	fs.StringVar(&opts.testPackage, "test-package", "./e2e", "Go package containing the E2E suite")
 	fs.StringVar(&opts.scenariosPath, "scenarios", "e2e/scenarios.json", "feature/scenario manifest")
@@ -127,6 +130,9 @@ func parseRunFlags(args []string) (runOptions, error) {
 	}
 	if opts.checksum != "" && opts.artifact == "" {
 		return runOptions{}, errors.New("--checksum requires --artifact")
+	}
+	if opts.reporterChecksum != "" && opts.reporter == "" {
+		return runOptions{}, errors.New("--reporter-checksum requires --reporter")
 	}
 	if opts.commandTimeout <= 0 || opts.testTimeout <= 0 {
 		return runOptions{}, errors.New("timeouts must be positive")
