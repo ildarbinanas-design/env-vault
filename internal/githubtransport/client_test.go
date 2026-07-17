@@ -16,6 +16,12 @@ type scriptedRunner struct {
 	responses []CommandResult
 	apiCalls  [][]string
 	allCalls  [][]string
+	inputs    [][]byte
+}
+
+func (r *scriptedRunner) RunInput(ctx context.Context, args []string, environment []string, input []byte) CommandResult {
+	r.inputs = append(r.inputs, append([]byte(nil), input...))
+	return r.Run(ctx, args, environment)
 }
 
 func (r *scriptedRunner) Run(_ context.Context, args []string, _ []string) CommandResult {
@@ -24,7 +30,7 @@ func (r *scriptedRunner) Run(_ context.Context, args []string, _ []string) Comma
 		return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\nhttps://github.com/cli/cli/releases/tag/v2.96.0\n")}
 	}
 	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
-		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field\n")}
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
 	}
 	r.apiCalls = append(r.apiCalls, append([]string(nil), args...))
 	if len(r.responses) == 0 {
@@ -470,6 +476,15 @@ func TestWriteNoClobberAndPreflightPolicy(t *testing.T) {
 	matches, _ = filepath.Glob(filepath.Join(root, ".*.releasetransport.*"))
 	if len(matches) != 0 {
 		t.Fatalf("temporary files remain after adversarial cases: %v", matches)
+	}
+}
+
+func TestPreflightAdvertisesOptionalOneShotMutationCapability(t *testing.T) {
+	runner := &scriptedRunner{}
+	var sleeps []time.Duration
+	document, transportErr := testClient(runner, &sleeps).Preflight(context.Background())
+	if transportErr != nil || !containsAll(strings.Join(document.Capabilities, " "), "one_shot_git_data_mutation") {
+		t.Fatalf("preflight=%+v error=%v", document, transportErr)
 	}
 }
 

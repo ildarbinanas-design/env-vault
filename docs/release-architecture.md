@@ -1,8 +1,9 @@
 # Release architecture and refactor baseline
 
-Status: measured before refactoring, 2026-07-17. The machine-readable companion
-is [`release/refactor-baseline.v1.json`](../release/refactor-baseline.v1.json).
-It pins `env-vault` to
+Status: immutable pre-refactor baseline plus dated stage deltas, 2026-07-17.
+The machine-readable baseline companion is
+[`release/refactor-baseline.v1.json`](../release/refactor-baseline.v1.json). It
+pins `env-vault` to
 `c7dd1fd6176ac2abbea22f226795a0787e774c1b` and `homebrew-tap` to
 `71217af8d0c692e27d8c268c9cce5a2a533f4ea9`.
 
@@ -29,7 +30,7 @@ counts every Git tree path, including two paths that point at the same blob.
 Neither number claims network transfer, compressed artifact size, GitHub hosted
 storage, or billing usage.
 
-## Current release graph
+## Measured `v0.0.15` release graph
 
 ```mermaid
 flowchart TD
@@ -200,9 +201,10 @@ validator are excluded from literal counts.
 - The same reviewed `actions/setup-go` SHA has 17 `v6.5.0` comments and one
   stale `v6.3.0` comment. The tap uses floating `actions/checkout@v7`, unlike
   env-vault's full-SHA action pins.
-- Evidence genesis is manual today: publication fails when `release-evidence`
-  does not exist, and bootstrapping a branch would require separate operator
-  work. This is the Stage 3 genesis boundary.
+- Evidence genesis was manual at this baseline: publication failed when
+  `release-evidence` did not exist, and bootstrapping the branch required
+  separate operator work. Stage 3 replaced that fresh-repository path without
+  changing the existing production history.
 
 ### Stage 2 measured transport delta
 
@@ -252,6 +254,30 @@ transport once per integration-test process. Host/tool/cache metadata and
 repetitions were not recorded, so this is directional evidence rather than a
 benchmark and is not a hosted-runner metric.
 
+### Stage 3 measured evidence delta
+
+Stage 3 added exact capability-based v1/v2 routing, deterministic
+content-addressed objects, byte-exact v1 reconstruction and parity, and
+automatic evidence-only genesis for a genuinely absent ref. The existing
+production ledger remains byte- and history-immutable in `legacy-compatible`
+mode; the measurement below is an offline v2 replay of its immutable
+`v0.0.15` evidence, not a rewrite or a hosted-storage observation.
+
+| Byte scope | v1 baseline | Stage 3 v2 replay | Change |
+| --- | ---: | ---: | ---: |
+| Root plus publisher-attempt logical payload | 2,964,270 | 379,550 | -2,584,720 (-87.1%) |
+| Deterministic offline export | 1,486,981 | 374,320 | -1,112,661 (-74.8%) |
+
+The six compact metadata files total 10,892 bytes: the 1,887-byte root, 6,944
+bytes of other auxiliary metadata, a 593-byte parity record, and a 1,468-byte
+self-report. Three objects total 357,677 raw and 357,766 canonical encoded
+bytes. Unique Git blob payload is 368,658 bytes; complete offline reconstructed
+payload is 368,569 bytes.
+These domains deliberately exclude network transfer, artifact billing, and
+compression-ratio claims. The bundle format, limits, migration semantics, and
+remaining bounded-history work are recorded in
+[ADR 0003](adr/0003-compact-release-evidence-ledger.md).
+
 ## Preserved invariants and risks
 
 Every stage must retain:
@@ -284,7 +310,7 @@ them.
 | Stage | Owns | Required proof before the next stage |
 | --- | --- | --- |
 | 2: typed GitHub transport | strict workflow/run/job/attempt types, pagination, bounded read retry policy, realistic fixtures | no ad-hoc direct API reads outside the transport; mutation semantics remain explicit and no-clobber |
-| 3: durable evidence | versioned automatic evidence-only genesis, dual-write migration, content-addressed compact bundle | fresh-repository genesis without Workflows write; old/new parity; full offline replay; measured byte comparison. Backlog target is root JSON below 150 KiB and at least 60% payload reduction, still a target until measured |
+| 3: durable evidence | versioned automatic evidence-only genesis, dual-write migration, content-addressed compact bundle | implemented with fresh-repository genesis without Workflows write, v1/v2 parity, full offline replay, a 1,887-byte root, and measured 87.1% logical / 74.8% deterministic-export reduction; checkpoint/Merkle and frozen-v1-fixture follow-ups remain tracked |
 | 4: release contract and graph | operational repositories, targets, assets, formula and workflow identities; simpler CI/publisher graph | duplicate operational parameters removed or justified; five-target concurrency and all fail-closed gates preserved; exact before/after run metrics |
 | 5: Homebrew | release-derived URL/SHA, deterministic formula and tap transition | exact PR and merge tuple, both tap CI gates, formula merged, `brew install` and `brew test` green |
 | 6: patch release | Release Please-resolved version, authorization, tag, assets, attestations, SBOM, health, evidence and tap | exact confirmation before merge; published five-target patch; durable offline evidence; green main and tap; no temporary agent context |

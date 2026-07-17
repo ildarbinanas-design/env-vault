@@ -46,6 +46,22 @@ func TestVerifyBlobAcceptsCanonicalEmptyBlob(t *testing.T) {
 	}
 }
 
+func TestVerifyBlobAcceptsNearWorstCaseEvidenceObject(t *testing.T) {
+	content := bytes.Repeat([]byte{0x00, 0x80, 0xff, 0x5a}, ((16<<20)+(64<<10))/4)
+	sha := gitBlobSHA(content)
+	path := filepath.Join(t.TempDir(), "large-object.gz")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	response := fmt.Sprintf(`{"sha":%q,"encoding":"base64","size":%d,"content":%q}`, sha, len(content), base64.StdEncoding.EncodeToString(content))
+	runner := &scriptedRunner{responses: []CommandResult{liveResponse(200, "", response)}}
+	var sleeps []time.Duration
+	document, transportErr := testClient(runner, &sleeps).VerifyBlob(context.Background(), "example/repo", sha, path)
+	if transportErr != nil || !document.OK || document.DeclaredSize != int64(len(content)) {
+		t.Fatalf("document=%+v error=%v", document, transportErr)
+	}
+}
+
 func TestReadContentsPreservesOpaqueRawMediaBytes(t *testing.T) {
 	body := []byte("# README\r\nnot JSON\n")
 	response := liveResponse(200, "", string(body))
@@ -91,6 +107,7 @@ func TestVerifyBlobRejectsMalformedNoncanonicalSizeAndByteMismatch(t *testing.T)
 		"extra padding":         {len(content), canonical + "=", "BLOB_INVALID"},
 		"noncanonical pad bits": {len(content), canonical[:len(canonical)-2] + "R=", "BLOB_INVALID"},
 		"size mismatch":         {len(content) + 1, canonical, "BLOB_INVALID"},
+		"declared oversized":    {maxEvidenceBlobBytes + 1, canonical, "BLOB_INVALID"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

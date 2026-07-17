@@ -856,6 +856,9 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 	}
 	assertJobIDs(t, wf, "assemble", "publish")
 	assembleJob := wf.Jobs["assemble"]
+	if assembleJob.Outputs["format"] != "${{ steps.capabilities.outputs.format }}" {
+		t.Fatalf("assemble does not expose the capability-selected format: %v", assembleJob.Outputs)
+	}
 	if assembleJob.TimeoutMinutes != 20 || !containsAll(compactExpression(assembleJob.If),
 		"conclusion=='success'", "head_repository.full_name==github.repository", "path=='.github/workflows/build-binaries.yml'", "event=='push'", "event=='workflow_dispatch'") {
 		t.Fatalf("release evidence trust boundary is incomplete: timeout=%d if=%q", assembleJob.TimeoutMinutes, assembleJob.If)
@@ -864,6 +867,13 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 	observation := namedStep(t, assembleJob, "Download the exact publisher-attempt observation")
 	if observation.Uses != downloadAction || !containsAll(observation.With["pattern"], "release-observation", "workflow_run.run_attempt") || observation.With["run-id"] != "${{ github.event.workflow_run.id }}" {
 		t.Fatalf("release observation download is not exact-attempt bound: %v", observation.With)
+	}
+	capabilities := namedStep(t, assembleJob, "Build source tooling and select the exact evidence format capability")
+	if capabilities.ID != "capabilities" || !containsAll(capabilities.Run,
+		`has("release_evidence_bundle") | not`, `has("release_evidence_genesis") | not`, "format=v1",
+		"release_evidence_bundle == [2]", "release_evidence_genesis == [1]", "format=v2",
+		"present-but-partial, null, empty, or unsupported", "GITHUB_OUTPUT") || strings.Contains(capabilities.Run, "// []") {
+		t.Fatalf("evidence capability routing is not exact and fail-closed: id=%q run=%s", capabilities.ID, capabilities.Run)
 	}
 	identity := namedStep(t, assembleJob, "Resolve exact CI, release PR, and PR-head CI identities")
 	if !containsAll(identity.Run,
@@ -890,7 +900,10 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 		t.Fatalf("evidence metrics do not bind all three exact attempts")
 	}
 	assemble := namedStep(t, assembleJob, "Assemble and replay durable release evidence offline")
-	if !containsAll(assemble.Run, "evidence assemble", "evidence verify", "promotion-manifest.json", "--authorization", "--attestations") {
+	if assemble.Env["EVIDENCE_FORMAT"] != "${{ steps.capabilities.outputs.format }}" || !containsAll(assemble.Run,
+		"evidence assemble", "evidence verify", "promotion-manifest.json", "--authorization", "--attestations",
+		`[[ "$EVIDENCE_FORMAT" == v2 ]]`, "evidence bundle-create", "evidence bundle-verify",
+		"evidence bundle-parity", "evidence bundle-measure", "evidence genesis-create", "evidence genesis-verify") {
 		t.Fatalf("evidence is not assembled and replayed by the offline checker")
 	}
 	candidate := namedStep(t, assembleJob, "Upload immutable evidence candidate for the write-scoped job")
@@ -906,21 +919,41 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 	if tooling.Uses != checkoutAction || tooling.With["ref"] != "${{ github.sha }}" || tooling.With["path"] != "evidence-tooling" || tooling.With["persist-credentials"] != "false" {
 		t.Fatalf("write-scoped evidence tooling is not pinned to the reviewed listener SHA: %v", tooling.With)
 	}
+	reviewedBuild := namedStep(t, publishJob, "Build the reviewed checker and strict GitHub release transport once")
+	if !containsAll(reviewedBuild.Run, "releasecheck-reviewed", "releasetransport") {
+		t.Fatalf("write-scoped job does not build reviewed checker and transport: %s", reviewedBuild.Run)
+	}
 	replay := namedStep(t, publishJob, "Replay the complete candidate before granting it mutation authority")
-	if !containsAll(replay.Run, "evidence verify", "metrics compare", "cmp candidate/final/index.md", "SOURCE_SHA") {
+	if replay.Env["EVIDENCE_FORMAT"] != "${{ needs.assemble.outputs.format }}" || !containsAll(replay.Env["SOURCE_RELEASECHECK"], "releasecheck-source") ||
+		!containsAll(replay.Env["REVIEWED_RELEASECHECK"], "releasecheck-reviewed") || !containsAll(replay.Run,
+		"evidence verify", "metrics compare",
+		"cmp candidate/final/index.md", "SOURCE_SHA", "evidence bundle-verify", "evidence bundle-create",
+		"diff -r candidate/final/bundle replay/bundle", "evidence bundle-parity", "cmp candidate/final/parity.json",
+		"evidence bundle-measure", "cmp candidate/final/storage-metrics.json", "evidence genesis-verify",
+		"evidence genesis-create", "cmp candidate/final/genesis.v1.json", "release_evidence_bundle == [2]", "release_evidence_genesis == [1]",
+		"env -i", "no-network-commands", "sentinel-gh-must-not-be-read", "classify_capabilities",
+		`[[ "$source_format" == "$EVIDENCE_FORMAT" ]]`, `[[ "$reviewed_format" == v2 ]]`) || strings.Contains(replay.Run, "// []") {
 		t.Fatalf("write-scoped evidence job does not replay its complete candidate")
 	}
 	publish := namedStep(t, publishJob, "Publish durable no-clobber evidence branch state")
-	if !containsAll(publish.Run, "evidence-tooling/scripts/release/publish-release-evidence.sh", "release-evidence.json", "metrics-comparison.json", "GITHUB_OUTPUT") {
+	if publish.Env["EVIDENCE_FORMAT"] != "${{ needs.assemble.outputs.format }}" || publish.Env["EVIDENCE_PUBLISHER_CHECK"] != "${{ runner.temp }}/releasecheck-reviewed" || !containsAll(publish.Run,
+		"evidence-tooling/scripts/release/publish-release-evidence.sh", "--format v2", "release-evidence.json",
+		"candidate/final/bundle", "storage-metrics.json", "parity.json", "genesis.v1.json", "metrics-comparison.json", "GITHUB_OUTPUT") {
 		t.Fatalf("durable evidence publisher invocation is incomplete")
 	}
 	coordinates := namedStep(t, publishJob, "Report exact immutable evidence coordinates")
-	if !containsAll(coordinates.Run, "blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}", "publisher-runs/run-${PUBLISHER_RUN_ID}/attempt-${PUBLISHER_RUN_ATTEMPT}", "OUTPUT_PUBLISHER_RUN_ID", "OUTPUT_PUBLISHER_RUN_ATTEMPT", "EVIDENCE_REPAIR_MODE", "release-evidence.json", "metrics-comparison.json") {
+	if !containsAll(coordinates.Run, "blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}", "publisher-runs/run-${PUBLISHER_RUN_ID}/attempt-${PUBLISHER_RUN_ATTEMPT}", "OUTPUT_PUBLISHER_RUN_ID", "OUTPUT_PUBLISHER_RUN_ATTEMPT", "EVIDENCE_REPAIR_MODE", "release-evidence.json", "release-evidence-bundle.json", "metrics-comparison.json") {
 		t.Fatalf("evidence links are not pinned to the exact immutable evidence commit and publisher-attempt lineage")
 	}
 	upload := namedStep(t, publishJob, "Upload replayable release evidence artifact")
-	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "commit_sha", "workflow_run.id", "workflow_run.run_attempt", "github.run_id", "github.run_attempt") {
+	if compactExpression(upload.If) != "needs.assemble.outputs.format=='v1'" || upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "commit_sha", "workflow_run.id", "workflow_run.run_attempt", "github.run_id", "github.run_attempt") {
 		t.Fatalf("release evidence artifact is not tuple-qualified: %v", upload.With)
+	}
+	compactUpload := namedStep(t, publishJob, "Upload compact replayable release evidence artifact")
+	if compactExpression(compactUpload.If) != "needs.assemble.outputs.format=='v2'" || compactUpload.Uses != uploadArtifactAction || compactUpload.With["retention-days"] != "90" ||
+		!containsAll(compactUpload.With["path"], "candidate/final/bundle", "index.md", "metrics-comparison.json", "metrics-comparison.md", "storage-metrics.json", "parity.json") ||
+		strings.Contains(compactUpload.With["path"], "release-evidence.json") || strings.Contains(compactUpload.With["path"], "genesis.v1.json") {
+		t.Fatalf("90-day v2 artifact is not exact compact metadata+objects: if=%q with=%v", compactUpload.If, compactUpload.With)
 	}
 	if raw := readFile(t, "../.github/workflows/release-evidence.yml"); containsAll(raw, "go test ./...", "-ldflags=") || strings.Contains(raw, "browser") || strings.Contains(raw, "gh release edit") {
 		t.Fatalf("release evidence workflow must not rebuild product quality or use browser automation")

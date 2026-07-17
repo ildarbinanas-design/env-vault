@@ -31,6 +31,18 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 		return runEvidenceAssemble(args[1:], stdout, stderr)
 	case "verify":
 		return runEvidenceVerify(args[1:], stdout, stderr)
+	case "bundle-create":
+		return runEvidenceBundleCreate(args[1:], stdout, stderr)
+	case "bundle-verify":
+		return runEvidenceBundleVerify(args[1:], stdout, stderr)
+	case "bundle-parity":
+		return runEvidenceBundleParity(args[1:], stdout, stderr)
+	case "bundle-measure":
+		return runEvidenceBundleMeasure(args[1:], stdout, stderr)
+	case "genesis-create":
+		return runEvidenceGenesisCreate(args[1:], stdout, stderr)
+	case "genesis-verify":
+		return runEvidenceGenesisVerify(args[1:], stdout, stderr)
 	default:
 		fmt.Fprint(stderr, evidenceUsage())
 		return exitUsage
@@ -319,6 +331,12 @@ Commands:
   seal-health  strictly parse and self-digest a passing health proof
   assemble     bind authorization, promotion, metrics, raw attestations, observation, and health into evidence
   verify       revalidate durable evidence entirely offline
+  bundle-create compact canonical v1 evidence into a deterministic v2 bundle
+  bundle-verify reconstruct and revalidate a complete v2 bundle offline
+  bundle-parity require byte-exact v1/v2 reconstruction and decision parity
+  bundle-measure report explicit logical, object, compressed, and export bytes
+  genesis-create create a self-digested anchor for the first v2 ledger entry
+  genesis-verify verify a canonical genesis anchor, optionally against its bundle
 `
 }
 

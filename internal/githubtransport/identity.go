@@ -270,7 +270,7 @@ func (c *Client) VerifyBlob(ctx context.Context, repository, sha, expectedFile s
 		return BlobIdentityDocument{}, &TransportError{Code: "INPUT_INVALID", Message: "repository, blob SHA, and expected file are required"}
 	}
 	lstat, err := os.Lstat(expectedFile)
-	if err != nil || !lstat.Mode().IsRegular() || lstat.Mode()&os.ModeSymlink != 0 || lstat.Size() < 0 || lstat.Size() > 8<<20 {
+	if err != nil || !lstat.Mode().IsRegular() || lstat.Mode()&os.ModeSymlink != 0 || lstat.Size() < 0 || lstat.Size() > maxEvidenceBlobBytes {
 		return BlobIdentityDocument{}, &TransportError{Code: "INPUT_INVALID", Message: "expected blob file must be a bounded regular non-symlink file", Cause: err}
 	}
 	file, err := os.Open(expectedFile)
@@ -279,49 +279,16 @@ func (c *Client) VerifyBlob(ctx context.Context, repository, sha, expectedFile s
 	}
 	defer file.Close()
 	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(lstat, opened) || opened.Size() != lstat.Size() || opened.Size() > 8<<20 {
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(lstat, opened) || opened.Size() != lstat.Size() || opened.Size() > maxEvidenceBlobBytes {
 		return BlobIdentityDocument{}, &TransportError{Code: "INPUT_INVALID", Message: "expected blob file changed during validation", Cause: err}
 	}
-	expected, err := io.ReadAll(io.LimitReader(file, (8<<20)+1))
-	if err != nil || len(expected) > 8<<20 || int64(len(expected)) != opened.Size() {
+	expected, err := io.ReadAll(io.LimitReader(file, maxEvidenceBlobBytes+1))
+	if err != nil || len(expected) > maxEvidenceBlobBytes || int64(len(expected)) != opened.Size() {
 		return BlobIdentityDocument{}, &TransportError{Code: "INPUT_INVALID", Message: "cannot read bounded expected blob bytes", Cause: err}
 	}
-	data, transportErr := c.Read(ctx, ReadRequest{Endpoint: fmt.Sprintf("repos/%s/git/blobs/%s", repository, sha)})
+	decoded, transportErr := c.ReadBlob(ctx, repository, sha)
 	if transportErr != nil {
 		return BlobIdentityDocument{}, transportErr
-	}
-	object, err := exactObject(data)
-	if err != nil {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: err.Error(), Cause: err, Attempts: 1}
-	}
-	observedSHA, err := exactString(object, "sha")
-	if err != nil || observedSHA != sha {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob SHA mismatch", Attempts: 1}
-	}
-	encoding, err := exactString(object, "encoding")
-	if err != nil || encoding != "base64" {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob encoding must be base64", Attempts: 1}
-	}
-	size, err := exactNonNegativeInt64(object, "size")
-	if err != nil {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob size is malformed", Attempts: 1}
-	}
-	content, err := exactAnyString(object, "content")
-	if err != nil {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob content is malformed", Attempts: 1}
-	}
-	unwrapped := strings.NewReplacer("\r", "", "\n", "").Replace(content)
-	decoded, err := base64.StdEncoding.Strict().DecodeString(unwrapped)
-	if err != nil || base64.StdEncoding.EncodeToString(decoded) != unwrapped {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob content is not canonical base64", Attempts: 1, Cause: err}
-	}
-	if int64(len(decoded)) != size {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob declared size mismatch", Attempts: 1}
-	}
-	gitObject := append([]byte(fmt.Sprintf("blob %d\x00", len(decoded))), decoded...)
-	gitDigest := sha1.Sum(gitObject)
-	if hex.EncodeToString(gitDigest[:]) != sha {
-		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_INVALID", Message: "blob SHA is inconsistent with decoded Git object bytes", Attempts: 1}
 	}
 	if !bytes.Equal(decoded, expected) {
 		return BlobIdentityDocument{}, &TransportError{Code: "BLOB_MISMATCH", Message: "blob bytes differ from expected file", Attempts: 1}
@@ -329,9 +296,56 @@ func (c *Client) VerifyBlob(ctx context.Context, repository, sha, expectedFile s
 	digest := sha256.Sum256(decoded)
 	expectedDigest := sha256.Sum256(expected)
 	return BlobIdentityDocument{
-		SchemaID: BlobIdentitySchemaID, SchemaVersion: 1, OK: true, Repository: repository, SHA: sha, Encoding: encoding,
-		DeclaredSize: size, DecodedSHA256: hex.EncodeToString(digest[:]), ExpectedSHA256: hex.EncodeToString(expectedDigest[:]),
+		SchemaID: BlobIdentitySchemaID, SchemaVersion: 1, OK: true, Repository: repository, SHA: sha, Encoding: "base64",
+		DeclaredSize: int64(len(decoded)), DecodedSHA256: hex.EncodeToString(digest[:]), ExpectedSHA256: hex.EncodeToString(expectedDigest[:]),
 	}, nil
+}
+
+// ReadBlob returns exact bounded Git blob bytes through the strict REST
+// transport. It is used for large evidence objects that the Contents API does
+// not guarantee to inline.
+func (c *Client) ReadBlob(ctx context.Context, repository, sha string) ([]byte, *TransportError) {
+	if !validRepository(repository) || !shaPattern.MatchString(sha) {
+		return nil, &TransportError{Code: "INPUT_INVALID", Message: "repository and blob SHA are required"}
+	}
+	data, transportErr := c.Read(ctx, ReadRequest{Endpoint: fmt.Sprintf("repos/%s/git/blobs/%s", repository, sha)})
+	if transportErr != nil {
+		return nil, transportErr
+	}
+	object, err := exactObject(data)
+	if err != nil {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: err.Error(), Cause: err, Attempts: 1}
+	}
+	observedSHA, err := exactString(object, "sha")
+	if err != nil || observedSHA != sha {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob SHA mismatch", Attempts: 1}
+	}
+	encoding, err := exactString(object, "encoding")
+	if err != nil || encoding != "base64" {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob encoding must be base64", Attempts: 1}
+	}
+	size, err := exactNonNegativeInt64(object, "size")
+	if err != nil || size > maxEvidenceBlobBytes {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob size is malformed", Attempts: 1}
+	}
+	content, err := exactAnyString(object, "content")
+	if err != nil {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob content is malformed", Attempts: 1}
+	}
+	unwrapped := strings.NewReplacer("\r", "", "\n", "").Replace(content)
+	decoded, err := base64.StdEncoding.Strict().DecodeString(unwrapped)
+	if err != nil || base64.StdEncoding.EncodeToString(decoded) != unwrapped {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob content is not canonical base64", Attempts: 1, Cause: err}
+	}
+	if int64(len(decoded)) != size {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob declared size mismatch", Attempts: 1}
+	}
+	gitObject := append([]byte(fmt.Sprintf("blob %d\x00", len(decoded))), decoded...)
+	gitDigest := sha1.Sum(gitObject)
+	if hex.EncodeToString(gitDigest[:]) != sha {
+		return nil, &TransportError{Code: "BLOB_INVALID", Message: "blob SHA is inconsistent with decoded Git object bytes", Attempts: 1}
+	}
+	return decoded, nil
 }
 
 func (c *Client) ReadContents(ctx context.Context, repository, path, ref string) ([]byte, *TransportError) {

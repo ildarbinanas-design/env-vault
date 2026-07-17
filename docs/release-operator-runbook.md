@@ -898,26 +898,21 @@ formula version, force-push tap, or substitute only one of the two CI gates.
 
 **Command.** Require the exact first publisher and its automatic evidence run
 to succeed. Bind the evidence run name to the publisher run ID and attempt,
-then download one exact evidence document and replay it offline:
+then download its one exact durable artifact and replay it offline.
 
-For the repository's first durable evidence publication only, the protected
-ref is a one-time infrastructure prerequisite. After proving it is absent and
-that the append-only ruleset is active, create it without force at the exact
-release source and verify the result:
+For a fresh repository, do not create the evidence ref manually. The reviewed
+v2 publisher treats only an exact HTTP 404 as absence, freshly verifies the
+release source before each Git mutation, and creates a parentless,
+evidence-only root plus `evidence/genesis.v1.json`. Authentication, rate-limit,
+and transport errors are not absence. The workflow must retain `contents:
+write` without Workflows write or a ruleset bypass. The published production
+ledger is the historical `legacy-compatible` exception and must not be
+retrofitted with an anchor or rewritten.
 
-```sh
-set -euo pipefail
-evidence_ref="$(git ls-remote --refs origin refs/heads/release-evidence)"
-test -z "$evidence_ref"
-git push origin "${SOURCE_SHA}:refs/heads/release-evidence"
-evidence_ref="$(git ls-remote --refs origin refs/heads/release-evidence)"
-test "$evidence_ref" = "${SOURCE_SHA}"$'\t'"refs/heads/release-evidence"
-```
-
-If evidence failed before this prerequisite was established, rerun the whole
-evidence workflow, not only failed jobs: the new run attempt must recreate its
-attempt-qualified candidate artifact. Never bootstrap from current `main`, an
-abbreviated SHA, or a different release source.
+If a genesis attempt races or loses its response, rerun only after the current
+attempt has failed and the exact ref/commit state has been read. The publisher
+itself reconciles an exact committed result and otherwise fails closed; never
+repeat a mutation by hand or create the ref at current `main`.
 
 ```sh
 gh run view "$PUBLISHER_RUN_ID" --attempt "$PUBLISHER_RUN_ATTEMPT" \
@@ -942,16 +937,54 @@ gh run view "$EVIDENCE_RUN_ID" --attempt "$EVIDENCE_RUN_ATTEMPT" \
   > "$SNAPSHOT_DIR/evidence-run.json"
 gh run view "$EVIDENCE_RUN_ID" --attempt "$EVIDENCE_RUN_ATTEMPT" \
   --repo "$REPOSITORY" --exit-status
+scripts/release/gh-api-read.sh "$SNAPSHOT_DIR/evidence-artifacts.json" \
+  --paginate --slurp \
+  "repos/${REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}/artifacts?per_page=100"
+EVIDENCE_ARTIFACT="$(jq -er \
+  --arg v1 "env-vault-release-evidence-${VERSION}-" \
+  --arg v2 "env-vault-release-evidence-v2-${VERSION}-" \
+  --arg suffix "-publisher-${PUBLISHER_RUN_ID}-attempt-${PUBLISHER_RUN_ATTEMPT}-evidence-${EVIDENCE_RUN_ID}-${EVIDENCE_RUN_ATTEMPT}" '
+  [.[]?.artifacts[]? |
+    .name as $name |
+    (if ($name | startswith($v2)) then $v2
+     elif ($name | startswith($v1)) then $v1
+     else ""
+     end) as $prefix |
+    select(
+      .expired == false and $prefix != "" and
+      ($name | endswith($suffix)) and
+      ($name | length) == (($prefix | length) + 40 + ($suffix | length)) and
+      ($name[($prefix | length):(($prefix | length) + 40)] |
+        test("^[0-9a-f]{40}$"))
+    )
+  ] |
+  if length == 1 then .[0].name
+  else error("expected one exact attempt-bound durable evidence artifact")
+  end
+' "$SNAPSHOT_DIR/evidence-artifacts.json")"
 gh run download "$EVIDENCE_RUN_ID" --repo "$REPOSITORY" \
-  --pattern "env-vault-release-evidence-${VERSION}-*" \
-  --dir "$SNAPSHOT_DIR/evidence"
-mapfile -t EVIDENCE_FILES < <(find "$SNAPSHOT_DIR/evidence" \
+  --name "$EVIDENCE_ARTIFACT" --dir "$SNAPSHOT_DIR/evidence"
+mapfile -t BUNDLE_ROOTS < <(find "$SNAPSHOT_DIR/evidence" \
+  -type f -name release-evidence-bundle.json -print | LC_ALL=C sort)
+mapfile -t LEGACY_ROOTS < <(find "$SNAPSHOT_DIR/evidence" \
   -type f -name release-evidence.json -print | LC_ALL=C sort)
-test "${#EVIDENCE_FILES[@]}" -eq 1
-EVIDENCE_FILE="${EVIDENCE_FILES[0]}"
-"$SNAPSHOT_DIR/releasecheck" evidence verify \
-  --input "$EVIDENCE_FILE" --json \
-  > "$SNAPSHOT_DIR/evidence-verification.json"
+EMPTY_PATH="$SNAPSHOT_DIR/no-network-commands"
+mkdir "$EMPTY_PATH"
+if test "${#BUNDLE_ROOTS[@]}" -eq 1 && test "${#LEGACY_ROOTS[@]}" -eq 0; then
+  BUNDLE_DIR="$(dirname "${BUNDLE_ROOTS[0]}")"
+  env -i PATH="$EMPTY_PATH" TMPDIR="$SNAPSHOT_DIR" \
+    "$SNAPSHOT_DIR/releasecheck" evidence bundle-verify \
+      --bundle-dir "$BUNDLE_DIR" --json \
+      > "$SNAPSHOT_DIR/evidence-verification.json"
+elif test "${#BUNDLE_ROOTS[@]}" -eq 0 && test "${#LEGACY_ROOTS[@]}" -eq 1; then
+  env -i PATH="$EMPTY_PATH" TMPDIR="$SNAPSHOT_DIR" \
+    "$SNAPSHOT_DIR/releasecheck" evidence verify \
+      --input "${LEGACY_ROOTS[0]}" --json \
+      > "$SNAPSHOT_DIR/evidence-verification.json"
+else
+  echo "durable artifact has a partial or mixed evidence format" >&2
+  exit 1
+fi
 ```
 
 Prove the permanent exceptions without converting unknown state to absence:
@@ -1053,18 +1086,24 @@ jq -e \
 **Inputs and machine result.** Health must have uploaded exactly one
 `env-vault.release-health-proof.v1`, one
 `env-vault.release-observation.v1`, raw attestation verification bundle, and
-the replayed settings/abandoned-policy proofs. Durable evidence is
-`env-vault.release-evidence.v1`; offline verify must return `ok=true` at exit
-`0`. Metrics are `env-vault.release-metrics.v1`; comparison is
+the replayed settings/abandoned-policy proofs. Durable evidence is either the
+legacy `env-vault.release-evidence.v1` record or a complete
+`env-vault.release-evidence-bundle.v2` directory. The latter contains the six
+metadata files and exact content-addressed objects and reconstructs/revalidates
+v1 entirely offline. Verification must exit `0`; v2 typed output also returns
+`ok=true`, `decision=pass`, and an empty error code. Metrics are
+`env-vault.release-metrics.v1`; comparison is
 `env-vault.release-metrics-comparison.v1`. They bind the three distinct exact
 run IDs/attempts and include job count, queue time, wall time, aggregate
 runner-seconds, retries, critical path, and available artifact/cache transfer
 time.
 
 **Exit, effect, and permission.** Observation/download/checking is read-only.
-The automated evidence `publish` job alone fast-forwards the protected
-`release-evidence` branch with Contents write. Absence is proven only by the
-helpers' explicit HTTP-404 exit `4`.
+The automated evidence `publish` job alone creates or fast-forwards the
+protected `release-evidence` branch with Contents write. Absence is proven only
+by the typed transport's exact HTTP-404 classification. Existing ledgers are
+validated to a bounded depth of 64 before mutation; a full window requires a
+reviewed checkpoint migration, not a bypass.
 
 **Reverify.** Require the tag to peel to `SOURCE_SHA`; stable non-draft,
 non-prerelease Release; exactly ten assets and matching digests; promotion from
@@ -1077,8 +1116,9 @@ wall / 1253 runner-s; PR CI 25 / 359 s / 1205 runner-s; publisher 30 / 417 s /
 
 **Forbidden.** Do not call a skipped evidence run successful, use a failed
 publisher as the publication-eligible metrics comparison, overwrite the first
-durable evidence tuple, treat a network failure as 404, or claim health from
-individual successful publisher jobs.
+durable evidence tuple, treat a network failure as 404, manually bootstrap a
+new evidence ref, publish past the 64-commit validation bound, or claim health
+from individual successful publisher jobs.
 
 ### 16. Incomplete-attempt classifier and `rerun_all_jobs`
 
@@ -1185,8 +1225,9 @@ deadline, and paginated aggregation has no separate total-byte cap; until the
 Stage 4 targets are implemented, rely on the enclosing workflow timeout and do
 not describe this transport as end-to-end time- or memory-bounded.
 
-Direct REST reads are prohibited outside this boundary. The eight explicit
-mutations and one GraphQL observation are registered in
+Direct REST reads are prohibited outside this boundary. The eight baseline
+direct mutations, one registered typed v2 mutation adapter, and one GraphQL
+observation are registered in
 `release/github-transport-boundary.v1.json`; tests fail if another `gh` command
 is introduced without path, operation, category, owner, count, and rationale.
 After an ambiguous evidence blob POST, do not repeat POST: calculate the Git
@@ -1251,7 +1292,7 @@ credentials, semantic authorization, or release truth.
 | 17. `v0.0.14` publisher and health were green, but durable evidence failed immediately in identity resolution | evidence run `29563754061`; `assemble` job `87831640011`; step “Resolve exact CI, release PR, and PR-head CI identities”; `publish` job `87831680693` skipped | Publisher REST `.name` contained custom run-name `env-vault-publication event=push version=v0.0.14 repair=none`, not `build-binaries`; the next latent predicate also required `.pull_requests`, but PR-CI run `29562392602` returns `pull_requests: []` after PR #39 merged; review also found that the old parser discarded the quality-gate job ID from the exact check URL and never resolved or cross-checked that job's `run_attempt` | Bind publisher by exact repository/head-repository/run/attempt, workflow `path`, event, source/ref, status, and conclusion; bind PR CI through the unique successful `quality-gate` URL, exact job/run/attempt identity, and direct exact `head_sha`; emit explicit mismatch errors | Preserve failed logs and observation artifact, replay each predicate against exact run/job API JSON, then prepare one scoped workflow/test/docs PR | Card 17; query `actions/runs/RUN_ID` and `actions/jobs/JOB_ID`; compare stable tuple and exact check URL; after merge dispatch one documented `repair=health` at immutable `v0.0.14` | Actions read for diagnosis; normal reviewed PR; Actions write only for the exact tag-scoped health repair; no asset/tag/tap mutation | Fix PR #41 exact-head and main CI passed; health repair `29566697259` was a publication no-op and succeeded; evidence run `29566800374` completed exact identity resolution and `assemble`, with its later publish transport defect tracked separately in row 19 | One-time deterministic identity defect; stable-path/direct-head/job-attempt identity is steady-state |
 | 18. GitHub Actions UI appeared to show duplicate jobs for Release Please PR #39 | `pr-title` runs `29562392487` (`synchronize`, cancelled before steps) and `29562393511` (`edited`, success), both for head `40d12c48fe87a7a4ef7fbb735d7b2759d88c53a9`; CI and Dependency Review used the release PR title, while CodeQL appeared as the separate `PR #39` row | Release Please force-pushed the proposal and then edited PR body; different workflows still describe the same PR/head, while `pr-title` intentionally listens to both events and uses one PR-scoped concurrency group | Keep both triggers and `cancel-in-progress: true`; treat the later successful run as canonical; defer optional event-aware `run-name` observability | Group runs by workflow, event, head SHA, and time; distinguish a cancelled zero-step replacement from a rerun or duplicated workflow | `gh run list`/`gh run view` on both IDs and `gh pr checks 39 --required`; inspect `.github/workflows/pr-title.yml` | Read-only Actions/PR metadata; no workflow mutation required for release | Cancelled run has no executed steps, successor succeeds, and all required checks remain green; same pattern is limited to near-simultaneous Release Please `synchronize`/`edited` events | Expected steady-state cancellation noise; optional observability item is backlog only |
 | 19. Identity repair assembled valid evidence, but append-only publish rejected the first real Git blob | publisher health repair `29566697259` succeeded; evidence run `29566800374`; `assemble` job `87841128421` succeeded; `publish` job `87841199069`, step “Publish durable no-clobber evidence branch state” failed; candidate artifact `8401417490` | Git Blobs API returned 1,475,773 bytes as 2,000,495 characters with 32,795 LF separators (32,796 lines); the fake returned one unwrapped line, and `jq '.content \| @base64d'` rejects wrapped input. The immutable `v0.0.14` checkout also freezes the defective helper, so changing only `main` would not affect a later repair | Stream `.content` through CR/LF removal, fail-closed decode, and an exact canonical-base64 round trip before retaining declared-size and exact-byte checks; make the realistic fake wrap at 60 characters and reject malformed/trailing/extra/missing-padding variants; keep assembly/replay on publisher source but execute the mutation helper from a separate checkout pinned to protected listener `github.sha` | Stop after the first failure; verify the evidence ref is still HTTP 404 and classify the created blob as unreachable; fix through a new reviewed PR rather than rerunning the old workflow | Query the exact orphan blob only for metadata/shape; run publisher-script create/no-op/append/race/malformed tests and workflow graph tests; after merge use one new health repair because rerun preserves the old listener/tooling | Read-only diagnosis plus normal reviewed PR; one exact tag-scoped health dispatch after green main; no tag/release/asset/tap mutation | Real wrapped-blob fixture passes; malformed and non-canonical base64 fail before tree/commit/ref; exact-head CI/main CI pass; health repair `29569706872` and evidence run `29569819553` attempt 1 proved candidate replay, then exposed the separate ref-bootstrap defect in row 20 | One-time deterministic transport-fixture and historical-tooling defect; wrapped decode and dual-source trust boundary are steady-state |
-| 20. Valid replay could not create the first protected evidence ref | health repair `29569706872` succeeded; evidence run `29569819553` attempt 1; `assemble` `87850701462` succeeded; `publish` `87850792886` failed with `Resource not accessible by integration (HTTP 403)` at `POST git/refs`; candidate replay digest `124a7706b4129c053fd3b76588b2591296bdda26c31235e98589ba898eabcb0c` | The absent-branch path inherited the release source tree and parent, making ten `.github/workflows/*` files reachable through the new ref. GitHub therefore required `Workflows: write`; the deliberately narrow workflow token had only `Contents: write`. The ruleset allowed creation and fast-forward and was not the cause | Treat `release-evidence` as one-time repository infrastructure: bootstrap it without force at the exact first release source; enforce that source with exact operator pre/post checks; fail before Git-object writes when absent; keep subsequent writes as `force:false` fast-forwards. Track an automated evidence-only root ledger as refactor backlog rather than granting a broad token | Preserve the 403 and branch 404, audit token permissions/ruleset, bootstrap only exact `c42a92144a82c19edea41c76328ec7fd1e408ceb`, then rerun the whole evidence workflow so attempt-qualified artifacts are rebuilt | Run the exact absence/ruleset checks, `git push origin "${SOURCE_SHA}:refs/heads/release-evidence"`, verify the ref, then `gh run rerun 29569819553`; never use `--failed`, `--force`, current `main`, or a different SHA | One authenticated one-time branch creation; steady-state workflow remains `actions: read`, `contents: write`; no App permission, bypass, tag, Release, asset, or tap change | Attempt 2: `assemble` `87853060534` and `publish` `87853170330` succeeded; evidence commit `68547bd880a4d49f44389476b77046aac2ab1675` fast-forwarded from the source; replay artifact `8402901139`; exact tuple verifies offline | One-time exact bootstrap protocol; missing-ref gate is steady-state; machine-verifiable genesis anchor is refactor backlog |
+| 20. Valid replay could not create the first protected evidence ref | health repair `29569706872` succeeded; evidence run `29569819553` attempt 1; `assemble` `87850701462` succeeded; `publish` `87850792886` failed with `Resource not accessible by integration (HTTP 403)` at `POST git/refs`; candidate replay digest `124a7706b4129c053fd3b76588b2591296bdda26c31235e98589ba898eabcb0c` | The absent-branch path inherited the release source tree and parent, making ten `.github/workflows/*` files reachable through the new ref. GitHub therefore required `Workflows: write`; the deliberately narrow workflow token had only `Contents: write`. The ruleset allowed creation and fast-forward and was not the cause | Treat `release-evidence` as one-time repository infrastructure: bootstrap it without force at the exact first release source; enforce that source with exact operator pre/post checks; fail before Git-object writes when absent; keep subsequent writes as `force:false` fast-forwards. Track an automated evidence-only root ledger as refactor backlog rather than granting a broad token | Preserve the 403 and branch 404, audit token permissions/ruleset, bootstrap only exact `c42a92144a82c19edea41c76328ec7fd1e408ceb`, then rerun the whole evidence workflow so attempt-qualified artifacts are rebuilt | Run the exact absence/ruleset checks, `git push origin "${SOURCE_SHA}:refs/heads/release-evidence"`, verify the ref, then `gh run rerun 29569819553`; never use `--failed`, `--force`, current `main`, or a different SHA | One authenticated one-time branch creation; steady-state workflow remains `actions: read`, `contents: write`; no App permission, bypass, tag, Release, asset, or tap change | Attempt 2: `assemble` `87853060534` and `publish` `87853170330` succeeded; evidence commit `68547bd880a4d49f44389476b77046aac2ab1675` fast-forwarded from the source; replay artifact `8402901139`; exact tuple verifies offline | Historical one-time bootstrap resolution only. Fresh-ledger automation was later implemented by ADR 0003; the production legacy root remains unchanged |
 
 ## Honest `v0.0.12` and `v0.0.13` record
 

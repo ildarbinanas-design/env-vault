@@ -32,6 +32,7 @@ jobs:
     outputs:
       version: ${{ steps.identity.outputs.version }}
       source_sha: ${{ steps.identity.outputs.source_sha }}
+      format: ${{ steps.capabilities.outputs.format }}
     steps:
       - name: Check out the exact publisher source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -44,7 +45,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build the offline checker and strict GitHub release transport once
+      - id: capabilities
+        name: Build source tooling and select the exact evidence format capability
         env:
           RELEASECHECK: ${{ runner.temp }}/releasecheck
         run: |
@@ -52,8 +54,24 @@ jobs:
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
           echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
-          "$RELEASECHECK" --version --json
+          "$RELEASECHECK" --version --json > "$RUNNER_TEMP/releasecheck-capabilities.json"
+          cat "$RUNNER_TEMP/releasecheck-capabilities.json"
           "$RELEASECHECK" validate-contract --json
+          if jq -e '.supported_schema_versions | type == "object" and
+            (has("release_evidence_bundle") | not) and
+            (has("release_evidence_genesis") | not)' \
+            "$RUNNER_TEMP/releasecheck-capabilities.json" >/dev/null; then
+            format=v1
+          elif jq -e '.supported_schema_versions | type == "object" and
+            .release_evidence_bundle == [2] and
+            .release_evidence_genesis == [1]' \
+            "$RUNNER_TEMP/releasecheck-capabilities.json" >/dev/null; then
+            format=v2
+          else
+            echo "release evidence capabilities are present-but-partial, null, empty, or unsupported" >&2
+            exit 1
+          fi
+          printf 'format=%s\n' "$format" >> "$GITHUB_OUTPUT"
 
       - name: Download the exact publisher-attempt observation
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -368,6 +386,7 @@ jobs:
       - name: Assemble and replay durable release evidence offline
         env:
           RELEASECHECK: ${{ runner.temp }}/releasecheck
+          EVIDENCE_FORMAT: ${{ steps.capabilities.outputs.format }}
         run: |
           set -euo pipefail
           mapfile -t manifests < <(find promotion -type f -name promotion-manifest.json -print | LC_ALL=C sort)
@@ -382,16 +401,37 @@ jobs:
             --output final/release-evidence.json \
             --markdown-output final/index.md
           "$RELEASECHECK" evidence verify --input final/release-evidence.json
+          if [[ "$EVIDENCE_FORMAT" == v2 ]]; then
+            "$RELEASECHECK" evidence bundle-create \
+              --input final/release-evidence.json \
+              --output-dir final/bundle
+            "$RELEASECHECK" evidence bundle-verify --bundle-dir final/bundle --json
+            "$RELEASECHECK" evidence bundle-parity \
+              --legacy final/release-evidence.json \
+              --bundle-dir final/bundle \
+              --output final/parity.json
+            "$RELEASECHECK" evidence bundle-measure \
+              --legacy final/release-evidence.json \
+              --bundle-dir final/bundle \
+              --index final/index.md \
+              --metrics-json final/metrics-comparison.json \
+              --metrics-markdown final/metrics-comparison.md \
+              --output final/storage-metrics.json
+            "$RELEASECHECK" evidence genesis-create \
+              --bundle-dir final/bundle \
+              --output final/genesis.v1.json
+            "$RELEASECHECK" evidence genesis-verify \
+              --input final/genesis.v1.json \
+              --bundle-dir final/bundle \
+              --json
+          fi
 
       - name: Upload immutable evidence candidate for the write-scoped job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-release-evidence-candidate-${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            final/release-evidence.json
-            final/index.md
-            final/metrics-comparison.json
-            final/metrics-comparison.md
+            final
             metrics/main-ci.json
             metrics/pr-ci.json
             metrics/publisher.json
@@ -424,10 +464,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build the strict GitHub release transport once
+      - name: Build the reviewed checker and strict GitHub release transport once
         working-directory: evidence-tooling
         run: |
           set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasecheck-reviewed" ./cmd/releasecheck
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
           echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
 
@@ -439,20 +480,102 @@ jobs:
 
       - name: Replay the complete candidate before granting it mutation authority
         env:
-          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source
+          REVIEWED_RELEASECHECK: ${{ runner.temp }}/releasecheck-reviewed
+          EVIDENCE_FORMAT: ${{ needs.assemble.outputs.format }}
           VERSION: ${{ needs.assemble.outputs.version }}
           SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
         run: |
           set -euo pipefail
-          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
-          "$RELEASECHECK" --version --json
-          "$RELEASECHECK" validate-contract --json
-          mkdir replay
-          "$RELEASECHECK" evidence verify \
+          go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck
+          offline_path="$RUNNER_TEMP/no-network-commands"
+          mkdir "$offline_path" replay
+          offline_check() {
+            env -i \
+              PATH="$offline_path" \
+              TMPDIR="$RUNNER_TEMP" \
+              GH_TOKEN=sentinel-gh-must-not-be-read \
+              GITHUB_TOKEN=sentinel-github-must-not-be-read \
+              AWS_SECRET_ACCESS_KEY=sentinel-cloud-must-not-be-read \
+              "$@"
+          }
+          classify_capabilities() {
+            local document=$1
+            if jq -e '.supported_schema_versions | type == "object" and
+              (has("release_evidence_bundle") | not) and
+              (has("release_evidence_genesis") | not)' "$document" >/dev/null; then
+              printf 'v1\n'
+            elif jq -e '.supported_schema_versions | type == "object" and
+              .release_evidence_bundle == [2] and
+              .release_evidence_genesis == [1]' "$document" >/dev/null; then
+              printf 'v2\n'
+            else
+              return 1
+            fi
+          }
+          offline_check "$SOURCE_RELEASECHECK" --version --json > "$RUNNER_TEMP/source-releasecheck-capabilities.json"
+          offline_check "$SOURCE_RELEASECHECK" validate-contract --json
+          offline_check "$REVIEWED_RELEASECHECK" --version --json > "$RUNNER_TEMP/reviewed-releasecheck-capabilities.json"
+          offline_check "$REVIEWED_RELEASECHECK" validate-contract --json
+          source_format="$(classify_capabilities "$RUNNER_TEMP/source-releasecheck-capabilities.json")" || {
+            echo "source checker evidence capabilities are partial or unsupported" >&2
+            exit 1
+          }
+          reviewed_format="$(classify_capabilities "$RUNNER_TEMP/reviewed-releasecheck-capabilities.json")" || {
+            echo "reviewed checker evidence capabilities are partial or unsupported" >&2
+            exit 1
+          }
+          [[ "$source_format" == "$EVIDENCE_FORMAT" ]] || {
+            echo "routed evidence format differs from the independently observed source checker" >&2
+            exit 1
+          }
+          [[ "$reviewed_format" == v2 ]] || {
+            echo "reviewed listener checker lacks the exact v2/genesis capability" >&2
+            exit 1
+          }
+          offline_check "$SOURCE_RELEASECHECK" evidence verify \
+            --input candidate/final/release-evidence.json
+          offline_check "$REVIEWED_RELEASECHECK" evidence verify \
             --input candidate/final/release-evidence.json \
             --markdown-output replay/index.md
           cmp candidate/final/index.md replay/index.md
-          "$RELEASECHECK" metrics compare \
+          if [[ "$EVIDENCE_FORMAT" == v2 ]]; then
+            offline_check "$SOURCE_RELEASECHECK" evidence bundle-verify \
+              --bundle-dir candidate/final/bundle --json
+            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-verify \
+              --bundle-dir candidate/final/bundle --json
+            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-create \
+              --input candidate/final/release-evidence.json \
+              --output-dir replay/bundle
+            diff -r candidate/final/bundle replay/bundle
+            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-parity \
+              --legacy candidate/final/release-evidence.json \
+              --bundle-dir candidate/final/bundle \
+              --output replay/parity.json
+            cmp candidate/final/parity.json replay/parity.json
+            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-measure \
+              --legacy candidate/final/release-evidence.json \
+              --bundle-dir candidate/final/bundle \
+              --index candidate/final/index.md \
+              --metrics-json candidate/final/metrics-comparison.json \
+              --metrics-markdown candidate/final/metrics-comparison.md \
+              --output replay/storage-metrics.json
+            cmp candidate/final/storage-metrics.json replay/storage-metrics.json
+            offline_check "$REVIEWED_RELEASECHECK" evidence genesis-create \
+              --bundle-dir candidate/final/bundle \
+              --output replay/genesis.v1.json
+            cmp candidate/final/genesis.v1.json replay/genesis.v1.json
+            offline_check "$SOURCE_RELEASECHECK" evidence genesis-verify \
+              --input candidate/final/genesis.v1.json \
+              --bundle-dir candidate/final/bundle --json
+            offline_check "$REVIEWED_RELEASECHECK" evidence genesis-verify \
+              --input candidate/final/genesis.v1.json \
+              --bundle-dir candidate/final/bundle --json
+          elif [[ "$EVIDENCE_FORMAT" != v1 ]]; then
+            echo "unsupported routed evidence format: $EVIDENCE_FORMAT" >&2
+            exit 1
+          fi
+          offline_check "$REVIEWED_RELEASECHECK" metrics compare \
             --main-ci candidate/metrics/main-ci.json \
             --pr-ci candidate/metrics/pr-ci.json \
             --publisher candidate/metrics/publisher.json \
@@ -468,22 +591,44 @@ jobs:
         name: Publish durable no-clobber evidence branch state
         env:
           GH_TOKEN: ${{ github.token }}
+          EVIDENCE_FORMAT: ${{ needs.assemble.outputs.format }}
+          EVIDENCE_PUBLISHER_CHECK: ${{ runner.temp }}/releasecheck-reviewed
           VERSION: ${{ needs.assemble.outputs.version }}
           SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
-        run: >-
-          evidence-tooling/scripts/release/publish-release-evidence.sh
-          "$VERSION"
-          "$SOURCE_SHA"
-          "$GITHUB_REPOSITORY"
-          candidate/final/release-evidence.json
-          candidate/final/index.md
-          candidate/final/metrics-comparison.json
-          candidate/final/metrics-comparison.md
-          >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          if [[ "$EVIDENCE_FORMAT" == v2 ]]; then
+            evidence-tooling/scripts/release/publish-release-evidence.sh --format v2 \
+              "$VERSION" \
+              "$SOURCE_SHA" \
+              "$GITHUB_REPOSITORY" \
+              candidate/final/bundle \
+              candidate/final/index.md \
+              candidate/final/metrics-comparison.json \
+              candidate/final/metrics-comparison.md \
+              candidate/final/storage-metrics.json \
+              candidate/final/parity.json \
+              candidate/final/genesis.v1.json \
+              >> "$GITHUB_OUTPUT"
+          elif [[ "$EVIDENCE_FORMAT" == v1 ]]; then
+            evidence-tooling/scripts/release/publish-release-evidence.sh \
+              "$VERSION" \
+              "$SOURCE_SHA" \
+              "$GITHUB_REPOSITORY" \
+              candidate/final/release-evidence.json \
+              candidate/final/index.md \
+              candidate/final/metrics-comparison.json \
+              candidate/final/metrics-comparison.md \
+              >> "$GITHUB_OUTPUT"
+          else
+            echo "unsupported routed evidence format: $EVIDENCE_FORMAT" >&2
+            exit 1
+          fi
 
       - name: Report exact immutable evidence coordinates
         env:
           VERSION: ${{ needs.assemble.outputs.version }}
+          EVIDENCE_FORMAT: ${{ needs.assemble.outputs.format }}
           EVIDENCE_COMMIT_SHA: ${{ steps.publish.outputs.commit_sha }}
           EVIDENCE_PATH_PREFIX: ${{ steps.publish.outputs.path_prefix }}
           EVIDENCE_REPAIR_MODE: ${{ steps.publish.outputs.repair_mode }}
@@ -505,19 +650,26 @@ jobs:
             none|release-assets|homebrew|health) ;;
             *) echo "published evidence repair mode is invalid" >&2; exit 1 ;;
           esac
-          evidence_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/release-evidence.json"
+          case "$EVIDENCE_FORMAT" in
+            v1) evidence_name=release-evidence.json ;;
+            v2) evidence_name=release-evidence-bundle.json ;;
+            *) echo "published evidence format is invalid" >&2; exit 1 ;;
+          esac
+          evidence_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/${evidence_name}"
           index_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/index.md"
           comparison_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}/metrics-comparison.json"
           {
             printf '## Durable release evidence\n\n'
             printf -- '- Evidence commit: `%s`\n' "$EVIDENCE_COMMIT_SHA"
             printf -- '- Publisher run / attempt / repair: `%s` / `%s` / `%s`\n' "$PUBLISHER_RUN_ID" "$PUBLISHER_RUN_ATTEMPT" "$EVIDENCE_REPAIR_MODE"
-            printf -- '- [Machine evidence](%s)\n' "$evidence_url"
+            printf -- '- Format: `%s`\n' "$EVIDENCE_FORMAT"
+            printf -- '- [Machine evidence root](%s)\n' "$evidence_url"
             printf -- '- [Markdown index](%s)\n' "$index_url"
             printf -- '- [Machine metrics comparison](%s)\n' "$comparison_url"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload replayable release evidence artifact
+        if: ${{ needs.assemble.outputs.format == 'v1' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-release-evidence-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}
@@ -526,5 +678,20 @@ jobs:
             candidate/final/index.md
             candidate/final/metrics-comparison.json
             candidate/final/metrics-comparison.md
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload compact replayable release evidence artifact
+        if: ${{ needs.assemble.outputs.format == 'v2' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-release-evidence-v2-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            candidate/final/bundle
+            candidate/final/index.md
+            candidate/final/metrics-comparison.json
+            candidate/final/metrics-comparison.md
+            candidate/final/storage-metrics.json
+            candidate/final/parity.json
           if-no-files-found: error
           retention-days: 90

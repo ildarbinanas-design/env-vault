@@ -465,23 +465,39 @@ successful evidence remains immutable at `evidence/releases/vX.Y.Z/`; every
 successful publisher run and attempt, including that first publication, is
 additionally stored at
 `evidence/releases/vX.Y.Z/publisher-runs/run-RUN_ID/attempt-ATTEMPT/`.
-Replaying the same run/attempt is a no-op only when all four files are
-byte-identical. A partial tuple directory, unexpected path, or conflicting
-bytes fails closed; a later repair appends its own tuple directory without
-rewriting the initial snapshot. Evidence must not contain credentials or
-secret values.
+The source checker selects v1 only when both compact-format capability keys are
+absent, and selects v2 only for the exact `[2]` bundle / `[1]` genesis pair.
+Any partial, null, empty, or unknown capability fails closed. The seven-day
+handoff retains v1 and v2 during migration. The per-release/per-attempt portion
+of v2 durable Git state and the 90-day replay artifact contains only the six
+compact metadata files and the content-addressed object set; fresh Git state
+also contains genesis, while production retains immutable legacy history.
+`release-evidence-bundle.json` reconstructs the canonical v1 decision
+byte-for-byte offline. `parity.json` is emitted only for a successful v1/v2
+replay; it is not failure evidence.
 
-`release-evidence` is repository infrastructure and must exist before its
-first publication. Bootstrap it once, without force, at the exact release
-source SHA that will receive the first evidence commit; verify the remote ref
-before rerunning the complete evidence workflow. The publisher then performs
-only ordinary fast-forwards and fails before creating Git objects when the ref
-is absent. The operator's exact absence, push, and equality checks are the
-fail-closed trust boundary for the one-time genesis. This keeps the workflow
-token at `contents: write`: creating a new ref whose inherited tree contains
-`.github/workflows` would otherwise require a workflows-capable credential.
-Do not replace `GITHUB_TOKEN` with such an App/PAT, broaden either release App,
-or add a ruleset bypass to avoid the one-time bootstrap.
+Replaying the same run/attempt is a no-op only when every file for that format
+is byte-identical. A partial tuple directory, unexpected path, conflicting
+bytes, rewritten earlier object, or inherited-path change fails closed; a
+later repair appends its own tuple directory without rewriting the initial
+snapshot. Evidence must not contain credentials or secret values.
+
+For a genuinely absent `release-evidence` ref—proved only by an exact HTTP
+404—the v2 publisher automatically creates a parentless evidence-only commit
+and `evidence/genesis.v1.json`. It never inherits the release source tree and
+therefore needs no Workflows permission or manual bootstrap. Every genesis
+mutation is immediately preceded by a fresh exact-source observation. A race
+is accepted only after exact read-back reconciliation. Do not pre-create a new
+ledger, replace `GITHUB_TOKEN` with a workflows-capable App/PAT, broaden either
+release App, or add a ruleset bypass.
+
+The already published production ledger remains `legacy-compatible` and is
+never migrated or rewritten. Both v1 and v2 listeners validate its bounded
+first-parent history and refuse a new append before any mutation when the
+64-commit validation window is full. The two-commit baseline leaves 62 append
+slots before this refactor and 61 after the next successful patch; land a
+reviewed checkpoint/Merkle design before that window is exhausted. See
+[ADR 0003](docs/adr/0003-compact-release-evidence-ledger.md).
 
 Metrics are derived from a saved complete `gh run view` document:
 

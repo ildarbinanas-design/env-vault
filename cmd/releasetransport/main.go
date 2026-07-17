@@ -76,8 +76,14 @@ func runContents(ctx context.Context, args []string, stderr io.Writer) int {
 }
 
 func runREST(ctx context.Context, args []string, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "observe" {
-		return writeUsageError(stderr, "rest observe subcommand is required")
+	if len(args) == 0 {
+		return writeUsageError(stderr, "rest subcommand is required")
+	}
+	if args[0] == "mutate-once" {
+		return runRESTMutateOnce(ctx, args[1:], stderr)
+	}
+	if args[0] != "observe" {
+		return writeUsageError(stderr, "rest subcommand is unsupported")
 	}
 	set := flag.NewFlagSet("rest observe", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
@@ -90,6 +96,29 @@ func runREST(ctx context.Context, args []string, stderr io.Writer) int {
 		return writeError(stderr, &githubtransport.TransportError{Code: "OUTPUT_FAILED", Message: err.Error()}, githubtransport.ExitOutput)
 	}
 	document, transportErr := githubtransport.NewClient().Observe(ctx, *endpoint)
+	if transportErr != nil {
+		return writeError(stderr, transportErr, exitForTransportError(transportErr))
+	}
+	return writeDocument(*output, document, stderr)
+}
+
+func runRESTMutateOnce(ctx context.Context, args []string, stderr io.Writer) int {
+	set := flag.NewFlagSet("rest mutate-once", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	output := set.String("output", "", "typed one-shot mutation outcome")
+	method := set.String("method", "", "reviewed HTTP mutation method")
+	endpoint := set.String("endpoint", "", "reviewed Git-data endpoint")
+	input := set.String("input", "", "strict JSON request body")
+	expectedStatus := set.Int("expected-status", 0, "exact successful HTTP status")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *output == "" {
+		return writeUsageError(stderr, "rest mutate-once arguments are invalid")
+	}
+	if err := githubtransport.ValidateOutputPath(*output); err != nil {
+		return writeError(stderr, &githubtransport.TransportError{Code: "OUTPUT_FAILED", Message: err.Error()}, githubtransport.ExitOutput)
+	}
+	document, transportErr := githubtransport.NewClient().MutateOnce(ctx, githubtransport.MutationRequest{
+		Method: *method, Endpoint: *endpoint, InputPath: *input, ExpectedStatus: *expectedStatus,
+	})
 	if transportErr != nil {
 		return writeError(stderr, transportErr, exitForTransportError(transportErr))
 	}
@@ -133,10 +162,11 @@ func runActions(ctx context.Context, args []string, stderr io.Writer) int {
 }
 
 func runBlob(ctx context.Context, args []string, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "verify" {
-		return writeUsageError(stderr, "git-blob verify subcommand is required")
+	if len(args) == 0 || (args[0] != "verify" && args[0] != "read") {
+		return writeUsageError(stderr, "git-blob read or verify subcommand is required")
 	}
-	set := flag.NewFlagSet("git-blob verify", flag.ContinueOnError)
+	operation := args[0]
+	set := flag.NewFlagSet("git-blob "+operation, flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	output := set.String("output", "", "output JSON")
 	repository := set.String("repository", "", "owner/repository")
@@ -147,6 +177,19 @@ func runBlob(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	if err := githubtransport.ValidateOutputPath(*output); err != nil {
 		return writeError(stderr, &githubtransport.TransportError{Code: "OUTPUT_FAILED", Message: err.Error()}, githubtransport.ExitOutput)
+	}
+	if operation == "read" {
+		if *expected != "" {
+			return writeUsageError(stderr, "git-blob read does not accept expected-file")
+		}
+		data, transportErr := githubtransport.NewClient().ReadBlob(ctx, *repository, *sha)
+		if transportErr != nil {
+			return writeError(stderr, transportErr, exitForTransportError(transportErr))
+		}
+		if err := githubtransport.WriteNoClobber(*output, data); err != nil {
+			return writeError(stderr, &githubtransport.TransportError{Code: "OUTPUT_FAILED", Message: err.Error()}, githubtransport.ExitOutput)
+		}
+		return githubtransport.ExitOK
 	}
 	document, transportErr := githubtransport.NewClient().VerifyBlob(ctx, *repository, *sha, *expected)
 	if transportErr != nil {
@@ -310,5 +353,5 @@ func writeUsageError(writer io.Writer, message string) int {
 }
 
 func usage() string {
-	return "usage:\n  releasetransport preflight --output PATH|-\n  releasetransport read OUTPUT [--paginate --slurp] [--method GET] [-f key=value] ENDPOINT\n  releasetransport contents read --output PATH --repository OWNER/REPO --path PATH --ref SHA\n  releasetransport rest observe --output PATH --endpoint ENDPOINT\n  releasetransport actions identity --output PATH --repository OWNER/REPO --run-id ID --run-attempt N --workflow-path PATH --event EVENT --head-sha SHA --head-ref REF [--job-id ID --job-name NAME --job-url URL]\n  releasetransport git-blob verify --output PATH --repository OWNER/REPO --sha SHA --expected-file PATH\n"
+	return "usage:\n  releasetransport preflight --output PATH|-\n  releasetransport read OUTPUT [--paginate --slurp] [--method GET] [-f key=value] ENDPOINT\n  releasetransport contents read --output PATH --repository OWNER/REPO --path PATH --ref SHA\n  releasetransport rest observe --output PATH --endpoint ENDPOINT\n  releasetransport rest mutate-once --output PATH --method POST|PATCH --endpoint ENDPOINT --input PATH --expected-status STATUS\n  releasetransport actions identity --output PATH --repository OWNER/REPO --run-id ID --run-attempt N --workflow-path PATH --event EVENT --head-sha SHA --head-ref REF [--job-id ID --job-name NAME --job-url URL]\n  releasetransport git-blob read --output PATH --repository OWNER/REPO --sha SHA\n  releasetransport git-blob verify --output PATH --repository OWNER/REPO --sha SHA --expected-file PATH\n"
 }
