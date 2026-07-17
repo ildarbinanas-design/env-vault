@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,188 +12,7 @@ import (
 
 const (
 	recoveryBoundarySHA = "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b"
-	recoveryPRHeadSHA   = "c7169946d9c430209928266d95be7629c93d5878"
 )
-
-func TestReconcileAbandonedReleasePullRequest(t *testing.T) {
-	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
-	fixture, env, state, mutations := newRecoveryOperatorFixture(t, releasecheck)
-
-	outputPath := filepath.Join(fixture, "recovery-evidence.json")
-	output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-		"reconcile-abandoned-release-pr.sh", outputPath)
-	if err != nil {
-		t.Fatalf("reconcile abandoned release PR: %v\n%s", err, output)
-	}
-
-	var evidence struct {
-		SchemaID           string `json:"schema_id"`
-		OK                 bool   `json:"ok"`
-		AbandonedVersion   string `json:"abandoned_version"`
-		AbandonedSourceSHA string `json:"abandoned_source_sha"`
-		GeneratedReleasePR struct {
-			Number   int    `json:"number"`
-			HeadSHA  string `json:"head_sha"`
-			MergeSHA string `json:"merge_sha"`
-		} `json:"generated_release_pr"`
-		Lifecycle struct {
-			LabelsBefore []string `json:"labels_before"`
-			LabelsAfter  []string `json:"labels_after"`
-		} `json:"lifecycle"`
-		TagExists           bool   `json:"tag_exists"`
-		GitHubReleaseExists bool   `json:"github_release_exists"`
-		ActionCode          string `json:"action_code"`
-		ReasonCode          string `json:"reason_code"`
-		Result              string `json:"result"`
-	}
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &evidence); err != nil {
-		t.Fatalf("decode recovery evidence: %v", err)
-	}
-	if evidence.SchemaID != "env-vault.release-please-recovery.v1" || !evidence.OK ||
-		evidence.AbandonedVersion != "v0.0.12" || evidence.AbandonedSourceSHA != recoveryBoundarySHA ||
-		evidence.GeneratedReleasePR.Number != 31 || evidence.GeneratedReleasePR.HeadSHA != recoveryPRHeadSHA ||
-		evidence.GeneratedReleasePR.MergeSHA != recoveryBoundarySHA || evidence.TagExists ||
-		evidence.GitHubReleaseExists || evidence.ActionCode != "mark_release_pr_abandoned" ||
-		evidence.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || evidence.Result != "pass" ||
-		!slices.Equal(evidence.Lifecycle.LabelsBefore, []string{"autorelease: pending"}) ||
-		!slices.Equal(evidence.Lifecycle.LabelsAfter, []string{"autorelease: abandoned"}) {
-		t.Fatalf("recovery evidence is not exact: %+v", evidence)
-	}
-	assertRecoveryState(t, state, `[{"name":"autorelease: abandoned"}]`)
-	assertRecoveryMutations(t, mutations, "POST abandoned\nDELETE pending\n")
-
-	secondOutput := filepath.Join(fixture, "recovery-evidence-resumed.json")
-	output, err = runReleaseAutomationScriptEnv(t, fixture, env,
-		"reconcile-abandoned-release-pr.sh", secondOutput)
-	if err != nil {
-		t.Fatalf("resume exact abandoned state: %v\n%s", err, output)
-	}
-	assertRecoveryState(t, state, `[{"name":"autorelease: abandoned"}]`)
-	assertRecoveryMutations(t, mutations, "POST abandoned\nDELETE pending\n")
-}
-
-func TestReconcileAbandonedReleasePullRequestReconcilesAmbiguousWrites(t *testing.T) {
-	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
-	fixture, env, state, mutations := newRecoveryOperatorFixture(t, releasecheck)
-	env = append(env, "FAKE_POST_AMBIGUOUS=true", "FAKE_DELETE_AMBIGUOUS=true")
-
-	output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-		"reconcile-abandoned-release-pr.sh", filepath.Join(fixture, "evidence.json"))
-	if err != nil {
-		t.Fatalf("reconcile ambiguous label writes: %v\n%s", err, output)
-	}
-	assertRecoveryState(t, state, `[{"name":"autorelease: abandoned"}]`)
-	assertRecoveryMutations(t, mutations, "POST abandoned\nDELETE pending\n")
-}
-
-func TestReconcileAbandonedReleasePullRequestFailsClosedAfterMutation(t *testing.T) {
-	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
-	for name, override := range map[string]string{
-		"tag appears":     "FAKE_TAG_AFTER_MUTATION=true",
-		"release appears": "FAKE_RELEASE_AFTER_MUTATION=true",
-		"main advances":   "FAKE_MAIN_ADVANCES_AFTER_MUTATION=true",
-	} {
-		t.Run(name, func(t *testing.T) {
-			fixture, env, _, mutations := newRecoveryOperatorFixture(t, releasecheck)
-			env = append(env, override)
-			outputPath := filepath.Join(fixture, "unsafe-evidence.json")
-			output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-				"reconcile-abandoned-release-pr.sh", outputPath)
-			if err == nil {
-				t.Fatalf("post-mutation race unexpectedly succeeded: %s", output)
-			}
-			assertRecoveryMutations(t, mutations, "POST abandoned\nDELETE pending\n")
-			if _, statErr := os.Lstat(outputPath); !os.IsNotExist(statErr) {
-				t.Fatalf("failed reconciliation left evidence: %v", statErr)
-			}
-		})
-	}
-}
-
-func TestReconcileAbandonedReleasePullRequestDoesNotRetryAmbiguousUnappliedWrites(t *testing.T) {
-	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
-	for name, tc := range map[string]struct {
-		override      string
-		wantMutations string
-	}{
-		"post":   {override: "FAKE_POST_AMBIGUOUS_NO_APPLY=true", wantMutations: "POST abandoned\n"},
-		"delete": {override: "FAKE_DELETE_AMBIGUOUS_NO_APPLY=true", wantMutations: "POST abandoned\nDELETE pending\n"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			fixture, env, _, mutations := newRecoveryOperatorFixture(t, releasecheck)
-			env = append(env, tc.override)
-			outputPath := filepath.Join(fixture, "unsafe-evidence.json")
-			if output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-				"reconcile-abandoned-release-pr.sh", outputPath); err == nil {
-				t.Fatalf("unapplied ambiguous %s unexpectedly succeeded: %s", name, output)
-			}
-			assertRecoveryMutations(t, mutations, tc.wantMutations)
-			if _, statErr := os.Lstat(outputPath); !os.IsNotExist(statErr) {
-				t.Fatalf("failed reconciliation left evidence: %v", statErr)
-			}
-		})
-	}
-}
-
-func TestReconcileAbandonedReleasePullRequestPinsGitHubHost(t *testing.T) {
-	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
-	fixture, env, _, _ := newRecoveryOperatorFixture(t, releasecheck)
-	env = append(env,
-		"GH_HOST=attacker.example",
-		"GH_ENTERPRISE_TOKEN=must-not-reach-gh",
-		"GITHUB_ENTERPRISE_TOKEN=must-not-reach-gh",
-		"GH_DEBUG=api",
-	)
-
-	output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-		"reconcile-abandoned-release-pr.sh", filepath.Join(fixture, "evidence.json"))
-	if err != nil {
-		t.Fatalf("pinned GitHub host recovery: %v\n%s", err, output)
-	}
-}
-
-func TestReconcileAbandonedReleasePullRequestFailsClosedBeforeMutation(t *testing.T) {
-	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
-	tests := []struct {
-		name     string
-		override string
-	}{
-		{name: "wrong PR head", override: "FAKE_PR_HEAD_SHA=" + strings.Repeat("1", 40)},
-		{name: "wrong merge source", override: "FAKE_PR_MERGE_SHA=" + strings.Repeat("2", 40)},
-		{name: "wrong title", override: "FAKE_PR_TITLE=chore(main): release env-vault v0.0.99"},
-		{name: "wrong author", override: "FAKE_PR_AUTHOR=github-actions[bot]"},
-		{name: "boundary not ancestor", override: "FAKE_COMPARE_STATUS=diverged"},
-		{name: "compare response wrong head", override: "FAKE_COMPARE_HEAD_SHA=" + strings.Repeat("5", 40)},
-		{name: "tag exists", override: "FAKE_TAG_EXISTS=true"},
-		{name: "release exists", override: "FAKE_RELEASE_EXISTS=true"},
-		{name: "tagged lifecycle", override: `FAKE_INITIAL_LABELS=[{"name":"autorelease: tagged"}]`},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture, env, state, mutations := newRecoveryOperatorFixture(t, releasecheck)
-			env = append(env, tc.override)
-			if strings.HasPrefix(tc.override, "FAKE_INITIAL_LABELS=") {
-				initial := strings.TrimPrefix(tc.override, "FAKE_INITIAL_LABELS=")
-				if err := os.WriteFile(state, []byte(initial+"\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-				"reconcile-abandoned-release-pr.sh", filepath.Join(fixture, "evidence.json"))
-			if err == nil {
-				t.Fatalf("unsafe recovery unexpectedly succeeded: %s", output)
-			}
-			if !strings.Contains(output, "release:") {
-				t.Fatalf("failure is not structured: %q", output)
-			}
-			assertRecoveryMutations(t, mutations, "")
-		})
-	}
-}
 
 func TestVerifyAbandonedReleasePolicy(t *testing.T) {
 	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
@@ -205,7 +23,7 @@ func TestVerifyAbandonedReleasePolicy(t *testing.T) {
 	sourceSHA := strings.TrimSpace(runRecoveryGit(t, fixture, "rev-parse", "HEAD"))
 	outputPath := filepath.Join(fixture, "abandoned-release.json")
 	output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-		"verify-abandoned-release-policy.sh", "v0.0.13", sourceSHA, outputPath)
+		"verify-abandoned-release-policy.sh", "v0.0.14", sourceSHA, outputPath)
 	if err != nil {
 		t.Fatalf("verify abandoned release policy: %v\n%s", err, output)
 	}
@@ -235,7 +53,7 @@ func TestVerifyAbandonedReleasePolicy(t *testing.T) {
 	}
 
 	if output, err := runReleaseAutomationScriptEnv(t, fixture, env,
-		"verify-abandoned-release-policy.sh", "v0.0.13", sourceSHA, outputPath); err == nil {
+		"verify-abandoned-release-policy.sh", "v0.0.14", sourceSHA, outputPath); err == nil {
 		t.Fatalf("abandoned-release proof clobbered an existing output: %s", output)
 	}
 }
@@ -249,14 +67,18 @@ func TestVerifyAbandonedReleasePolicyFailsClosed(t *testing.T) {
 		override   string
 		labelState string
 	}{
-		{name: "wrong resume version", version: "v0.0.14"},
-		{name: "wrong source checkout", version: "v0.0.13", source: strings.Repeat("1", 40)},
-		{name: "pending lifecycle", version: "v0.0.13", labelState: `[{"name":"autorelease: pending"}]`},
-		{name: "tagged lifecycle", version: "v0.0.13", labelState: `[{"name":"autorelease: abandoned"},{"name":"autorelease: tagged"}]`},
-		{name: "boundary not ancestor", version: "v0.0.13", override: "FAKE_COMPARE_STATUS=diverged"},
-		{name: "compare response wrong head", version: "v0.0.13", override: "FAKE_COMPARE_HEAD_SHA=" + strings.Repeat("5", 40)},
-		{name: "tag exists", version: "v0.0.13", override: "FAKE_TAG_EXISTS=true"},
-		{name: "release exists", version: "v0.0.13", override: "FAKE_RELEASE_EXISTS=true"},
+		{name: "malformed release version", version: "0.0.14"},
+		{name: "wrong source checkout", version: "v0.0.14", source: strings.Repeat("1", 40)},
+		{name: "pending lifecycle", version: "v0.0.14", labelState: `[{"name":"autorelease: pending"}]`},
+		{name: "tagged lifecycle", version: "v0.0.14", labelState: `[{"name":"autorelease: abandoned"},{"name":"autorelease: tagged"}]`},
+		{name: "wrong PR head", version: "v0.0.14", override: "FAKE_PR_HEAD_SHA=" + strings.Repeat("1", 40)},
+		{name: "wrong PR merge source", version: "v0.0.14", override: "FAKE_PR_MERGE_SHA=" + strings.Repeat("2", 40)},
+		{name: "wrong PR title", version: "v0.0.14", override: "FAKE_PR_TITLE=chore(main): release env-vault v0.0.99"},
+		{name: "wrong PR author", version: "v0.0.14", override: "FAKE_PR_AUTHOR=github-actions[bot]"},
+		{name: "boundary not ancestor", version: "v0.0.14", override: "FAKE_COMPARE_STATUS=diverged"},
+		{name: "compare response wrong head", version: "v0.0.14", override: "FAKE_COMPARE_HEAD_SHA=" + strings.Repeat("5", 40)},
+		{name: "tag exists", version: "v0.0.14", override: "FAKE_TAG_EXISTS=true"},
+		{name: "release exists", version: "v0.0.14", override: "FAKE_RELEASE_EXISTS=true"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -298,7 +120,7 @@ func newRecoveryOperatorFixture(t *testing.T, releasecheck string) (string, []st
 	if err := os.WriteFile(filepath.Join(fixture, "release-please-config.json"), config, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(fixture, ".release-please-manifest.json"), []byte("{\n  \".\": \"0.0.12\"\n}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(fixture, ".release-please-manifest.json"), []byte("{\n  \".\": \"0.0.13\"\n}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runRecoveryGit(t, fixture, "init", "-q")
@@ -350,35 +172,6 @@ func runRecoveryGit(t *testing.T, directory string, args ...string) string {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return string(output)
-}
-
-func assertRecoveryState(t *testing.T, path, want string) {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var gotValue, wantValue any
-	if err := json.Unmarshal(data, &gotValue); err != nil {
-		t.Fatalf("decode recovery label state: %v", err)
-	}
-	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
-		t.Fatalf("decode wanted recovery label state: %v", err)
-	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
-		t.Fatalf("recovery label state=%s, want %s", data, want)
-	}
-}
-
-func assertRecoveryMutations(t *testing.T, path, want string) {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != want {
-		t.Fatalf("recovery mutations=%q, want %q", data, want)
-	}
 }
 
 const recoveryFakeGH = `#!/usr/bin/env bash

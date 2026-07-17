@@ -66,7 +66,8 @@ jq -e '
 
 policy=$(jq -ce '
   .version_policy.release_please_recovery |
-  select(.state == "active" or .state == "complete") |
+  select(.state == "complete") |
+  select(.completed_release_source_sha == "6206b472cda81f7a87656055d8eb6627c26a0fef") |
   select(.abandoned_version == "v0.0.12") |
   select(.abandoned_source_sha | type == "string" and test("^[0-9a-f]{40}$")) |
   select(.generated_release_pr_number == 31) |
@@ -79,21 +80,16 @@ policy=$(jq -ce '
   select(.reason_code == "PRETAG_AUTHORIZATION_MISSING")
 ' "$RELEASE_CONTRACT_PATH") || release_die "abandoned-release contract policy is invalid"
 
-policy_state=$(jq -er '.state' <<< "$policy")
 contract_sha=$(jq -er '.semantic_contract_sha256' "$snapshot_dir/contract-validation.json")
 abandoned_version=$(jq -er '.abandoned_version' <<< "$policy")
 boundary_sha=$(jq -er '.abandoned_source_sha' <<< "$policy")
 pr_number=$(jq -er '.generated_release_pr_number' <<< "$policy")
 pr_head_sha=$(jq -er '.generated_release_pr_head_sha' <<< "$policy")
-resume_version=$(jq -er '.resume_version' <<< "$policy")
 pending_label=$(jq -er '.pending_label' <<< "$policy")
 abandoned_label=$(jq -er '.abandoned_label' <<< "$policy")
 tagged_label=$(jq -er '.tagged_label' <<< "$policy")
 reason_code=$(jq -er '.reason_code' <<< "$policy")
 
-if [[ "$policy_state" == "active" && "$release_version" != "$resume_version" ]]; then
-  release_die "active recovery release version does not equal the exact resume version"
-fi
 [[ "$release_source_sha" != "$boundary_sha" && "$release_source_sha" != "$pr_head_sha" ]] ||
   release_die "release source is not distinct from the abandoned incident"
 [[ "$(git rev-parse HEAD)" == "$release_source_sha" ]] || release_die "checkout is not the exact release source"

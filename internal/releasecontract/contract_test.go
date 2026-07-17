@@ -50,10 +50,13 @@ func TestCanonicalContract(t *testing.T) {
 		t.Fatal("release-please recovery schemas are not canonical")
 	}
 	recovery := contract.VersionPolicy.ReleasePleaseRecovery
-	if recovery.State != "active" || recovery.AbandonedVersion != "v0.0.12" || recovery.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
+	if completedReleaseSource013 != "6206b472cda81f7a87656055d8eb6627c26a0fef" {
+		t.Fatalf("checker completion pin=%q", completedReleaseSource013)
+	}
+	if recovery.State != "complete" || recovery.AbandonedVersion != "v0.0.12" || recovery.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
 		recovery.GeneratedReleasePRNumber != 31 || recovery.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" || recovery.ResumeVersion != "v0.0.13" ||
 		recovery.PendingLabel != "autorelease: pending" || recovery.AbandonedLabel != "autorelease: abandoned" || recovery.TaggedLabel != "autorelease: tagged" ||
-		!recovery.TagMustNotExist || !recovery.GitHubReleaseMustNotExist || recovery.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || recovery.CompletedReleaseSourceSHA != "" {
+		!recovery.TagMustNotExist || !recovery.GitHubReleaseMustNotExist || recovery.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || recovery.CompletedReleaseSourceSHA != completedReleaseSource013 {
 		t.Fatalf("release-please recovery=%+v", recovery)
 	}
 	wantChecks := []RequiredCheck{
@@ -97,13 +100,22 @@ func TestIsVersionUsesStrictCanonicalPolicy(t *testing.T) {
 
 func TestLoadFileRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
 	canonical := readCanonicalForTest(t)
+	completedLine := `      "completed_release_source_sha": "6206b472cda81f7a87656055d8eb6627c26a0fef",`
+	withoutCompleted := []byte(strings.Replace(string(canonical), completedLine+"\n", "", 1))
 	tests := map[string][]byte{
-		"unknown":               []byte(strings.TrimSuffix(string(canonical), "\n}") + ",\n  \"unknown\": true\n}\n"),
-		"case variant":          []byte(strings.Replace(string(canonical), `"schema_id":`, `"Schema_ID":`, 1)),
-		"nested variant":        []byte(strings.Replace(string(canonical), `"archive_prefix":`, `"Archive_Prefix":`, 1)),
-		"duplicate":             []byte(strings.Replace(string(canonical), `"schema_id": "env-vault.release-contract.v1",`, `"schema_id": "env-vault.release-contract.v1", "schema_id": "env-vault.release-contract.v1",`, 1)),
-		"active completed null": []byte(strings.Replace(string(canonical), `"reason_code": "PRETAG_AUTHORIZATION_MISSING"`, `"reason_code": "PRETAG_AUTHORIZATION_MISSING", "completed_release_source_sha": null`, 1)),
-		"trailing":              append(append([]byte(nil), canonical...), []byte("{}")...),
+		"unknown":           []byte(strings.TrimSuffix(string(canonical), "\n}") + ",\n  \"unknown\": true\n}\n"),
+		"case variant":      []byte(strings.Replace(string(canonical), `"schema_id":`, `"Schema_ID":`, 1)),
+		"nested variant":    []byte(strings.Replace(string(canonical), `"archive_prefix":`, `"Archive_Prefix":`, 1)),
+		"duplicate":         []byte(strings.Replace(string(canonical), `"schema_id": "env-vault.release-contract.v1",`, `"schema_id": "env-vault.release-contract.v1", "schema_id": "env-vault.release-contract.v1",`, 1)),
+		"completed missing": withoutCompleted,
+		"completed null": []byte(strings.Replace(string(canonical),
+			`"completed_release_source_sha": "6206b472cda81f7a87656055d8eb6627c26a0fef"`, `"completed_release_source_sha": null`, 1)),
+		"completed wrong": []byte(strings.Replace(string(canonical),
+			"6206b472cda81f7a87656055d8eb6627c26a0fef", strings.Repeat("e", 40), 1)),
+		"completed duplicate":    []byte(strings.Replace(string(canonical), completedLine, completedLine+"\n"+completedLine, 1)),
+		"completed case variant": []byte(strings.Replace(string(canonical), `"completed_release_source_sha"`, `"Completed_Release_Source_SHA"`, 1)),
+		"rollback active":        []byte(strings.Replace(string(withoutCompleted), `"state": "complete"`, `"state": "active"`, 1)),
+		"trailing":               append(append([]byte(nil), canonical...), []byte("{}")...),
 	}
 	for name, data := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -158,8 +170,21 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"recovery can tag abandoned": func(c *Contract) {
 			c.VersionPolicy.ReleasePleaseRecovery.TagMustNotExist = false
 		},
-		"active recovery completed": func(c *Contract) {
+		"recovery can release abandoned": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.GitHubReleaseMustNotExist = false
+		},
+		"recovery PR number drift": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.GeneratedReleasePRNumber = 32
+		},
+		"recovery PR head drift": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.GeneratedReleasePRHeadSHA = strings.Repeat("f", 40)
+		},
+		"wrong completed recovery source": func(c *Contract) {
 			c.VersionPolicy.ReleasePleaseRecovery.CompletedReleaseSourceSHA = strings.Repeat("e", 40)
+		},
+		"rollback recovery to active": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.State = "active"
+			c.VersionPolicy.ReleasePleaseRecovery.CompletedReleaseSourceSHA = ""
 		},
 		"artifact naming": func(c *Contract) {
 			c.Naming.PlatformArtifactTemplate = "env-vault-release-{platform}"

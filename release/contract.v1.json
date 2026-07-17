@@ -4,7 +4,8 @@
   "version_policy": {
     "pattern": "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
     "release_please_recovery": {
-      "state": "active",
+      "state": "complete",
+      "completed_release_source_sha": "6206b472cda81f7a87656055d8eb6627c26a0fef",
       "abandoned_version": "v0.0.12",
       "abandoned_source_sha": "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b",
       "generated_release_pr_number": 31,

@@ -294,7 +294,7 @@ func TestRecoveryValidateConfigCLI(t *testing.T) {
 		"recovery", "validate-config",
 		"--contract", canonicalContractPath(t),
 		"--config", canonicalRepositoryFile(t, "release-please-config.json"),
-		"--manifest", writeTestFile(t, []byte(`{".":"0.0.12"}`)),
+		"--manifest", canonicalRepositoryFile(t, ".release-please-manifest.json"),
 		"--json",
 	}, &stdout, &stderr)
 	if code != exitOK {
@@ -302,11 +302,12 @@ func TestRecoveryValidateConfigCLI(t *testing.T) {
 	}
 	var document releasecontract.ReleasePleaseRecoveryCheck
 	decodeOneJSON(t, stdout.Bytes(), &document)
-	if !document.OK || document.SchemaID != releasecontract.ReleasePleaseRecoveryCheckSchemaID || document.SchemaVersion != 1 || document.State != "active" ||
+	if !document.OK || document.SchemaID != releasecontract.ReleasePleaseRecoveryCheckSchemaID || document.SchemaVersion != 1 || document.State != "complete" ||
 		document.AbandonedVersion != "v0.0.12" || document.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
 		document.GeneratedReleasePRNumber != 31 || document.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" || document.ResumeVersion != "v0.0.13" ||
 		document.PendingLabel != "autorelease: pending" || document.AbandonedLabel != "autorelease: abandoned" || document.TaggedLabel != "autorelease: tagged" ||
-		!document.TagMustNotExist || !document.GitHubReleaseMustNotExist || document.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || len(document.SemanticContractSHA256) != 64 {
+		!document.TagMustNotExist || !document.GitHubReleaseMustNotExist || document.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || len(document.SemanticContractSHA256) != 64 ||
+		document.CompletedReleaseSourceSHA != "6206b472cda81f7a87656055d8eb6627c26a0fef" {
 		t.Fatalf("recovery=%+v", document)
 	}
 	if stderr.Len() != 0 {
@@ -315,24 +316,48 @@ func TestRecoveryValidateConfigCLI(t *testing.T) {
 }
 
 func TestRecoveryValidateConfigCLIFailsClosed(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := run([]string{
-		"recovery", "validate-config",
-		"--contract", canonicalContractPath(t),
-		"--config", canonicalRepositoryFile(t, "release-please-config.json"),
-		"--manifest", writeTestFile(t, []byte(`{".":"0.0.13"}`)),
-		"--json",
-	}, &stdout, &stderr)
-	if code != exitSnapshotInvalid {
-		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	configData, err := os.ReadFile(canonicalRepositoryFile(t, "release-please-config.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	var document errorDocument
-	decodeOneJSON(t, stdout.Bytes(), &document)
-	if document.OK || document.Error.Code != "INPUT_INVALID" {
-		t.Fatalf("failure=%+v", document)
+	needle := `  "separate-pull-requests": true,`
+	withLastReleaseSHA := []byte(strings.Replace(string(configData), needle,
+		`  "last-release-sha": "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b",`+"\n"+needle, 1))
+	tests := map[string]struct {
+		config   string
+		manifest string
+	}{
+		"manifest below completed floor": {
+			config:   canonicalRepositoryFile(t, "release-please-config.json"),
+			manifest: writeTestFile(t, []byte(`{".":"0.0.12"}`)),
+		},
+		"returned last release SHA": {
+			config:   writeTestFile(t, withLastReleaseSHA),
+			manifest: canonicalRepositoryFile(t, ".release-please-manifest.json"),
+		},
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr=%q", stderr.String())
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run([]string{
+				"recovery", "validate-config",
+				"--contract", canonicalContractPath(t),
+				"--config", test.config,
+				"--manifest", test.manifest,
+				"--json",
+			}, &stdout, &stderr)
+			if code != exitSnapshotInvalid {
+				t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+			}
+			var document errorDocument
+			decodeOneJSON(t, stdout.Bytes(), &document)
+			if document.OK || document.Error.Code != "INPUT_INVALID" {
+				t.Fatalf("failure=%+v", document)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr=%q", stderr.String())
+			}
+		})
 	}
 }
 
