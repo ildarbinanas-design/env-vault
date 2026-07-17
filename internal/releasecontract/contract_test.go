@@ -24,7 +24,7 @@ func TestCanonicalContract(t *testing.T) {
 	if got := contract.Matrix().Include; len(got) != 5 || got[0].ID != "linux-amd64" {
 		t.Fatalf("matrix=%+v", got)
 	}
-	for _, code := range []string{"rerun_all_jobs", "inspect_failure", "rerun_tap_pr_ci_all_jobs", "dispatch_legacy_rebuild"} {
+	for _, code := range []string{"rerun_all_jobs", "inspect_failure", "rerun_tap_pr_ci_all_jobs", "dispatch_legacy_rebuild", "mark_release_pr_abandoned"} {
 		if !contract.HasActionCode(code) {
 			t.Fatalf("required action code %q absent", code)
 		}
@@ -34,6 +34,9 @@ func TestCanonicalContract(t *testing.T) {
 			t.Fatalf("required error code %q absent", code)
 		}
 	}
+	if !contains(contract.ReasonCodes, "PRETAG_AUTHORIZATION_MISSING") {
+		t.Fatal("recovery reason code is absent")
+	}
 	if contract.Schemas["source_quality_proof"] != "env-vault.source-quality-proof.v1" {
 		t.Fatal("source-quality proof schema is not canonical")
 	}
@@ -42,6 +45,16 @@ func TestCanonicalContract(t *testing.T) {
 	}
 	if contract.Schemas["repository_release_settings_check"] != "env-vault.repository-release-settings-check.v1" {
 		t.Fatal("repository release-settings check schema is not canonical")
+	}
+	if contract.Schemas["release_please_recovery"] != ReleasePleaseRecoverySchemaID || contract.Schemas["release_please_recovery_check"] != ReleasePleaseRecoveryCheckSchemaID {
+		t.Fatal("release-please recovery schemas are not canonical")
+	}
+	recovery := contract.VersionPolicy.ReleasePleaseRecovery
+	if recovery.State != "active" || recovery.AbandonedVersion != "v0.0.12" || recovery.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
+		recovery.GeneratedReleasePRNumber != 31 || recovery.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" || recovery.ResumeVersion != "v0.0.13" ||
+		recovery.PendingLabel != "autorelease: pending" || recovery.AbandonedLabel != "autorelease: abandoned" || recovery.TaggedLabel != "autorelease: tagged" ||
+		!recovery.TagMustNotExist || !recovery.GitHubReleaseMustNotExist || recovery.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || recovery.CompletedReleaseSourceSHA != "" {
+		t.Fatalf("release-please recovery=%+v", recovery)
 	}
 	wantChecks := []RequiredCheck{
 		{Name: "Analyze (actions)", Workflow: "CodeQL", Event: "dynamic"},
@@ -85,11 +98,12 @@ func TestIsVersionUsesStrictCanonicalPolicy(t *testing.T) {
 func TestLoadFileRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
 	canonical := readCanonicalForTest(t)
 	tests := map[string][]byte{
-		"unknown":        []byte(strings.TrimSuffix(string(canonical), "\n}") + ",\n  \"unknown\": true\n}\n"),
-		"case variant":   []byte(strings.Replace(string(canonical), `"schema_id":`, `"Schema_ID":`, 1)),
-		"nested variant": []byte(strings.Replace(string(canonical), `"archive_prefix":`, `"Archive_Prefix":`, 1)),
-		"duplicate":      []byte(strings.Replace(string(canonical), `"schema_id": "env-vault.release-contract.v1",`, `"schema_id": "env-vault.release-contract.v1", "schema_id": "env-vault.release-contract.v1",`, 1)),
-		"trailing":       append(append([]byte(nil), canonical...), []byte("{}")...),
+		"unknown":               []byte(strings.TrimSuffix(string(canonical), "\n}") + ",\n  \"unknown\": true\n}\n"),
+		"case variant":          []byte(strings.Replace(string(canonical), `"schema_id":`, `"Schema_ID":`, 1)),
+		"nested variant":        []byte(strings.Replace(string(canonical), `"archive_prefix":`, `"Archive_Prefix":`, 1)),
+		"duplicate":             []byte(strings.Replace(string(canonical), `"schema_id": "env-vault.release-contract.v1",`, `"schema_id": "env-vault.release-contract.v1", "schema_id": "env-vault.release-contract.v1",`, 1)),
+		"active completed null": []byte(strings.Replace(string(canonical), `"reason_code": "PRETAG_AUTHORIZATION_MISSING"`, `"reason_code": "PRETAG_AUTHORIZATION_MISSING", "completed_release_source_sha": null`, 1)),
+		"trailing":              append(append([]byte(nil), canonical...), []byte("{}")...),
 	}
 	for name, data := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -138,13 +152,28 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 			c.VersionPolicy.BlockedVersions = c.VersionPolicy.BlockedVersions[:1]
 		},
 		"legacy publication": func(c *Contract) { c.VersionPolicy.LegacyRebuild.PublicationEligible = true },
+		"invalid recovery state": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.State = "unknown"
+		},
+		"recovery can tag abandoned": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.TagMustNotExist = false
+		},
+		"active recovery completed": func(c *Contract) {
+			c.VersionPolicy.ReleasePleaseRecovery.CompletedReleaseSourceSHA = strings.Repeat("e", 40)
+		},
 		"artifact naming": func(c *Contract) {
 			c.Naming.PlatformArtifactTemplate = "env-vault-release-{platform}"
 		},
 		"repair rebuild":        func(c *Contract) { c.AllowedRepairActions[1].Rebuilds = true },
 		"action code separator": func(c *Contract) { c.ActionCodes[2] = "rerun-all-jobs" },
-		"app slug underscore":   func(c *Contract) { c.Apps[0].Slug = "env_vault_release_planning" },
-		"missing reason":        func(c *Contract) { c.ReasonCodes = c.ReasonCodes[1:] },
+		"missing recovery action": func(c *Contract) {
+			c.ActionCodes = c.ActionCodes[:len(c.ActionCodes)-1]
+		},
+		"app slug underscore": func(c *Contract) { c.Apps[0].Slug = "env_vault_release_planning" },
+		"missing reason":      func(c *Contract) { c.ReasonCodes = c.ReasonCodes[1:] },
+		"missing recovery reason": func(c *Contract) {
+			c.ReasonCodes = c.ReasonCodes[:len(c.ReasonCodes)-1]
+		},
 		"missing required check": func(c *Contract) {
 			c.MainRequiredChecks = c.MainRequiredChecks[:len(c.MainRequiredChecks)-1]
 		},

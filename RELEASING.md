@@ -106,6 +106,37 @@ post-release verification.
 Opening, updating, approving, or closing the generated PR is not publication
 authorization. Do not create a tag or Release manually.
 
+## One-time abandoned `v0.0.12` recovery
+
+Generated PR #31 was merged at
+`a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b` before its exact authorization
+could be recorded on GitHub. It is permanently abandoned: tag `v0.0.12` and a
+GitHub Release for that version must never exist. The active recovery record in
+the release contract pins PR #31, its head, merge source, lifecycle labels,
+and the expected next version. The temporary top-level `last-release-sha` in
+`release-please-config.json` is the exact merge commit on `main`, not the PR
+head; Release Please treats it as an exclusive commit boundary.
+
+On the first ordinary green-main planning run, the offline checker requires
+the active contract, config, and `0.0.12` manifest to agree byte-for-byte on
+that boundary. The narrow reconciliation step then uses `gh` to re-observe
+current `main`, exact PR metadata and ancestry, and explicit HTTP 404 results
+for both the tag and Release. Only then does it add the truthful
+`autorelease: abandoned` label and remove `autorelease: pending`. It never adds
+`autorelease: tagged`. Mutations are single-attempt and followed by bounded
+read reconciliation, so an ambiguous response is not retried blindly. The
+step emits versioned JSON evidence before Release Please proposes `v0.0.13`.
+
+Keep the boundary active through the successful `v0.0.13` tag, publication,
+Homebrew update, health check, and durable evidence. The first subsequent
+change to `main` must be a non-release cleanup PR that removes
+`last-release-sha`, marks the incident complete with the exact successful
+release source SHA in both the contract and the checker pin
+`completedReleaseSource013`, and removes the temporary reconciliation step. Until that
+cleanup lands, an ordinary planning run with a manifest newer than `0.0.12`
+fails closed. After cleanup, a real planning run must prove that no `v0.0.14`
+proposal is created from the `chore(release)` cleanup commit.
+
 ## Normal release sequence
 
 1. Release Please opens or updates the generated release PR in PR-only mode.

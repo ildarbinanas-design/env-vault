@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	checkerVersion = "1.0.0"
+	checkerVersion = "1.2.0"
 
 	exitOK              = 0
 	exitUsage           = 2
@@ -114,6 +114,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runEvidence(args[1:], stdout, stderr)
 	case "settings":
 		return runSettings(args[1:], stdout, stderr)
+	case "recovery":
+		return runRecovery(args[1:], stdout, stderr)
 	default:
 		return runRootFlags(args, stdout, stderr)
 	}
@@ -161,6 +163,8 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 			"release_observation":               {1},
 			"release_health_proof":              {1},
 			"release_authorization":             {1},
+			"release_please_recovery":           {1},
+			"release_please_recovery_check":     {1},
 			"attestation_verification_bundle":   {1},
 			"release_evidence":                  {1},
 			"repository_release_settings_check": {1},
@@ -362,6 +366,39 @@ func runClassifyAttempt(args []string, stdout, stderr io.Writer) int {
 	return exitActionRequired
 }
 
+func runRecovery(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "validate-config" {
+		fmt.Fprint(stderr, recoveryUsage())
+		return exitUsage
+	}
+	set := newFlagSet("recovery validate-config")
+	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
+	configPath := set.String("config", "", "release-please config JSON")
+	manifestPath := set.String("manifest", "", "release-please manifest JSON")
+	jsonOutput := set.Bool("json", false, "emit versioned JSON")
+	if err := set.Parse(args[1:]); err != nil || set.NArg() != 0 || *configPath == "" || *manifestPath == "" {
+		fmt.Fprint(stderr, recoveryUsage())
+		return exitUsage
+	}
+	contract, err := releasecontract.LoadFile(*contractPath)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	document, err := releasecontract.CheckReleasePleaseRecoveryFiles(contract, *configPath, *manifestPath)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "INPUT_INVALID", err, exitSnapshotInvalid)
+	}
+	if *jsonOutput {
+		if err := writeJSON(stdout, document); err != nil {
+			fmt.Fprintf(stderr, "write JSON: %v\n", err)
+			return exitInternal
+		}
+		return exitOK
+	}
+	fmt.Fprintf(stdout, "valid release-please recovery: state=%s abandoned=%s resume=%s semantic_sha256=%s\n", document.State, document.AbandonedVersion, document.ResumeVersion, document.SemanticContractSHA256)
+	return exitOK
+}
+
 func newFlagSet(name string) *flag.FlagSet {
 	set := flag.NewFlagSet(name, flag.ContinueOnError)
 	set.SetOutput(io.Discard)
@@ -490,6 +527,7 @@ Usage:
   releasecheck promotion <record-platform|seal-source-quality|assemble|verify> ...
   releasecheck evidence <seal-health|assemble|verify> ...
   releasecheck settings <check|seal|verify> ...
+  releasecheck recovery validate-config --contract FILE --config FILE --manifest FILE [--json]
   releasecheck help
 
 classify-attempt expects one complete REST workflow-run object and either one
@@ -534,4 +572,8 @@ func legacyUsage() string {
 
 func contractUsage() string {
 	return "usage: releasecheck contract matrix [--contract FILE] [--json]\n"
+}
+
+func recoveryUsage() string {
+	return "usage: releasecheck recovery validate-config --contract FILE --config FILE --manifest FILE [--json]\n"
 }

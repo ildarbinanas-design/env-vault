@@ -117,6 +117,7 @@ type Observation struct {
 	Attestations              []ArchiveAttestation        `json:"attestations"`
 	Homebrew                  HomebrewObservation         `json:"homebrew"`
 	BlockedVersions           []BlockedVersionObservation `json:"blocked_versions"`
+	AbandonedRelease          AbandonedReleaseObservation `json:"abandoned_release"`
 	RepositoryReleaseSettings releasesettings.Proof       `json:"repository_release_settings"`
 	Health                    HealthProof                 `json:"health"`
 }
@@ -220,27 +221,51 @@ type BlockedVersionObservation struct {
 	ReleaseExists bool   `json:"release_exists"`
 }
 
+// AbandonedReleaseObservation proves that the merged v0.0.12 Release Please
+// proposal remains an explicitly abandoned planning record, never a tag or a
+// GitHub Release. The immutable incident tuple comes from the release contract.
+type AbandonedReleaseObservation struct {
+	State                       string                     `json:"state"`
+	Version                     string                     `json:"version"`
+	SourceSHA                   string                     `json:"source_sha"`
+	GeneratedReleasePR          GeneratedReleasePRIdentity `json:"generated_release_pr"`
+	PullRequestState            string                     `json:"pull_request_state"`
+	PullRequestMerged           bool                       `json:"pull_request_merged"`
+	PullRequestTitle            string                     `json:"pull_request_title"`
+	PullRequestAuthor           string                     `json:"pull_request_author"`
+	BaseRef                     string                     `json:"base_ref"`
+	BaseRepository              string                     `json:"base_repository"`
+	Labels                      []string                   `json:"labels"`
+	BoundaryIsAncestorOfRelease bool                       `json:"boundary_is_ancestor_of_release"`
+	TagExists                   bool                       `json:"tag_exists"`
+	GitHubReleaseExists         bool                       `json:"github_release_exists"`
+	ReasonCode                  string                     `json:"reason_code"`
+	ObservedAt                  string                     `json:"observed_at"`
+	SemanticContractSHA256      string                     `json:"semantic_contract_sha256"`
+}
+
 // HealthProof is sealed before evidence assembly so an independently saved
 // health result cannot be silently changed while the final record is built.
 type HealthProof struct {
-	SchemaID                   string `json:"schema_id"`
-	SchemaVersion              int    `json:"schema_version"`
-	Repository                 string `json:"repository"`
-	ReleaseVersion             string `json:"release_version"`
-	SourceSHA                  string `json:"source_sha"`
-	PublisherRunID             int64  `json:"publisher_run_id"`
-	PublisherRunAttempt        int    `json:"publisher_run_attempt"`
-	CheckedAt                  string `json:"checked_at"`
-	TagExactSource             bool   `json:"tag_exact_source"`
-	ReleasePublished           bool   `json:"release_published"`
-	AssetsExact                bool   `json:"assets_exact"`
-	AttestationsExact          bool   `json:"attestations_exact"`
-	HomebrewExact              bool   `json:"homebrew_exact"`
-	HomebrewPRHeadCISuccess    bool   `json:"homebrew_pr_head_ci_success"`
-	HomebrewPostMergeCISuccess bool   `json:"homebrew_post_merge_ci_success"`
-	BlockedVersionPolicyExact  bool   `json:"blocked_version_policy_exact"`
-	Result                     string `json:"result"`
-	ProofSHA256                string `json:"proof_sha256"`
+	SchemaID                    string `json:"schema_id"`
+	SchemaVersion               int    `json:"schema_version"`
+	Repository                  string `json:"repository"`
+	ReleaseVersion              string `json:"release_version"`
+	SourceSHA                   string `json:"source_sha"`
+	PublisherRunID              int64  `json:"publisher_run_id"`
+	PublisherRunAttempt         int    `json:"publisher_run_attempt"`
+	CheckedAt                   string `json:"checked_at"`
+	TagExactSource              bool   `json:"tag_exact_source"`
+	ReleasePublished            bool   `json:"release_published"`
+	AssetsExact                 bool   `json:"assets_exact"`
+	AttestationsExact           bool   `json:"attestations_exact"`
+	HomebrewExact               bool   `json:"homebrew_exact"`
+	HomebrewPRHeadCISuccess     bool   `json:"homebrew_pr_head_ci_success"`
+	HomebrewPostMergeCISuccess  bool   `json:"homebrew_post_merge_ci_success"`
+	BlockedVersionPolicyExact   bool   `json:"blocked_version_policy_exact"`
+	AbandonedReleasePolicyExact bool   `json:"abandoned_release_policy_exact"`
+	Result                      string `json:"result"`
+	ProofSHA256                 string `json:"proof_sha256"`
 }
 
 type PromotionRecord struct {
@@ -270,6 +295,7 @@ type Evidence struct {
 	AttestationVerificationBundle AttestationVerificationBundle `json:"attestation_verification_bundle"`
 	Homebrew                      HomebrewObservation           `json:"homebrew"`
 	BlockedVersions               []BlockedVersionObservation   `json:"blocked_versions"`
+	AbandonedRelease              AbandonedReleaseObservation   `json:"abandoned_release"`
 	RepositoryReleaseSettings     releasesettings.Proof         `json:"repository_release_settings"`
 	Health                        HealthProof                   `json:"health"`
 	EvidenceSHA256                string                        `json:"evidence_sha256"`

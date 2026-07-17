@@ -112,6 +112,7 @@ func Assemble(contract releasecontract.Contract, authorization Authorization, ma
 		AttestationVerificationBundle: attestationBundleCopy,
 		Homebrew:                      observationCopy.Homebrew,
 		BlockedVersions:               observationCopy.BlockedVersions,
+		AbandonedRelease:              observationCopy.AbandonedRelease,
 		RepositoryReleaseSettings:     observationCopy.RepositoryReleaseSettings,
 		Health:                        observationCopy.Health,
 	}
@@ -142,6 +143,7 @@ func Verify(evidence Evidence, contract releasecontract.Contract) error {
 		ObservedAt: evidence.ObservedAt,
 		Tag:        evidence.Tag, Release: evidence.Release, Attestations: evidence.Attestations,
 		Homebrew: evidence.Homebrew, BlockedVersions: evidence.BlockedVersions,
+		AbandonedRelease:          evidence.AbandonedRelease,
 		RepositoryReleaseSettings: evidence.RepositoryReleaseSettings, Health: evidence.Health,
 	}
 	if err := validateInputs(contract, evidence.Authorization, manifest, evidence.CIMetrics, evidence.PublisherMetrics, observation, evidence.AttestationVerificationBundle); err != nil {
@@ -334,6 +336,9 @@ func validateObservation(contract releasecontract.Contract, authorization Author
 	if err := validateBlockedVersions(contract, observation.BlockedVersions); err != nil {
 		return err
 	}
+	if err := validateAbandonedRelease(contract, manifest, observation.AbandonedRelease, observedAt); err != nil {
+		return err
+	}
 	if err := validateRepositoryReleaseSettings(contract, authorization, observation.RepositoryReleaseSettings, observedAt); err != nil {
 		return err
 	}
@@ -500,6 +505,62 @@ func validateBlockedVersions(contract releasecontract.Contract, observed []Block
 	return nil
 }
 
+func validateAbandonedRelease(contract releasecontract.Contract, manifest releasepromotion.Manifest, observed AbandonedReleaseObservation, observedAt time.Time) error {
+	policy := contract.VersionPolicy.ReleasePleaseRecovery
+	planningApp, ok := contract.AppByID("release_planning")
+	if !ok {
+		return fail(CodeInputIncomplete, "release contract has no release-planning app", nil)
+	}
+	wantTitle := "chore(main): release " + contract.Naming.Product + " " + policy.AbandonedVersion
+	wantAuthor := planningApp.Slug + "[bot]"
+	semanticContractSHA256, err := releasecontract.SemanticSHA256(contract)
+	if err != nil {
+		return fail(CodeDigestMismatch, "hash abandoned-release contract", err)
+	}
+	pr := observed.GeneratedReleasePR
+	if policy.State == "active" && (manifest.ReleaseVersion != policy.ResumeVersion || manifest.SourceSHA == policy.AbandonedSourceSHA) {
+		return fail(CodeVersionMismatch, "active recovery evidence is not bound to the exact resume release", nil)
+	}
+	if manifest.SourceSHA == policy.AbandonedSourceSHA || manifest.SourceSHA == policy.GeneratedReleasePRHeadSHA {
+		return fail(CodeSourceMismatch, "release evidence source is not distinct from the abandoned incident", nil)
+	}
+	if observed.State != "abandoned" || observed.Version != policy.AbandonedVersion || observed.SourceSHA != policy.AbandonedSourceSHA ||
+		pr.Number != int64(policy.GeneratedReleasePRNumber) || pr.HeadSHA != policy.GeneratedReleasePRHeadSHA || pr.MergeSHA != policy.AbandonedSourceSHA ||
+		observed.PullRequestState != "closed" || !observed.PullRequestMerged || observed.PullRequestTitle != wantTitle || observed.PullRequestAuthor != wantAuthor ||
+		observed.BaseRef != "main" || observed.BaseRepository != manifest.Repository || !observed.BoundaryIsAncestorOfRelease ||
+		(policy.TagMustNotExist && observed.TagExists) || (policy.GitHubReleaseMustNotExist && observed.GitHubReleaseExists) || observed.ReasonCode != policy.ReasonCode ||
+		observed.SemanticContractSHA256 != semanticContractSHA256 || !digestPattern.MatchString(observed.SemanticContractSHA256) {
+		return fail(CodeInputInvalid, "abandoned release state differs from the exact contract incident", nil)
+	}
+	mergedAt, err := canonicalTime(pr.MergedAt)
+	if err != nil || mergedAt.After(observedAt) {
+		return fail(CodeInputInvalid, "abandoned release PR merged_at is invalid", err)
+	}
+	abandonedObservedAt, err := canonicalTime(observed.ObservedAt)
+	if err != nil || abandonedObservedAt.Before(mergedAt) || abandonedObservedAt.After(observedAt) {
+		return fail(CodeInputInvalid, "abandoned release observed_at is invalid", err)
+	}
+	if len(observed.Labels) == 0 {
+		return fail(CodeInputIncomplete, "abandoned release PR labels are missing", nil)
+	}
+	foundAbandoned := false
+	for index, label := range observed.Labels {
+		if label == "" || (index > 0 && observed.Labels[index-1] >= label) {
+			return fail(CodeInputInvalid, "abandoned release PR labels must be sorted and unique", nil)
+		}
+		switch label {
+		case policy.AbandonedLabel:
+			foundAbandoned = true
+		case policy.PendingLabel, policy.TaggedLabel:
+			return fail(CodeInputInvalid, "abandoned release PR has a forbidden lifecycle label", nil)
+		}
+	}
+	if !foundAbandoned {
+		return fail(CodeInputIncomplete, "abandoned release PR lacks its lifecycle label", nil)
+	}
+	return nil
+}
+
 func ValidateHealthProof(proof HealthProof, contract releasecontract.Contract, manifest releasepromotion.Manifest, publisherMetrics releasemetrics.Metrics, observedAt time.Time) error {
 	if proof.SchemaID != contract.Schemas["release_health_proof"] || proof.SchemaVersion != ObservationSchemaVersion || proof.Result != "pass" {
 		return fail(CodeInputInvalid, "health proof schema or result is invalid", nil)
@@ -511,7 +572,7 @@ func ValidateHealthProof(proof HealthProof, contract releasecontract.Contract, m
 	if err != nil || checkedAt.After(observedAt) {
 		return fail(CodeInputInvalid, "health proof checked_at is invalid", err)
 	}
-	if !proof.TagExactSource || !proof.ReleasePublished || !proof.AssetsExact || !proof.AttestationsExact || !proof.HomebrewExact || !proof.HomebrewPRHeadCISuccess || !proof.HomebrewPostMergeCISuccess || !proof.BlockedVersionPolicyExact {
+	if !proof.TagExactSource || !proof.ReleasePublished || !proof.AssetsExact || !proof.AttestationsExact || !proof.HomebrewExact || !proof.HomebrewPRHeadCISuccess || !proof.HomebrewPostMergeCISuccess || !proof.BlockedVersionPolicyExact || !proof.AbandonedReleasePolicyExact {
 		return fail(CodeInputIncomplete, "health proof did not pass every release guarantee", nil)
 	}
 	want, err := HealthProofSHA256(proof)

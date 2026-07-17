@@ -80,5 +80,13 @@ func Markdown(evidence Evidence, contract releasecontract.Contract) ([]byte, err
 		fmt.Fprintf(&output, "- `%s`: tag `%s` exists; GitHub Release absent\n", blocked.Version, blocked.TagSHA)
 	}
 
+	fmt.Fprintln(&output, "\n## Preserved abandoned-release policy")
+	fmt.Fprintln(&output)
+	fmt.Fprintf(&output, "- `%s`: merged PR `#%d` at `%s` is labeled `%s`; tag and GitHub Release absent\n",
+		evidence.AbandonedRelease.Version,
+		evidence.AbandonedRelease.GeneratedReleasePR.Number,
+		evidence.AbandonedRelease.SourceSHA,
+		contract.VersionPolicy.ReleasePleaseRecovery.AbandonedLabel)
+
 	return output.Bytes(), nil
 }

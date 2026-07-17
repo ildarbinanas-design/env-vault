@@ -24,11 +24,13 @@ const (
 	CanonicalPath  = "release/contract.v1.json"
 	MatrixSchemaID = "env-vault.release-contract-matrix.v1"
 
-	VersionSchemaID        = "env-vault.releasecheck-version.v1"
-	ErrorSchemaID          = "env-vault.releasecheck-error.v1"
-	ValidationSchemaID     = "env-vault.contract-validation.v1"
-	ClassificationSchemaID = "env-vault.attempt-classification.v1"
-	LegacyQuerySchemaID    = "env-vault.legacy-rebuild-query.v1"
+	VersionSchemaID                    = "env-vault.releasecheck-version.v1"
+	ErrorSchemaID                      = "env-vault.releasecheck-error.v1"
+	ValidationSchemaID                 = "env-vault.contract-validation.v1"
+	ClassificationSchemaID             = "env-vault.attempt-classification.v1"
+	LegacyQuerySchemaID                = "env-vault.legacy-rebuild-query.v1"
+	ReleasePleaseRecoverySchemaID      = "env-vault.release-please-recovery.v1"
+	ReleasePleaseRecoveryCheckSchemaID = "env-vault.release-please-recovery-check.v1"
 
 	maxContractBytes  = 1 << 20
 	blockedVersion008 = "v0.0.8"
@@ -39,7 +41,10 @@ const (
 	blockedTagSHA010  = "591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795"
 	blockedVersion011 = "v0.0.11"
 	blockedTagSHA011  = "95181260700afdb0bf257b69f490079d2fb6d5f0"
-	versionPattern    = `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
+	// This remains empty until post-release evidence proves v0.0.13. The
+	// cleanup PR must pin the exact successful source here and in the contract.
+	completedReleaseSource013 = ""
+	versionPattern            = `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
 )
 
 var (
@@ -75,9 +80,30 @@ type Contract struct {
 }
 
 type VersionPolicy struct {
-	Pattern         string              `json:"pattern"`
-	BlockedVersions []BlockedVersion    `json:"blocked_versions"`
-	LegacyRebuild   LegacyRebuildPolicy `json:"legacy_rebuild"`
+	Pattern               string                      `json:"pattern"`
+	ReleasePleaseRecovery ReleasePleaseRecoveryPolicy `json:"release_please_recovery"`
+	BlockedVersions       []BlockedVersion            `json:"blocked_versions"`
+	LegacyRebuild         LegacyRebuildPolicy         `json:"legacy_rebuild"`
+}
+
+// ReleasePleaseRecoveryPolicy records the one-time, fail-closed recovery from
+// a merged Release Please proposal that was deliberately not tagged. The
+// incident identity remains immutable when state advances from active to
+// complete; only CompletedReleaseSourceSHA is added.
+type ReleasePleaseRecoveryPolicy struct {
+	State                     string `json:"state"`
+	AbandonedVersion          string `json:"abandoned_version"`
+	AbandonedSourceSHA        string `json:"abandoned_source_sha"`
+	GeneratedReleasePRNumber  int    `json:"generated_release_pr_number"`
+	GeneratedReleasePRHeadSHA string `json:"generated_release_pr_head_sha"`
+	ResumeVersion             string `json:"resume_version"`
+	PendingLabel              string `json:"pending_label"`
+	AbandonedLabel            string `json:"abandoned_label"`
+	TaggedLabel               string `json:"tagged_label"`
+	TagMustNotExist           bool   `json:"tag_must_not_exist"`
+	GitHubReleaseMustNotExist bool   `json:"github_release_must_not_exist"`
+	ReasonCode                string `json:"reason_code"`
+	CompletedReleaseSourceSHA string `json:"completed_release_source_sha,omitempty"`
 }
 
 type LegacyRebuildPolicy struct {
@@ -170,6 +196,9 @@ func LoadFile(filename string) (Contract, error) {
 	}
 	var contract Contract
 	if err := decodeJSON(data, &contract, true); err != nil {
+		return Contract{}, fmt.Errorf("decode release contract: %w", err)
+	}
+	if err := validateReleasePleaseRecoveryEncoding(data, contract.VersionPolicy.ReleasePleaseRecovery); err != nil {
 		return Contract{}, fmt.Errorf("decode release contract: %w", err)
 	}
 	if err := contract.Validate(); err != nil {
@@ -316,6 +345,9 @@ func (c Contract) Validate() error {
 	if c.VersionPolicy.Pattern != versionPattern {
 		add("version policy pattern is not the canonical strict SemVer expression")
 	}
+	if err := validateReleasePleaseRecovery(c.VersionPolicy.ReleasePleaseRecovery); err != nil {
+		add("release-please recovery: %v", err)
+	}
 	if err := validateBlockedVersions(c.VersionPolicy.BlockedVersions); err != nil {
 		add("blocked versions: %v", err)
 	}
@@ -455,7 +487,7 @@ func (c Contract) Validate() error {
 	if err := validateCodes(c.ErrorCodes, errorCodePattern, "error"); err != nil {
 		add("%v", err)
 	}
-	for _, required := range []string{"none", "wait_attempt", "rerun_all_jobs", "inspect_failure", "rerun_tap_pr_ci_all_jobs", "rerun_tap_post_merge_ci_all_jobs", "dispatch_release_assets_repair", "dispatch_homebrew_repair", "dispatch_health_repair", "dispatch_legacy_rebuild"} {
+	for _, required := range []string{"none", "wait_attempt", "rerun_all_jobs", "inspect_failure", "rerun_tap_pr_ci_all_jobs", "rerun_tap_post_merge_ci_all_jobs", "dispatch_release_assets_repair", "dispatch_homebrew_repair", "dispatch_health_repair", "dispatch_legacy_rebuild", "mark_release_pr_abandoned"} {
 		if !contains(c.ActionCodes, required) {
 			add("required action code %q is missing", required)
 		}
@@ -465,7 +497,7 @@ func (c Contract) Validate() error {
 			add("required error code %q is missing", required)
 		}
 	}
-	for _, required := range []string{"ATTEMPT_MATRIX_COMPLETE", "ATTEMPT_NOT_COMPLETED", "ATTEMPT_MATRIX_INCOMPLETE", "CI_ATTEMPT_FAILED"} {
+	for _, required := range []string{"ATTEMPT_MATRIX_COMPLETE", "ATTEMPT_NOT_COMPLETED", "ATTEMPT_MATRIX_INCOMPLETE", "CI_ATTEMPT_FAILED", "PRETAG_AUTHORIZATION_MISSING"} {
 		if !contains(c.ReasonCodes, required) {
 			add("required reason code %q is missing", required)
 		}
@@ -496,6 +528,8 @@ func (c Contract) Validate() error {
 		"repository_release_settings_check": "env-vault.repository-release-settings-check.v1",
 		"repository_release_settings_proof": "env-vault.repository-release-settings-proof.v1",
 		"release_authorization":             "env-vault.release-authorization.v1",
+		"release_please_recovery":           ReleasePleaseRecoverySchemaID,
+		"release_please_recovery_check":     ReleasePleaseRecoveryCheckSchemaID,
 		"attestation_verification_bundle":   "env-vault.attestation-verification-bundle.v1",
 		"release_evidence":                  "env-vault.release-evidence.v1",
 		"release_metrics":                   "env-vault.release-metrics.v1",
@@ -553,6 +587,62 @@ func validateMainRequiredChecks(checks []RequiredCheck) error {
 		if check != want[index] {
 			return fmt.Errorf("entry %d does not match the canonical name/workflow/event identity", index)
 		}
+	}
+	return nil
+}
+
+func validateReleasePleaseRecovery(policy ReleasePleaseRecoveryPolicy) error {
+	if policy.State != "active" && policy.State != "complete" {
+		return errors.New("state must be active or complete")
+	}
+	if policy.AbandonedVersion != "v0.0.12" || policy.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" {
+		return errors.New("abandoned v0.0.12 identity must remain exact")
+	}
+	if policy.GeneratedReleasePRNumber != 31 || policy.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" {
+		return errors.New("generated release PR #31 identity must remain exact")
+	}
+	if policy.ResumeVersion != "v0.0.13" {
+		return errors.New("resume version must remain v0.0.13")
+	}
+	if policy.PendingLabel != "autorelease: pending" || policy.AbandonedLabel != "autorelease: abandoned" || policy.TaggedLabel != "autorelease: tagged" {
+		return errors.New("Release Please transition labels must remain exact")
+	}
+	if !policy.TagMustNotExist || !policy.GitHubReleaseMustNotExist {
+		return errors.New("abandoned version must prohibit both tag and GitHub Release")
+	}
+	if policy.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" {
+		return errors.New("reason code must remain PRETAG_AUTHORIZATION_MISSING")
+	}
+	if policy.State == "active" {
+		if policy.CompletedReleaseSourceSHA != "" {
+			return errors.New("active recovery must omit completed release source SHA")
+		}
+		return nil
+	}
+	if completedReleaseSource013 == "" {
+		return errors.New("complete recovery is disabled until the successful v0.0.13 source SHA is pinned in the checker")
+	}
+	if policy.CompletedReleaseSourceSHA != completedReleaseSource013 || !isSHA(policy.CompletedReleaseSourceSHA) || policy.CompletedReleaseSourceSHA == policy.AbandonedSourceSHA || policy.CompletedReleaseSourceSHA == policy.GeneratedReleasePRHeadSHA {
+		return errors.New("complete recovery requires the checker-pinned successful v0.0.13 source SHA")
+	}
+	return nil
+}
+
+func validateReleasePleaseRecoveryEncoding(data []byte, policy ReleasePleaseRecoveryPolicy) error {
+	var envelope struct {
+		VersionPolicy struct {
+			Recovery map[string]json.RawMessage `json:"release_please_recovery"`
+		} `json:"version_policy"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	_, completedPresent := envelope.VersionPolicy.Recovery["completed_release_source_sha"]
+	if policy.State == "active" && completedPresent {
+		return errors.New("active release-please recovery must omit completed_release_source_sha")
+	}
+	if policy.State == "complete" && !completedPresent {
+		return errors.New("complete release-please recovery must include completed_release_source_sha")
 	}
 	return nil
 }

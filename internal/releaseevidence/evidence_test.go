@@ -21,7 +21,7 @@ import (
 
 const (
 	testRepository = "ildarbinanas-design/env-vault"
-	testVersion    = "v9.8.7"
+	testVersion    = "v0.0.13"
 	testSource     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	testCIRun      = int64(424242)
 	testAttempt    = 3
@@ -75,7 +75,7 @@ func TestAssembleVerifyAndRenderDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(first, second) || !bytes.Contains(first, []byte("| Publisher | 525252 / 1 |")) || !bytes.Contains(first, []byte("525252` / `1` / `none")) || !bytes.Contains(first, []byte("v0.0.8")) {
+	if !bytes.Equal(first, second) || !bytes.Contains(first, []byte("| Publisher | 525252 / 1 |")) || !bytes.Contains(first, []byte("525252` / `1` / `none")) || !bytes.Contains(first, []byte("v0.0.8")) || !bytes.Contains(first, []byte("v0.0.12")) {
 		t.Fatalf("Markdown index is incomplete or nondeterministic:\n%s", first)
 	}
 
@@ -83,6 +83,7 @@ func TestAssembleVerifyAndRenderDeterministically(t *testing.T) {
 	fixture.manifest.Assets[0].SHA256 = strings.Repeat("0", 64)
 	fixture.authorization.GeneratedReleasePR.HeadSHA = strings.Repeat("0", 40)
 	fixture.observation.Attestations[0].AssetSHA256 = strings.Repeat("1", 64)
+	fixture.observation.AbandonedRelease.Labels[0] = "mutated"
 	fixture.observation.RepositoryReleaseSettings.Inputs.MainRuleset.DocumentJSON = "{}"
 	fixture.attestationBundle.Entries[0].DocumentJSON = "[]"
 	if err := Verify(evidence, fixture.contract); err != nil {
@@ -144,8 +145,50 @@ func TestEvidenceFailsClosedOnIncompleteOrInconsistentState(t *testing.T) {
 		"failed tag gained release": func(f *evidenceFixture) {
 			f.observation.BlockedVersions[0].ReleaseExists = true
 		},
+		"abandoned release gained tag": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.TagExists = true
+		},
+		"abandoned release gained GitHub Release": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.GitHubReleaseExists = true
+		},
+		"abandoned release lost lifecycle label": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.Labels = []string{"documentation"}
+		},
+		"abandoned release regained pending label": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.Labels = []string{"autorelease: abandoned", "autorelease: pending"}
+		},
+		"abandoned release boundary ancestry unproven": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.BoundaryIsAncestorOfRelease = false
+		},
+		"abandoned release PR head mismatch": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.GeneratedReleasePR.HeadSHA = strings.Repeat("f", 40)
+		},
+		"abandoned release labels unsorted": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.Labels = []string{"documentation", "autorelease: abandoned"}
+		},
+		"abandoned release labels duplicate": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.Labels = []string{"autorelease: abandoned", "autorelease: abandoned"}
+		},
+		"abandoned release wrong title": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.PullRequestTitle = "chore(main): release env-vault v0.0.13"
+		},
+		"abandoned release wrong author": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.PullRequestAuthor = "github-actions[bot]"
+		},
+		"abandoned release future observation": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.ObservedAt = "2026-07-16T09:21:00Z"
+		},
+		"abandoned release wrong reason": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.ReasonCode = "ATTEMPT_NOT_COMPLETED"
+		},
+		"abandoned release contract digest mismatch": func(f *evidenceFixture) {
+			f.observation.AbandonedRelease.SemanticContractSHA256 = strings.Repeat("f", 64)
+		},
 		"health result tampered": func(f *evidenceFixture) {
 			f.observation.Health.HomebrewExact = false
+		},
+		"health omitted abandoned release policy": func(f *evidenceFixture) {
+			f.observation.Health.AbandonedReleasePolicyExact = false
 		},
 		"published asset reordered": func(f *evidenceFixture) {
 			f.observation.Release.Assets[0], f.observation.Release.Assets[1] = f.observation.Release.Assets[1], f.observation.Release.Assets[0]
@@ -875,7 +918,7 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 		PublisherRunID: publisher.RunID, PublisherRunAttempt: publisher.Attempt, CheckedAt: "2026-07-16T09:15:00Z",
 		TagExactSource: true, ReleasePublished: true, AssetsExact: true, AttestationsExact: true,
 		HomebrewExact: true, HomebrewPRHeadCISuccess: true, HomebrewPostMergeCISuccess: true,
-		BlockedVersionPolicyExact: true, Result: "pass",
+		BlockedVersionPolicyExact: true, AbandonedReleasePolicyExact: true, Result: "pass",
 	}
 	if err := SealHealthProof(&health); err != nil {
 		t.Fatal(err)
@@ -884,13 +927,33 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 	for _, policy := range contract.VersionPolicy.BlockedVersions {
 		blocked = append(blocked, BlockedVersionObservation{Version: policy.Version, TagSHA: policy.TagSHA, TagExists: policy.TagMustRemain, ReleaseExists: false})
 	}
+	recovery := contract.VersionPolicy.ReleasePleaseRecovery
+	planningApp, _ := contract.AppByID("release_planning")
+	semanticContractSHA256, err := releasecontract.SemanticSHA256(contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandoned := AbandonedReleaseObservation{
+		State: "abandoned", Version: recovery.AbandonedVersion, SourceSHA: recovery.AbandonedSourceSHA,
+		GeneratedReleasePR: GeneratedReleasePRIdentity{
+			Number: int64(recovery.GeneratedReleasePRNumber), HeadSHA: recovery.GeneratedReleasePRHeadSHA,
+			MergeSHA: recovery.AbandonedSourceSHA, MergedAt: "2026-07-16T08:00:00Z",
+		},
+		PullRequestState: "closed", PullRequestMerged: true,
+		PullRequestTitle:  "chore(main): release " + contract.Naming.Product + " " + recovery.AbandonedVersion,
+		PullRequestAuthor: planningApp.Slug + "[bot]", BaseRef: "main", BaseRepository: testRepository,
+		Labels: []string{recovery.AbandonedLabel}, BoundaryIsAncestorOfRelease: true,
+		TagExists: false, GitHubReleaseExists: false, ReasonCode: recovery.ReasonCode,
+		ObservedAt: "2026-07-16T09:16:00Z", SemanticContractSHA256: semanticContractSHA256,
+	}
 	return Observation{
 		SchemaID: ObservationSchemaID, SchemaVersion: ObservationSchemaVersion,
 		Repository: testRepository, ReleaseVersion: testVersion, SourceSHA: testSource,
 		PublisherRepairMode: "none", ObservedAt: "2026-07-16T09:20:00Z",
 		Tag:          TagObservation{Name: testVersion, RefSHA: testSource, TargetSHA: testSource, Immutable: true, RulesetProtected: true},
 		Release:      ReleaseObservation{State: "published", URL: "https://github.com/" + testRepository + "/releases/tag/" + testVersion, TagName: testVersion, TargetSHA: testSource, PublishedAt: "2026-07-16T09:11:00Z", NoClobberVerified: true, Assets: releaseAssets},
-		Attestations: attestations, Homebrew: homebrew, BlockedVersions: blocked, Health: health,
+		Attestations: attestations, Homebrew: homebrew, BlockedVersions: blocked,
+		AbandonedRelease: abandoned, Health: health,
 	}
 }
 

@@ -292,6 +292,7 @@ func TestVerifyReleaseProposal(t *testing.T) {
 	baseEnv := []string{
 		"GITHUB_REPOSITORY=example/env-vault",
 		"RELEASE_APP_SLUG=env-vault-release-planning",
+		"EXPECTED_RELEASE_VERSION=v0.0.8",
 		"FAKE_PROPOSAL_HEAD_SHA=" + headSHA,
 		"FAKE_PROPOSAL_PARENT_SHA=" + parentSHA,
 		"FAKE_MAIN_SHA=" + mainSHA,
@@ -324,6 +325,12 @@ func TestVerifyReleaseProposal(t *testing.T) {
 	badPathsEnv = append(badPathsEnv, "FAKE_PROPOSAL_UNEXPECTED_PATH=true")
 	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), badPathsEnv, "verify-release-proposal.sh"); err == nil {
 		t.Fatalf("proposal with unexpected path unexpectedly succeeded: %s", output)
+	}
+
+	wrongVersionEnv := append([]string{}, baseEnv...)
+	wrongVersionEnv = append(wrongVersionEnv, "EXPECTED_RELEASE_VERSION=v0.0.9")
+	if output, err := runReleaseAutomationScriptEnv(t, t.TempDir(), wrongVersionEnv, "verify-release-proposal.sh"); err == nil {
+		t.Fatalf("proposal outside the active recovery resume version unexpectedly succeeded: %s", output)
 	}
 }
 
@@ -517,8 +524,10 @@ func TestEnsureReleaseLifecycleLabels(t *testing.T) {
 	for _, snippet := range []string{
 		"label create autorelease: pending",
 		"label create autorelease: tagged",
+		"label create autorelease: abandoned",
 		"labels/autorelease%3A%20pending",
 		"labels/autorelease%3A%20tagged",
+		"labels/autorelease%3A%20abandoned",
 	} {
 		if !strings.Contains(log, snippet) {
 			t.Fatalf("release label bootstrap log missing %q: %s", snippet, log)
@@ -684,6 +693,11 @@ fi
 if [[ "$args" == *"labels/autorelease%3A%20tagged"* ]]; then
   printf '%s\n' "$args" >> "${FAKE_LABEL_CALL_LOG:?}"
   printf '%s\n' $'autorelease: tagged\t0e8a16\tReviewed Release Please proposal with an exact release tag'
+  exit 0
+fi
+if [[ "$args" == *"labels/autorelease%3A%20abandoned"* ]]; then
+  printf '%s\n' "$args" >> "${FAKE_LABEL_CALL_LOG:?}"
+  printf '%s\n' $'autorelease: abandoned\tb60205\tMerged Release Please proposal permanently abandoned before tagging'
   exit 0
 fi
 

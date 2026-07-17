@@ -18,7 +18,7 @@ func TestEvidenceSealHealthCLIIsStrictAndNoClobber(t *testing.T) {
 		CheckedAt: "2026-07-16T09:00:00Z", TagExactSource: true, ReleasePublished: true,
 		AssetsExact: true, AttestationsExact: true, HomebrewExact: true,
 		HomebrewPRHeadCISuccess: true, HomebrewPostMergeCISuccess: true,
-		BlockedVersionPolicyExact: true, Result: "pass",
+		BlockedVersionPolicyExact: true, AbandonedReleasePolicyExact: true, Result: "pass",
 	}
 	input, err := releaseevidence.MarshalJSON(proof)
 	if err != nil {

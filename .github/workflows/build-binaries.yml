@@ -924,6 +924,7 @@ jobs:
       actions: read
       contents: read
       attestations: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -971,7 +972,7 @@ jobs:
             --json > repository-release-settings-proof.json
           cmp "${proofs[0]}" repository-release-settings-proof.json
 
-      - name: Verify release, supply chain, both Homebrew gates, and blocked tags
+      - name: Verify release, supply chain, Homebrew, blocked tags, and abandoned release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -988,6 +989,7 @@ jobs:
           PUBLISHED_TAP_SHA: ${{ needs.homebrew.outputs.tap_sha }}
           PUBLISHED_PR_CI_URL: ${{ needs.homebrew.outputs.pr_ci_url }}
           PUBLISHED_TAP_CI_URL: ${{ needs.homebrew.outputs.tap_ci_url }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck
         run: |
           set -euo pipefail
           tag_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
@@ -1234,6 +1236,10 @@ jobs:
             )
           ' health-evidence/attestation-verifications.json >/dev/null
 
+          scripts/release/verify-abandoned-release-policy.sh \
+            "$VERSION" "$SOURCE_SHA" health-evidence/abandoned-release-policy.json
+          abandoned_release="$(jq -c . health-evidence/abandoned-release-policy.json)"
+
           checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -1248,6 +1254,7 @@ jobs:
                tag_exact_source:true,release_published:true,assets_exact:true,
                attestations_exact:true,homebrew_exact:true,homebrew_pr_head_ci_success:true,
                homebrew_post_merge_ci_success:true,blocked_version_policy_exact:true,
+               abandoned_release_policy_exact:true,
                result:"pass",proof_sha256:""}
             ' > health-evidence/health-unsealed.json
           go run ./cmd/releasecheck evidence seal-health \
@@ -1281,6 +1288,7 @@ jobs:
             --arg tap_ci_url "$tap_ci_url" \
             --arg tap_ci_workflow "$TAP_CI_WORKFLOW" \
             --argjson blocked_versions "$blocked_versions" \
+            --argjson abandoned_release "$abandoned_release" \
             --argjson repository_release_settings "$(jq -c . repository-release-settings-proof.json)" \
             --argjson health "$(jq -c . health-evidence/health-proof.json)" '
               {schema_id:"env-vault.release-observation.v1",schema_version:1,
@@ -1300,6 +1308,7 @@ jobs:
                  post_merge_ci:{run_id:$tap_ci_run_id,run_attempt:$tap_ci_attempt,workflow:$tap_ci_workflow,
                    event:"push",head_sha:$merge_sha,conclusion:"success",url:$tap_ci_url}},
                blocked_versions:$blocked_versions,
+               abandoned_release:$abandoned_release,
                health:$health}
             ' > health-evidence/release-observation.json
           jq -e '.schema_id == "env-vault.release-observation.v1" and .health.result == "pass"' \
@@ -1314,6 +1323,7 @@ jobs:
             health-evidence/release-observation.json
             health-evidence/health-proof.json
             health-evidence/attestation-verifications.json
+            health-evidence/abandoned-release-policy.json
             repository-release-settings-proof.json
           if-no-files-found: error
           retention-days: 90

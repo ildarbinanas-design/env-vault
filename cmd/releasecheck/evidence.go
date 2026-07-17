@@ -245,7 +245,7 @@ func validateUnsealedHealthProof(proof releaseevidence.HealthProof, contract rel
 	if err != nil || checkedAt.Location() != time.UTC || checkedAt.Format(time.RFC3339) != proof.CheckedAt {
 		return errors.New("health proof checked_at must be canonical UTC RFC3339")
 	}
-	if !proof.TagExactSource || !proof.ReleasePublished || !proof.AssetsExact || !proof.AttestationsExact || !proof.HomebrewExact || !proof.HomebrewPRHeadCISuccess || !proof.HomebrewPostMergeCISuccess || !proof.BlockedVersionPolicyExact {
+	if !proof.TagExactSource || !proof.ReleasePublished || !proof.AssetsExact || !proof.AttestationsExact || !proof.HomebrewExact || !proof.HomebrewPRHeadCISuccess || !proof.HomebrewPostMergeCISuccess || !proof.BlockedVersionPolicyExact || !proof.AbandonedReleasePolicyExact {
 		return errors.New("health proof cannot be sealed before every guarantee passes")
 	}
 	return nil

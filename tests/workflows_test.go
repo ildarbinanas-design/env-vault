@@ -135,6 +135,21 @@ type releaseContract struct {
 	Assets        []string           `json:"assets"`
 	Workflows     []contractWorkflow `json:"workflows"`
 	VersionPolicy struct {
+		ReleasePleaseRecovery struct {
+			State                     string `json:"state"`
+			AbandonedVersion          string `json:"abandoned_version"`
+			AbandonedSourceSHA        string `json:"abandoned_source_sha"`
+			GeneratedReleasePRNumber  int    `json:"generated_release_pr_number"`
+			GeneratedReleasePRHeadSHA string `json:"generated_release_pr_head_sha"`
+			ResumeVersion             string `json:"resume_version"`
+			PendingLabel              string `json:"pending_label"`
+			AbandonedLabel            string `json:"abandoned_label"`
+			TaggedLabel               string `json:"tagged_label"`
+			TagMustNotExist           bool   `json:"tag_must_not_exist"`
+			GitHubReleaseMustNotExist bool   `json:"github_release_must_not_exist"`
+			ReasonCode                string `json:"reason_code"`
+			CompletedReleaseSourceSHA string `json:"completed_release_source_sha"`
+		} `json:"release_please_recovery"`
 		BlockedVersions []struct {
 			Version                   string `json:"version"`
 			TagSHA                    string `json:"tag_sha"`
@@ -463,6 +478,12 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 	if !containsAll(current.Run, "gh-api-read.sh", "main-ref.json", "EXPECTED_SHA") {
 		t.Fatalf("planning current-main observation is not bounded and file-backed")
 	}
+	contractStep := namedStep(t, plan, "Build the offline checker and validate the release contract")
+	if !containsAll(contractStep.Run,
+		"recovery validate-config", "--config release-please-config.json",
+		"--manifest .release-please-manifest.json", "recovery_state", "recovery_resume_version") {
+		t.Fatalf("planning does not bind the one-time Release Please recovery offline")
+	}
 
 	attempt := namedStep(t, plan, "Snapshot and classify the exact triggering CI attempt")
 	if !containsAll(attempt.Run, "gh-api-read.sh", "classify-attempt", "action_code == \"none\"", "rerun_failed_jobs_allowed == false", ".repository == $repository", ".head_repository == $repository") || strings.Contains(attempt.Run, "rerun-classified-attempt.sh") {
@@ -517,9 +538,37 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 		settingsUpload.With["path"] != "${{ runner.temp }}/repository-release-settings-proof.json" {
 		t.Fatalf("pre-tag settings proof artifact is not source/attempt qualified: %+v", settingsUpload.With)
 	}
+	recovery := namedStep(t, plan, "Reconcile the exact abandoned untagged release pull request")
+	if recovery.Env["GH_TOKEN"] != "${{ steps.release-token.outputs.token }}" ||
+		recovery.Env["RELEASECHECK"] != "${{ runner.temp }}/releasecheck" ||
+		!containsAll(recovery.If, "publish != 'true'", "current == 'true'", "recovery_state == 'active'") ||
+		!containsAll(recovery.Run, "reconcile-abandoned-release-pr.sh", "release-please-recovery.json") {
+		t.Fatalf("abandoned release recovery is not exact, App-scoped, and offline-checker backed: %+v", recovery)
+	}
+	recoveryUpload := namedStep(t, plan, "Upload exact abandoned-release recovery evidence")
+	if recoveryUpload.Uses != uploadArtifactAction ||
+		!containsAll(recoveryUpload.If, "abandon-release.outcome == 'success'") ||
+		!containsAll(recoveryUpload.With["name"], "github.run_id", "github.run_attempt") ||
+		recoveryUpload.With["path"] != "${{ runner.temp }}/release-please-recovery.json" ||
+		recoveryUpload.With["if-no-files-found"] != "error" {
+		t.Fatalf("abandoned release recovery evidence is not attempt-qualified: %+v", recoveryUpload.With)
+	}
+	proposal := namedStep(t, plan, "Verify the proposal is based on a green main commit")
+	if proposal.Env["EXPECTED_RELEASE_VERSION"] != "${{ steps.release-contract.outputs.recovery_state == 'active' && steps.release-contract.outputs.recovery_resume_version || '' }}" ||
+		proposal.Run != "scripts/release/verify-release-proposal.sh" {
+		t.Fatalf("active recovery proposal is not bound to the exact resume version: %+v", proposal)
+	}
 	tagMutation := namedStep(t, plan, "Create or verify the exact release tag")
-	if strings.Count(tagMutation.Run, "gh api --method POST") != 1 || strings.Contains(tagMutation.Run, "gh-api-read.sh") {
+	if strings.Count(tagMutation.Run, "gh api --method POST") != 1 || strings.Contains(tagMutation.Run, "gh-api-read.sh") ||
+		!containsAll(tagMutation.Run, "verify-abandoned-release-policy.sh", `"$VERSION" "$SOURCE_SHA"`, "abandoned-release-policy.json") ||
+		tagMutation.Env["RELEASECHECK"] != "${{ runner.temp }}/releasecheck" {
 		t.Fatalf("immutable tag mutation must remain a one-shot direct API call")
+	}
+	pretagRecoveryUpload := namedStep(t, plan, "Upload the exact pre-tag abandoned-release proof")
+	if pretagRecoveryUpload.Uses != uploadArtifactAction ||
+		!containsAll(pretagRecoveryUpload.With["name"], "source_sha", "github.run_id", "github.run_attempt") ||
+		pretagRecoveryUpload.With["path"] != "${{ runner.temp }}/pretag/abandoned-release-policy.json" {
+		t.Fatalf("pre-tag abandoned-release proof is not source/planning-attempt qualified: %+v", pretagRecoveryUpload.With)
 	}
 
 	assertStepOrder(t, plan,
@@ -532,6 +581,14 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 		"Verify generated release pull request authorization",
 		"Recheck the exact CI attempt immediately before tag creation",
 		"Create or verify the exact release tag",
+		"Upload the exact pre-tag abandoned-release proof",
+	)
+	assertStepOrder(t, plan,
+		"Ensure release lifecycle labels",
+		"Reconcile the exact abandoned untagged release pull request",
+		"Upload exact abandoned-release recovery evidence",
+		"Create or update the reviewed release pull request",
+		"Verify the proposal is based on a green main commit",
 	)
 
 	helper := readFile(t, "../scripts/release/rerun-classified-attempt.sh")
@@ -654,7 +711,7 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 		"contents": "read", "id-token": "write", "attestations": "write", "artifact-metadata": "write",
 	})
 	assertPermissions(t, "homebrew", wf.Jobs["homebrew"].Permissions, map[string]string{"contents": "read", "attestations": "read"})
-	assertPermissions(t, "health", wf.Jobs["health"].Permissions, map[string]string{"actions": "read", "contents": "read", "attestations": "read"})
+	assertPermissions(t, "health", wf.Jobs["health"].Permissions, map[string]string{"actions": "read", "contents": "read", "attestations": "read", "pull-requests": "read"})
 
 	supply := wf.Jobs["supply_chain"]
 	if namedStep(t, supply, "Safely extract packages for SBOM").Run != "go run ./cmd/release-extract --input-dir release-dist --output-dir sbom-root" {
@@ -709,7 +766,7 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 	if !containsAll(settingsVerify.Run, "settings verify", "--planning-run-id", "--planning-run-attempt", "--source-sha", "--release-version", "cmp") {
 		t.Fatalf("health does not replay the settings proof against the exact release/planning tuple")
 	}
-	healthVerify := namedStep(t, health, "Verify release, supply chain, both Homebrew gates, and blocked tags")
+	healthVerify := namedStep(t, health, "Verify release, supply chain, Homebrew, blocked tags, and abandoned release")
 	if healthVerify.Env["REPAIR_MODE"] != "${{ needs.metadata.outputs.repair }}" || !containsAll(healthVerify.Run, "publisher_repair_mode", `--arg repair_mode "$REPAIR_MODE"`) {
 		t.Fatalf("health observation does not bind the exact publisher repair mode: env=%v", healthVerify.Env)
 	}
@@ -719,7 +776,9 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 		"attestation-verifications.json", "document_sha256", "document_json",
 		"merge_is_ancestor_of_tap", `merge-base --is-ancestor "$merge_sha" "$tap_sha"`,
 		`wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push`,
-		"blocked_versions:$blocked_versions", "releasecheck evidence seal-health") {
+		"blocked_versions:$blocked_versions", "verify-abandoned-release-policy.sh",
+		"abandoned_release_policy_exact:true", "abandoned_release:$abandoned_release",
+		"releasecheck evidence seal-health") {
 		t.Fatalf("health does not independently re-observe release, attestations, both tap gates, and all blocked versions")
 	}
 	if strings.Contains(healthVerify.Run, "verify-repository-release-settings.sh") || !containsAll(healthVerify.Run, "repository_release_settings", "repository-release-settings-proof.json") {
@@ -727,7 +786,7 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 	}
 	healthUpload := namedStep(t, health, "Upload typed release observation and sealed health proof")
 	if healthUpload.Uses != uploadArtifactAction || !containsAll(healthUpload.With["name"], "version", "github.run_attempt") ||
-		!containsAll(healthUpload.With["path"], "release-observation.json", "health-proof.json", "attestation-verifications.json", "repository-release-settings-proof.json") {
+		!containsAll(healthUpload.With["path"], "release-observation.json", "health-proof.json", "attestation-verifications.json", "abandoned-release-policy.json", "repository-release-settings-proof.json") {
 		t.Fatalf("machine-readable health observation is not version/current-attempt qualified: %v", healthUpload.With)
 	}
 }
@@ -910,7 +969,8 @@ func TestReleaseAppAuditWorkflowsKeepNarrowTokenScopes(t *testing.T) {
 func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T) {
 	data := []byte(readFile(t, "../release-please-config.json"))
 	var config struct {
-		Packages map[string]struct {
+		LastReleaseSHA string `json:"last-release-sha"`
+		Packages       map[string]struct {
 			ReleaseType       string `json:"release-type"`
 			PackageName       string `json:"package-name"`
 			Component         string `json:"component"`
@@ -925,6 +985,20 @@ func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatalf("parse release-please-config.json: %v", err)
+	}
+	recovery := readReleaseContract(t).VersionPolicy.ReleasePleaseRecovery
+	if recovery.State != "active" || recovery.AbandonedVersion != "v0.0.12" ||
+		recovery.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
+		recovery.GeneratedReleasePRNumber != 31 ||
+		recovery.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" ||
+		recovery.ResumeVersion != "v0.0.13" || config.LastReleaseSHA != recovery.AbandonedSourceSHA ||
+		recovery.PendingLabel != "autorelease: pending" ||
+		recovery.AbandonedLabel != "autorelease: abandoned" ||
+		recovery.TaggedLabel != "autorelease: tagged" ||
+		!recovery.TagMustNotExist || !recovery.GitHubReleaseMustNotExist ||
+		recovery.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" ||
+		recovery.CompletedReleaseSourceSHA != "" {
+		t.Fatalf("active Release Please recovery/config boundary=%+v config_sha=%q", recovery, config.LastReleaseSHA)
 	}
 	pkg, ok := config.Packages["."]
 	if !ok || pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" || !pkg.SkipGitHubRelease || !pkg.IncludeVInTag {
