@@ -2,6 +2,7 @@ package tests
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,6 +26,61 @@ var releaseTestArchives = []string{
 	"env-vault-darwin-amd64.tar.gz",
 	"env-vault-darwin-arm64.tar.gz",
 	"env-vault-windows-amd64.zip",
+}
+
+func TestHomebrewStateJQParsesExactOutputsFailClosed(t *testing.T) {
+	query := `include "homebrew-state"; env_vault_homebrew_state`
+	validRows := []string{
+		"branch=release/env-vault-v0.0.13",
+		"base_branch=main",
+		"base_sha=40efd0aaacfb9a76e34fa1916c177844ef8f7964",
+		"source_sha=6206b472cda81f7a87656055d8eb6627c26a0fef",
+		"pr_number=6",
+		"pr_url=https://github.com/ildarbinanas-design/homebrew-tap/pull/6",
+		"head_sha=cc84546bd407e99aefb79b8ac1d0754df747bcd3",
+		"merge_sha=40efd0aaacfb9a76e34fa1916c177844ef8f7964",
+		"tap_sha=40efd0aaacfb9a76e34fa1916c177844ef8f7964",
+		"merge_is_ancestor_of_tap=true",
+		"state=MERGED",
+		"already_merged=true",
+		"no_op=true",
+	}
+	run := func(t *testing.T, rows []string) []byte {
+		t.Helper()
+		command := exec.Command("jq", "-Rn", "-L", "../scripts/release", query)
+		command.Stdin = strings.NewReader(strings.Join(rows, "\n") + "\n")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("parse Homebrew exact state: %v\n%s", err, output)
+		}
+		return output
+	}
+
+	output := run(t, validRows)
+	var parsed map[string]string
+	if err := json.Unmarshal(output, &parsed); err != nil {
+		t.Fatalf("decode parsed Homebrew exact state: %v\n%s", err, output)
+	}
+	if len(parsed) != len(validRows) || parsed["merge_is_ancestor_of_tap"] != "true" || parsed["merge_sha"] != "40efd0aaacfb9a76e34fa1916c177844ef8f7964" {
+		t.Fatalf("parsed Homebrew exact state=%v", parsed)
+	}
+
+	invalid := map[string][]string{
+		"missing row":                 validRows[:len(validRows)-1],
+		"duplicate key":               append(append([]string{}, validRows[:len(validRows)-1]...), "already_merged=true"),
+		"unknown key":                 append(append([]string{}, validRows[:len(validRows)-1]...), "unexpected=true"),
+		"malformed row":               append(append([]string{}, validRows[:len(validRows)-1]...), "no_op"),
+		"additional row":              append(append([]string{}, validRows...), "unexpected=true"),
+		"additional malformed row":    append(append([]string{}, validRows...), "malformed"),
+		"additional blank input line": append(append([]string{}, validRows...), ""),
+	}
+	for name, rows := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if output := run(t, rows); len(strings.TrimSpace(string(output))) != 0 {
+				t.Fatalf("invalid Homebrew exact state was accepted: %s", output)
+			}
+		})
+	}
 }
 
 func TestArtifactPagesJQFlattensSlurpedEnvelopesFailClosed(t *testing.T) {

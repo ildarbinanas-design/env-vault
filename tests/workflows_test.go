@@ -838,7 +838,8 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 	}
 	if !containsAll(healthVerify.Run,
 		"wait-tap-ci.sh", "pull_request", "push", "version_policy.blocked_versions[]",
-		"--verify-published-pr", "gh attestation verify", "runInvocationURI",
+		"--verify-published-pr", `include "homebrew-state"`, "env_vault_homebrew_state",
+		"gh attestation verify", "runInvocationURI",
 		"attestation-verifications.json", "document_sha256", "document_json",
 		"merge_is_ancestor_of_tap", `merge-base --is-ancestor "$merge_sha" "$tap_sha"`,
 		`wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push`,
