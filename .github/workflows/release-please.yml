@@ -366,7 +366,6 @@ jobs:
         name: Build the offline checker and validate the release contract
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
         env:
-          PUBLISH: ${{ steps.classify.outputs.publish }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
         shell: bash
         run: |
@@ -374,21 +373,11 @@ jobs:
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
           "$RELEASECHECK" validate-contract --json > "${RUNNER_TEMP}/release-contract-validation.json"
 
-          recovery_state="$(jq -er '
-            .version_policy.release_please_recovery.state |
-            select(. == "active" or . == "complete")
-          ' release/contract.v1.json)"
-          recovery_resume_version="$(jq -er '
-            .version_policy.release_please_recovery.resume_version |
-            select(type == "string" and test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-          ' release/contract.v1.json)"
-          if [[ "$PUBLISH" != "true" ]]; then
-            "$RELEASECHECK" recovery validate-config \
-              --contract release/contract.v1.json \
-              --config release-please-config.json \
-              --manifest .release-please-manifest.json \
-              --json > "${RUNNER_TEMP}/release-please-recovery-check.json"
-          fi
+          "$RELEASECHECK" recovery validate-config \
+            --contract release/contract.v1.json \
+            --config release-please-config.json \
+            --manifest .release-please-manifest.json \
+            --json > "${RUNNER_TEMP}/release-please-recovery-check.json"
 
           release_app_slug="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
             [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
@@ -415,8 +404,6 @@ jobs:
             printf 'release_repository_name=%s\n' "$release_repository_name"
             printf 'platform_artifact_template=%s\n' "$platform_artifact_template"
             printf 'promotion_manifest_template=%s\n' "$promotion_manifest_template"
-            printf 'recovery_state=%s\n' "$recovery_state"
-            printf 'recovery_resume_version=%s\n' "$recovery_resume_version"
           } >> "$GITHUB_OUTPUT"
 
       - id: attempt
@@ -661,31 +648,6 @@ jobs:
         shell: bash
         run: scripts/release/ensure-release-labels.sh
 
-      - id: abandon-release
-        name: Reconcile the exact abandoned untagged release pull request
-        if: >-
-          ${{
-            steps.classify.outputs.publish != 'true' &&
-            steps.current.outputs.current == 'true' &&
-            steps.release-contract.outputs.recovery_state == 'active'
-          }}
-        env:
-          GH_TOKEN: ${{ steps.release-token.outputs.token }}
-          RELEASECHECK: ${{ runner.temp }}/releasecheck
-        shell: bash
-        run: >-
-          scripts/release/reconcile-abandoned-release-pr.sh
-          "${RUNNER_TEMP}/release-please-recovery.json"
-
-      - name: Upload exact abandoned-release recovery evidence
-        if: steps.abandon-release.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-release-please-recovery-planning-${{ github.run_id }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/release-please-recovery.json
-          if-no-files-found: error
-          retention-days: 90
-
       - id: authorize
         name: Verify generated release pull request authorization
         if: steps.classify.outputs.publish == 'true'
@@ -716,7 +678,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
-          EXPECTED_RELEASE_VERSION: ${{ steps.release-contract.outputs.recovery_state == 'active' && steps.release-contract.outputs.recovery_resume_version || '' }}
         shell: bash
         run: scripts/release/verify-release-proposal.sh
 

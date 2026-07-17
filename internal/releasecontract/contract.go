@@ -41,9 +41,10 @@ const (
 	blockedTagSHA010  = "591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795"
 	blockedVersion011 = "v0.0.11"
 	blockedTagSHA011  = "95181260700afdb0bf257b69f490079d2fb6d5f0"
-	// This remains empty until post-release evidence proves v0.0.13. The
-	// cleanup PR must pin the exact successful source here and in the contract.
-	completedReleaseSource013 = ""
+	// This one-time recovery pin records the independently verified v0.0.13
+	// release source. Durable v0.0.13 release evidence was skipped, so the pin
+	// must not be described as evidence-run success.
+	completedReleaseSource013 = "6206b472cda81f7a87656055d8eb6627c26a0fef"
 	versionPattern            = `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
 )
 
@@ -614,6 +615,9 @@ func validateReleasePleaseRecovery(policy ReleasePleaseRecoveryPolicy) error {
 		return errors.New("reason code must remain PRETAG_AUTHORIZATION_MISSING")
 	}
 	if policy.State == "active" {
+		if completedReleaseSource013 != "" {
+			return errors.New("active recovery is forbidden after the completed release source is pinned")
+		}
 		if policy.CompletedReleaseSourceSHA != "" {
 			return errors.New("active recovery must omit completed release source SHA")
 		}
