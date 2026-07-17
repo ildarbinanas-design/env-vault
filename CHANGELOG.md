@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.13](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.12...v0.0.13) (2026-07-17)
+
+
+### Bug Fixes
+
+* **ci:** make E2E reporter bootstrap deterministic ([#36](https://github.com/ildarbinanas-design/env-vault/issues/36)) ([50f927c](https://github.com/ildarbinanas-design/env-vault/commit/50f927ccc8a0ba6f7921f8fc5f27b31a0113141c))
+* **release:** record authorization before merge ([#32](https://github.com/ildarbinanas-design/env-vault/issues/32)) ([0550a2b](https://github.com/ildarbinanas-design/env-vault/commit/0550a2b14c4d17e26e3d5a017c9118e018f3837c))
+* **release:** recover abandoned v0.0.12 proposal ([#34](https://github.com/ildarbinanas-design/env-vault/issues/34)) ([5e3b94e](https://github.com/ildarbinanas-design/env-vault/commit/5e3b94ecd6f5b41f3f63bb2c878c7e65844da282))
+* **release:** retry read-only GitHub observations ([#33](https://github.com/ildarbinanas-design/env-vault/issues/33)) ([e55cfdb](https://github.com/ildarbinanas-design/env-vault/commit/e55cfdbc3ba68e29eb68f0d438bd55cd3a93b394))
+
 ## [0.0.12](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.11...v0.0.12) (2026-07-16)
 
 
