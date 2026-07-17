@@ -87,7 +87,7 @@ read_ref_sha() {
 
 read_commit_tree() {
   local commit=$1
-  local output=$2
+  local output=${2:-}
   local response="$scratch_dir/commit-$commit.json"
   local tree_sha
   api_get "repos/$repository/git/commits/$commit" "$response"
@@ -101,7 +101,9 @@ read_commit_tree() {
     ) |
     .tree.sha
   ' "$response") || release_die "GitHub returned invalid commit data"
-  printf -v "$output" '%s' "$tree_sha"
+  if [[ -n "$output" ]]; then
+    printf -v "$output" '%s' "$tree_sha"
+  fi
 }
 
 read_tree() {
@@ -308,11 +310,6 @@ assert_ref_unchanged() {
   [[ "$observed" == "$expected" ]] || release_die "evidence reference changed during publication"
 }
 
-assert_ref_absent() {
-  probe_ref
-  [[ "$ref_state" == "absent" ]] || release_die "evidence reference was created concurrently"
-}
-
 create_blob() {
   local path=$1
   local output=$2
@@ -373,17 +370,6 @@ create_commit() {
   sha=$(jq -er '.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$response") ||
     release_die "GitHub returned invalid created commit data"
   printf -v "$output" '%s' "$sha"
-}
-
-create_ref() {
-  local commit=$1
-  local payload="$scratch_dir/create-ref-payload.json"
-  local response="$scratch_dir/create-ref-response.json"
-  jq -n --arg ref "$full_ref" --arg sha "$commit" '{ref:$ref, sha:$sha}' >"$payload" ||
-    release_die "cannot build evidence reference request"
-  if ! gh api --method POST "repos/$repository/git/refs" --input "$payload" >"$response"; then
-    release_die "cannot create evidence reference"
-  fi
 }
 
 fast_forward_ref() {
@@ -515,7 +501,6 @@ remote_ancestors_json=$(jq -cn --arg root evidence --arg releases evidence/relea
 
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-evidence.XXXXXX")
 trap cleanup EXIT
-source_tree=''
 base_commit=''
 base_tree=''
 created_blob=''
@@ -526,32 +511,25 @@ verified_tree=''
 
 # The exact source commit must exist before any write. It is also the parent of
 # the first evidence-branch commit, keeping the first publication source-bound.
-read_commit_tree "$source_sha" source_tree
+read_commit_tree "$source_sha"
 
 probe_ref
-if [[ "$ref_state" == "present" ]]; then
-  branch_existed=true
-  read_ref_sha base_commit
-  read_commit_tree "$base_commit" base_tree
-else
-  branch_existed=false
-  base_commit=$source_sha
-  base_tree=$source_tree
-fi
+[[ "$ref_state" == "present" ]] ||
+  release_die "evidence reference must be bootstrapped at the exact source SHA"
+read_ref_sha base_commit
+read_commit_tree "$base_commit" base_tree
 
 base_tree_file="$scratch_dir/base-tree.json"
 read_tree "$base_tree" "$base_tree_file"
 directory_state=$(classify_version_directory "$base_tree_file")
 case "$directory_state" in
   tuple_complete)
-    [[ "$branch_existed" == "true" ]] || release_die "source commit unexpectedly contains the release evidence directory"
     verify_remote_tuple "$base_tree_file"
     assert_ref_unchanged "$base_commit"
     emit_result "$base_commit" unchanged
     exit 0
     ;;
   tuple_absent)
-    [[ "$branch_existed" == "true" ]] || release_die "source commit unexpectedly contains the release evidence directory"
     initialize_version=false
     ;;
   absent)
@@ -567,11 +545,7 @@ esac
 
 # Close the observation window immediately before creating Git objects. A
 # second exact check protects the eventual reference mutation as well.
-if [[ "$branch_existed" == "true" ]]; then
-  assert_ref_unchanged "$base_commit"
-else
-  assert_ref_absent
-fi
+assert_ref_unchanged "$base_commit"
 
 created_blobs=()
 for index in "${!local_files[@]}"; do
@@ -609,15 +583,9 @@ jq -e --arg parent "$base_commit" --arg tree "$created_tree" '
 ' "$staged_commit_response" >/dev/null || release_die "created evidence commit has an invalid parent or tree"
 [[ "$staged_commit_tree" == "$created_tree" ]] || release_die "created evidence commit tree changed"
 
-if [[ "$branch_existed" == "true" ]]; then
-  assert_ref_unchanged "$base_commit"
-  fast_forward_ref "$created_commit"
-  result_state=updated
-else
-  assert_ref_absent
-  create_ref "$created_commit"
-  result_state=created
-fi
+assert_ref_unchanged "$base_commit"
+fast_forward_ref "$created_commit"
+result_state=updated
 
 assert_ref_unchanged "$created_commit"
 created_commit_response="$scratch_dir/commit-$created_commit.json"

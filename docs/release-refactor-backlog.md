@@ -356,20 +356,66 @@ work completed by the documentation release.
   present exactly once and digest-valid, measured size targets are met, and no
   release/runtime behavior changes.
 
+## 11. Automatic evidence-only ledger genesis
+
+- **Problem and evidence:** evidence run `29569819553` attempt 1 replayed a
+  valid `v0.0.14` candidate, then received HTTP 403 creating the first
+  `release-evidence` ref. The initial commit inherited the release source tree,
+  including ten `.github/workflows/*` files, so GitHub required
+  `Workflows: write`; the intentionally narrow workflow token had only
+  `Contents: write`. Recovery used a one-time exact-source bootstrap and a full
+  attempt-2 rerun.
+- **Affected files/workflows:** `publish-release-evidence.sh`, its fake Git API
+  and adversarial tests, evidence branch initialization, the release contract,
+  external-settings documentation, and operator preflight.
+- **Guarantee preserved:** never rewrite the existing append-only branch;
+  validate the exact source commit before mutation; bind source/version/run in
+  canonical evidence; keep later commits single-parent fast-forwards with
+  `force:false`; never add an App bypass, PAT, or persistent
+  `Workflows: write` credential.
+- **Proposed architecture:** for a genuinely absent ledger, create the first
+  tree without `base_tree` and a parentless root commit containing only the
+  strict `evidence/` namespace. Make the source SHA visible in the commit
+  message and cryptographically authoritative in the verified evidence.
+  Existing initialized histories continue unchanged; introduce a versioned,
+  immutable genesis anchor and contract mode instead of inferring trust from
+  remote directory shape.
+- **Expected reduction:** zero operator bootstrap commands for a fresh
+  repository and zero extra token permissions. Record the eliminated manual
+  step and permission diff; no runtime or release-asset size claim is made.
+- **Risk:** losing source ancestry without strengthening content binding,
+  accepting paths outside `evidence/`, accidentally creating a second ledger,
+  or attempting to migrate the current immutable root in place.
+- **Required tests:** source tree containing workflow files; initial tree has no
+  `base_tree`; root commit has no parent; hostile non-evidence path; wrong
+  source response; concurrent creation; append/no-op/race parity; current
+  bootstrapped history compatibility; token permission remains exactly
+  `actions: read` plus `contents: write`.
+- **Dependencies and order:** freeze the successful bootstrapped v1 behavior;
+  add contract/genesis fixtures; implement automatic genesis before or with
+  the content-addressed bundle, then prove both paths against a disposable
+  repository without touching the existing evidence root.
+- **Acceptance criteria:** a fresh repository reaches durable evidence with no
+  manual ref creation, no workflows-capable credential, and an evidence-only
+  root; the current branch remains byte- and history-identical; offline replay,
+  exact tuple binding, append-only rules, and no-clobber tests all pass.
+
 ## Suggested implementation order
 
 1. Add metrics/graph assertions and the typed GitHub transport/run-identity
    read boundary, including custom-name and post-merge association fixtures.
 2. Make test-tool bootstrap hermetic.
 3. Consolidate App audits and promotion inventory with parity dual-runs.
-4. Compact the evidence bundle through a measured dual-write parity phase.
-5. Reduce the CI/publisher graph using measurements from successful runs.
-6. Add event-aware run names and measure title-check event fan-out without
+4. Implement versioned automatic evidence-only genesis without changing the
+   existing append-only root.
+5. Compact the evidence bundle through a measured dual-write parity phase.
+6. Reduce the CI/publisher graph using measurements from successful runs.
+7. Add event-aware run names and measure title-check event fan-out without
    changing triggers.
-7. Add the diagnostic evidence collector.
-8. Generalize recovery transitions only after the completed `v0.0.12` incident
+8. Add the diagnostic evidence collector.
+9. Generalize recovery transitions only after the completed `v0.0.12` incident
    has remained stable through at least one fully green later release.
-9. Implement dual-source historical verification last, as a read-only tool with
+10. Implement dual-source historical verification last, as a read-only tool with
    no operator plane.
 
 Each step requires its own before/after successful-run metrics and a product-path
