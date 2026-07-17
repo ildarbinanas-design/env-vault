@@ -3,6 +3,7 @@ package tests
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 		wantReconcileGET int
 		repairMode       string
 		publisherEvent   string
+		ledgerDepth      int
 	}{
 		{
 			name:           "missing evidence branch fails before every mutation",
@@ -103,6 +105,53 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			publisherEvent: "push",
 		},
 		{
+			name:           "depth 64 exact tuple remains readable",
+			mode:           "depth64-noop",
+			wantOutput:     evidencePublishOutput(evidenceBaseSHA, "unchanged", "none"),
+			repairMode:     "none",
+			publisherEvent: "push",
+			ledgerDepth:    64,
+		},
+		{
+			name:           "depth 64 missing tuple fails before mutation",
+			mode:           "depth64-missing",
+			wantStatus:     1,
+			wantOutput:     "64-commit validation bound",
+			repairMode:     "none",
+			publisherEvent: "push",
+			ledgerDepth:    64,
+		},
+		{
+			name:             "depth 63 permits the final bounded append",
+			mode:             "depth63-append",
+			wantOutput:       evidencePublishOutput(evidenceNewSHA, "updated", "none"),
+			wantBlobCreates:  4,
+			wantTreeCreates:  1,
+			wantCommitCreate: 1,
+			wantRefUpdates:   1,
+			repairMode:       "none",
+			publisherEvent:   "push",
+			ledgerDepth:      63,
+		},
+		{
+			name:           "tree response identity mismatch fails before mutation",
+			mode:           "wrong-tree-sha",
+			wantStatus:     1,
+			wantOutput:     "invalid or truncated tree",
+			repairMode:     "none",
+			publisherEvent: "push",
+		},
+		{
+			name:            "returned tree cannot drop older evidence before ref update",
+			mode:            "dropped-history-tree",
+			wantStatus:      1,
+			wantOutput:      "rewrote or removed an earlier controlled blob",
+			wantBlobCreates: 4,
+			wantTreeCreates: 1,
+			repairMode:      "none",
+			publisherEvent:  "push",
+		},
+		{
 			name:           "mismatch fails before every mutation",
 			mode:           "mismatch",
 			wantStatus:     1,
@@ -113,6 +162,17 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 		{
 			name:             "repair appends a new immutable publisher tuple without comparing root bytes",
 			mode:             "append",
+			wantOutput:       evidencePublishOutput(evidenceNewSHA, "updated", "health"),
+			wantBlobCreates:  4,
+			wantTreeCreates:  1,
+			wantCommitCreate: 1,
+			wantRefUpdates:   1,
+			repairMode:       "health",
+			publisherEvent:   "workflow_dispatch",
+		},
+		{
+			name:             "legacy repair preserves another complete v2 version and object store",
+			mode:             "mixed-v2-append",
 			wantOutput:       evidencePublishOutput(evidenceNewSHA, "updated", "health"),
 			wantBlobCreates:  4,
 			wantTreeCreates:  1,
@@ -195,9 +255,10 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 
 			files := writeEvidencePublicationFixturesForPublisher(t, localDir, test.repairMode, test.publisherEvent)
 			installEvidenceAPIFakeGH(t, binDir)
-			if test.mode == "noop" || test.mode == "mismatch" {
+			if test.mode == "noop" || test.mode == "depth64-noop" || test.mode == "mismatch" {
 				seedEvidenceRemoteBlobs(t, remoteDir, files, test.mode == "mismatch")
 			}
+			chainFile := writeLegacyEvidenceChainFixture(t, root, test.ledgerDepth)
 
 			output, status := runReleaseScript(
 				t,
@@ -209,14 +270,16 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 					files[0], files[1], files[2], files[3],
 				},
 				map[string]string{
-					"FAKE_EVIDENCE_MODE":       test.mode,
-					"FAKE_EVIDENCE_BLOB_SHAS":  strings.Join(evidenceBlobSHAs(t, files), ","),
-					"FAKE_GH_CALL_LOG":         callLog,
-					"FAKE_GH_REMOTE_DIR":       remoteDir,
-					"FAKE_GH_REF_STATE":        refState,
-					"FAKE_GH_BLOB_COUNT_STATE": blobCount,
-					"PATH":                     binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-					"TMPDIR":                   root,
+					"FAKE_EVIDENCE_MODE":         test.mode,
+					"FAKE_EVIDENCE_BLOB_SHAS":    strings.Join(evidenceBlobSHAs(t, files), ","),
+					"FAKE_GH_CALL_LOG":           callLog,
+					"FAKE_GH_REMOTE_DIR":         remoteDir,
+					"FAKE_GH_REF_STATE":          refState,
+					"FAKE_GH_BLOB_COUNT_STATE":   blobCount,
+					"FAKE_EVIDENCE_CHAIN_FILE":   chainFile,
+					"FAKE_GH_CREATED_TREE_STATE": filepath.Join(root, "created-tree.json"),
+					"PATH":                       binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"TMPDIR":                     root,
 				},
 			)
 			if status != test.wantStatus {
@@ -244,7 +307,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 				assertEvidenceCallCount(t, calls, "repos/example/env-vault/git/blobs/"+firstSHA, test.wantReconcileGET)
 			}
 
-			if test.mode == "bootstrap" || test.mode == "post-blob-timeout" || test.mode == "new-version" || test.mode == "append" {
+			if test.mode == "bootstrap" || test.mode == "post-blob-timeout" || test.mode == "new-version" || test.mode == "append" || test.mode == "depth63-append" {
 				for index, sha := range evidenceBlobSHAs(t, files) {
 					remote, err := os.ReadFile(filepath.Join(remoteDir, sha))
 					if err != nil {
@@ -267,7 +330,48 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 					t.Fatalf("race must not change reference state: %v", err)
 				}
 			}
+			if test.mode == "mixed-v2-append" {
+				assertMixedV2HistoryPreserved(t, filepath.Join(root, "created-tree.json"))
+			}
 		})
+	}
+}
+
+func assertMixedV2HistoryPreserved(t *testing.T, treePath string) {
+	t.Helper()
+	data, err := os.ReadFile(treePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{}
+	names := []string{"index.md", "metrics-comparison.json", "metrics-comparison.md", "parity.json", "release-evidence-bundle.json", "storage-metrics.json"}
+	for index, name := range names {
+		sha := strings.Repeat(string(rune('a'+index)), 40)
+		want["evidence/releases/v1.2.2/"+name] = sha
+		want["evidence/releases/v1.2.2/publisher-runs/run-51/attempt-1/"+name] = sha
+	}
+	want["evidence/objects/sha256/"+strings.Repeat("a", 64)+".gz"] = strings.Repeat("f", 40)
+	for _, entry := range document.Tree {
+		if sha, expected := want[entry.Path]; expected {
+			if entry.Type != "blob" || entry.Mode != "100644" || entry.SHA != sha {
+				t.Fatalf("mixed v2 entry changed: %+v want sha=%s", entry, sha)
+			}
+			delete(want, entry.Path)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("mixed v2 entries disappeared: %v", want)
 	}
 }
 
@@ -484,6 +588,8 @@ call_log=${FAKE_GH_CALL_LOG:?FAKE_GH_CALL_LOG is required}
 remote_dir=${FAKE_GH_REMOTE_DIR:?FAKE_GH_REMOTE_DIR is required}
 ref_state=${FAKE_GH_REF_STATE:?FAKE_GH_REF_STATE is required}
 blob_count_state=${FAKE_GH_BLOB_COUNT_STATE:?FAKE_GH_BLOB_COUNT_STATE is required}
+chain_file=${FAKE_EVIDENCE_CHAIN_FILE:-}
+created_tree_state=${FAKE_GH_CREATED_TREE_STATE:-}
 IFS=, read -r blob_sha_1 blob_sha_2 blob_sha_3 blob_sha_4 <<< "${FAKE_EVIDENCE_BLOB_SHAS:?}"
 blob_shas_json=$(jq -cn --args '$ARGS.positional' "$blob_sha_1" "$blob_sha_2" "$blob_sha_3" "$blob_sha_4")
 printf '%s\n' "$*" >> "$call_log"
@@ -577,8 +683,8 @@ emit_commit() {
 }
 
 emit_evidence_tree() {
-  local variant=$1
-  jq -n --arg variant "$variant" --argjson current_shas "$blob_shas_json" '
+  local variant=$1 tree_sha=$2
+  jq -n --arg variant "$variant" --arg tree_sha "$tree_sha" --argjson current_shas "$blob_shas_json" '
     def dir($path): {path:$path,mode:"040000",type:"tree",sha:"0000000000000000000000000000000000000000"};
     def blob($path;$sha): {path:$path,mode:"100644",type:"blob",sha:$sha};
     def files($prefix;$shas): [
@@ -587,10 +693,21 @@ emit_evidence_tree() {
       blob($prefix + "/metrics-comparison.json";$shas[2]),
       blob($prefix + "/metrics-comparison.md";$shas[3])
     ];
+    def v2files($prefix;$shas): [
+      blob($prefix + "/index.md";$shas[0]),
+      blob($prefix + "/metrics-comparison.json";$shas[1]),
+      blob($prefix + "/metrics-comparison.md";$shas[2]),
+      blob($prefix + "/parity.json";$shas[3]),
+      blob($prefix + "/release-evidence-bundle.json";$shas[4]),
+      blob($prefix + "/storage-metrics.json";$shas[5])
+    ];
     ["6666666666666666666666666666666666666666","7777777777777777777777777777777777777777",
      "8888888888888888888888888888888888888888","9999999999999999999999999999999999999999"] as $prior_shas |
     "evidence/releases/v1.2.3" as $version |
     "evidence/releases/v1.2.2" as $previous_version |
+	["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	 "cccccccccccccccccccccccccccccccccccccccc","dddddddddddddddddddddddddddddddddddddddd",
+	 "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","ffffffffffffffffffffffffffffffffffffffff"] as $v2_shas |
     [dir("evidence"),dir("evidence/releases"),dir($version)] as $ancestors |
     (files($version;$current_shas)) as $current_root |
     (files($version;$prior_shas)) as $prior_root |
@@ -607,6 +724,14 @@ emit_evidence_tree() {
        dir($previous_version + "/publisher-runs/run-41"),
        dir($previous_version + "/publisher-runs/run-41/attempt-1")] +
       files($previous_version + "/publisher-runs/run-41/attempt-1";$prior_shas)) as $previous |
+	([dir($previous_version)] + v2files($previous_version;$v2_shas) +
+	 [dir($previous_version + "/publisher-runs"),
+	  dir($previous_version + "/publisher-runs/run-51"),
+	  dir($previous_version + "/publisher-runs/run-51/attempt-1")] +
+	 v2files($previous_version + "/publisher-runs/run-51/attempt-1";$v2_shas) +
+	 [dir("evidence/objects"),dir("evidence/objects/sha256"),
+	  blob("evidence/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.gz";
+	       "ffffffffffffffffffffffffffffffffffffffff")]) as $v2_previous |
     ($prior + [dir($version + "/publisher-runs/run-4242"),dir($version + "/publisher-runs/run-4242/attempt-2")] +
       files($version + "/publisher-runs/run-4242/attempt-2";$current_shas)) as $appended |
     if $variant == "current" then {truncated:false,tree:($ancestors + $current_root + $current)}
@@ -616,6 +741,14 @@ emit_evidence_tree() {
       {truncated:false,tree:([dir("evidence"),dir("evidence/releases")] + $previous)}
     elif $variant == "new-version" then
       {truncated:false,tree:($ancestors + $previous + $current_root + $current)}
+	elif $variant == "mixed-base" then
+	  {truncated:false,tree:($ancestors + $previous + $prior_root + $prior)}
+	elif $variant == "mixed-v2-base" then
+	  {truncated:false,tree:($ancestors + $v2_previous + $prior_root + $prior)}
+	elif $variant == "mixed-v2-appended" then
+	  {truncated:false,tree:($ancestors + $v2_previous + $prior_root + $appended)}
+	elif $variant == "dropped-history" then
+	  {truncated:false,tree:($ancestors + $prior_root + $appended)}
     elif $variant == "partial" then {truncated:false,tree:($ancestors + $current_root + $current[0:-1])}
     elif $variant == "unexpected" then
       {truncated:false,tree:($ancestors + $current_root + $current +
@@ -629,9 +762,26 @@ emit_evidence_tree() {
          dir($version + "/publisher-runs/run-01/attempt-1")] +
         files($version + "/publisher-runs/run-01/attempt-1";$prior_shas))}
     else error("unsupported tree variant")
-    end
+    end | . + {sha:$tree_sha}
   '
 }
+
+emit_created_evidence_tree() {
+  if [[ -n $created_tree_state ]]; then
+    emit_evidence_tree "$1" "$2" | tee "$created_tree_state"
+  else
+    emit_evidence_tree "$1" "$2"
+  fi
+}
+
+if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/commits/([0-9a-f]{40})$ && -n $chain_file && -f $chain_file ]]; then
+  chain_commit=${BASH_REMATCH[1]}
+  if jq -e --arg sha "$chain_commit" 'has($sha)' "$chain_file" >/dev/null; then
+    chain_parent=$(jq -er --arg sha "$chain_commit" '.[$sha]' "$chain_file")
+    emit_commit "$chain_commit" "$base_tree" "$chain_parent"
+    exit 0
+  fi
+fi
 
 case "$method:$endpoint" in
   GET:repos/example/env-vault/git/ref/heads/release-evidence)
@@ -649,22 +799,28 @@ case "$method:$endpoint" in
     emit_commit "$new_sha" "$new_tree" "$parent"
     ;;
   GET:repos/example/env-vault/git/trees/$source_tree?recursive=1)
-    jq -n '{truncated:false,tree:[]}'
+    jq -n --arg sha "$source_tree" '{sha:$sha,truncated:false,tree:[]}'
     ;;
   GET:repos/example/env-vault/git/trees/$base_tree?recursive=1)
     case $mode in
-      noop|mismatch) emit_evidence_tree current ;;
-      new-version) emit_evidence_tree previous-version ;;
-      append|race) emit_evidence_tree prior ;;
-      partial|unexpected|case-collision|unsafe-numeric) emit_evidence_tree "$mode" ;;
-      *) jq -n '{truncated:false,tree:[]}' ;;
+      noop|depth64-noop|mismatch) emit_evidence_tree current "$base_tree" ;;
+      new-version) emit_evidence_tree previous-version "$base_tree" ;;
+      append|race|depth63-append) emit_evidence_tree prior "$base_tree" ;;
+	  mixed-v2-append) emit_evidence_tree mixed-v2-base "$base_tree" ;;
+      depth64-missing) emit_evidence_tree previous-version "$base_tree" ;;
+      wrong-tree-sha) emit_evidence_tree prior "7777777777777777777777777777777777777777" ;;
+	  dropped-history-tree) emit_evidence_tree mixed-base "$base_tree" ;;
+      partial|unexpected|case-collision|unsafe-numeric) emit_evidence_tree "$mode" "$base_tree" ;;
+      *) jq -n --arg sha "$base_tree" '{sha:$sha,truncated:false,tree:[]}' ;;
     esac
     ;;
   GET:repos/example/env-vault/git/trees/$new_tree?recursive=1)
     case $mode in
-      bootstrap|post-blob-timeout*) emit_evidence_tree current ;;
-      new-version) emit_evidence_tree new-version ;;
-      *) emit_evidence_tree appended ;;
+      bootstrap|post-blob-timeout*) emit_created_evidence_tree current "$new_tree" ;;
+      new-version) emit_created_evidence_tree new-version "$new_tree" ;;
+	  mixed-v2-append) emit_created_evidence_tree mixed-v2-appended "$new_tree" ;;
+	  dropped-history-tree) emit_created_evidence_tree dropped-history "$new_tree" ;;
+      *) emit_created_evidence_tree appended "$new_tree" ;;
     esac
     ;;
   GET:repos/example/env-vault/git/blobs/*)
@@ -784,7 +940,7 @@ case "$method:$endpoint" in
       printf 'gh: Update is not a fast forward (HTTP 422)\n' >&2
       exit 1
     fi
-    [[ $mode == append || $mode == bootstrap || $mode == post-blob-timeout || $mode == new-version ]] || exit 102
+    [[ $mode == append || $mode == bootstrap || $mode == post-blob-timeout || $mode == new-version || $mode == depth63-append || $mode == mixed-v2-append ]] || exit 102
     : > "$ref_state"
     emit_ref
     ;;

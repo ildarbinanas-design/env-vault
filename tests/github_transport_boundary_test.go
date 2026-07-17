@@ -41,7 +41,7 @@ func TestGitHubTransportBoundaryRegistryIsExactAndComplete(t *testing.T) {
 
 	root := filepath.Clean("..")
 	commandPattern := regexp.MustCompile(`\bgh[[:space:]]+`)
-	var observed, directMutations, graphqlObservations int
+	var observed, directMutations, typedMutationAdapters, graphqlObservations int
 	for _, relativeRoot := range []string{".github/workflows", "scripts/release"} {
 		err := filepath.WalkDir(filepath.Join(root, relativeRoot), func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -101,19 +101,23 @@ func TestGitHubTransportBoundaryRegistryIsExactAndComplete(t *testing.T) {
 		if got := strings.Count(string(contents), entry.Needle); got != entry.Count {
 			t.Fatalf("registry count for %s %q=%d, want %d", entry.Path, entry.Needle, got, entry.Count)
 		}
-		registeredCount += entry.Count
 		switch entry.Category {
 		case "direct-mutation":
+			registeredCount += entry.Count
 			directMutations += entry.Count
+		case "typed-mutation-adapter":
+			typedMutationAdapters += entry.Count
 		case "graphql-observation":
+			registeredCount += entry.Count
 			graphqlObservations += entry.Count
 		case "high-level-observation", "metrics-observation", "high-level-mutation", "attestation-verification", "credential-setup":
+			registeredCount += entry.Count
 		default:
 			t.Fatalf("unknown registry category %q", entry.Category)
 		}
 	}
-	if observed != registeredCount || directMutations != 8 || graphqlObservations != 1 {
-		t.Fatalf("boundary counts observed=%d registered=%d direct_mutations=%d graphql=%d", observed, registeredCount, directMutations, graphqlObservations)
+	if observed != registeredCount || directMutations != 8 || typedMutationAdapters != 1 || directMutations+typedMutationAdapters != 9 || graphqlObservations != 1 {
+		t.Fatalf("boundary counts observed=%d registered=%d direct_mutations=%d typed_mutation_adapters=%d graphql=%d", observed, registeredCount, directMutations, typedMutationAdapters, graphqlObservations)
 	}
 
 	workflowData := readFile(t, "../.github/workflows/release-please.yml") +

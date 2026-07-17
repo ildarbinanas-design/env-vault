@@ -2,10 +2,13 @@
 // It invokes gh for credential-aware network I/O and never stores credentials.
 package githubtransport
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
-	TransportVersion = "1.0.0"
+	TransportVersion = "1.1.0"
 	APIVersion       = "2022-11-28"
 	Host             = "github.com"
 
@@ -14,6 +17,7 @@ const (
 	ActionsIdentitySchemaID = "env-vault.github-actions-identity.v1"
 	BlobIdentitySchemaID    = "env-vault.github-blob-identity.v1"
 	ObservationSchemaID     = "env-vault.github-rest-observation.v1"
+	MutationSchemaID        = "env-vault.github-mutation-outcome.v1"
 )
 
 const (
@@ -131,4 +135,17 @@ type ObservationDocument struct {
 	HTTPStatus    int    `json:"http_status"`
 	ServerDate    string `json:"server_date"`
 	BodySHA256    string `json:"body_sha256"`
+}
+
+type MutationDocument struct {
+	SchemaID      string          `json:"schema_id"`
+	SchemaVersion int             `json:"schema_version"`
+	OK            bool            `json:"ok"`
+	Outcome       string          `json:"outcome"`
+	Method        string          `json:"method"`
+	Endpoint      string          `json:"endpoint"`
+	HTTPStatus    int             `json:"http_status"`
+	BodySHA256    string          `json:"body_sha256,omitempty"`
+	Body          json.RawMessage `json:"body,omitempty"`
+	ErrorCode     string          `json:"error_code"`
 }

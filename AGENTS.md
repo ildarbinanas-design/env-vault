@@ -16,6 +16,16 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - Release evidence must be versioned machine JSON generated from exact workflow
   and artifact identities. A generated Markdown index may summarize that JSON;
   append-only narrative evidence is not an authorization or release gate.
+- Compact evidence capabilities fail closed: v1 is selected only when both v2
+  capability keys are absent, while v2 requires the exact supported
+  bundle/genesis versions. Content-addressed objects must reconstruct canonical
+  v1 bytes entirely offline and remain bound by raw and encoded digests, strict
+  size/count limits, and deterministic canonical gzip.
+- Only an exact typed HTTP 404 may create a fresh evidence ledger. Its first
+  commit is parentless and evidence-only, uses no source `base_tree`, and needs
+  no Workflows write or manual ref bootstrap. The published production ledger
+  is an immutable `legacy-compatible` exception: never rewrite it or retrofit
+  genesis. Both modes fail before append beyond the bounded 64-commit window.
 - GitHub transport and mutations use `gh` or the GitHub API. Repository
   checkers consume saved files offline, hold no credentials, and fail closed on
   unknown, incomplete, invalid, or unsupported input.

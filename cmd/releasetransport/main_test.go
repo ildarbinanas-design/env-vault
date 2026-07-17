@@ -2,7 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +68,59 @@ func TestReadRejectsExistingOutputBeforeLookingForGH(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if string(data) != "trusted\n" {
 		t.Fatalf("output changed: %q", data)
+	}
+}
+
+func TestGitBlobReadWritesOpaqueLargeBytesAtomicallyAndNoClobber(t *testing.T) {
+	content := bytes.Repeat([]byte{0x00, 0x80, 0xff, 0x5a}, (2<<20)/4)
+	gitObject := append([]byte(fmt.Sprintf("blob %d\x00", len(content))), content...)
+	digest := sha1.Sum(gitObject)
+	sha := hex.EncodeToString(digest[:])
+	response, err := json.Marshal(map[string]any{
+		"sha": sha, "encoding": "base64", "size": len(content), "content": base64.StdEncoding.EncodeToString(content),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	responsePath := filepath.Join(root, "response.json")
+	if err := os.WriteFile(responsePath, response, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gh := filepath.Join(bin, "gh")
+	script := `#!/bin/sh
+if [ "$1" = --version ]; then printf 'gh version 2.96.0 (2026-07-02)\n'; exit 0; fi
+if [ "$1" = api ] && [ "$2" = --help ]; then printf '%s\n' '--include --hostname --method --header --raw-field --input'; exit 0; fi
+printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json; charset=utf-8\r\nDate: Fri, 17 Jul 2026 12:00:00 GMT\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
+cat "$FAKE_BLOB_RESPONSE"
+`
+	if err := os.WriteFile(gh, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_BLOB_RESPONSE", responsePath)
+	output := filepath.Join(root, "object.gz")
+	var stdout, stderr bytes.Buffer
+	args := []string{"git-blob", "read", "--output", output, "--repository", "example/repo", "--sha", sha}
+	if status := run(args, &stdout, &stderr); status != githubtransport.ExitOK {
+		t.Fatalf("status=%d stderr=%s", status, stderr.String())
+	}
+	got, err := os.ReadFile(output)
+	if err != nil || !bytes.Equal(got, content) {
+		t.Fatalf("opaque output mismatch: size=%d err=%v", len(got), err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if status := run(args, &stdout, &stderr); status != githubtransport.ExitOutput {
+		t.Fatalf("no-clobber status=%d stderr=%s", status, stderr.String())
+	}
+	got, _ = os.ReadFile(output)
+	if !bytes.Equal(got, content) {
+		t.Fatal("no-clobber failure changed existing opaque output")
 	}
 }
 

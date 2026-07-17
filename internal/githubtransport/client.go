@@ -20,12 +20,13 @@ import (
 )
 
 const (
-	maxAttempts       = 5
-	maxPages          = 100
-	maxTotalRequests  = maxAttempts * maxPages
-	maxTotalRetryWait = 120 * time.Second
-	maxStdoutBytes    = 64 << 20
-	maxStderrBytes    = 256 << 10
+	maxAttempts          = 5
+	maxPages             = 100
+	maxTotalRequests     = maxAttempts * maxPages
+	maxTotalRetryWait    = 120 * time.Second
+	maxStdoutBytes       = 64 << 20
+	maxStderrBytes       = 256 << 10
+	maxEvidenceBlobBytes = 17 << 20
 )
 
 type ReadRequest struct {
@@ -47,15 +48,30 @@ type CommandRunner interface {
 	Run(context.Context, []string, []string) CommandResult
 }
 
+type InputCommandRunner interface {
+	RunInput(context.Context, []string, []string, []byte) CommandResult
+}
+
 type ExecRunner struct{ Path string }
 
 func (r ExecRunner) Run(ctx context.Context, args, environment []string) CommandResult {
+	return r.run(ctx, args, environment, nil)
+}
+
+func (r ExecRunner) RunInput(ctx context.Context, args, environment []string, input []byte) CommandResult {
+	return r.run(ctx, args, environment, input)
+}
+
+func (r ExecRunner) run(ctx context.Context, args, environment []string, input []byte) CommandResult {
 	path := r.Path
 	if path == "" {
 		path = "gh"
 	}
 	command := exec.CommandContext(ctx, path, args...)
 	command.Env = environment
+	if input != nil {
+		command.Stdin = bytes.NewReader(input)
+	}
 	stdout := &boundedBuffer{limit: maxStdoutBytes}
 	stderr := &boundedBuffer{limit: maxStderrBytes}
 	command.Stdout, command.Stderr = stdout, stderr
@@ -74,6 +90,7 @@ type Client struct {
 	capabilityChecked bool
 	capabilityError   *TransportError
 	capabilityVersion string
+	mutationInput     bool
 }
 
 func NewClient() *Client {
@@ -86,13 +103,18 @@ func (c *Client) Preflight(ctx context.Context) (CapabilitiesDocument, *Transpor
 	}
 	c.capabilityMu.Lock()
 	ghVersion := c.capabilityVersion
+	mutationInput := c.mutationInput
 	c.capabilityMu.Unlock()
+	capabilities := []string{"strict_raw_rest_get", "complete_pagination", "actions_attempt_identity", "git_blob_exact_bytes", "atomic_no_clobber_output"}
+	if mutationInput {
+		capabilities = append(capabilities, "one_shot_git_data_mutation")
+	}
 	return CapabilitiesDocument{
 		SchemaID: CapabilitiesSchemaID, SchemaVersion: 1, OK: true,
 		TransportVersion: TransportVersion, GitHubAPIVersion: APIVersion,
 		Host: Host, GHVersion: ghVersion, MaxAttemptsPerPage: maxAttempts, MaxPages: maxPages,
 		MaxTotalRequests: maxTotalRequests, MaxTotalRetryWaitSecs: int(maxTotalRetryWait / time.Second),
-		Capabilities: []string{"strict_raw_rest_get", "complete_pagination", "actions_attempt_identity", "git_blob_exact_bytes", "atomic_no_clobber_output"},
+		Capabilities: capabilities,
 	}, nil
 }
 
@@ -195,6 +217,7 @@ func (c *Client) checkCapabilities(ctx context.Context) *TransportError {
 		c.capabilityError = &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "gh api lacks required transport flags"}
 		return c.capabilityError
 	}
+	c.mutationInput = strings.Contains(string(help.Stdout), "--input")
 	return nil
 }
 

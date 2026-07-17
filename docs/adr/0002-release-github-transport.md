@@ -2,7 +2,8 @@
 
 - Status: accepted
 - Date: 2026-07-17
-- Scope: release-only GitHub reads and workflow/run/job/attempt identity
+- Scope: release-only GitHub reads, workflow/run/job/attempt identity, and the
+  typed v2 evidence Git-data mutation boundary
 
 ## Context
 
@@ -43,6 +44,21 @@ read boundary. They:
   and—when required—the attempt-qualified job ID/name/URL;
 - retain run display name and job workflow name as diagnostic fields only.
 
+The v2 evidence publisher additionally uses `rest mutate-once`, a closed
+Git-data adapter for evidence blobs, trees, commits, and the
+`release-evidence` reference. It validates an endpoint-specific strict
+closed-schema JSON payload snapshot (with canonical base64 content), streams
+it on standard input, performs exactly one request,
+and returns a typed `success`, terminal `http_error`, or `ambiguous` outcome.
+It never retries a mutation. A missing `gh api --input` capability does not
+break the established read boundary: preflight simply omits
+`one_shot_git_data_mutation`, while an attempted mutation fails before network
+I/O. Success requires a strict operation-specific response body. Any observed
+4xx is terminal, and only an exact reviewed 422 shape may trigger reference-race
+reconciliation. Indeterminate blob or reference outcomes can proceed only
+through a fresh exact read reconciliation; ambiguous tree and commit creation
+fail closed.
+
 `scripts/release/releasetransport.sh` is the general launcher and
 `gh-api-read.sh` is its GET compatibility adapter. CI jobs build the binary once
 and export `RELEASE_TRANSPORT_BIN`; the integration-test process does the same.
@@ -53,10 +69,15 @@ input/bootstrap message when no remote error is available. This guarantee does
 not claim to structure an external OS signal or an executable-disappearance
 race after the launcher has validated the file.
 
-All eight direct REST mutations remain visible, single-attempt operations with
-their existing exact postcondition or ambiguity reconciliation. In particular,
-an ambiguous Git-blob POST is never replayed: the publisher calculates the
-deterministic Git object SHA and performs one typed byte-for-byte read-back.
+All eight baseline direct REST mutations remain visible, single-attempt
+operations with their existing exact postcondition or ambiguity
+reconciliation. The ninth registered mutation authority is the typed v2
+adapter, including automatic creation of a previously absent evidence
+reference. In particular, an ambiguous Git-blob POST is never replayed: the
+publisher calculates the deterministic Git object SHA and performs one typed
+byte-for-byte read-back. Arbitrary binary blobs are encoded outside jq and
+then passed as canonical base64, so gzip bytes are not coerced through a UTF-8
+string.
 The only remaining direct non-mutation API exception is the pre-existing
 read-only GraphQL ruleset
 query. Every direct or high-level `gh` exception is enumerated with owner and
@@ -81,8 +102,8 @@ unregistered command or count change.
 The transport is security-critical and has a larger Go/test surface, but release
 read behavior and error semantics now have one implementation. Operational
 source has zero direct REST reads, eight registered direct mutations, one
-registered GraphQL observation, 62 bounded helper call sites, and 17 typed
-Actions-identity call sites.
+registered typed mutation adapter, one registered GraphQL observation, 62
+bounded helper call sites, and 17 typed Actions-identity call sites.
 
 Two single observed local runs of
 `go test ./tests -run '^TestPublishReleaseEvidenceIsNoClobberAndRaceSafe$' -count=1`

@@ -261,15 +261,24 @@ deletion, have no bypass actor, and allow initial branch creation plus ordinary
 fast-forward commits. Evidence links use exact commit SHAs; this ruleset also
 prevents the durable evidence history from being rewritten or removed.
 
-Before the first durable publication only, create that ref without force at
-the exact source SHA of the release whose evidence will initialize the branch.
-The operator must prove the exact absence, push, and resulting remote equality;
-the evidence workflow requires the pre-created ref and thereafter writes only
-fast-forward evidence commits. Do not replace `GITHUB_TOKEN` with a
-workflows-capable App/PAT or broaden either release App: creating a new ref
-directly at a tree that contains `.github/workflows` needs that broader
-permission, while updating the pre-created ref with evidence-only changes needs
-only `Contents: write`.
+For a fresh repository, do not pre-create the evidence ref. The v2 evidence
+publisher treats only an exact typed HTTP 404 as absence, freshly revalidates
+the release source before each Git mutation, and creates a parentless commit
+whose tree contains only the strict `evidence/` namespace and versioned genesis
+anchor. It then creates `refs/heads/release-evidence` without force. This path
+needs `Contents: write`, but no Workflows write, App/PAT replacement, ruleset
+bypass, or operator bootstrap. Authentication, authorization, rate-limit, and
+transport failures must never be classified as absence.
+
+The production ref predates automatic genesis and remains an immutable
+`legacy-compatible` exception. Never rewrite it, move its root, add an anchor
+retroactively, or use a fresh-ledger operation to normalize it. On 2026-07-17,
+read-only inspection observed ruleset ID `19058721` active on the exact ref,
+with deletion and non-fast-forward protection, `bypass_actors=[]`, and
+`current_user_can_bypass=never`; the ref tip was
+`af521d52b898088cb49f6256964e377e33e95a5d`. Those values are dated audit
+evidence, not workflow inputs or operational constants. Re-read and validate
+current settings and ref identity for every release.
 
 Observe each real check context from a pull request before adding it to the
 ruleset. Do not guess from a display label. The dedicated lightweight

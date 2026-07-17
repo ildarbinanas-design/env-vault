@@ -11,6 +11,7 @@
     {"path":".github/workflows/release-please.yml","needle":"gh api --method POST","count":1,"category":"direct-mutation","rationale":"Immutable tag creation is a single-attempt mutation after exact authorization and current-head checks."},
     {"path":"scripts/release/mark-release-pr-tagged.sh","needle":"gh api --method POST","count":1,"category":"direct-mutation","rationale":"Lifecycle label addition is an explicit mutation followed by read-back verification."},
     {"path":"scripts/release/mark-release-pr-tagged.sh","needle":"gh api --method DELETE","count":1,"category":"direct-mutation","rationale":"Lifecycle label removal is an explicit mutation followed by read-back verification."},
+    {"path":"internal/githubtransport/mutation.go","needle":"func (c *Client) MutateOnce","count":1,"category":"typed-mutation-adapter","rationale":"The v2 evidence ledger uses one closed, payload-typed, single-attempt Git-data mutation boundary; automatic reference creation and ambiguous outcomes are reconciled only by fresh reads."},
     {"path":"scripts/release/verify-repository-release-settings.sh","needle":"gh api graphql","count":1,"category":"graphql-observation","rationale":"Ruleset bypass actor counts are unavailable in the required REST shape; the response is validated offline and has no mutation fields."},
 
     {"path":"scripts/release/ensure-release-labels.sh","needle":"gh label create","count":1,"category":"high-level-mutation","rationale":"Idempotent lifecycle label creation uses the dedicated gh command."},

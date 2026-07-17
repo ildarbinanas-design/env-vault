@@ -9,6 +9,13 @@ unset GH_DEBUG GIT_TRACE GIT_TRACE_CURL GIT_CURL_VERBOSE
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=scripts/release/evidence-ledger-common.sh
+source "$SCRIPT_DIR/evidence-ledger-common.sh"
+
+if [[ ${1:-} == "--format" ]]; then
+  [[ ${2:-} == "v2" ]] || release_die "unsupported release evidence publication format"
+  exec "$SCRIPT_DIR/publish-release-evidence-v2.sh" "${@:3}"
+fi
 
 usage() {
   printf 'usage: %s vMAJOR.MINOR.PATCH SOURCE_SHA OWNER/REPO RELEASE_EVIDENCE_JSON INDEX_MD METRICS_COMPARISON_JSON METRICS_COMPARISON_MD\n' "$(basename "$0")" >&2
@@ -95,7 +102,8 @@ read_commit_tree() {
       .sha == $commit and
       (.tree | type == "object") and
       (.tree.sha | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.parents | type == "array")
+      (.parents | type == "array") and
+      all(.parents[]; type == "object" and (.sha | type == "string" and test("^[0-9a-f]{40}$")))
     ) |
     .tree.sha
   ' "$response") || release_die "GitHub returned invalid commit data"
@@ -108,8 +116,9 @@ read_tree() {
   local tree_sha=$1
   local output=$2
   api_get "repos/$repository/git/trees/$tree_sha?recursive=1" "$output"
-  jq -e '
+  jq -e --arg tree "$tree_sha" '
     type == "object" and
+    .sha == $tree and
     .truncated == false and
     (.tree | type == "array") and
     all(.tree[];
@@ -121,6 +130,62 @@ read_tree() {
     ) and
     (([.tree[].path] | length) == ([.tree[].path] | unique | length))
   ' "$output" >/dev/null || release_die "GitHub returned an invalid or truncated tree"
+}
+
+validate_evidence_namespace() {
+  local tree_file=$1
+  release_evidence_validate_namespace "$tree_file" "$v1_names_json" "$v2_names_json" \
+    "$SCRIPT_DIR/evidence-ledger-tree.jq" ||
+    release_die "evidence namespace contains partial, mixed, unsafe, or unrooted lineage"
+}
+
+validate_present_legacy_ledger() {
+  local tip=$1
+  local tip_tree_file=$2
+  local controlled cursor parents parent parent_tree current_tree_file parent_tree_file
+  local current_non_evidence parent_non_evidence depth
+
+  [[ "$(release_evidence_anchor_count "$tip_tree_file")" == "0" ]] ||
+    release_die "legacy evidence lineage contains an anchor"
+  controlled=$(release_evidence_controlled_entry_count "$tip_tree_file")
+  if [[ "$controlled" == "0" ]]; then
+    validated_ledger_depth=0
+    return
+  fi
+
+  ledger_validation_sequence=$((ledger_validation_sequence + 1))
+  cursor=$tip
+  current_tree_file=$tip_tree_file
+  depth=0
+  while :; do
+    depth=$((depth + 1))
+    [[ "$depth" -le 64 ]] || release_die "legacy evidence lineage exceeds the 64-commit validation bound"
+    validate_evidence_namespace "$current_tree_file"
+    [[ "$(release_evidence_anchor_count "$current_tree_file")" == "0" ]] ||
+      release_die "legacy evidence lineage contains an anchor"
+    read_commit_tree "$cursor"
+    parents=$(jq -cer '[.parents[].sha]' "$last_commit_response") ||
+      release_die "GitHub returned invalid commit parents"
+    [[ "$(jq 'length' <<<"$parents")" == "1" ]] ||
+      release_die "legacy evidence commit is not single-parent"
+    parent=$(jq -er '.[0]' <<<"$parents")
+    read_commit_tree "$parent" parent_tree
+    parent_tree_file="$scratch_dir/legacy-parent-tree-$ledger_validation_sequence-$depth-$parent.json"
+    read_tree "$parent_tree" "$parent_tree_file"
+    release_evidence_assert_controlled_blobs_preserved "$parent_tree_file" "$current_tree_file" ||
+      release_die "evidence lineage rewrote or removed an earlier controlled blob"
+    current_non_evidence=$(release_evidence_non_evidence_projection "$current_tree_file")
+    parent_non_evidence=$(release_evidence_non_evidence_projection "$parent_tree_file")
+    [[ "$current_non_evidence" == "$parent_non_evidence" ]] ||
+      release_die "legacy evidence commit changed inherited non-evidence paths"
+    controlled=$(release_evidence_controlled_entry_count "$parent_tree_file")
+    if [[ "$controlled" == "0" ]]; then
+      break
+    fi
+    cursor=$parent
+    current_tree_file=$parent_tree_file
+  done
+  validated_ledger_depth=$depth
 }
 
 classify_version_directory() {
@@ -264,7 +329,7 @@ verify_remote_blob() {
     .decoded_sha256 == $digest and .expected_sha256 == $digest and
     (.declared_size | type == "number" and . >= 0 and floor == .)
   ' "$document" >/dev/null || release_die "typed blob verification result is malformed for $label"
-  : > "$cache_file"
+  : >"$cache_file"
 }
 
 verify_remote_tuple() {
@@ -317,7 +382,7 @@ create_blob() {
     fi
     expected_digest=$(release_sha256_file "$path")
     cache_file="$scratch_dir/blob-cache-$sha-$expected_digest"
-    : > "$cache_file"
+    : >"$cache_file"
     printf -v "$output" '%s' "$sha"
     return
   fi
@@ -496,6 +561,8 @@ remote_names_json=$(jq -cn \
   --arg name0 "${remote_names[0]}" --arg name1 "${remote_names[1]}" \
   --arg name2 "${remote_names[2]}" --arg name3 "${remote_names[3]}" \
   '[$name0,$name1,$name2,$name3]')
+v1_names_json=$remote_names_json
+v2_names_json='["index.md","metrics-comparison.json","metrics-comparison.md","parity.json","release-evidence-bundle.json","storage-metrics.json"]'
 remote_ancestors_json=$(jq -cn --arg root evidence --arg releases evidence/releases --arg version "$remote_prefix" \
   '[$root,$releases,$version]')
 
@@ -505,6 +572,8 @@ ref_probe_sequence=0
 ref_read_sequence=0
 commit_read_sequence=0
 blob_verify_sequence=0
+ledger_validation_sequence=0
+validated_ledger_depth=0
 last_commit_response=''
 base_commit=''
 base_tree=''
@@ -528,25 +597,30 @@ base_tree_file="$scratch_dir/base-tree.json"
 read_tree "$base_tree" "$base_tree_file"
 directory_state=$(classify_version_directory "$base_tree_file")
 case "$directory_state" in
-  tuple_complete)
-    verify_remote_tuple "$base_tree_file"
-    assert_ref_unchanged "$base_commit"
-    emit_result "$base_commit" unchanged
-    exit 0
-    ;;
-  tuple_absent)
-    initialize_version=false
-    ;;
-  absent)
-    initialize_version=true
-    ;;
-  invalid)
-    release_die "remote release evidence lineage is partial, conflicting, unsafe, or incompatible"
-    ;;
-  *)
-    release_die "unknown remote release evidence state"
-    ;;
+tuple_complete)
+  verify_remote_tuple "$base_tree_file"
+  validate_present_legacy_ledger "$base_commit" "$base_tree_file"
+  assert_ref_unchanged "$base_commit"
+  emit_result "$base_commit" unchanged
+  exit 0
+  ;;
+tuple_absent)
+  initialize_version=false
+  ;;
+absent)
+  initialize_version=true
+  ;;
+invalid)
+  release_die "remote release evidence lineage is partial, conflicting, unsafe, or incompatible"
+  ;;
+*)
+  release_die "unknown remote release evidence state"
+  ;;
 esac
+
+validate_present_legacy_ledger "$base_commit" "$base_tree_file"
+[[ "$validated_ledger_depth" -lt 64 ]] ||
+  release_die "evidence lineage reached the 64-commit validation bound; refusing to mutate before a reviewed checkpoint migration"
 
 # Close the observation window immediately before creating Git objects. A
 # second exact check protects the eventual reference mutation as well.
@@ -572,6 +646,13 @@ mutation_shas_json=$(jq -cn --args '$ARGS.positional' "${mutation_shas[@]}") ||
 create_tree created_tree
 staged_tree_file="$scratch_dir/staged-tree.json"
 read_tree "$created_tree" "$staged_tree_file"
+validate_evidence_namespace "$staged_tree_file"
+release_evidence_assert_controlled_blobs_preserved "$base_tree_file" "$staged_tree_file" ||
+  release_die "created evidence tree rewrote or removed an earlier controlled blob"
+base_non_evidence=$(release_evidence_non_evidence_projection "$base_tree_file")
+staged_non_evidence=$(release_evidence_non_evidence_projection "$staged_tree_file")
+[[ "$base_non_evidence" == "$staged_non_evidence" ]] ||
+  release_die "created evidence tree changed inherited non-evidence paths"
 [[ "$(classify_version_directory "$staged_tree_file")" == "tuple_complete" ]] ||
   release_die "created evidence lineage tree is incomplete"
 if [[ "$initialize_version" == "true" ]]; then
@@ -610,5 +691,6 @@ if [[ "$initialize_version" == "true" ]]; then
 else
   verify_remote_tuple "$verified_tree_file"
 fi
+validate_present_legacy_ledger "$created_commit" "$verified_tree_file"
 assert_ref_unchanged "$created_commit"
 emit_result "$created_commit" "$result_state"

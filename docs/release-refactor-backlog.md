@@ -363,85 +363,66 @@ or substituted for the immutable baseline JSON.
 
 ## 10. Compact content-addressed offline evidence bundle
 
-- **Problem and evidence:** the first real `v0.0.14` candidate embedded enough
-  raw attestation/SBOM verification material to make `release-evidence.json`
-  1,475,773 bytes. Git Blobs transport expanded it to 2,000,495 base64
-  characters including line separators. This is release audit data, not product
-  code or a runtime dependency, but the monolithic representation is expensive
-  to move, inspect, and retain.
-- **Affected files/workflows:** `internal/releaseevidence`, `cmd/releasecheck`,
-  `release-evidence.yml`, append-only evidence publishing, artifact retention,
-  and offline replay tests.
-- **Guarantee preserved:** a verifier with network disabled receives every raw
-  document needed to reproduce the decision; every document is digest-bound;
-  append-only publisher/run/attempt lineage and no-clobber semantics remain.
-- **Proposed architecture:** emit a small canonical index plus one deterministic,
-  content-addressed compressed object per unique raw document under its SHA-256.
-  Typed evidence references local objects by digest instead of embedding the
-  same payload in the root JSON. The replayable artifact contains the complete
-  object set; branch tuples reuse already-present objects only after byte and
-  digest verification.
-- **Expected reduction:** target root JSON below 150 KiB and at least 60% less
-  transferred/stored evidence payload versus the measured `v0.0.14` candidate;
-  record actual before/after bytes rather than treating the target as a claim.
-- **Risk:** an index-only design could accidentally introduce network
-  dependence, permit missing objects, or let decompression limits become a
-  resource-exhaustion path.
-- **Required tests:** duplicate-object deduplication, missing/extra object,
-  digest collision simulation, deterministic compression, decompression size
-  limit, archive traversal, reordered index, offline replay with network denied,
-  and byte-for-byte legacy parity.
-- **Dependencies and order:** first freeze the current evidence semantics and
-  add byte metrics; dual-write old monolith and new bundle read-only; prove
-  parity; switch the durable publisher; remove the monolith only afterward.
-- **Acceptance criteria:** the exact same authorization/result is produced by
-  both formats, network-denied replay succeeds, every referenced object is
-  present exactly once and digest-valid, measured size targets are met, and no
-  release/runtime behavior changes.
+**Implemented in refactor Stage 3 (2026-07-17).** The accepted format and
+migration decision are recorded in [ADR 0003](adr/0003-compact-release-evidence-ledger.md).
+The source capability document selects v1 only when both new keys are absent
+and v2 only for exact bundle/genesis versions. The seven-day handoff dual-writes
+v1 and v2; the durable v2 tuple and 90-day artifact omit the monolith after
+byte-exact reconstruction, semantic replay, and success parity. Failure parity
+is executable API/CLI coverage rather than a misleading `parity.json` file.
+
+Objects are raw-SHA-addressed and use a canonical stored-DEFLATE gzip encoding
+with independent compressed digest/size binding. Strict directory shape,
+no-clobber publication, decompression and aggregate limits, missing/extra
+object rejection, and network/credential-independent offline replay are tested.
+The six metadata files and byte-domain definitions are stable and explicit.
+
+Replay of immutable evidence commit
+`af521d52b898088cb49f6256964e377e33e95a5d` produced a 1,887-byte root, 6,944
+auxiliary metadata bytes, a 593-byte parity record, a 1,468-byte self-report,
+and three objects totaling 357,677 raw / 357,766 encoded bytes. Root-plus-
+attempt logical payload changed from 2,964,270 to 379,550 bytes (-87.1%);
+deterministic export changed from 1,486,981 to 374,320 bytes (-74.8%). Unique
+Git blob payload is 368,658 bytes and complete offline reconstructed payload is
+368,569 bytes. These scopes are not interchangeable with transfer, billing, or
+compression-ratio metrics.
+
+**Residual hardening backlog:** commit a small frozen historical-v1 golden
+fixture in addition to generated compatibility fixtures. It must contain no
+secret or credential material and must prove stable reconstruction/error codes
+without treating the dated production evidence SHA as an operational constant.
 
 ## 11. Automatic evidence-only ledger genesis
 
-- **Problem and evidence:** evidence run `29569819553` attempt 1 replayed a
-  valid `v0.0.14` candidate, then received HTTP 403 creating the first
-  `release-evidence` ref. The initial commit inherited the release source tree,
-  including ten `.github/workflows/*` files, so GitHub required
-  `Workflows: write`; the intentionally narrow workflow token had only
-  `Contents: write`. Recovery used a one-time exact-source bootstrap and a full
-  attempt-2 rerun.
-- **Affected files/workflows:** `publish-release-evidence.sh`, its fake Git API
-  and adversarial tests, evidence branch initialization, the release contract,
-  external-settings documentation, and operator preflight.
-- **Guarantee preserved:** never rewrite the existing append-only branch;
-  validate the exact source commit before mutation; bind source/version/run in
-  canonical evidence; keep later commits single-parent fast-forwards with
-  `force:false`; never add an App bypass, PAT, or persistent
-  `Workflows: write` credential.
-- **Proposed architecture:** for a genuinely absent ledger, create the first
-  tree without `base_tree` and a parentless root commit containing only the
-  strict `evidence/` namespace. Make the source SHA visible in the commit
-  message and cryptographically authoritative in the verified evidence.
-  Existing initialized histories continue unchanged; introduce a versioned,
-  immutable genesis anchor and contract mode instead of inferring trust from
-  remote directory shape.
-- **Expected reduction:** zero operator bootstrap commands for a fresh
-  repository and zero extra token permissions. Record the eliminated manual
-  step and permission diff; no runtime or release-asset size claim is made.
-- **Risk:** losing source ancestry without strengthening content binding,
-  accepting paths outside `evidence/`, accidentally creating a second ledger,
-  or attempting to migrate the current immutable root in place.
-- **Required tests:** source tree containing workflow files; initial tree has no
-  `base_tree`; root commit has no parent; hostile non-evidence path; wrong
-  source response; concurrent creation; append/no-op/race parity; current
-  bootstrapped history compatibility; token permission remains exactly
-  `actions: read` plus `contents: write`.
-- **Dependencies and order:** freeze the successful bootstrapped v1 behavior;
-  add contract/genesis fixtures; implement automatic genesis before or with
-  the content-addressed bundle, then prove both paths against a disposable
-  repository without touching the existing evidence root.
-- **Acceptance criteria:** a fresh repository reaches durable evidence with no
-  manual ref creation, no workflows-capable credential, and an evidence-only
-  root; the current branch remains byte- and history-identical; offline replay,
-  exact tuple binding, append-only rules, and no-clobber tests all pass.
+**Implemented in refactor Stage 3 (2026-07-17).** Only an exact typed HTTP 404
+enables genesis. The publisher re-observes the exact source immediately before
+each mutation, creates blobs, creates a tree without `base_tree`, creates a
+parentless commit, and creates the ref without force. The closed initial tree
+contains only evidence paths and `evidence/genesis.v1.json`; it never inherits
+source workflow files. Ambiguous ref creation and concurrent creation are
+accepted only after exact read-back reconciliation. Contents write remains the
+only write permission; Workflows write, PAT/App expansion, and bypasses remain
+forbidden.
+
+The versioned genesis anchor binds repository, first version/source and bundle,
+publisher run/attempt/repair, and evidence workflow run/attempt. Its self-digest
+proves internal integrity, while authenticity remains external: protected
+exact ref, reviewed workflow/checker, and independently observed release tuple.
+The existing production history stays `legacy-compatible`; Stage 3 neither
+rewrites it nor retrofits an anchor. Its immutable baseline and the dated live
+ruleset/ref observations are documented separately from operational inputs.
+
+Both anchored and legacy lineages have a 64-commit validation window. Exact
+no-op replay is allowed at depth 64; append is rejected before any mutation.
+The two-commit production baseline had 62 append slots before this stage and is
+expected to have 61 after the next successful patch.
+
+**Residual architecture backlog:** design and review a checkpoint or Merkle
+summary before the validation window is exhausted. It must preserve historical
+root/source binding and complete offline verification. Also replace the oldest
+accepted legacy parent/source observation with a dynamic, independently bound
+proof before removing any compatibility fixture. Neither follow-up authorizes
+rewriting the current branch.
 
 ## Suggested implementation order
 
@@ -449,16 +430,16 @@ or substituted for the immutable baseline JSON.
    read boundary, including custom-name and post-merge association fixtures.
 2. Make test-tool bootstrap hermetic.
 3. Consolidate App audits and promotion inventory with parity dual-runs.
-4. Implement versioned automatic evidence-only genesis without changing the
-   existing append-only root.
-5. Compact the evidence bundle through a measured dual-write parity phase.
-6. Reduce the CI/publisher graph using measurements from successful runs.
-7. Add event-aware run names and measure title-check event fan-out without
+4. Preserve the completed Stage 3 automatic genesis and compact-bundle
+   invariants; schedule its checkpoint/Merkle and frozen-v1 follow-ups before
+   the validation window becomes operationally tight.
+5. Reduce the CI/publisher graph using measurements from successful runs.
+6. Add event-aware run names and measure title-check event fan-out without
    changing triggers.
-8. Add the diagnostic evidence collector.
-9. Generalize recovery transitions only after the completed `v0.0.12` incident
+7. Add the diagnostic evidence collector.
+8. Generalize recovery transitions only after the completed `v0.0.12` incident
    has remained stable through at least one fully green later release.
-10. Implement dual-source historical verification last, as a read-only tool with
+9. Implement dual-source historical verification last, as a read-only tool with
    no operator plane.
 
 Each step requires its own before/after successful-run metrics and a product-path
