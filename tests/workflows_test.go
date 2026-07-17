@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1051,10 +1052,13 @@ func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T
 		recovery.CompletedReleaseSourceSHA != "6206b472cda81f7a87656055d8eb6627c26a0fef" {
 		t.Fatalf("complete Release Please recovery/config boundary=%+v config_last_release_sha=%s", recovery, config.LastReleaseSHA)
 	}
-	var manifest map[string]string
-	if err := json.Unmarshal([]byte(readFile(t, "../.release-please-manifest.json")), &manifest); err != nil ||
-		len(manifest) != 1 || manifest["."] != "0.0.13" {
-		t.Fatalf("completed recovery manifest=%v err=%v", manifest, err)
+	canonicalContract, err := releasecontract.LoadCanonical("..")
+	if err != nil {
+		t.Fatalf("load canonical release contract: %v", err)
+	}
+	manifestData := []byte(readFile(t, "../.release-please-manifest.json"))
+	if _, err := releasecontract.CheckReleasePleaseRecovery(canonicalContract, data, manifestData); err != nil {
+		t.Fatalf("completed recovery config/manifest: %v", err)
 	}
 	pkg, ok := config.Packages["."]
 	if !ok || pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" || !pkg.SkipGitHubRelease || !pkg.IncludeVInTag {
