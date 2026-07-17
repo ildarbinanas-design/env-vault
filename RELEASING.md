@@ -479,3 +479,12 @@ shape and cross-check the job ID, run ID/attempt, head SHA, check/workflow
 names, success state, and canonical URL before requiring the run's direct
 `head_sha` to equal the reviewed PR head. See the incident matrix in the
 [operator runbook](docs/release-operator-runbook.md).
+
+The Git Blobs API returns base64 content with transport line wrapping. Evidence
+publication removes only CR/LF wrapping, decodes fail-closed, requires an exact
+canonical-base64 round trip, then checks the declared byte count and exact byte
+equality. Historical evidence assembly
+and replay stay pinned to the immutable publisher source; the append-only
+mutation helper is separately checked out at the protected listener
+`github.sha`, so a reviewed transport fix can recover an old immutable release
+without changing that release's code, tag, assets, or Homebrew state.

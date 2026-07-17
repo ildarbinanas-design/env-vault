@@ -119,8 +119,9 @@ work completed by the documentation release.
   `--jq`. Investigation of evidence run `29563754061` additionally showed that
   Actions REST `.name` can expose a custom `run-name`, while the exact
   successful PR run `29562392602` has `.pull_requests: []` after PR #39 was
-  merged. Blindly replaying mutations after transport or identity ambiguity is
-  prohibited.
+  merged. Evidence publish run `29566800374` then showed that Git Blobs API
+  `.content` is line-wrapped base64, unlike the original unwrapped fake. Blindly
+  replaying mutations after transport or identity ambiguity is prohibited.
 - **Affected files/workflows:** `scripts/release/gh-api-read.sh`, release shell
   scripts, `release-evidence.yml`, release/planning/publisher observers,
   operator documentation, and transport/workflow tests.
@@ -134,8 +135,11 @@ work completed by the documentation release.
   based on exact run ID/attempt, workflow path, event, head SHA/ref, and the
   originating required-check URL/job ID where applicable. Cross-check the job
   endpoint's run ID/attempt, head SHA, name, workflow, result, and canonical URL;
-  REST `.name` and `.pull_requests` remain diagnostic-only. Mutations remain
-  explicit commands with postcondition probes and idempotency identities.
+  REST `.name` and `.pull_requests` remain diagnostic-only. Model Git blob
+  payloads as typed `{sha,encoding,size,content}` records: remove only CR/LF
+  transport wrapping, decode fail-closed, and compare declared size and exact
+  bytes. Mutations remain explicit commands with postcondition probes and
+  idempotency identities.
 - **Expected reduction:** 200-350 shell LOC, 20-40 seconds of repeated setup per
   full release, and fewer non-deterministic operator retries; no required job
   reduction.
@@ -145,7 +149,9 @@ work completed by the documentation release.
   DNS denial, invalid keyring token without token disclosure, HTTP 401/403/429,
   post-write timeout, CLI capability drift, atomic-output interruption, custom
   workflow `run-name`, merged-PR empty associations, stale/wrong check URL/job,
-  wrong run attempt, and direct-head mismatch.
+  wrong run attempt, direct-head mismatch, realistic line-wrapped Git blobs,
+  malformed/trailing base64, missing/extra padding, noncanonical pad bits,
+  declared-size mismatch, and byte mismatch.
 - **Dependencies and order:** specify codes and exit statuses; implement reads;
   migrate one verifier at a time; design mutation postconditions only after read
   parity is proven.
@@ -312,19 +318,58 @@ work completed by the documentation release.
   context; title edits are always revalidated; no required-check or ruleset
   weakening occurs.
 
+## 10. Compact content-addressed offline evidence bundle
+
+- **Problem and evidence:** the first real `v0.0.14` candidate embedded enough
+  raw attestation/SBOM verification material to make `release-evidence.json`
+  1,475,773 bytes. Git Blobs transport expanded it to 2,000,495 base64
+  characters including line separators. This is release audit data, not product
+  code or a runtime dependency, but the monolithic representation is expensive
+  to move, inspect, and retain.
+- **Affected files/workflows:** `internal/releaseevidence`, `cmd/releasecheck`,
+  `release-evidence.yml`, append-only evidence publishing, artifact retention,
+  and offline replay tests.
+- **Guarantee preserved:** a verifier with network disabled receives every raw
+  document needed to reproduce the decision; every document is digest-bound;
+  append-only publisher/run/attempt lineage and no-clobber semantics remain.
+- **Proposed architecture:** emit a small canonical index plus one deterministic,
+  content-addressed compressed object per unique raw document under its SHA-256.
+  Typed evidence references local objects by digest instead of embedding the
+  same payload in the root JSON. The replayable artifact contains the complete
+  object set; branch tuples reuse already-present objects only after byte and
+  digest verification.
+- **Expected reduction:** target root JSON below 150 KiB and at least 60% less
+  transferred/stored evidence payload versus the measured `v0.0.14` candidate;
+  record actual before/after bytes rather than treating the target as a claim.
+- **Risk:** an index-only design could accidentally introduce network
+  dependence, permit missing objects, or let decompression limits become a
+  resource-exhaustion path.
+- **Required tests:** duplicate-object deduplication, missing/extra object,
+  digest collision simulation, deterministic compression, decompression size
+  limit, archive traversal, reordered index, offline replay with network denied,
+  and byte-for-byte legacy parity.
+- **Dependencies and order:** first freeze the current evidence semantics and
+  add byte metrics; dual-write old monolith and new bundle read-only; prove
+  parity; switch the durable publisher; remove the monolith only afterward.
+- **Acceptance criteria:** the exact same authorization/result is produced by
+  both formats, network-denied replay succeeds, every referenced object is
+  present exactly once and digest-valid, measured size targets are met, and no
+  release/runtime behavior changes.
+
 ## Suggested implementation order
 
 1. Add metrics/graph assertions and the typed GitHub transport/run-identity
    read boundary, including custom-name and post-merge association fixtures.
 2. Make test-tool bootstrap hermetic.
 3. Consolidate App audits and promotion inventory with parity dual-runs.
-4. Reduce the CI/publisher graph using measurements from successful runs.
-5. Add event-aware run names and measure title-check event fan-out without
+4. Compact the evidence bundle through a measured dual-write parity phase.
+5. Reduce the CI/publisher graph using measurements from successful runs.
+6. Add event-aware run names and measure title-check event fan-out without
    changing triggers.
-6. Add the diagnostic evidence collector.
-7. Generalize recovery transitions only after the completed `v0.0.12` incident
+7. Add the diagnostic evidence collector.
+8. Generalize recovery transitions only after the completed `v0.0.12` incident
    has remained stable through at least one fully green later release.
-8. Implement dual-source historical verification last, as a read-only tool with
+9. Implement dual-source historical verification last, as a read-only tool with
    no operator plane.
 
 Each step requires its own before/after successful-run metrics and a product-path
