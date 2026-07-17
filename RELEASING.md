@@ -372,6 +372,38 @@ Use a repair only after collecting the exact failed job, step, log, run ID,
 attempt, artifacts, and remote state. Fix workflow or code defects through a
 normal reviewed PR; do not mask a reproducible failure with repeated reruns.
 
+### Empty-Release parser recovery
+
+`assets: []` is a valid GitHub Release response for reconciliation, but it is
+not a complete release. Shape validation must succeed independently of name
+extraction; `download-release-assets.sh` still fails until all ten unique exact
+assets exist. After every upload response, reconciliation refreshes inventory.
+An ambiguous response is accepted only after the intended single-name delta
+and exact downloaded bytes are observed; it is never retried blindly.
+
+If a deterministic parser defect is frozen in an immutable tag and its exact
+public Release has zero assets, merge the reviewed fix first and require green
+exact-head and `main` CI. Then dispatch `bootstrap-release-assets.yml` on the
+protected default branch with explicit version, source CI run/attempt, failed
+publisher run/attempt/job, retained publisher-bundle artifact ID/digest, and
+Release ID. The workflow replays both ten-asset bundles offline and uploads
+only one contract archive/checksum pair. It also fails unless the dispatched
+default-branch control SHA has one exact successful main CI attempt. Require its
+`env-vault.release-assets-bootstrap.v1` result before dispatching the ordinary
+`repair=release-assets` workflow at the immutable tag.
+
+This path is forbidden when any Release asset already exists, any supplied
+identity differs, the source and reviewed release-byte contracts differ, a
+publisher for the source has succeeded, or the failed publisher graph/bundle
+is missing or ambiguous. Never replace this bootstrap with a tag move, Release
+deletion, local upload, clobber, failed-job-only rerun, or broader permission.
+See [ADR 0004](docs/adr/0004-empty-release-asset-bootstrap.md).
+
+The workflow re-reads the protected default-branch ref immediately before the
+first asset mutation and stops if it no longer equals the dispatched reviewed
+control SHA. A response file containing more than one top-level JSON value is
+malformed even when every value independently has a valid Release shape.
+
 ## Legacy and blocked versions
 
 `v0.0.1` through `v0.0.7` may be rebuilt only for diagnostics through

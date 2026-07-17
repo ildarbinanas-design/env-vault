@@ -51,6 +51,32 @@ release_is_expected_asset() {
   return 1
 }
 
+release_write_asset_names() {
+  local release_state=$1
+  local output=$2
+
+  release_require_regular_file "$release_state"
+  [[ ! -e "$output" ]] || release_die "refusing to overwrite release asset inventory: $output"
+  jq -s -e '
+    length == 1 and
+    (.[0] | type) == "object" and
+    (.[0].assets | type) == "array" and
+    (.[0].assets | length) <= 100 and
+    all(.[0].assets[];
+      type == "object" and
+      (.name | type) == "string" and
+      (.name | test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))
+    )
+  ' "$release_state" >/dev/null || release_die "GitHub returned malformed release asset data"
+  (
+    umask 077
+    jq -s -r '.[0].assets[].name' "$release_state" >"$output"
+  ) || {
+    rm -f -- "$output"
+    release_die "GitHub returned malformed release asset data"
+  }
+}
+
 release_sha256_file() {
   local path=$1
   local output hash
@@ -88,7 +114,7 @@ release_verify_checksum_pair() {
   [[ "$line_count" == "1" ]] ||
     release_die "checksum for $archive_name must contain exactly one record"
 
-  byte_count=$(wc -c < "$checksum_file") ||
+  byte_count=$(wc -c <"$checksum_file") ||
     release_die "cannot measure checksum for $archive_name"
   byte_count=${byte_count//[[:space:]]/}
   [[ "$byte_count" =~ ^[1-9][0-9]*$ ]] ||
@@ -96,7 +122,7 @@ release_verify_checksum_pair() {
 
   line=''
   terminator_bytes=0
-  if IFS= read -r line < "$checksum_file"; then
+  if IFS= read -r line <"$checksum_file"; then
     terminator_bytes=1
     # Bash read removes the LF from either native line ending but retains the
     # terminal CR from CRLF. Normalize exactly that known terminator before
@@ -135,7 +161,7 @@ release_write_checksum_pair() {
   [[ ! -e "$checksum_file" ]] || release_die "refusing to overwrite checksum file: $checksum_file"
 
   hash=$(release_sha256_file "$archive")
-  printf '%s  %s\n' "$hash" "$archive_name" > "$checksum_file"
+  printf '%s  %s\n' "$hash" "$archive_name" >"$checksum_file"
   release_verify_checksum_pair "$archive" "$checksum_file"
 }
 
@@ -191,11 +217,11 @@ _release_load_contract() {
   RELEASE_ARCHIVES=()
   while IFS= read -r archive; do
     RELEASE_ARCHIVES+=("$archive")
-  done <<< "$archives"
+  done <<<"$archives"
   RELEASE_ASSETS=()
   while IFS= read -r asset; do
     RELEASE_ASSETS+=("$asset")
-  done <<< "$assets"
+  done <<<"$assets"
   [[ ${#RELEASE_ARCHIVES[@]} -eq 5 && ${#RELEASE_ASSETS[@]} -eq 10 ]] ||
     release_die "release contract matrix is incomplete"
   readonly RELEASE_CONTRACT_PATH RELEASE_VERSION_PATTERN

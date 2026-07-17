@@ -228,6 +228,20 @@ or substituted for the immutable baseline JSON.
 - **Required tests:** mixed attempts, duplicate/missing assets, checksum line
   endings, archive traversal, wrong embedded version, wrong source SHA,
   attestation subject mismatch, proof tampering, and no-clobber replay.
+- **Implemented incident hardening (2026-07-18):** valid `assets: []` shape is
+  now distinct from an empty extracted name stream. Reconciliation accepts it
+  as ten missing assets, while the complete downloader still requires exactly
+  ten. Every upload refreshes inventory; ambiguous outcomes require the exact
+  one-name delta and byte read-back without retry. Realistic tests cover an
+  empty new Release, null/wrong-type/unsafe/duplicate/unexpected inventories,
+  no-clobber, divergence, and concurrent/ambiguous mutation. ADR 0004 adds a
+  source-bound two-asset bootstrap only because an immutable tag cannot consume
+  the fixed parser.
+- **Residual:** the exceptional bootstrap and steady-state reconciler still
+  express related inventory/postcondition rules in shell. The proposed typed
+  inventory engine should absorb both only after parity tests preserve the
+  exact zero/two/ten-state transitions; this incident is not justification to
+  collapse the five native builders or broaden mutation permissions.
 - **Dependencies and order:** freeze existing proof schemas; implement parity
   readers; dual-run old/new read-only verification; then remove duplicated jobs.
 - **Acceptance criteria:** all current adversarial fixtures produce the same
