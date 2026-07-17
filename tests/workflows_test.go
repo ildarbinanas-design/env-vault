@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -867,10 +868,18 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 	identity := namedStep(t, assembleJob, "Resolve exact CI, release PR, and PR-head CI identities")
 	if !containsAll(identity.Run,
 		"classify-attempt", "ATTEMPT_MATRIX_COMPLETE", "verify-release-authorization.sh", "gh pr checks", "quality-gate", "run_attempt", ".head_branch == $version",
-		"RELEASE_AUTHORIZATION_OUTPUT", "pull_requests", "confirmation", "generated_release_pr_head_sha",
+		"RELEASE_AUTHORIZATION_OUTPUT", "confirmation", "generated_release_pr_head_sha",
+		`.path == ".github/workflows/build-binaries.yml"`, ".head_sha == $release_pr_head",
+		"publisher run identity mismatch", "release PR CI run identity mismatch", "release planning run identity mismatch",
+		`^([1-9][0-9]*)/job/([1-9][0-9]*)$`, "actions/jobs/${pr_ci_job_id}", "snapshots/pr-ci-job.json",
+		`.run_attempt == $attempt`, `.html_url == $quality_link`, "release PR quality-gate job identity mismatch",
 		"release-authorization.json", "attestation-verifications.json", "repository_release_settings", "settings verify",
 		"actions/runs/${planning_run_id}", "snapshots/planning-run.json") {
 		t.Fatalf("evidence identity resolution is missing an exact tuple gate")
+	}
+	if strings.Contains(identity.Run, `.name == "build-binaries"`) || strings.Contains(identity.Run, `.name == "ci"`) ||
+		strings.Contains(identity.Run, `.name == "release-please"`) || strings.Contains(identity.Run, ".pull_requests") {
+		t.Fatalf("evidence identity resolution depends on lifecycle-unstable Actions API fields")
 	}
 	promotion := namedStep(t, assembleJob, "Download the exact promotion manifest")
 	if promotion.Uses != downloadAction || !containsAll(promotion.With["name"], "source_sha", "ci_attempt") || promotion.With["run-id"] != "${{ steps.identity.outputs.ci_run_id }}" {
@@ -911,6 +920,72 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 	}
 	if raw := readFile(t, "../.github/workflows/release-evidence.yml"); containsAll(raw, "go test ./...", "-ldflags=") || strings.Contains(raw, "browser") || strings.Contains(raw, "gh release edit") {
 		t.Fatalf("release evidence workflow must not rebuild product quality or use browser automation")
+	}
+}
+
+func TestReleaseEvidenceActionsIdentityPredicatesUseStableExactFields(t *testing.T) {
+	const (
+		repository = "example/env-vault"
+		version    = "v1.2.3"
+		source     = "1111111111111111111111111111111111111111"
+		prHead     = "2222222222222222222222222222222222222222"
+		branch     = "release-please--branches--main--components--env-vault"
+		qualityURL = "https://github.com/example/env-vault/actions/runs/92/job/93"
+	)
+
+	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
+	identityRun := namedStep(t, wf.Jobs["assemble"], "Resolve exact CI, release PR, and PR-head CI identities").Run
+	publisherPredicate := workflowJQProgram(t, identityRun, "snapshots/publisher-run.json")
+	publisher := map[string]any{
+		"id": 91, "run_attempt": 1,
+		"repository": map[string]any{"full_name": repository}, "head_repository": map[string]any{"full_name": repository},
+		"head_sha": source, "head_branch": version, "event": "push", "status": "completed", "conclusion": "success",
+		"name": "env-vault-publication event=push version=v1.2.3 repair=none", "path": ".github/workflows/build-binaries.yml",
+		"pull_requests": []any{},
+	}
+	publisherArgs := []string{"--arg", "repository", repository, "--arg", "source", source, "--arg", "version", version, "--argjson", "run_id", "91", "--argjson", "attempt", "1"}
+	assertJQIdentityPredicate(t, publisherPredicate, publisher, publisherArgs, true)
+
+	jobPredicate := workflowJQProgram(t, identityRun, "snapshots/pr-ci-job.json")
+	job := map[string]any{
+		"id": 93, "run_id": 92, "run_attempt": 2, "head_sha": prHead,
+		"name": "quality-gate", "workflow_name": "ci", "status": "completed", "conclusion": "success", "html_url": qualityURL,
+	}
+	jobArgs := []string{"--arg", "quality_link", qualityURL, "--arg", "release_pr_head", prHead, "--argjson", "job_id", "93", "--argjson", "run_id", "92", "--argjson", "attempt", "2"}
+	assertJQIdentityPredicate(t, jobPredicate, job, jobArgs, true)
+
+	runPredicate := workflowJQProgram(t, identityRun, "snapshots/pr-ci-run.json")
+	prRun := map[string]any{
+		"id": 92, "run_attempt": 2,
+		"repository": map[string]any{"full_name": repository}, "head_repository": map[string]any{"full_name": repository},
+		"head_sha": prHead, "head_branch": branch, "event": "pull_request", "status": "completed", "conclusion": "success",
+		"name": "chore(main): release env-vault v1.2.3", "path": ".github/workflows/ci.yml", "pull_requests": []any{},
+	}
+	runArgs := []string{"--arg", "repository", repository, "--arg", "branch", branch, "--arg", "release_pr_head", prHead, "--argjson", "run_id", "92", "--argjson", "attempt", "2"}
+	assertJQIdentityPredicate(t, runPredicate, prRun, runArgs, true)
+
+	for name, test := range map[string]struct {
+		predicate string
+		fixture   map[string]any
+		args      []string
+		field     string
+		value     any
+	}{
+		"publisher wrong path":        {publisherPredicate, publisher, publisherArgs, "path", ".github/workflows/other.yml"},
+		"publisher wrong head":        {publisherPredicate, publisher, publisherArgs, "head_sha", prHead},
+		"quality job wrong ID":        {jobPredicate, job, jobArgs, "id", 94},
+		"quality job wrong attempt":   {jobPredicate, job, jobArgs, "run_attempt", 3},
+		"quality job wrong head":      {jobPredicate, job, jobArgs, "head_sha", source},
+		"quality job stale URL":       {jobPredicate, job, jobArgs, "html_url", "https://github.com/example/env-vault/actions/runs/92/job/94"},
+		"PR CI run wrong attempt":     {runPredicate, prRun, runArgs, "run_attempt", 1},
+		"PR CI run wrong direct head": {runPredicate, prRun, runArgs, "head_sha", source},
+		"PR CI run wrong path":        {runPredicate, prRun, runArgs, "path", ".github/workflows/other.yml"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := cloneJSONMap(t, test.fixture)
+			mutated[test.field] = test.value
+			assertJQIdentityPredicate(t, test.predicate, mutated, test.args, false)
+		})
 	}
 }
 
@@ -1309,6 +1384,57 @@ func containsAll(value string, fragments ...string) bool {
 		}
 	}
 	return true
+}
+
+func assertJQIdentityPredicate(t *testing.T, predicate string, fixture map[string]any, args []string, wantPass bool) {
+	t.Helper()
+	data, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandArgs := append([]string{"-e"}, args...)
+	commandArgs = append(commandArgs, predicate)
+	command := exec.Command("jq", commandArgs...)
+	command.Stdin = strings.NewReader(string(data))
+	output, err := command.CombinedOutput()
+	if wantPass && err != nil {
+		t.Fatalf("exact Actions identity fixture was rejected: %v\n%s", err, output)
+	}
+	if !wantPass && err == nil {
+		t.Fatalf("drifted Actions identity fixture was accepted: %s", output)
+	}
+}
+
+func workflowJQProgram(t *testing.T, run, inputFile string) string {
+	t.Helper()
+	closing := "' " + inputFile + " >/dev/null || {"
+	closingIndex := strings.Index(run, closing)
+	if closingIndex < 0 {
+		t.Fatalf("jq predicate for %s not found in workflow step", inputFile)
+	}
+	prefix := run[:closingIndex]
+	openingIndex := strings.LastIndex(prefix, "'")
+	if openingIndex < 0 {
+		t.Fatalf("jq predicate for %s has no opening quote", inputFile)
+	}
+	program := strings.TrimSpace(prefix[openingIndex+1:])
+	if program == "" {
+		t.Fatalf("jq predicate for %s is empty", inputFile)
+	}
+	return program
+}
+
+func cloneJSONMap(t *testing.T, value map[string]any) map[string]any {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(data, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
 }
 
 func countJobRunsContaining(wf workflow, fragment string) int {

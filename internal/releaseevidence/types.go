@@ -76,8 +76,8 @@ type CompletedContractWorkflow struct {
 	Conclusion string `json:"conclusion"`
 }
 
-// ReleasePRCIIdentity intentionally does not require its head SHA to equal the
-// release source: GitHub pull_request CI may report a synthetic merge SHA.
+// ReleasePRCIIdentity binds the direct Actions run/job head to the exact
+// generated release-PR head. It is distinct from the post-merge release source.
 type ReleasePRCIIdentity struct {
 	ID                        string `json:"id"`
 	Name                      string `json:"name"`

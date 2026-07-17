@@ -116,17 +116,26 @@ work completed by the documentation release.
   pagination, retry, jq, and shell parsing. Operator history includes a CLI
   flag incompatibility (`gh config set --hostname` versus `-h`), sandbox DNS
   denial, and a current `gh` behavior where `--slurp` cannot be combined with
-  `--jq`. Blindly replaying mutations after transport ambiguity is prohibited.
+  `--jq`. Investigation of evidence run `29563754061` additionally showed that
+  Actions REST `.name` can expose a custom `run-name`, while the exact
+  successful PR run `29562392602` has `.pull_requests: []` after PR #39 was
+  merged. Blindly replaying mutations after transport or identity ambiguity is
+  prohibited.
 - **Affected files/workflows:** `scripts/release/gh-api-read.sh`, release shell
-  scripts, operator documentation, and transport/workflow tests.
+  scripts, `release-evidence.yml`, release/planning/publisher observers,
+  operator documentation, and transport/workflow tests.
 - **Guarantee preserved:** reads may use bounded retries; mutations are never
   blindly retried; JSON is atomic and schema checked; credentials never enter
   evidence.
 - **Proposed architecture:** a small release-only transport executable reports
   a versioned capability/preflight JSON, performs atomic read pagination, and
   classifies authentication, permission, rate-limit, sandbox/DNS, and malformed
-  response failures with stable codes. Mutations remain explicit commands with
-  postcondition probes and idempotency identities.
+  response failures with stable codes. Add a typed Actions run identity record
+  based on exact run ID/attempt, workflow path, event, head SHA/ref, and the
+  originating required-check URL/job ID where applicable. Cross-check the job
+  endpoint's run ID/attempt, head SHA, name, workflow, result, and canonical URL;
+  REST `.name` and `.pull_requests` remain diagnostic-only. Mutations remain
+  explicit commands with postcondition probes and idempotency identities.
 - **Expected reduction:** 200-350 shell LOC, 20-40 seconds of repeated setup per
   full release, and fewer non-deterministic operator retries; no required job
   reduction.
@@ -134,13 +143,17 @@ work completed by the documentation release.
   partial mutation if read and write policies are conflated.
 - **Required tests:** recorded HTTP fixtures, truncated pagination, retry-after,
   DNS denial, invalid keyring token without token disclosure, HTTP 401/403/429,
-  post-write timeout, CLI capability drift, and atomic-output interruption.
+  post-write timeout, CLI capability drift, atomic-output interruption, custom
+  workflow `run-name`, merged-PR empty associations, stale/wrong check URL/job,
+  wrong run attempt, and direct-head mismatch.
 - **Dependencies and order:** specify codes and exit statuses; implement reads;
   migrate one verifier at a time; design mutation postconditions only after read
   parity is proven.
 - **Acceptance criteria:** every release script consumes the same preflight and
-  error schema; unsupported CLI syntax fails before action; a transport-unknown
-  mutation is classified for inspection rather than retried.
+  error/identity schema; unsupported CLI syntax fails before action; custom
+  names and missing post-merge associations cannot break a valid exact tuple;
+  a transport-unknown mutation is classified for inspection rather than
+  retried.
 
 ## 5. Consolidated promotion-manifest and artifact inventory engine
 
@@ -257,16 +270,61 @@ work completed by the documentation release.
   attempts say `publication_eligible: false`; only one fully green attempt can
   create the durable release-evidence record.
 
+## 9. Event-aware required-check observability without trigger weakening
+
+- **Problem and evidence:** Release Please updates can emit `synchronize` and
+  `edited` within one second for the same PR head. For PR #39 this produced
+  `pr-title` run `29562392487`, cancelled before steps, followed by successful
+  run `29562393511`. In the Actions list, CI, Dependency Review, and title
+  checks share the release PR title, which looks like duplication despite
+  representing different workflows; CodeQL uses the distinct display title
+  `PR #39` but still appears as another row for the same PR/head. In the 55-run
+  cohort observed through 2026-07-17T07:13Z, 43 head SHAs were unique and 12
+  had a second run; six immediate cancelled/success pairs were Release Please
+  proposals.
+- **Affected files/workflows:** `pr-title.yml`, optional shared run-name
+  conventions, workflow graph tests, and operator documentation.
+- **Guarantee preserved:** `synchronize` must validate every new head;
+  `edited` must invalidate a title changed without a new commit; `pr-title`
+  remains a strict required check; cancelled stale runs never count as green.
+- **Proposed architecture:** add event/action/head context to `run-name` and
+  machine audit output while keeping the current concurrency cancellation.
+  An in-workflow or reusable coalescer cannot prevent GitHub from creating a
+  run record for each producer event; eliminating the record would require
+  removing/filtering a trigger or an external status producer, neither of
+  which is justified by the current evidence.
+- **Expected reduction:** safe phase: 0 jobs, 0 wall/runner seconds, and 0 LOC
+  removed; expect 1-5 workflow LOC added for `run-name`, with materially faster
+  UI classification. No run-count reduction is claimed.
+- **Risk:** removing either trigger or cancelling the wrong run can leave the
+  new SHA without its required context, or allow a valid title to be edited to
+  an invalid one after the last check.
+- **Required tests:** synchronize-only, title-only edit, body-only edit,
+  simultaneous synchronize/edit in both orders, cancelled predecessor,
+  required-context presence on the current SHA, and a post-success invalid
+  title edit.
+- **Dependencies and order:** land run-name/telemetry only; collect several
+  Release Please cycles; model GitHub check-suite/ruleset behavior; retain both
+  triggers unless a separate design proves equivalent required-status
+  semantics before implementation.
+- **Acceptance criteria:** Actions UI identifies workflow/event/action without
+  opening a run; every current head has one successful canonical `pr-title`
+  context; title edits are always revalidated; no required-check or ruleset
+  weakening occurs.
+
 ## Suggested implementation order
 
-1. Add metrics/graph assertions and the typed GitHub transport read boundary.
+1. Add metrics/graph assertions and the typed GitHub transport/run-identity
+   read boundary, including custom-name and post-merge association fixtures.
 2. Make test-tool bootstrap hermetic.
 3. Consolidate App audits and promotion inventory with parity dual-runs.
 4. Reduce the CI/publisher graph using measurements from successful runs.
-5. Add the diagnostic evidence collector.
-6. Generalize recovery transitions only after the completed `v0.0.12` incident
+5. Add event-aware run names and measure title-check event fan-out without
+   changing triggers.
+6. Add the diagnostic evidence collector.
+7. Generalize recovery transitions only after the completed `v0.0.12` incident
    has remained stable through at least one fully green later release.
-7. Implement dual-source historical verification last, as a read-only tool with
+8. Implement dual-source historical verification last, as a read-only tool with
    no operator plane.
 
 Each step requires its own before/after successful-run metrics and a product-path

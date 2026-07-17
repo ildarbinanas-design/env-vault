@@ -14,9 +14,8 @@ var githubUserPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`
 
 // ValidateAuthorization fails closed unless the saved checkpoint and all
 // relevant workflow identities match the release contract and exact promotion
-// tuple. The pull-request CI head is only syntax-checked because GitHub may use
-// a synthetic merge SHA for pull_request runs; its pull-request association is
-// separately bound to the exact generated PR number and head SHA.
+// tuple. The saved pull-request CI identity is the direct Actions run/job head,
+// so it must equal the exact generated release-PR head that was reviewed.
 func ValidateAuthorization(contract releasecontract.Contract, authorization Authorization, manifest releasepromotion.Manifest) error {
 	if authorization.SchemaID != contract.Schemas["release_authorization"] || authorization.SchemaVersion != AuthorizationSchemaVersion || authorization.Result != "pass" {
 		return fail(CodeInputInvalid, "release authorization schema or result is invalid", nil)
@@ -58,7 +57,8 @@ func ValidateAuthorization(contract releasecontract.Contract, authorization Auth
 	}
 	prCI := authorization.ReleasePRCI
 	if prCI.ID != ciWorkflow.ID || prCI.Name != ciWorkflow.Name || prCI.File != ciWorkflow.File ||
-		prCI.RunID <= 0 || prCI.RunAttempt <= 0 || prCI.Event != "pull_request" || !shaPattern.MatchString(prCI.HeadSHA) ||
+		prCI.RunID <= 0 || prCI.RunAttempt <= 0 || prCI.Event != "pull_request" ||
+		prCI.HeadSHA != generatedPR.HeadSHA || !shaPattern.MatchString(prCI.HeadSHA) ||
 		prCI.PullRequestNumber != generatedPR.Number || prCI.GeneratedReleasePRHeadSHA != generatedPR.HeadSHA ||
 		prCI.Conclusion != "success" {
 		return fail(CodeInputInvalid, "release PR CI identity is invalid", nil)

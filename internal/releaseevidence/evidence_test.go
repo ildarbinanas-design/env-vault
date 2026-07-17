@@ -245,6 +245,9 @@ func TestEvidenceFailsClosedOnIncompleteOrInconsistentState(t *testing.T) {
 		"authorization PR CI head invalid": func(f *evidenceFixture) {
 			f.authorization.ReleasePRCI.HeadSHA = "merge"
 		},
+		"authorization PR CI exact head mismatch": func(f *evidenceFixture) {
+			f.authorization.ReleasePRCI.HeadSHA = strings.Repeat("d", 40)
+		},
 		"authorization PR CI generated head mismatch": func(f *evidenceFixture) {
 			f.authorization.ReleasePRCI.GeneratedReleasePRHeadSHA = strings.Repeat("d", 40)
 		},
@@ -814,7 +817,7 @@ func makeAuthorization(t *testing.T, contract releasecontract.Contract, manifest
 		},
 		ReleasePRCI: ReleasePRCIIdentity{
 			ID: ciWorkflow.ID, Name: ciWorkflow.Name, File: ciWorkflow.File,
-			RunID: 323232, RunAttempt: 1, Event: "pull_request", HeadSHA: strings.Repeat("e", 40),
+			RunID: 323232, RunAttempt: 1, Event: "pull_request", HeadSHA: prHeadSHA,
 			PullRequestNumber: prNumber, GeneratedReleasePRHeadSHA: prHeadSHA, Conclusion: "success",
 		},
 		EvidenceWorkflow: ContractWorkflowInvocation{

@@ -1120,6 +1120,17 @@ deterministic code/workflow/config defect. For a defect, create a new scoped
 branch and implementation PR using cards 4-8; after merge, let the ordinary
 release path continue.
 
+For Actions run identity, treat exact repository/head-repository, run
+ID/attempt, `path`, event, head SHA/branch, and completed/success state as the
+stable tuple. REST `.name` may contain a custom `run-name` rather than the
+workflow name, and `.pull_requests` may be empty for an exact run after its PR
+is merged. For release-PR CI, derive the run ID from the unique successful
+required `ci / quality-gate` check URL on the exact PR. Require the exact
+`/actions/runs/RUN_ID/job/JOB_ID` shape; query the job and cross-check its job
+ID, run ID/attempt, direct head SHA, check/workflow names, completed/success
+state, and canonical URL before checking the run tuple. Neither REST `.name`
+nor `.pull_requests` is an authorization source.
+
 **Inputs and machine result.** Inputs are exact run/attempt/head/event,
 failed job/step logs, and complete artifact inventory. Use stable checker
 error/action/reason codes where available: for example `TRANSPORT_FAILED`,
@@ -1130,15 +1141,17 @@ error/action/reason codes where available: for example `TRANSPORT_FAILED`,
 The separate fix branch/PR has the same local and repository mutations as
 cards 4-8. It does not broaden release authorization.
 
-**Reverify.** Add a deterministic regression/adversarial test, run card 5,
-wait for exact-head CI, merge normally, and verify the next workflow attempt
-or higher patch release. A remote settings fix must be minimal and followed by
-the relevant audit.
+**Reverify.** Add a deterministic regression/adversarial test, including
+custom `run-name` and post-merge empty-`.pull_requests` fixtures when Actions
+identity is involved; run card 5, wait for exact-head CI, merge normally, and
+verify the next workflow attempt or higher patch release. A remote settings
+fix must be minimal and followed by the relevant audit.
 
-**Forbidden.** Do not mask a reproducible defect with repeated reruns, weaken a
-contract/check/ruleset/environment, move a tag, clobber an asset, force-push a
-tap branch, put secrets in diagnostics, or modify product behavior for a
-release-tooling defect.
+**Forbidden.** Do not mask a reproducible defect with repeated reruns, depend
+on lifecycle-unstable REST `.name`/`.pull_requests` fields for authorization,
+weaken a contract/check/ruleset/environment, move a tag, clobber an asset,
+force-push a tap branch, put secrets in diagnostics, or modify product behavior
+for a release-tooling defect.
 
 ## Incident and error matrix
 
@@ -1165,6 +1178,8 @@ credentials, semantic authorization, or release truth.
 | 14. Secrets/OTP could leak through traces, logs, JSON, or evidence | auth/App steps, shell environment, Actions logs, evidence assembly | Debug/tracing or copying interactive material crosses the credential boundary | `set +x`; unset debug/trace variables; use environment/credential store; redact by omission; evidence schemas contain identities, never credentials | Refuse to read or echo sensitive material | Human enters secrets only into secure prompt/secret store and verifies non-secret state | Secret-store/environment boundary; least-privilege App tokens | Search logs/artifacts/evidence for secret classes without displaying values; audits and workflows succeed with masked secrets | Permanent invariant |
 | 15. `gh api` rejected `--paginate --slurp` combined with `--jq` or `--template` | local `gh` 2.96 API snapshot command | This CLI version requires raw slurped pages to be emitted without an inline formatter | Save raw `--paginate --slurp` output atomically, then run `jq` offline; preferably use `scripts/release/gh-api-read.sh OUTPUT --paginate --slurp ENDPOINT` | Split transport from validation and preserve the raw response | Run the same helper/command, then `jq -e ... OUTPUT`; never pipe a partial response into a gate | Remote read plus private local output; scoped network escalation only if the first read is sandbox-denied | Transport and offline `jq` each exit `0`; raw file is a complete page array and is re-parseable | CLI compatibility incident; split transport/checking is steady-state |
 | 16. User OAuth token received HTTP 403 on `GET /user/installations` with “access token authorized to a GitHub App” required | local read-only App-installation probe | A user/keyring OAuth token is the wrong credential type for that endpoint; adding user scopes does not turn it into an App-authorized token | Do not broaden user scopes; dispatch the checked-in audit, which mints a metadata-only installation token and lists `installation/repositories` | Stop the 403 path and execute card 3 without seeing the App key/token | Run card 3, capture the exact returned audit run ID, and inspect its success | Dispatch needs Actions write; environment supplies the App private key only to the workflow; minted audit token has metadata read | Exact captured audit run is bound to saved `main`, concludes `success`, and proves one-repository scope | One-time wrong-credential incident; audit workflow is steady-state |
+| 17. `v0.0.14` publisher and health were green, but durable evidence failed immediately in identity resolution | evidence run `29563754061`; `assemble` job `87831640011`; step “Resolve exact CI, release PR, and PR-head CI identities”; `publish` job `87831680693` skipped | Publisher REST `.name` contained custom run-name `env-vault-publication event=push version=v0.0.14 repair=none`, not `build-binaries`; the next latent predicate also required `.pull_requests`, but PR-CI run `29562392602` returns `pull_requests: []` after PR #39 merged; review also found that the old parser discarded the quality-gate job ID from the exact check URL and never resolved or cross-checked that job's `run_attempt` | Bind publisher by exact repository/run/attempt, workflow `path`, event, source/ref, status, and conclusion; bind PR CI through the unique successful `quality-gate` URL, exact job/run/attempt identity, and direct exact `head_sha`; emit explicit mismatch errors | Preserve failed logs and observation artifact, replay each predicate against exact run/job API JSON, then prepare one scoped workflow/test/docs PR | Card 17; query `actions/runs/RUN_ID` and `actions/jobs/JOB_ID`; compare stable tuple and exact check URL; after merge dispatch one documented `repair=health` at immutable `v0.0.14` | Actions read for diagnosis; normal reviewed PR; Actions write only for the exact tag-scoped health repair; no asset/tag/tap mutation | Fix PR exact-head CI and main CI pass; exact-payload replay rejects wrong job/attempt/head; health repair is no-op for published state; a new `release-evidence` run completes `assemble` and append-only `publish`, then offline evidence replay exits `0` | One-time deterministic evidence defect; stable-path/direct-head/job-attempt identity is steady-state |
+| 18. GitHub Actions UI appeared to show duplicate jobs for Release Please PR #39 | `pr-title` runs `29562392487` (`synchronize`, cancelled before steps) and `29562393511` (`edited`, success), both for head `40d12c48fe87a7a4ef7fbb735d7b2759d88c53a9`; CI and Dependency Review used the release PR title, while CodeQL appeared as the separate `PR #39` row | Release Please force-pushed the proposal and then edited PR body; different workflows still describe the same PR/head, while `pr-title` intentionally listens to both events and uses one PR-scoped concurrency group | Keep both triggers and `cancel-in-progress: true`; treat the later successful run as canonical; defer optional event-aware `run-name` observability | Group runs by workflow, event, head SHA, and time; distinguish a cancelled zero-step replacement from a rerun or duplicated workflow | `gh run list`/`gh run view` on both IDs and `gh pr checks 39 --required`; inspect `.github/workflows/pr-title.yml` | Read-only Actions/PR metadata; no workflow mutation required for release | Cancelled run has no executed steps, successor succeeds, and all required checks remain green; same pattern is limited to near-simultaneous Release Please `synchronize`/`edited` events | Expected steady-state cancellation noise; optional observability item is backlog only |
 
 ## Honest `v0.0.12` and `v0.0.13` record
 
