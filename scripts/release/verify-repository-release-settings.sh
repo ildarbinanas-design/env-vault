@@ -22,13 +22,14 @@ releasecheck=${RELEASECHECK:-}
 
 repository_owner=${repository%%/*}
 repository_name=${repository#*/}
-merge_settings=$(mktemp "${TMPDIR:-/tmp}/env-vault-merge-settings.XXXXXX")
-ruleset_pages=$(mktemp "${TMPDIR:-/tmp}/env-vault-rulesets.XXXXXX")
-ruleset_detail=$(mktemp "${TMPDIR:-/tmp}/env-vault-ruleset.XXXXXX")
-tag_ruleset_detail=$(mktemp "${TMPDIR:-/tmp}/env-vault-tag-ruleset.XXXXXX")
-evidence_ruleset_detail=$(mktemp "${TMPDIR:-/tmp}/env-vault-evidence-ruleset.XXXXXX")
+probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-settings.XXXXXX")
+merge_settings="$probe_dir/merge-settings.json"
+ruleset_pages="$probe_dir/rulesets.json"
+ruleset_detail="$probe_dir/main-ruleset.json"
+tag_ruleset_detail="$probe_dir/tag-ruleset.json"
+evidence_ruleset_detail="$probe_dir/evidence-ruleset.json"
 cleanup() {
-  rm -f -- "$merge_settings" "$ruleset_pages" "$ruleset_detail" "$tag_ruleset_detail" "$evidence_ruleset_detail"
+  rm -rf -- "$probe_dir"
 }
 trap cleanup EXIT
 

@@ -105,8 +105,8 @@ require_validated_base_contract() {
   local validation="$probe_dir/release-contract-validation.json"
   local checker=${RELEASECHECK:-}
 
-  read_gh_api "$remote_contract" --header 'Accept: application/vnd.github.raw+json' \
-    "repos/$repository/contents/release/contract.v1.json?ref=$initial_base_sha" ||
+  "$SCRIPT_DIR/releasetransport.sh" contents read --output "$remote_contract" --repository "$repository" \
+    --path release/contract.v1.json --ref "$initial_base_sha" ||
     release_die "cannot load the release contract from the exact pull request base"
   cmp "$RELEASE_CONTRACT_PATH" "$remote_contract" >/dev/null ||
     release_die "local release contract differs from the exact pull request base"
@@ -133,7 +133,9 @@ require_validated_base_contract() {
 }
 
 require_current_base() {
-  local input=$1 main_ref="$probe_dir/main-ref.json"
+  local input=$1
+  local phase=$2
+  local main_ref="$probe_dir/main-ref-$phase.json"
   local observed_base main_sha
 
   observed_base=$(jq -er '.base.sha | select(test("^[0-9a-f]{40}$"))' "$input") ||
@@ -207,7 +209,7 @@ require_trusted_viewer() {
 load_green_checks() {
   local output=$1
   local raw="$output.raw"
-  local attempt loaded=false
+  local attempt loaded=false quality_link run_tail run_id job_id run_attempt
   for attempt in 1 2 3; do
     if gh pr checks "$pr_number" --repo "$repository" --required \
       --json name,state,bucket,link,workflow,event > "$raw"; then
@@ -235,6 +237,47 @@ load_green_checks() {
     sort_by([.name, .workflow, .event, .link])
   ' "$raw" > "$output" ||
     release_die "generated release pull request required checks are incomplete or malformed"
+
+  quality_link=$(jq -er '
+    [.[] | select(.name == "quality-gate" and .workflow == "ci" and .event == "pull_request")] |
+    select(length == 1) | .[0].link
+  ' "$output") || release_die "generated release pull request has no unique quality-gate check"
+  run_tail=${quality_link#"https://github.com/$repository/actions/runs/"}
+  if [[ "$run_tail" =~ ^([1-9][0-9]*)/job/([1-9][0-9]*)$ ]]; then
+    run_id=${BASH_REMATCH[1]}
+    job_id=${BASH_REMATCH[2]}
+  else
+    release_die "generated release pull request quality-gate URL is malformed"
+  fi
+  read_gh_api "$output.quality-run.json" "repos/$repository/actions/runs/$run_id" ||
+    release_die "cannot inspect generated release pull request quality-gate run"
+  run_attempt=$(jq -er --arg head "$expected_head_sha" --arg branch "$release_branch" \
+    --arg repository "$repository" --argjson run_id "$run_id" '
+      select(
+        .id == $run_id and
+        .repository.full_name == $repository and
+        .head_repository.full_name == $repository and
+        .head_sha == $head and
+        .head_branch == $branch and
+        .event == "pull_request" and
+        .path == ".github/workflows/ci.yml" and
+        .status == "completed" and
+        .conclusion == "success" and
+        (.run_attempt | type == "number" and . > 0 and floor == .)
+      ) | .run_attempt
+    ' "$output.quality-run.json") || release_die "generated release pull request quality-gate run is malformed"
+  "$SCRIPT_DIR/releasetransport.sh" actions identity \
+    --output "$output.quality-identity.json" \
+    --repository "$repository" \
+    --run-id "$run_id" \
+    --run-attempt "$run_attempt" \
+    --workflow-path .github/workflows/ci.yml \
+    --event pull_request \
+    --head-sha "$expected_head_sha" \
+    --head-ref "$release_branch" \
+    --job-id "$job_id" \
+    --job-name quality-gate \
+    --job-url "$quality_link" || release_die "generated release pull request quality-gate typed identity mismatch"
 }
 
 load_matching_confirmations() {
@@ -282,28 +325,19 @@ require_one_confirmation() {
     release_die "exactly one exact release confirmation comment from a repository owner or member is required"
 }
 
-extract_http_date() {
-  local input=$1
-  awk '
-    tolower(substr($0, 1, 5)) == "date:" {
-      line = $0
-      sub(/^[^:]*:[[:space:]]*/, "", line)
-      sub(/\r$/, "", line)
-      value = line
-    }
-    END {
-      if (value != "") print value
-    }
-  ' "$input"
-}
-
 observe_github_date() {
   local output=$1
   local date_value
-  read_gh_api "$output" --include "repos/$repository/issues/comments/$confirmation_id" ||
+  "$SCRIPT_DIR/releasetransport.sh" rest observe --output "$output" \
+    --endpoint "repos/$repository/issues/comments/$confirmation_id" ||
     release_die "cannot observe the release confirmation comment"
-  date_value=$(extract_http_date "$output")
-  [[ "$date_value" =~ ^[A-Z][a-z]{2},\ [0-9]{2}\ [A-Z][a-z]{2}\ [0-9]{4}\ [0-9]{2}:[0-9]{2}:[0-9]{2}\ GMT$ ]] ||
+  date_value=$(jq -er '
+    select(type == "object" and .schema_id == "env-vault.github-rest-observation.v1" and
+      .schema_version == 1 and .ok == true and .http_status == 200 and
+      (.server_date | type) == "string" and
+      (.body_sha256 | type) == "string" and (.body_sha256 | test("^[0-9a-f]{64}$"))) |
+    .server_date
+  ' "$output") ||
     release_die "GitHub response Date header is missing or malformed"
   printf '%s\n' "$date_value"
 }
@@ -341,11 +375,12 @@ require_confirmation_precedes_merge() {
 
 require_merge_in_main() {
   local merge_sha=$1
-  local main_ref="$probe_dir/main-after-merge.json"
-  local main_comparison="$probe_dir/main-after-merge-comparison.json"
-  local merge_in_main=false main_sha comparison_status
+  local main_ref main_comparison
+  local merge_in_main=false main_sha comparison_status attempt
 
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+    main_ref="$probe_dir/main-after-merge-$attempt.json"
+    main_comparison="$probe_dir/main-after-merge-comparison-$attempt.json"
     if ! read_gh_api "$main_ref" "repos/$repository/git/ref/heads/main"; then
       sleep 2
       continue
@@ -443,7 +478,7 @@ if jq -e '.state == "closed" and .merged == true' "$pr_before" >/dev/null; then
 fi
 
 require_open_exact_pull_request "$pr_before"
-require_current_base "$pr_before"
+require_current_base "$pr_before" before
 require_verified_proposal
 checks_before="$probe_dir/checks-before.json"
 load_green_checks "$checks_before"
@@ -480,7 +515,7 @@ load_matching_confirmations "$comment_pages" "$confirmation_matches"
 require_one_confirmation "$confirmation_matches"
 load_confirmation_identity "$confirmation_matches"
 
-anchor_date=$(observe_github_date "$probe_dir/date-anchor.txt")
+anchor_date=$(observe_github_date "$probe_dir/date-anchor.json")
 anchor_epoch=$(http_date_epoch "$anchor_date")
 confirmation_epoch=$(jq -en \
   --arg created_at "$confirmation_created_at" \
@@ -491,9 +526,9 @@ confirmation_epoch=$(jq -en \
     select(type == "number" and floor == .)
   ') || release_die "release confirmation timestamps cannot be parsed"
 advanced_date=''
-for _ in 1 2 3 4 5 6 7 8 9 10; do
+for observation_attempt in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
-  observed_date=$(observe_github_date "$probe_dir/date-observed.txt")
+  observed_date=$(observe_github_date "$probe_dir/date-observed-$observation_attempt.json")
   observed_epoch=$(http_date_epoch "$observed_date")
   if ((observed_epoch > anchor_epoch && observed_epoch > confirmation_epoch)); then
     advanced_date=$observed_date
@@ -506,7 +541,7 @@ done
 pr_final="$probe_dir/pr-final.json"
 load_pull_request "$pr_final"
 require_open_exact_pull_request "$pr_final"
-require_current_base "$pr_final"
+require_current_base "$pr_final" final
 require_verified_proposal
 checks_final="$probe_dir/checks-final.json"
 load_green_checks "$checks_final"
@@ -533,9 +568,9 @@ gh pr merge "$pr_number" --repo "$repository" --squash \
 merge_status=$?
 set -e
 
-pr_merged="$probe_dir/pr-merged.json"
 merged=false
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+for merge_observation_attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  pr_merged="$probe_dir/pr-merged-$merge_observation_attempt.json"
   if ! read_gh_api "$pr_merged" "repos/$repository/pulls/$pr_number"; then
     sleep 2
     continue

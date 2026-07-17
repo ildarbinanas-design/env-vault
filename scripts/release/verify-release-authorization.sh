@@ -57,18 +57,16 @@ comparison_status=$(jq -er '.status | select(. == "ahead" or . == "identical")' 
 [[ -n "$comparison_status" ]] || release_die "release commit ancestry is unknown"
 
 source_manifest="$probe_dir/source-manifest.json"
-"$SCRIPT_DIR/gh-api-read.sh" "$source_manifest" \
-  --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/.release-please-manifest.json?ref=$source_sha"
+"$SCRIPT_DIR/releasetransport.sh" contents read --output "$source_manifest" --repository "$repository" \
+  --path .release-please-manifest.json --ref "$source_sha"
 source_manifest_version=$(jq -er 'if type == "object" and (keys == ["."]) and ((.["."] | type) == "string") then .["."] else empty end' "$source_manifest") ||
   release_die "exact release source manifest is malformed"
 [[ "v$source_manifest_version" == "$version" ]] ||
   release_die "release version does not match the exact release source manifest"
 
 main_manifest="$probe_dir/main-manifest.json"
-"$SCRIPT_DIR/gh-api-read.sh" "$main_manifest" \
-  --header 'Accept: application/vnd.github.raw+json' \
-  "repos/$repository/contents/.release-please-manifest.json?ref=$main_sha"
+"$SCRIPT_DIR/releasetransport.sh" contents read --output "$main_manifest" --repository "$repository" \
+  --path .release-please-manifest.json --ref "$main_sha"
 main_manifest_version=$(jq -er 'if type == "object" and (keys == ["."]) and ((.["."] | type) == "string") then .["."] else empty end' "$main_manifest") ||
   release_die "current main release manifest is malformed"
 if [[ "$label_state" == "prepublish" ]]; then
@@ -81,23 +79,41 @@ else
 fi
 
 workflow_runs="$probe_dir/workflow-runs.json"
-"$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --method GET \
+"$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --paginate --slurp --method GET \
   "repos/$repository/actions/workflows/ci.yml/runs" \
   --raw-field "head_sha=$source_sha" \
   --raw-field "branch=$default_branch" \
   --raw-field 'event=push' \
   --raw-field 'status=completed' \
   --raw-field 'per_page=100'
-jq -e --arg sha "$source_sha" --arg branch "$default_branch" '
-  [.workflow_runs[] |
+ci_identity=$(jq -cer --arg sha "$source_sha" --arg branch "$default_branch" --arg repository "$repository" '
+  [.[] | .workflow_runs[] |
     select(
+      .repository.full_name == $repository and
+      .head_repository.full_name == $repository and
       .head_sha == $sha and
       .head_branch == $branch and
       .event == "push" and
-      .conclusion == "success"
+      .path == ".github/workflows/ci.yml" and
+      .status == "completed" and
+      .conclusion == "success" and
+      (.id | type == "number" and . > 0 and floor == .) and
+      (.run_attempt | type == "number" and . > 0 and floor == .) and
+      .html_url == ("https://github.com/" + $repository + "/actions/runs/" + (.id | tostring))
     )
-  ] | length >= 1
-' "$workflow_runs" >/dev/null || release_die "release commit has no successful main ci push run"
+  ] | select(length >= 1) | max_by(.id)
+' "$workflow_runs") || release_die "release commit has no strictly identified successful main ci push run"
+ci_run_id=$(jq -er '.id' <<< "$ci_identity")
+ci_run_attempt=$(jq -er '.run_attempt' <<< "$ci_identity")
+"$SCRIPT_DIR/releasetransport.sh" actions identity \
+  --output "$probe_dir/main-ci-identity.json" \
+  --repository "$repository" \
+  --run-id "$ci_run_id" \
+  --run-attempt "$ci_run_attempt" \
+  --workflow-path .github/workflows/ci.yml \
+  --event push \
+  --head-sha "$source_sha" \
+  --head-ref "$default_branch" || release_die "release commit CI typed identity mismatch"
 
 pulls="$probe_dir/pulls.json"
 "$SCRIPT_DIR/gh-api-read.sh" "$pulls" \

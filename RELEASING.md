@@ -95,12 +95,52 @@ versioned authorization evidence.
 
 Release-planning REST observations use `scripts/release/gh-api-read.sh`. It
 accepts only explicit or implicit GET reads, publishes a response file only
-after a non-empty successful response, and retries at most five times with the
-fixed `1, 2, 4, 8` second schedule. It rejects request bodies, GraphQL, custom
-hosts, cached observations, and mutation methods before invoking `gh`, and
-pins transport to `github.com`. State-changing API calls do not use this helper
-and remain single-attempt operations with their own exact state
-reconciliation.
+after a non-empty successful response, and attempts each page at most five
+times. Its fallback retry schedule is `1, 2, 4, 8` seconds; validated server
+retry timing is honored only inside a 120-second cumulative wait budget. It
+rejects request bodies, GraphQL, custom hosts, cached observations, and mutation
+methods before invoking `gh`, and pins transport to `github.com`. A paginated
+`Link` must preserve the original path and complete endpoint-query/field scope;
+`per_page` is invariant when supplied and only canonical, exactly consecutive
+`page` progression is accepted. State-changing API calls do not use this helper
+and remain single-attempt operations with their own exact state reconciliation.
+
+The helper delegates to the release-only `releasetransport` binary. Workflows
+build it once per consuming job and export `RELEASE_TRANSPORT_BIN`; local
+operators may omit that variable and let the launcher create and remove one
+private temporary binary. The stable exits are `0` success, `2` invalid input,
+`3` local `gh` capability drift, `4` an exact HTTP 404, `5` every other remote
+or identity failure, and `6` output publication failure. Controlled validation,
+bootstrap, transport, and output failures are JSON with schema
+`env-vault.github-transport-error.v1`; never parse stderr prose or map an exit
+other than `4` to absence. External process signals and an executable-removal
+race after launcher validation remain operating-system failures, not transport
+documents.
+
+One read is limited to 100 pages and 500 REST requests; each `gh` process is
+limited to 64 MiB stdout and 256 KiB stderr. These are not end-to-end time or
+aggregate-memory guarantees: the command has no internal request/operation
+deadline beyond signal cancellation and the enclosing workflow timeout, and
+the paginated body has no separate total-byte cap. Stage 4 owns the documented
+60-second request, 300-second operation, and 256 MiB aggregate-response targets
+before they may be described as enforced limits.
+
+Use the typed boundary when a run or required-check job authorizes release
+state:
+
+```sh
+scripts/release/releasetransport.sh actions identity \
+  --output "$SNAPSHOT_DIR/ci-identity.json" \
+  --repository "$REPOSITORY" \
+  --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+  --workflow-path .github/workflows/ci.yml \
+  --event push --head-sha "$SOURCE_SHA" --head-ref main
+```
+
+The command reads the attempt-qualified run and, when `--job-id`, `--job-name`,
+and `--job-url` are supplied together, the complete attempt-qualified jobs
+collection. Output uses `env-vault.github-actions-identity.v1`. Output paths
+are no-clobber; allocate a new path for every observation phase.
 
 Immediately before merge, re-read the remote PR and require the same tuple.
 Any version, PR number, or head-SHA change invalidates the authorization. There
@@ -489,9 +529,10 @@ state. REST `.name` is not a stable workflow identifier when `run-name` is
 configured, and `.pull_requests` may be empty for an exact run after its pull
 request is merged. Resolve release-PR CI from the unique successful required
 `ci / quality-gate` check URL on the exact PR. Require its exact `/job/JOB_ID`
-shape and cross-check the job ID, run ID/attempt, head SHA, check/workflow
-names, success state, and canonical URL before requiring the run's direct
-`head_sha` to equal the reviewed PR head. See the incident matrix in the
+shape, then use the attempt-qualified typed identity to cross-check the job ID,
+run ID/attempt, direct head SHA, check name, success state, and canonical URL.
+The job's `workflow_name` is diagnostic just like the run's `.name`; workflow
+authority comes from the run `path`. See the incident matrix in the
 [operator runbook](docs/release-operator-runbook.md).
 
 The Git Blobs API returns base64 content with transport line wrapping. Evidence

@@ -28,12 +28,12 @@ download_remote_pair_members() {
   local destination=$1
   shift
   local name
-  local -a args
-  args=(release download "$version" --repo "$repository" --dir "$destination")
+  local -a patterns
+  patterns=()
   for name in "$@"; do
-    args+=(--pattern "$name")
+    patterns+=(--pattern "$name")
   done
-  gh "${args[@]}"
+  gh release download "$version" --repo "$repository" --dir "$destination" "${patterns[@]}"
 }
 
 [[ $# -le 4 ]] || usage
@@ -46,6 +46,7 @@ repository=${4:-${GITHUB_REPOSITORY:-}}
 release_require_repository "$repository"
 release_require_version "$version"
 release_require_command gh
+release_require_command jq
 release_require_command cmp
 [[ -d "$local_dir" && ! -L "$local_dir" ]] ||
   release_die "local asset directory not found: $local_dir"
@@ -54,7 +55,10 @@ work_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-reconcile.XXXXXX")
 remove_verified_dir=false
 trap cleanup EXIT
 remote_names="$work_dir/remote-assets.txt"
-gh api "repos/$repository/releases/tags/$version" --jq '.assets[].name' > "$remote_names"
+release_state="$work_dir/release-state.json"
+"$SCRIPT_DIR/gh-api-read.sh" "$release_state" "repos/$repository/releases/tags/$version"
+jq -er 'select(type == "object" and (.assets | type) == "array" and all(.assets[]; type == "object" and (.name | type) == "string")) | .assets[].name' \
+  "$release_state" > "$remote_names" || release_die "GitHub returned malformed release asset data"
 
 while IFS= read -r remote_name; do
   release_is_expected_asset "$remote_name" || release_die "unexpected release asset: $remote_name"

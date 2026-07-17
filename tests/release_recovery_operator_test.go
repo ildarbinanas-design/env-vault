@@ -181,6 +181,20 @@ set -euo pipefail
   printf 'unsafe gh ambient environment\n' >&2
   exit 1
 }
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\nhttps://github.com/cli/cli/releases/tag/v2.80.0\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
+http_json() {
+  local status=$1 reason=$2
+  printf 'HTTP/2 %s %s\r\n' "$status" "$reason"
+  printf 'Content-Type: application/vnd.github+json\r\n'
+  printf 'X-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
+}
 args="$*"
 state=${FAKE_LABEL_STATE:?}
 mutations=${FAKE_MUTATION_LOG:?}
@@ -219,6 +233,7 @@ if [[ "$args" == *"git/ref/heads/main"* ]]; then
   if [[ ${FAKE_MAIN_ADVANCES_AFTER_MUTATION:-false} == true && -s "$mutations" ]]; then
     observed_main=4444444444444444444444444444444444444444
   fi
+  http_json 200 OK
   jq -cn --arg sha "$observed_main" '{object:{type:"commit",sha:$sha}}'
   exit 0
 fi
@@ -231,6 +246,7 @@ if [[ "$args" == *"compare/${boundary}...${main_sha}"* ]]; then
     merge_base=3333333333333333333333333333333333333333
     behind=1
   fi
+  http_json 200 OK
   jq -cn --arg base "$boundary" --arg head "$compare_head" --arg status "$status" \
     --arg url "https://api.github.com/repos/ildarbinanas-design/env-vault/compare/${boundary}...${compare_head}" \
     --arg html_url "https://github.com/ildarbinanas-design/env-vault/compare/${boundary}...${compare_head}" \
@@ -241,6 +257,7 @@ if [[ "$args" == *"compare/${boundary}...${main_sha}"* ]]; then
 fi
 if [[ "$args" == *"pulls/31"* ]]; then
   labels=$(cat "$state")
+  http_json 200 OK
   jq -cn \
     --argjson labels "$labels" \
     --arg head "$head" \
@@ -256,28 +273,22 @@ if [[ "$args" == *"pulls/31"* ]]; then
 fi
 if [[ "$args" == *"git/ref/tags/v0.0.12"* ]]; then
   if [[ ${FAKE_TAG_EXISTS:-false} == true || (${FAKE_TAG_AFTER_MUTATION:-false} == true && -s "$mutations") ]]; then
-    if [[ "$args" == *"--jq"* ]]; then
-      printf 'commit\t%s\n' "$boundary"
-    else
-      printf 'HTTP/2.0 200 OK\n\n'
-      jq -cn --arg sha "$boundary" '{object:{type:"commit",sha:$sha}}'
-    fi
+    http_json 200 OK
+    jq -cn --arg sha "$boundary" '{object:{type:"commit",sha:$sha}}'
     exit 0
   fi
-  printf 'HTTP/2.0 404 Not Found\n' >&2
+  http_json 404 'Not Found'
+  printf '%s\n' '{"message":"Not Found"}'
   exit 1
 fi
 if [[ "$args" == *"releases/tags/v0.0.12"* ]]; then
   if [[ ${FAKE_RELEASE_EXISTS:-false} == true || (${FAKE_RELEASE_AFTER_MUTATION:-false} == true && -s "$mutations") ]]; then
-    if [[ "$args" == *"--jq"* ]]; then
-      printf 'v0.0.12\tfalse\tfalse\n'
-    else
-      printf 'HTTP/2.0 200 OK\n\n'
-      printf '%s\n' '{"tag_name":"v0.0.12","draft":false,"prerelease":false}'
-    fi
+    http_json 200 OK
+    printf '%s\n' '{"tag_name":"v0.0.12","draft":false,"prerelease":false}'
     exit 0
   fi
-  printf 'HTTP/2.0 404 Not Found\n' >&2
+  http_json 404 'Not Found'
+  printf '%s\n' '{"message":"Not Found"}'
   exit 1
 fi
 

@@ -26,29 +26,31 @@ repository=${2:-${GITHUB_REPOSITORY:-}}
 release_require_repository "$repository"
 release_require_version "$version"
 release_require_command gh
+release_require_command jq
 
 probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-tag-probe.XXXXXX")
 trap cleanup EXIT
-probe_headers="$probe_dir/response"
-probe_error="$probe_dir/error"
+response="$probe_dir/tag-ref.json"
 
-if ! gh api --include "repos/$repository/git/ref/tags/$version" >"$probe_headers" 2>"$probe_error"; then
-  http_status=$(LC_ALL=C awk '
-    /^HTTP\/[0-9.]+ [0-9][0-9][0-9]( |$)/ { status = $2 }
-    match($0, /\(HTTP [0-9][0-9][0-9]\)/) { status = substr($0, RSTART + 6, 3) }
-    END { print status }
-  ' "$probe_headers" "$probe_error")
-  if [[ "$http_status" == "404" ]]; then
+set +e
+"$SCRIPT_DIR/gh-api-read.sh" "$response" "repos/$repository/git/ref/tags/$version"
+status=$?
+set -e
+case "$status" in
+  0) ;;
+  4)
     printf 'release: tag ref not found: %s\n' "$version" >&2
     exit 4
-  fi
-  if [[ -n "$http_status" ]]; then
-    release_die "failed to query tag ref (HTTP $http_status)"
-  fi
-  release_die "failed to query tag ref (no HTTP response)"
-fi
+    ;;
+  *) release_die "failed to query tag ref" ;;
+esac
 
-record=$(gh api "repos/$repository/git/ref/tags/$version" --jq '[.object.type, .object.sha] | @tsv')
+record=$(jq -er '
+  select(type == "object" and (.object | type) == "object" and
+    (.object.type | type) == "string" and (.object.sha | type) == "string") |
+  [.object.type, .object.sha] | @tsv
+' "$response") ||
+  release_die "GitHub returned malformed tag data"
 depth=0
 
 while :; do
@@ -69,7 +71,16 @@ while :; do
     tag)
       depth=$((depth + 1))
       [[ $depth -le 16 ]] || release_die "annotated tag chain is too deep"
-      record=$(gh api "repos/$repository/git/tags/$object_sha" --jq '[.object.type, .object.sha] | @tsv')
+      response="$probe_dir/tag-object-$depth.json"
+      if ! "$SCRIPT_DIR/gh-api-read.sh" "$response" "repos/$repository/git/tags/$object_sha"; then
+        release_die "failed to query annotated tag object"
+      fi
+      record=$(jq -er '
+        select(type == "object" and (.object | type) == "object" and
+          (.object.type | type) == "string" and (.object.sha | type) == "string") |
+        [.object.type, .object.sha] | @tsv
+      ' "$response") ||
+        release_die "GitHub returned malformed annotated tag data"
       ;;
     *)
       release_die "tag does not resolve to a commit"

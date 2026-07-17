@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
 usage() {
   printf 'usage: %s [OWNER/REPO] [WORKFLOW.yml] [COMMIT_SHA] [pull_request|push] [TIMEOUT_SECONDS] [INTERVAL_SECONDS]\n' "$(basename "$0")" >&2
   exit 2
@@ -46,6 +48,7 @@ require_nonnegative_integer "timeout" "$timeout_input"
 require_nonnegative_integer "interval" "$interval_input"
 
 command -v gh >/dev/null 2>&1 || tap_ci_die "required command not found: gh"
+command -v jq >/dev/null 2>&1 || tap_ci_die "required command not found: jq"
 command -v sleep >/dev/null 2>&1 || tap_ci_die "required command not found: sleep"
 
 timeout_seconds=$((10#$timeout_input))
@@ -54,49 +57,48 @@ endpoint="repos/$repository/actions/workflows/$workflow/runs"
 expected_url_prefix="https://github.com/$repository/actions/runs/"
 probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-tap-ci.XXXXXX")
 probe_error="$probe_dir/error"
+probe_sequence=0
 trap cleanup EXIT
 
 # The REST filters narrow the response server-side. The jq expression repeats
 # the SHA/event checks and emits a single delimited record so an unexpected or
 # malformed API response can never be mistaken for a successful run.
 jq_filter="def malformed: error(\"ENV_VAULT_MALFORMED_WORKFLOW_RUNS_RESPONSE\"); "
-jq_filter+="if (type != \"object\") or ((.workflow_runs | type) != \"array\") then malformed else "
-jq_filter+="[.workflow_runs[] | select(.head_sha == \"$commit_sha\" and .event == \"$event\")] as \$runs | "
+jq_filter+="if (type != \"array\") or (length == 0) or any(.[]; (type != \"object\") or ((.workflow_runs | type) != \"array\")) then malformed else "
+jq_filter+="[.[] | .workflow_runs[] | select(.head_sha == \"$commit_sha\" and .event == \"$event\")] as \$runs | "
 jq_filter+="if (\$runs | length) == 0 then \"NONE\" else "
 jq_filter+="(\$runs | map(if "
 jq_filter+="((.id | type) == \"number\") and ((.head_sha | type) == \"string\") and "
+jq_filter+="((.run_attempt | type) == \"number\") and (.run_attempt > 0) and (.run_attempt == (.run_attempt | floor)) and "
+jq_filter+="((.repository.full_name | type) == \"string\") and ((.head_repository.full_name | type) == \"string\") and "
+jq_filter+="((.path | type) == \"string\") and ((.head_branch | type) == \"string\") and "
 jq_filter+="((.event | type) == \"string\") and ((.status | type) == \"string\") and "
 jq_filter+="(((.conclusion | type) == \"string\") or ((.conclusion | type) == \"null\")) and "
 jq_filter+="((.html_url | type) == \"string\") "
 jq_filter+="then . else malformed end) | max_by(.id)) as \$run | "
-jq_filter+="[\"RUN\", (\$run.id | tostring), \$run.head_sha, \$run.event, \$run.status, "
+jq_filter+="[\"RUN\", (\$run.id | tostring), (\$run.run_attempt | tostring), \$run.head_sha, \$run.head_branch, "
+jq_filter+="\$run.repository.full_name, \$run.head_repository.full_name, \$run.path, \$run.event, \$run.status, "
 jq_filter+="(\$run.conclusion // \"\"), \$run.html_url] | join(\"|\") end end"
 
 started_at=$SECONDS
 last_state="not queried"
 
 while true; do
+  probe_sequence=$((probe_sequence + 1))
+  response_file="$probe_dir/workflow-runs-$probe_sequence.json"
   : > "$probe_error"
-  if ! response=$(gh api --method GET "$endpoint" \
+  if ! "$SCRIPT_DIR/gh-api-read.sh" "$response_file" --paginate --slurp --method GET "$endpoint" \
     -f "head_sha=$commit_sha" \
     -f "event=$event" \
-    -F per_page=100 \
-    --jq "$jq_filter" 2>"$probe_error"); then
+    -F per_page=100 2>"$probe_error"; then
+    LC_ALL=C cat -- "$probe_error" >&2
+    tap_ci_die "GitHub Actions API request failed"
+  fi
+  if ! response=$(jq -er "$jq_filter" "$response_file" 2>"$probe_error"); then
     if grep -Fq 'ENV_VAULT_MALFORMED_WORKFLOW_RUNS_RESPONSE' "$probe_error"; then
       tap_ci_die "GitHub returned malformed workflow run data"
     fi
-
-    http_status=$(LC_ALL=C awk '
-      match($0, /\(HTTP [0-9][0-9][0-9]\)/) { status = substr($0, RSTART + 6, 3) }
-      END { print status }
-    ' "$probe_error")
-    if [[ -n "$http_status" ]]; then
-      tap_ci_die "GitHub Actions API request failed (HTTP $http_status)"
-    fi
-    if LC_ALL=C grep -Eiq 'dial (tcp|udp)|network is unreachable|connection (refused|reset)|could not resolve|temporary failure in name resolution|TLS handshake timeout|i/o timeout|context deadline exceeded|unexpected EOF' "$probe_error"; then
-      tap_ci_die "GitHub Actions API network failure (no HTTP response)"
-    fi
-    tap_ci_die "GitHub CLI request failed without an HTTP status"
+    tap_ci_die "GitHub returned malformed workflow run data"
   fi
 
   [[ -n "$response" && "$response" != *$'\n'* ]] ||
@@ -109,17 +111,26 @@ while true; do
   else
     marker=''
     run_id=''
+    run_attempt=''
     returned_sha=''
+    head_ref=''
+    returned_repository=''
+    returned_head_repository=''
+    workflow_path=''
     returned_event=''
     status=''
     conclusion=''
     run_url=''
     extra=''
-    IFS='|' read -r marker run_id returned_sha returned_event status conclusion run_url extra <<< "$response"
-    [[ "$marker" == "RUN" && "$run_id" =~ ^[1-9][0-9]*$ && -z "$extra" ]] ||
+    IFS='|' read -r marker run_id run_attempt returned_sha head_ref returned_repository returned_head_repository workflow_path returned_event status conclusion run_url extra <<< "$response"
+    [[ "$marker" == "RUN" && "$run_id" =~ ^[1-9][0-9]*$ && "$run_attempt" =~ ^[1-9][0-9]*$ && -z "$extra" ]] ||
       tap_ci_die "GitHub returned malformed workflow run data"
     [[ "$returned_sha" == "$commit_sha" && "$returned_event" == "$event" ]] ||
       tap_ci_die "GitHub returned a workflow run for an unexpected SHA or event"
+    [[ "$returned_repository" == "$repository" && "$returned_head_repository" == "$repository" &&
+       "$workflow_path" == ".github/workflows/$workflow" &&
+       "$head_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$ ]] ||
+      tap_ci_die "GitHub returned a workflow run for an unexpected repository, workflow, or head ref"
     [[ "$run_url" == "$expected_url_prefix$run_id" ]] ||
       tap_ci_die "GitHub returned a malformed workflow run URL"
 
@@ -142,6 +153,17 @@ while true; do
       completed)
         [[ -n "$conclusion" ]] || tap_ci_die "completed workflow run has no conclusion"
         if [[ "$conclusion" == "success" ]]; then
+          identity_file="$probe_dir/run-identity-$probe_sequence.json"
+          "$SCRIPT_DIR/releasetransport.sh" actions identity \
+            --output "$identity_file" \
+            --repository "$repository" \
+            --run-id "$run_id" \
+            --run-attempt "$run_attempt" \
+            --workflow-path "$workflow_path" \
+            --event "$event" \
+            --head-sha "$commit_sha" \
+            --head-ref "$head_ref" ||
+            tap_ci_die "typed workflow run identity verification failed"
           printf '%s\n' "$run_url"
           exit 0
         fi

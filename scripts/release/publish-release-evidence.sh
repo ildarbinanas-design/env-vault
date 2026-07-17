@@ -36,7 +36,7 @@ emit_result() {
 api_get() {
   local endpoint=$1
   local output=$2
-  if ! gh api "$endpoint" >"$output"; then
+  if ! "$SCRIPT_DIR/gh-api-read.sh" "$output" "$endpoint"; then
     release_die "GitHub API request failed"
   fi
 }
@@ -44,33 +44,29 @@ api_get() {
 # Sets ref_state to present or absent. Only an explicit HTTP 404 is absence;
 # authentication, rate-limit, transport, and unknown responses fail closed.
 probe_ref() {
-  local response="$scratch_dir/ref-probe-response"
-  local error="$scratch_dir/ref-probe-error"
-  local http_status
+  ref_probe_sequence=$((ref_probe_sequence + 1))
+  local response="$scratch_dir/ref-probe-$ref_probe_sequence.json"
+  local error="$scratch_dir/ref-probe-$ref_probe_sequence.error"
+  local status
 
-  if gh api --include "$ref_endpoint" >"$response" 2>"$error"; then
+  if "$SCRIPT_DIR/gh-api-read.sh" "$response" "$ref_endpoint" 2>"$error"; then
     ref_state=present
     return
+  else
+    status=$?
   fi
-
-  http_status=$(awk '
-    /^HTTP\/[0-9.]+ [0-9][0-9][0-9]( |$)/ { status = $2 }
-    match($0, /\(HTTP [0-9][0-9][0-9]\)/) { status = substr($0, RSTART + 6, 3) }
-    END { print status }
-  ' "$response" "$error")
-  if [[ "$http_status" == "404" ]]; then
+  if [[ "$status" == "4" ]]; then
     ref_state=absent
     return
   fi
-  if [[ -n "$http_status" ]]; then
-    release_die "GitHub reference query failed (HTTP $http_status)"
-  fi
-  release_die "GitHub reference query failed (no HTTP response)"
+  LC_ALL=C cat -- "$error" >&2
+  release_die "GitHub reference query failed"
 }
 
 read_ref_sha() {
   local output=$1
-  local response="$scratch_dir/ref.json"
+  ref_read_sequence=$((ref_read_sequence + 1))
+  local response="$scratch_dir/ref-$ref_read_sequence.json"
   local sha
   api_get "$ref_endpoint" "$response"
   sha=$(jq -er --arg ref "$full_ref" '
@@ -88,9 +84,11 @@ read_ref_sha() {
 read_commit_tree() {
   local commit=$1
   local output=${2:-}
-  local response="$scratch_dir/commit-$commit.json"
+  commit_read_sequence=$((commit_read_sequence + 1))
+  local response="$scratch_dir/commit-$commit-$commit_read_sequence.json"
   local tree_sha
   api_get "repos/$repository/git/commits/$commit" "$response"
+  last_commit_response=$response
   tree_sha=$(jq -er --arg commit "$commit" '
     select(
       type == "object" and
@@ -249,37 +247,24 @@ verify_remote_blob() {
   local blob_sha=$1
   local expected=$2
   local label=$3
-  local response="$scratch_dir/blob-$blob_sha.json"
-  local decoded="$scratch_dir/decoded-$blob_sha"
-  local encoded="$scratch_dir/encoded-$blob_sha"
-  local canonical="$scratch_dir/canonical-$blob_sha"
-  local declared_size expected_size actual_size
-
-  api_get "repos/$repository/git/blobs/$blob_sha" "$response"
-  jq -e --arg sha "$blob_sha" '
-    type == "object" and
-    .sha == $sha and
-    .encoding == "base64" and
-    (.size | type == "number" and floor == . and . >= 0 and . <= 8388608) and
-    (.content | type == "string")
-  ' "$response" >/dev/null || release_die "GitHub returned invalid blob metadata for $label"
-  declared_size=$(jq -er '.size' "$response") || release_die "GitHub returned invalid blob size for $label"
-  expected_size=$(wc -c <"$expected" | tr -d '[:space:]')
-  [[ "$expected_size" =~ ^[0-9]+$ && "$declared_size" == "$expected_size" ]] ||
-    release_die "published evidence size differs for $label"
-  # GitHub's Git Blobs API line-wraps base64 content. Remove only transport
-  # CR/LF, decode it, then require an exact canonical round trip. jq's decoder
-  # alone accepts some trailing garbage and non-canonical padding.
-  if ! jq -er '.content' "$response" | tr -d '\r\n' >"$encoded" ||
-    ! jq -Rerj '@base64d' "$encoded" >"$decoded" ||
-    ! jq -nj --rawfile content "$decoded" '$content | @base64' >"$canonical" ||
-    ! cmp -s -- "$encoded" "$canonical"; then
-    release_die "GitHub returned invalid blob content for $label"
+  local expected_digest cache_file document
+  expected_digest=$(release_sha256_file "$expected")
+  cache_file="$scratch_dir/blob-cache-$blob_sha-$expected_digest"
+  if [[ -f "$cache_file" && ! -L "$cache_file" ]]; then
+    return
   fi
-  actual_size=$(wc -c <"$decoded" | tr -d '[:space:]')
-  [[ "$actual_size" =~ ^[0-9]+$ && "$actual_size" == "$declared_size" ]] ||
-    release_die "remote blob size mismatch for $label"
-  cmp -s -- "$expected" "$decoded" || release_die "published evidence differs for $label"
+  blob_verify_sequence=$((blob_verify_sequence + 1))
+  document="$scratch_dir/blob-verification-$blob_verify_sequence.json"
+  "$SCRIPT_DIR/releasetransport.sh" git-blob verify --output "$document" \
+    --repository "$repository" --sha "$blob_sha" --expected-file "$expected" ||
+    release_die "published evidence differs for $label"
+  jq -e --arg repository "$repository" --arg sha "$blob_sha" --arg digest "$expected_digest" '
+    .schema_id == "env-vault.github-blob-identity.v1" and .schema_version == 1 and .ok == true and
+    .repository == $repository and .sha == $sha and .encoding == "base64" and
+    .decoded_sha256 == $digest and .expected_sha256 == $digest and
+    (.declared_size | type == "number" and . >= 0 and floor == .)
+  ' "$document" >/dev/null || release_die "typed blob verification result is malformed for $label"
+  : > "$cache_file"
 }
 
 verify_remote_tuple() {
@@ -315,12 +300,26 @@ create_blob() {
   local output=$2
   local payload="$scratch_dir/blob-payload.json"
   local response="$scratch_dir/blob-create-response.json"
-  local sha
+  local sha reconciliation expected_digest cache_file
 
   jq -n --rawfile content "$path" '{encoding:"base64", content:($content | @base64)}' >"$payload" ||
     release_die "cannot encode local evidence"
   if ! gh api --method POST "repos/$repository/git/blobs" --input "$payload" >"$response"; then
-    release_die "cannot create evidence blob"
+    # A timeout can occur after GitHub committed this content-addressed write.
+    # Reconcile the deterministic Git blob identity once; never repeat POST.
+    sha=$(git hash-object -- "$path") || release_die "cannot calculate evidence blob identity"
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || release_die "calculated evidence blob identity is malformed"
+    blob_verify_sequence=$((blob_verify_sequence + 1))
+    reconciliation="$scratch_dir/blob-create-reconciliation-$blob_verify_sequence.json"
+    if ! "$SCRIPT_DIR/releasetransport.sh" git-blob verify --output "$reconciliation" \
+      --repository "$repository" --sha "$sha" --expected-file "$path"; then
+      release_die "cannot reconcile ambiguous evidence blob creation"
+    fi
+    expected_digest=$(release_sha256_file "$path")
+    cache_file="$scratch_dir/blob-cache-$sha-$expected_digest"
+    : > "$cache_file"
+    printf -v "$output" '%s' "$sha"
+    return
   fi
   sha=$(jq -er '.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$response") ||
     release_die "GitHub returned invalid created blob data"
@@ -410,6 +409,7 @@ release_require_repository "$repository"
 release_require_command gh
 release_require_command jq
 release_require_command cmp
+release_require_command git
 
 validate_local_file "$release_evidence_json" "release evidence JSON"
 validate_local_file "$index_md" "release evidence index"
@@ -501,6 +501,11 @@ remote_ancestors_json=$(jq -cn --arg root evidence --arg releases evidence/relea
 
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-evidence.XXXXXX")
 trap cleanup EXIT
+ref_probe_sequence=0
+ref_read_sequence=0
+commit_read_sequence=0
+blob_verify_sequence=0
+last_commit_response=''
 base_commit=''
 base_tree=''
 created_blob=''
@@ -576,7 +581,7 @@ else
 fi
 create_commit "$created_tree" created_commit
 read_commit_tree "$created_commit" staged_commit_tree
-staged_commit_response="$scratch_dir/commit-$created_commit.json"
+staged_commit_response=$last_commit_response
 jq -e --arg parent "$base_commit" --arg tree "$created_tree" '
   .tree.sha == $tree and
   ([.parents[].sha] == [$parent])
@@ -588,8 +593,8 @@ fast_forward_ref "$created_commit"
 result_state=updated
 
 assert_ref_unchanged "$created_commit"
-created_commit_response="$scratch_dir/commit-$created_commit.json"
 read_commit_tree "$created_commit" verified_tree
+created_commit_response=$last_commit_response
 jq -e --arg parent "$base_commit" --arg tree "$created_tree" '
   .tree.sha == $tree and
   ([.parents[].sha] == [$parent])

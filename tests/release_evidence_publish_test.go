@@ -1,6 +1,8 @@
 package tests
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +29,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 		wantCommitCreate int
 		wantRefCreates   int
 		wantRefUpdates   int
+		wantReconcileGET int
 		repairMode       string
 		publisherEvent   string
 	}{
@@ -46,6 +49,38 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			wantTreeCreates:  1,
 			wantCommitCreate: 1,
 			wantRefUpdates:   1,
+			repairMode:       "none",
+			publisherEvent:   "push",
+		},
+		{
+			name:             "ambiguous blob create is reconciled by deterministic identity without replay",
+			mode:             "post-blob-timeout",
+			wantOutput:       evidencePublishOutput(evidenceNewSHA, "updated", "none"),
+			wantBlobCreates:  4,
+			wantTreeCreates:  1,
+			wantCommitCreate: 1,
+			wantRefUpdates:   1,
+			wantReconcileGET: 1,
+			repairMode:       "none",
+			publisherEvent:   "push",
+		},
+		{
+			name:             "ambiguous blob create with mismatched remote bytes fails before tree and ref",
+			mode:             "post-blob-timeout-mismatch",
+			wantStatus:       1,
+			wantOutput:       "cannot reconcile ambiguous evidence blob creation",
+			wantBlobCreates:  1,
+			wantReconcileGET: 1,
+			repairMode:       "none",
+			publisherEvent:   "push",
+		},
+		{
+			name:             "ambiguous blob create with unknown remote outcome fails before tree and ref",
+			mode:             "post-blob-timeout-unknown",
+			wantStatus:       1,
+			wantOutput:       "cannot reconcile ambiguous evidence blob creation",
+			wantBlobCreates:  1,
+			wantReconcileGET: 1,
 			repairMode:       "none",
 			publisherEvent:   "push",
 		},
@@ -71,7 +106,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			name:           "mismatch fails before every mutation",
 			mode:           "mismatch",
 			wantStatus:     1,
-			wantOutput:     "published evidence size differs for release-evidence.json",
+			wantOutput:     "published evidence differs for release-evidence.json",
 			repairMode:     "none",
 			publisherEvent: "push",
 		},
@@ -90,7 +125,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			name:            "malformed wrapped blob is rejected before tree or ref mutation",
 			mode:            "invalid-base64",
 			wantStatus:      1,
-			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantOutput:      "published evidence differs for release-evidence.json",
 			wantBlobCreates: 1,
 			repairMode:      "none",
 			publisherEvent:  "push",
@@ -99,7 +134,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			name:            "trailing base64 garbage is rejected before tree or ref mutation",
 			mode:            "trailing-base64-garbage",
 			wantStatus:      1,
-			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantOutput:      "published evidence differs for release-evidence.json",
 			wantBlobCreates: 1,
 			repairMode:      "none",
 			publisherEvent:  "push",
@@ -108,7 +143,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			name:            "missing base64 padding is rejected before tree or ref mutation",
 			mode:            "missing-base64-padding",
 			wantStatus:      1,
-			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantOutput:      "published evidence differs for release-evidence.json",
 			wantBlobCreates: 1,
 			repairMode:      "none",
 			publisherEvent:  "push",
@@ -117,7 +152,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			name:            "extra base64 padding is rejected before tree or ref mutation",
 			mode:            "extra-base64-padding",
 			wantStatus:      1,
-			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantOutput:      "published evidence differs for release-evidence.json",
 			wantBlobCreates: 1,
 			repairMode:      "none",
 			publisherEvent:  "push",
@@ -126,7 +161,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			name:            "noncanonical base64 pad bits are rejected before tree or ref mutation",
 			mode:            "noncanonical-base64-pad-bits",
 			wantStatus:      1,
-			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantOutput:      "published evidence differs for release-evidence.json",
 			wantBlobCreates: 1,
 			repairMode:      "none",
 			publisherEvent:  "push",
@@ -175,6 +210,7 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 				},
 				map[string]string{
 					"FAKE_EVIDENCE_MODE":       test.mode,
+					"FAKE_EVIDENCE_BLOB_SHAS":  strings.Join(evidenceBlobSHAs(t, files), ","),
 					"FAKE_GH_CALL_LOG":         callLog,
 					"FAKE_GH_REMOTE_DIR":       remoteDir,
 					"FAKE_GH_REF_STATE":        refState,
@@ -203,9 +239,13 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/commits", test.wantCommitCreate)
 			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/refs ", test.wantRefCreates)
 			assertEvidenceCallCount(t, calls, "--method PATCH repos/example/env-vault/git/refs/heads/release-evidence", test.wantRefUpdates)
+			if strings.HasPrefix(test.mode, "post-blob-timeout") {
+				firstSHA := evidenceBlobSHAs(t, files)[0]
+				assertEvidenceCallCount(t, calls, "repos/example/env-vault/git/blobs/"+firstSHA, test.wantReconcileGET)
+			}
 
-			if test.mode == "bootstrap" || test.mode == "new-version" || test.mode == "append" {
-				for index, sha := range evidenceBlobSHAs() {
+			if test.mode == "bootstrap" || test.mode == "post-blob-timeout" || test.mode == "new-version" || test.mode == "append" {
+				for index, sha := range evidenceBlobSHAs(t, files) {
 					remote, err := os.ReadFile(filepath.Join(remoteDir, sha))
 					if err != nil {
 						t.Fatalf("read created remote blob %d: %v", index, err)
@@ -275,6 +315,7 @@ func TestPublishReleaseEvidenceRejectsMalformedLineageBeforeMutation(t *testing.
 				[]string{releaseTestVersion, evidenceSourceSHA, releaseTestRepository, files[0], files[1], files[2], files[3]},
 				map[string]string{
 					"FAKE_EVIDENCE_MODE":       mode,
+					"FAKE_EVIDENCE_BLOB_SHAS":  strings.Join(evidenceBlobSHAs(t, files), ","),
 					"FAKE_GH_CALL_LOG":         callLog,
 					"FAKE_GH_REMOTE_DIR":       remoteDir,
 					"FAKE_GH_REF_STATE":        filepath.Join(root, "ref-state"),
@@ -389,7 +430,7 @@ func evidencePublishOutput(commitSHA, state, repairMode string) string {
 
 func seedEvidenceRemoteBlobs(t *testing.T, directory string, local []string, mismatch bool) {
 	t.Helper()
-	for index, sha := range evidenceBlobSHAs() {
+	for index, sha := range evidenceBlobSHAs(t, local) {
 		contents, err := os.ReadFile(local[index])
 		if err != nil {
 			t.Fatalf("read local evidence fixture: %v", err)
@@ -403,13 +444,19 @@ func seedEvidenceRemoteBlobs(t *testing.T, directory string, local []string, mis
 	}
 }
 
-func evidenceBlobSHAs() []string {
-	return []string{
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"cccccccccccccccccccccccccccccccccccccccc",
-		"dddddddddddddddddddddddddddddddddddddddd",
+func evidenceBlobSHAs(t *testing.T, files []string) []string {
+	t.Helper()
+	shas := make([]string, len(files))
+	for index, path := range files {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		object := append([]byte(fmt.Sprintf("blob %d\x00", len(contents))), contents...)
+		digest := sha1.Sum(object)
+		shas[index] = hex.EncodeToString(digest[:])
 	}
+	return shas
 }
 
 func assertEvidenceCallCount(t *testing.T, calls, fragment string, want int) {
@@ -424,11 +471,21 @@ func installEvidenceAPIFakeGH(t *testing.T, binDir string) {
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} == --version ]]; then
+  printf 'gh version 2.80.0 (2026-01-01)\n'
+  exit 0
+fi
+if [[ ${1:-} == api && ${2:-} == --help ]]; then
+  printf '%s\n' 'OPTIONS: --include --hostname --method --header --raw-field'
+  exit 0
+fi
 mode=${FAKE_EVIDENCE_MODE:?FAKE_EVIDENCE_MODE is required}
 call_log=${FAKE_GH_CALL_LOG:?FAKE_GH_CALL_LOG is required}
 remote_dir=${FAKE_GH_REMOTE_DIR:?FAKE_GH_REMOTE_DIR is required}
 ref_state=${FAKE_GH_REF_STATE:?FAKE_GH_REF_STATE is required}
 blob_count_state=${FAKE_GH_BLOB_COUNT_STATE:?FAKE_GH_BLOB_COUNT_STATE is required}
+IFS=, read -r blob_sha_1 blob_sha_2 blob_sha_3 blob_sha_4 <<< "${FAKE_EVIDENCE_BLOB_SHAS:?}"
+blob_shas_json=$(jq -cn --args '$ARGS.positional' "$blob_sha_1" "$blob_sha_2" "$blob_sha_3" "$blob_sha_4")
 printf '%s\n' "$*" >> "$call_log"
 
 [[ ${1:-} == api ]] || {
@@ -440,23 +497,21 @@ shift
 method=GET
 include=false
 input=''
-if [[ ${1:-} == --include ]]; then
-  include=true
-  shift
-elif [[ ${1:-} == --method ]]; then
-  method=${2:-}
-  shift 2
-fi
-endpoint=${1:-}
-shift || true
-if [[ ${1:-} == --input ]]; then
-  input=${2:-}
-  shift 2
-fi
-[[ $# -eq 0 ]] || {
-  printf 'fake gh: unsupported arguments\n' >&2
-  exit 91
-}
+endpoint=''
+while (($#)); do
+  case "$1" in
+    --include) include=true; shift ;;
+    --hostname|--header) shift 2 ;;
+    --method) method=${2:-}; shift 2 ;;
+    --input) input=${2:-}; shift 2 ;;
+    -*) printf 'fake gh: unsupported option: %s\n' "$1" >&2; exit 91 ;;
+    *)
+      [[ -z $endpoint ]] || { printf 'fake gh: multiple endpoints\n' >&2; exit 91; }
+      endpoint=$1
+      shift
+      ;;
+  esac
+done
 
 source_sha=1111111111111111111111111111111111111111
 source_tree=1010101010101010101010101010101010101010
@@ -471,20 +526,38 @@ if [[ $mode == missing && ! -f $ref_state ]]; then
   branch_present=false
 fi
 
+if [[ $include == true && $method == GET && $endpoint == repos/example/env-vault/git/ref/heads/release-evidence && $branch_present == false ]]; then
+  printf 'HTTP/2 404 Not Found\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Not Found"}\n'
+  exit 1
+fi
+
 if [[ $include == true ]]; then
-  [[ $method == GET && $endpoint == repos/example/env-vault/git/ref/heads/release-evidence ]] || exit 92
-  if [[ $branch_present == false ]]; then
-    printf 'HTTP/2 404 Not Found\r\n\r\n'
-    exit 1
-  fi
-  printf 'HTTP/2 200 OK\r\n\r\n{}\n'
-  exit 0
+  transport_tmp=$(mktemp "${TMPDIR:-/tmp}/fake-evidence-gh.XXXXXX")
+  exec 3>&1
+  exec >"$transport_tmp"
+  finish_transport() {
+    status=$?
+    trap - EXIT
+    exec 1>&3
+    if [[ $status == 0 ]]; then
+      printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json; charset=utf-8\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
+    elif [[ $status == 44 ]]; then
+      printf 'HTTP/2 404 Not Found\r\nContent-Type: application/vnd.github+json; charset=utf-8\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
+    fi
+    cat -- "$transport_tmp"
+    rm -f -- "$transport_tmp"
+    if [[ $status == 44 ]]; then
+      exit 1
+    fi
+    exit "$status"
+  }
+  trap finish_transport EXIT
 fi
 
 emit_ref() {
   local sha=$base_sha
   case $mode in
-    bootstrap|invalid-base64|trailing-base64-garbage|missing-base64-padding|extra-base64-padding|noncanonical-base64-pad-bits)
+    bootstrap|post-blob-timeout*|invalid-base64|trailing-base64-garbage|missing-base64-padding|extra-base64-padding|noncanonical-base64-pad-bits)
       sha=$source_sha
       ;;
   esac
@@ -505,7 +578,7 @@ emit_commit() {
 
 emit_evidence_tree() {
   local variant=$1
-  jq -n --arg variant "$variant" '
+  jq -n --arg variant "$variant" --argjson current_shas "$blob_shas_json" '
     def dir($path): {path:$path,mode:"040000",type:"tree",sha:"0000000000000000000000000000000000000000"};
     def blob($path;$sha): {path:$path,mode:"100644",type:"blob",sha:$sha};
     def files($prefix;$shas): [
@@ -514,8 +587,6 @@ emit_evidence_tree() {
       blob($prefix + "/metrics-comparison.json";$shas[2]),
       blob($prefix + "/metrics-comparison.md";$shas[3])
     ];
-    ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-     "cccccccccccccccccccccccccccccccccccccccc","dddddddddddddddddddddddddddddddddddddddd"] as $current_shas |
     ["6666666666666666666666666666666666666666","7777777777777777777777777777777777777777",
      "8888888888888888888888888888888888888888","9999999999999999999999999999999999999999"] as $prior_shas |
     "evidence/releases/v1.2.3" as $version |
@@ -574,7 +645,7 @@ case "$method:$endpoint" in
     emit_commit "$base_sha" "$base_tree" "$source_sha"
     ;;
   GET:repos/example/env-vault/git/commits/$new_sha)
-    if [[ $mode == bootstrap ]]; then parent=$source_sha; else parent=$base_sha; fi
+    if [[ $mode == bootstrap || $mode == post-blob-timeout* ]]; then parent=$source_sha; else parent=$base_sha; fi
     emit_commit "$new_sha" "$new_tree" "$parent"
     ;;
   GET:repos/example/env-vault/git/trees/$source_tree?recursive=1)
@@ -591,7 +662,7 @@ case "$method:$endpoint" in
     ;;
   GET:repos/example/env-vault/git/trees/$new_tree?recursive=1)
     case $mode in
-      bootstrap) emit_evidence_tree current ;;
+      bootstrap|post-blob-timeout*) emit_evidence_tree current ;;
       new-version) emit_evidence_tree new-version ;;
       *) emit_evidence_tree appended ;;
     esac
@@ -599,7 +670,10 @@ case "$method:$endpoint" in
   GET:repos/example/env-vault/git/blobs/*)
     sha=${endpoint##*/}
     path=$remote_dir/$sha
-    [[ -f $path && ! -L $path ]] || exit 94
+    if [[ ! -f $path || -L $path ]]; then
+      jq -n '{message:"Not Found"}'
+      exit 44
+    fi
     size=$(wc -c < "$path" | tr -d '[:space:]')
     jq -n --arg sha "$sha" --rawfile content "$path" --argjson size "$size" --arg mode "$mode" '
       def wrap:
@@ -643,20 +717,30 @@ case "$method:$endpoint" in
     count=$((count + 1))
     printf '%s\n' "$count" > "$blob_count_state"
     case $count in
-      1) sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
-      2) sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
-      3) sha=cccccccccccccccccccccccccccccccccccccccc ;;
-      4) sha=dddddddddddddddddddddddddddddddddddddddd ;;
+      1) sha=$blob_sha_1 ;;
+      2) sha=$blob_sha_2 ;;
+      3) sha=$blob_sha_3 ;;
+      4) sha=$blob_sha_4 ;;
       *) exit 97 ;;
     esac
+    if [[ $count == 1 && $mode == post-blob-timeout-unknown ]]; then
+      exit 75
+    fi
+    if [[ $count == 1 && $mode == post-blob-timeout-mismatch ]]; then
+      printf 'different remote evidence\n' > "$remote_dir/$sha"
+      exit 75
+    fi
     jq -e -j '.content|@base64d' "$input" > "$remote_dir/$sha"
+    if [[ $count == 1 && $mode == post-blob-timeout ]]; then
+      exit 75
+    fi
     jq -n --arg sha "$sha" '{sha:$sha}'
     ;;
   POST:repos/example/env-vault/git/trees)
     expected_base=$base_tree
-    if [[ $mode == bootstrap ]]; then expected_base=$source_tree; fi
-    if [[ $mode == bootstrap || $mode == new-version ]]; then
-      jq -e --arg base "$expected_base" '
+    if [[ $mode == bootstrap || $mode == post-blob-timeout* ]]; then expected_base=$source_tree; fi
+    if [[ $mode == bootstrap || $mode == post-blob-timeout* || $mode == new-version ]]; then
+      jq -e --arg base "$expected_base" --argjson current "$blob_shas_json" '
         .base_tree == $base and
         [.tree[].path] == [
           "evidence/releases/v1.2.3/release-evidence.json",
@@ -668,16 +752,11 @@ case "$method:$endpoint" in
           "evidence/releases/v1.2.3/publisher-runs/run-4242/attempt-2/metrics-comparison.json",
           "evidence/releases/v1.2.3/publisher-runs/run-4242/attempt-2/metrics-comparison.md"
         ] and
-        [.tree[].sha] == [
-          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "cccccccccccccccccccccccccccccccccccccccc","dddddddddddddddddddddddddddddddddddddddd",
-          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "cccccccccccccccccccccccccccccccccccccccc","dddddddddddddddddddddddddddddddddddddddd"
-        ] and
+        [.tree[].sha] == ($current + $current) and
         all(.tree[]; .mode == "100644" and .type == "blob")
       ' "$input" >/dev/null || exit 98
     else
-      jq -e --arg base "$expected_base" '
+      jq -e --arg base "$expected_base" --argjson current "$blob_shas_json" '
         .base_tree == $base and
         [.tree[].path] == [
           "evidence/releases/v1.2.3/publisher-runs/run-4242/attempt-2/release-evidence.json",
@@ -685,14 +764,15 @@ case "$method:$endpoint" in
           "evidence/releases/v1.2.3/publisher-runs/run-4242/attempt-2/metrics-comparison.json",
           "evidence/releases/v1.2.3/publisher-runs/run-4242/attempt-2/metrics-comparison.md"
         ] and
-        all(.tree[]; .mode == "100644" and .type == "blob" and (.sha|test("^[a-d]{40}$")))
+        [.tree[].sha] == $current and
+        all(.tree[]; .mode == "100644" and .type == "blob")
       ' "$input" >/dev/null || exit 98
     fi
     jq -n --arg sha "$new_tree" '{sha:$sha}'
     ;;
   POST:repos/example/env-vault/git/commits)
     expected_parent=$base_sha
-    if [[ $mode == bootstrap ]]; then expected_parent=$source_sha; fi
+    if [[ $mode == bootstrap || $mode == post-blob-timeout* ]]; then expected_parent=$source_sha; fi
     jq -e --arg parent "$expected_parent" --arg tree "$new_tree" '
       .message == "chore(evidence): publish v1.2.3" and .tree == $tree and .parents == [$parent]
     ' "$input" >/dev/null || exit 99
@@ -704,7 +784,7 @@ case "$method:$endpoint" in
       printf 'gh: Update is not a fast forward (HTTP 422)\n' >&2
       exit 1
     fi
-    [[ $mode == append || $mode == bootstrap || $mode == new-version ]] || exit 102
+    [[ $mode == append || $mode == bootstrap || $mode == post-blob-timeout || $mode == new-version ]] || exit 102
     : > "$ref_state"
     emit_ref
     ;;

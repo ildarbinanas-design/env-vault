@@ -75,6 +75,7 @@ jobs:
         env:
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           EXPECTED_SHA: ${{ steps.classify.outputs.source_sha }}
           GH_TOKEN: ${{ github.token }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
@@ -85,7 +86,20 @@ jobs:
           umask 077
           mkdir -p "$SNAPSHOT_DIR"
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          export RELEASE_TRANSPORT_BIN="$RUNNER_TEMP/releasetransport"
           "$RELEASECHECK" validate-contract --json > "$SNAPSHOT_DIR/contract-validation.json"
+
+          scripts/release/releasetransport.sh actions identity \
+            --output "$SNAPSHOT_DIR/ci-run-identity.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$EXPECTED_SHA" \
+            --head-ref main \
+            --conclusion "$CI_CONCLUSION"
 
           scripts/release/gh-api-read.sh \
             "$SNAPSHOT_DIR/ci-run.json" \
@@ -107,7 +121,6 @@ jobs:
               .head_sha == $sha and
               .head_branch == "main" and
               .event == "push" and
-              .name == "ci" and
               .path == ".github/workflows/ci.yml" and
               .status == "completed" and
               (.conclusion | type == "string")
@@ -211,6 +224,7 @@ jobs:
         env:
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           EXPECTED_SHA: ${{ needs.inspect.outputs.source_sha }}
           GH_TOKEN: ${{ github.token }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
@@ -221,6 +235,8 @@ jobs:
           umask 077
           mkdir -p "$SNAPSHOT_DIR"
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          export RELEASE_TRANSPORT_BIN="$RUNNER_TEMP/releasetransport"
           scripts/release/gh-api-read.sh \
             "$SNAPSHOT_DIR/main-ref.json" \
             "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
@@ -238,6 +254,16 @@ jobs:
             "$SNAPSHOT_DIR/ci-artifacts.json" \
             --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
+          scripts/release/releasetransport.sh actions identity \
+            --output "$SNAPSHOT_DIR/ci-run-identity.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$EXPECTED_SHA" \
+            --head-ref main \
+            --conclusion "$CI_CONCLUSION"
 
           set +e
           "$RELEASECHECK" classify-attempt \
@@ -336,6 +362,17 @@ jobs:
           }
           printf '%s\n' "$classification" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Go for release planning
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build the strict GitHub release transport once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
       - id: current
         name: Require the planning commit to remain current
         env:
@@ -355,12 +392,6 @@ jobs:
             echo 'current=false' >> "$GITHUB_OUTPUT"
             echo "skipping stale planning run for ${EXPECTED_SHA}; current main is ${current_sha}"
           fi
-
-      - name: Set up Go for the offline release checker
-        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
 
       - id: release-contract
         name: Build the offline checker and validate the release contract
@@ -432,6 +463,16 @@ jobs:
             --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
 
+          scripts/release/releasetransport.sh actions identity \
+            --output "$SNAPSHOT_DIR/ci-run-identity.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$EXPECTED_SHA" \
+            --head-ref main
+
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sha "$EXPECTED_SHA" \
@@ -444,7 +485,6 @@ jobs:
               .head_sha == $sha and
               .head_branch == "main" and
               .event == "push" and
-              .name == "ci" and
               .status == "completed" and
               .conclusion == "success" and
               .path == ".github/workflows/ci.yml"
@@ -519,7 +559,7 @@ jobs:
             env_vault_artifacts | map({id, name, expired, workflow_run}) | sort_by(.id)
           ' \
             "$SNAPSHOT_DIR/ci-artifacts.json" > "$SNAPSHOT_DIR/artifact-identities.json"
-          jq -S '{id, run_attempt, status, conclusion, head_sha, head_branch, event, name, path, repository: .repository.full_name, head_repository: .head_repository.full_name}' \
+          jq -S '{id, run_attempt, status, conclusion, head_sha, head_branch, event, path, repository: .repository.full_name, head_repository: .head_repository.full_name}' \
             "$SNAPSHOT_DIR/ci-run.json" > "$SNAPSHOT_DIR/run-identity.json"
 
           {
@@ -703,6 +743,16 @@ jobs:
             --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
 
+          scripts/release/releasetransport.sh actions identity \
+            --output "$SNAPSHOT_DIR/ci-run-identity-final.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$CI_RUN_ID" \
+            --run-attempt "$CI_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/ci.yml \
+            --event push \
+            --head-sha "$EXPECTED_SHA" \
+            --head-ref main
+
           "$RELEASECHECK" classify-attempt \
             --run "$SNAPSHOT_DIR/ci-run-final.json" \
             --artifacts "$SNAPSHOT_DIR/ci-artifacts-final.json" \
@@ -741,7 +791,7 @@ jobs:
             env_vault_artifacts | map({id, name, expired, workflow_run}) | sort_by(.id)
           ' \
             "$SNAPSHOT_DIR/ci-artifacts-final.json" > "$SNAPSHOT_DIR/artifact-identities-final.json"
-          jq -S '{id, run_attempt, status, conclusion, head_sha, head_branch, event, name, path, repository: .repository.full_name, head_repository: .head_repository.full_name}' \
+          jq -S '{id, run_attempt, status, conclusion, head_sha, head_branch, event, path, repository: .repository.full_name, head_repository: .head_repository.full_name}' \
             "$SNAPSHOT_DIR/ci-run-final.json" > "$SNAPSHOT_DIR/run-identity-final.json"
           cmp "$SNAPSHOT_DIR/run-identity.json" "$SNAPSHOT_DIR/run-identity-final.json"
           cmp "$SNAPSHOT_DIR/artifact-identities.json" "$SNAPSHOT_DIR/artifact-identities-final.json"

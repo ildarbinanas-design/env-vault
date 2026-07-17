@@ -1145,10 +1145,53 @@ stable tuple. REST `.name` may contain a custom `run-name` rather than the
 workflow name, and `.pull_requests` may be empty for an exact run after its PR
 is merged. For release-PR CI, derive the run ID from the unique successful
 required `ci / quality-gate` check URL on the exact PR. Require the exact
-`/actions/runs/RUN_ID/job/JOB_ID` shape; query the job and cross-check its job
-ID, run ID/attempt, direct head SHA, check/workflow names, completed/success
-state, and canonical URL before checking the run tuple. Neither REST `.name`
-nor `.pull_requests` is an authorization source.
+`/actions/runs/RUN_ID/job/JOB_ID` shape; resolve the run through
+`/actions/runs/RUN_ID/attempts/ATTEMPT` and the job from the complete
+attempt-qualified jobs collection. Cross-check job ID, run ID/attempt, direct
+head SHA, check name, completed/success state, and canonical URL before checking
+the run tuple. Both run `.name` and job `workflow_name` are diagnostic; workflow
+authority is the run `path`. Neither those names nor `.pull_requests` is an
+authorization source.
+
+The steady-state operator boundary is:
+
+```sh
+go build -trimpath -o "$SNAPSHOT_DIR/releasetransport" ./cmd/releasetransport
+export RELEASE_TRANSPORT_BIN="$SNAPSHOT_DIR/releasetransport"
+scripts/release/releasetransport.sh preflight \
+  --output "$SNAPSHOT_DIR/github-capabilities.json"
+scripts/release/releasetransport.sh actions identity \
+  --output "$SNAPSHOT_DIR/run-identity.json" \
+  --repository "$REPOSITORY" \
+  --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+  --workflow-path "$WORKFLOW_PATH" --event "$EVENT" \
+  --head-sha "$HEAD_SHA" --head-ref "$HEAD_REF"
+```
+
+Allocate a fresh output path for every phase; all transport outputs are
+no-clobber regular files. Exit `2` is invalid input, `3` is local CLI capability
+drift, `4` alone is exact not-found, `5` is every other remote/auth/identity
+failure, and `6` is output failure. Preserve the versioned JSON error; never
+convert `3`, `5`, or `6` into absence. The preflight and all reads execute the
+same capability contract, pin `github.com` and API `2022-11-28`, and reject
+unsupported media types or duplicate/case-variant JSON members.
+
+The enforced read caps are five attempts per page, 100 pages, 500 REST
+requests, 120 seconds cumulative retry wait, and 64 MiB stdout / 256 KiB stderr
+per `gh` process. Every next-page URL must retain the exact initial query scope
+(endpoint query plus fields); `per_page` stays invariant and `page` advances by
+exactly one. Those caps do not provide an internal request or end-to-end
+deadline, and paginated aggregation has no separate total-byte cap; until the
+Stage 4 targets are implemented, rely on the enclosing workflow timeout and do
+not describe this transport as end-to-end time- or memory-bounded.
+
+Direct REST reads are prohibited outside this boundary. The eight explicit
+mutations and one GraphQL observation are registered in
+`release/github-transport-boundary.v1.json`; tests fail if another `gh` command
+is introduced without path, operation, category, owner, count, and rationale.
+After an ambiguous evidence blob POST, do not repeat POST: calculate the Git
+object SHA and require one typed exact-byte read-back. A mismatch or 404 stops
+before tree, commit, or ref mutation.
 
 Evidence assembly and offline replay remain pinned to the immutable publisher
 source. The write-scoped append-only helper is a separate checkout pinned to

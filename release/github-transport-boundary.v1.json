@@ -1,0 +1,36 @@
+{
+  "schema_id": "env-vault.github-transport-boundary.v1",
+  "schema_version": 1,
+  "owner": "release-engineering",
+  "entries": [
+    {"path":"scripts/release/authorize-and-merge-release-pr.sh","needle":"gh api --method POST \"repos/$repository/issues/$pr_number/comments\"","count":1,"category":"direct-mutation","rationale":"Non-idempotent confirmation comment creation is reconciled after an ambiguous outcome and is never blindly retried."},
+    {"path":"scripts/release/publish-release-evidence.sh","needle":"gh api --method POST \"repos/$repository/git/blobs\"","count":1,"category":"direct-mutation","rationale":"Content-addressed blob creation is reconciled by deterministic Git object identity after an ambiguous outcome."},
+    {"path":"scripts/release/publish-release-evidence.sh","needle":"gh api --method POST \"repos/$repository/git/trees\"","count":1,"category":"direct-mutation","rationale":"Evidence tree creation is a single-attempt mutation."},
+    {"path":"scripts/release/publish-release-evidence.sh","needle":"gh api --method POST \"repos/$repository/git/commits\"","count":1,"category":"direct-mutation","rationale":"Evidence commit creation is a single-attempt mutation."},
+    {"path":"scripts/release/publish-release-evidence.sh","needle":"gh api --method PATCH \"repos/$repository/git/refs/heads/$branch\"","count":1,"category":"direct-mutation","rationale":"The evidence ref is advanced once with force disabled after exact ref rechecks."},
+    {"path":".github/workflows/release-please.yml","needle":"gh api --method POST","count":1,"category":"direct-mutation","rationale":"Immutable tag creation is a single-attempt mutation after exact authorization and current-head checks."},
+    {"path":"scripts/release/mark-release-pr-tagged.sh","needle":"gh api --method POST","count":1,"category":"direct-mutation","rationale":"Lifecycle label addition is an explicit mutation followed by read-back verification."},
+    {"path":"scripts/release/mark-release-pr-tagged.sh","needle":"gh api --method DELETE","count":1,"category":"direct-mutation","rationale":"Lifecycle label removal is an explicit mutation followed by read-back verification."},
+    {"path":"scripts/release/verify-repository-release-settings.sh","needle":"gh api graphql","count":1,"category":"graphql-observation","rationale":"Ruleset bypass actor counts are unavailable in the required REST shape; the response is validated offline and has no mutation fields."},
+
+    {"path":"scripts/release/ensure-release-labels.sh","needle":"gh label create","count":1,"category":"high-level-mutation","rationale":"Idempotent lifecycle label creation uses the dedicated gh command."},
+    {"path":"scripts/release/reconcile-release-assets.sh","needle":"gh release upload","count":2,"category":"high-level-mutation","rationale":"No-clobber asset upload uses the dedicated release command after checksum/name reconciliation."},
+    {"path":"scripts/release/reconcile-release-assets.sh","needle":"gh release download","count":1,"category":"high-level-observation","rationale":"Existing remote assets are downloaded only after exact release inventory validation and are compared byte-for-byte with promoted assets."},
+    {"path":"scripts/release/download-release-assets.sh","needle":"gh release download","count":1,"category":"high-level-observation","rationale":"The dedicated release downloader fetches an already validated exact ten-asset inventory into a private staging directory for offline checks."},
+    {"path":".github/workflows/build-binaries.yml","needle":"gh release create","count":1,"category":"high-level-mutation","rationale":"Stable GitHub Release creation uses the dedicated command after exact tag and absence checks."},
+    {"path":".github/workflows/build-binaries.yml","needle":"gh attestation verify","count":1,"category":"attestation-verification","rationale":"Cryptographic attestation verification is delegated to the dedicated gh verifier and its JSON is sealed into evidence."},
+    {"path":"scripts/release/authorize-and-merge-release-pr.sh","needle":"gh pr checks","count":1,"category":"high-level-observation","rationale":"Registered cross-workflow aggregation authority: the complete exact required-check set and state gate the merge before and after confirmation, while typed attempt-qualified identity additionally binds the exact quality-gate run and job."},
+    {"path":"scripts/release/authorize-and-merge-release-pr.sh","needle":"gh repo view","count":1,"category":"high-level-observation","rationale":"Optional repository-name discovery is used only when GITHUB_REPOSITORY is absent and is strictly validated."},
+    {"path":"scripts/release/authorize-and-merge-release-pr.sh","needle":"gh pr merge","count":1,"category":"high-level-mutation","rationale":"Squash merge is an exact-head mutation with ambiguous-outcome reconciliation."},
+    {"path":"scripts/release/rerun-classified-attempt.sh","needle":"gh run rerun","count":1,"category":"high-level-mutation","rationale":"A full-run rerun is issued only from a signed-off offline classification; failed-jobs-only reruns are prohibited."},
+    {"path":".github/workflows/release-evidence.yml","needle":"gh pr checks","count":1,"category":"high-level-observation","rationale":"Required-check discovery supplies the quality-gate URL; typed identity binds the exact run attempt and job before evidence assembly."},
+    {"path":".github/workflows/release-evidence.yml","needle":"gh run view","count":3,"category":"metrics-observation","rationale":"Attempt-qualified timing/job data is diagnostic metrics input after the authoritative run tuples have been typed and verified."},
+    {"path":"scripts/release/publish-homebrew-pr.sh","needle":"gh pr list","count":1,"category":"high-level-observation","rationale":"Deterministic tap PR discovery is followed by exact branch/head/body/file verification."},
+    {"path":"scripts/release/publish-homebrew-pr.sh","needle":"gh pr view","count":2,"category":"high-level-observation","rationale":"Tap PR files and body are read through the dedicated command and compared to the deterministic formula contract."},
+    {"path":"scripts/release/publish-homebrew-pr.sh","needle":"gh auth setup-git","count":1,"category":"credential-setup","rationale":"The scoped App token is installed into Git credential transport for the isolated tap worktree."},
+    {"path":"scripts/release/publish-homebrew-pr.sh","needle":"gh pr create","count":1,"category":"high-level-mutation","rationale":"Tap PR creation uses a deterministic branch and exact body after remote no-clobber checks."},
+    {"path":"scripts/release/merge-homebrew-pr.sh","needle":"gh pr view","count":1,"category":"high-level-observation","rationale":"The tap PR head and mergeability are re-read and strictly compared before merge."},
+    {"path":"scripts/release/merge-homebrew-pr.sh","needle":"gh pr merge","count":1,"category":"high-level-mutation","rationale":"Tap merge is exact-head matched and reconciled by read-only state after ambiguity."},
+    {"path":"scripts/release/verify-artifact-attestations.sh","needle":"gh attestation verify","count":2,"category":"attestation-verification","rationale":"Provenance and SBOM verification use the dedicated cryptographic verifier with exact repository/workflow/source constraints."}
+  ]
+}

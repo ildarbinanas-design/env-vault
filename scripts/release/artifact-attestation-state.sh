@@ -29,6 +29,7 @@ release_require_repository "$repository"
 [[ "$source_sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] ||
   release_die "source SHA must contain 40 or 64 lowercase hexadecimal characters"
 release_require_command gh
+release_require_command jq
 release_verify_asset_directory "$asset_directory"
 
 probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-attestation-probe.XXXXXX")
@@ -37,29 +38,30 @@ trap cleanup EXIT
 probe_attestation() {
   local archive=$1
   local predicate=$2
-  local digest endpoint count http_status
-  local probe_error="$probe_dir/error"
+  local digest endpoint count response error status
 
   digest=$(release_sha256_file "$asset_directory/$archive")
   endpoint="repos/$repository/attestations/sha256:$digest"
-  : > "$probe_error"
-  if ! count=$(gh api --method GET "$endpoint" \
+  response="$probe_dir/attestation-$archive-${predicate##*/}.json"
+  error="$probe_dir/attestation-$archive-${predicate##*/}.error"
+  if "$SCRIPT_DIR/gh-api-read.sh" "$response" --method GET "$endpoint" \
     -f "predicate_type=$predicate" \
-    -f per_page=1 \
-    --jq '.attestations | length' 2>"$probe_error"); then
-    http_status=$(LC_ALL=C awk '
-      /^HTTP\/[0-9.]+ [0-9][0-9][0-9]( |$)/ { status = $2 }
-      match($0, /\(HTTP [0-9][0-9][0-9]\)/) { status = substr($0, RSTART + 6, 3) }
-      END { print status }
-    ' "$probe_error")
-    if [[ "$http_status" == "404" ]]; then
-      return 4
-    fi
-    if [[ -n "$http_status" ]]; then
-      release_die "failed to query $predicate attestation for $archive (HTTP $http_status)"
-    fi
-    release_die "failed to query $predicate attestation for $archive (no HTTP response)"
+    -f per_page=1 2>"$error"; then
+    status=0
+  else
+    status=$?
   fi
+  case "$status" in
+    0) ;;
+    4) return 4 ;;
+    *)
+      LC_ALL=C cat -- "$error" >&2
+      release_die "failed to query $predicate attestation for $archive"
+      ;;
+  esac
+
+  count=$(jq -er 'select(type == "object") | .attestations | select(type == "array") | length' "$response") ||
+    release_die "GitHub returned malformed attestation data for $archive"
 
   [[ "$count" =~ ^[0-9]+$ ]] ||
     release_die "GitHub returned a malformed attestation count for $archive"
