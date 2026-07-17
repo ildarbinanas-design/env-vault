@@ -112,7 +112,8 @@ jobs:
             --arg version "$version" \
             --argjson run_id "$PUBLISHER_RUN_ID" \
             --argjson attempt "$PUBLISHER_ATTEMPT" '
-              .id == $run_id and .run_attempt == $attempt and .repository.full_name == $repository and
+              .id == $run_id and .run_attempt == $attempt and
+              .repository.full_name == $repository and .head_repository.full_name == $repository and
               .head_sha == $source and .head_branch == $version and
               (.event == "push" or .event == "workflow_dispatch") and
               .status == "completed" and .conclusion == "success" and
@@ -379,6 +380,13 @@ jobs:
           ref: ${{ needs.assemble.outputs.source_sha }}
           persist-credentials: "false"
 
+      - name: Check out the reviewed evidence publisher
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          path: evidence-tooling
+          persist-credentials: "false"
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -423,7 +431,7 @@ jobs:
           VERSION: ${{ needs.assemble.outputs.version }}
           SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
         run: >-
-          scripts/release/publish-release-evidence.sh
+          evidence-tooling/scripts/release/publish-release-evidence.sh
           "$VERSION"
           "$SOURCE_SHA"
           "$GITHUB_REPOSITORY"

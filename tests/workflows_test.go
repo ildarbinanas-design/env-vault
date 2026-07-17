@@ -902,12 +902,16 @@ func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *tes
 	assertCancellationSafe(t, "release evidence publish", publishJob)
 	assertNeeds(t, "release evidence publish", publishJob, "assemble")
 	assertPermissions(t, "release evidence publish", publishJob.Permissions, map[string]string{"actions": "read", "contents": "write"})
+	tooling := namedStep(t, publishJob, "Check out the reviewed evidence publisher")
+	if tooling.Uses != checkoutAction || tooling.With["ref"] != "${{ github.sha }}" || tooling.With["path"] != "evidence-tooling" || tooling.With["persist-credentials"] != "false" {
+		t.Fatalf("write-scoped evidence tooling is not pinned to the reviewed listener SHA: %v", tooling.With)
+	}
 	replay := namedStep(t, publishJob, "Replay the complete candidate before granting it mutation authority")
 	if !containsAll(replay.Run, "evidence verify", "metrics compare", "cmp candidate/final/index.md", "SOURCE_SHA") {
 		t.Fatalf("write-scoped evidence job does not replay its complete candidate")
 	}
 	publish := namedStep(t, publishJob, "Publish durable no-clobber evidence branch state")
-	if !containsAll(publish.Run, "publish-release-evidence.sh", "release-evidence.json", "metrics-comparison.json", "GITHUB_OUTPUT") {
+	if !containsAll(publish.Run, "evidence-tooling/scripts/release/publish-release-evidence.sh", "release-evidence.json", "metrics-comparison.json", "GITHUB_OUTPUT") {
 		t.Fatalf("durable evidence publisher invocation is incomplete")
 	}
 	coordinates := namedStep(t, publishJob, "Report exact immutable evidence coordinates")
@@ -973,6 +977,7 @@ func TestReleaseEvidenceActionsIdentityPredicatesUseStableExactFields(t *testing
 	}{
 		"publisher wrong path":        {publisherPredicate, publisher, publisherArgs, "path", ".github/workflows/other.yml"},
 		"publisher wrong head":        {publisherPredicate, publisher, publisherArgs, "head_sha", prHead},
+		"publisher wrong head repo":   {publisherPredicate, publisher, publisherArgs, "head_repository", map[string]any{"full_name": "other/env-vault"}},
 		"quality job wrong ID":        {jobPredicate, job, jobArgs, "id", 94},
 		"quality job wrong attempt":   {jobPredicate, job, jobArgs, "run_attempt", 3},
 		"quality job wrong head":      {jobPredicate, job, jobArgs, "head_sha", source},

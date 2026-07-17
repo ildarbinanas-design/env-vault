@@ -249,6 +249,8 @@ verify_remote_blob() {
   local label=$3
   local response="$scratch_dir/blob-$blob_sha.json"
   local decoded="$scratch_dir/decoded-$blob_sha"
+  local encoded="$scratch_dir/encoded-$blob_sha"
+  local canonical="$scratch_dir/canonical-$blob_sha"
   local declared_size expected_size actual_size
 
   api_get "repos/$repository/git/blobs/$blob_sha" "$response"
@@ -263,7 +265,13 @@ verify_remote_blob() {
   expected_size=$(wc -c <"$expected" | tr -d '[:space:]')
   [[ "$expected_size" =~ ^[0-9]+$ && "$declared_size" == "$expected_size" ]] ||
     release_die "published evidence size differs for $label"
-  if ! jq -e -j '.content | @base64d' "$response" >"$decoded"; then
+  # GitHub's Git Blobs API line-wraps base64 content. Remove only transport
+  # CR/LF, decode it, then require an exact canonical round trip. jq's decoder
+  # alone accepts some trailing garbage and non-canonical padding.
+  if ! jq -er '.content' "$response" | tr -d '\r\n' >"$encoded" ||
+    ! jq -Rerj '@base64d' "$encoded" >"$decoded" ||
+    ! jq -nj --rawfile content "$decoded" '$content | @base64' >"$canonical" ||
+    ! cmp -s -- "$encoded" "$canonical"; then
     release_die "GitHub returned invalid blob content for $label"
   fi
   actual_size=$(wc -c <"$decoded" | tr -d '[:space:]')

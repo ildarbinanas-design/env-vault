@@ -68,6 +68,51 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			publisherEvent:   "workflow_dispatch",
 		},
 		{
+			name:            "malformed wrapped blob is rejected before tree or ref mutation",
+			mode:            "invalid-base64",
+			wantStatus:      1,
+			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantBlobCreates: 1,
+			repairMode:      "none",
+			publisherEvent:  "push",
+		},
+		{
+			name:            "trailing base64 garbage is rejected before tree or ref mutation",
+			mode:            "trailing-base64-garbage",
+			wantStatus:      1,
+			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantBlobCreates: 1,
+			repairMode:      "none",
+			publisherEvent:  "push",
+		},
+		{
+			name:            "missing base64 padding is rejected before tree or ref mutation",
+			mode:            "missing-base64-padding",
+			wantStatus:      1,
+			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantBlobCreates: 1,
+			repairMode:      "none",
+			publisherEvent:  "push",
+		},
+		{
+			name:            "extra base64 padding is rejected before tree or ref mutation",
+			mode:            "extra-base64-padding",
+			wantStatus:      1,
+			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantBlobCreates: 1,
+			repairMode:      "none",
+			publisherEvent:  "push",
+		},
+		{
+			name:            "noncanonical base64 pad bits are rejected before tree or ref mutation",
+			mode:            "noncanonical-base64-pad-bits",
+			wantStatus:      1,
+			wantOutput:      "GitHub returned invalid blob content for release-evidence.json",
+			wantBlobCreates: 1,
+			repairMode:      "none",
+			publisherEvent:  "push",
+		},
+		{
 			name:             "concurrent fast-forward race is never forced",
 			mode:             "race",
 			wantStatus:       1,
@@ -517,8 +562,39 @@ case "$method:$endpoint" in
     path=$remote_dir/$sha
     [[ -f $path && ! -L $path ]] || exit 94
     size=$(wc -c < "$path" | tr -d '[:space:]')
-    jq -n --arg sha "$sha" --rawfile content "$path" --argjson size "$size" \
-      '{sha:$sha,encoding:"base64",size:$size,content:($content|@base64)}'
+    jq -n --arg sha "$sha" --rawfile content "$path" --argjson size "$size" --arg mode "$mode" '
+      def wrap:
+        . as $value |
+        [range(0; ($value | length); 60) as $offset | $value[$offset:$offset + 60]] |
+        join("\n") + "\n";
+      def noncanonical_pad_bits:
+        . as $value |
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" as $alphabet |
+        ($value | length) as $length |
+        if ($value | endswith("==")) then
+          ($value[$length - 3:$length - 2]) as $character |
+          ($alphabet | index($character)) as $index |
+          ($index - ($index % 16) + 1) as $replacement |
+          $value[0:$length - 3] + $alphabet[$replacement:$replacement + 1] + "=="
+        elif ($value | endswith("=")) then
+          ($value[$length - 2:$length - 1]) as $character |
+          ($alphabet | index($character)) as $index |
+          ($index - ($index % 4) + 1) as $replacement |
+          $value[0:$length - 2] + $alphabet[$replacement:$replacement + 1] + "="
+        else $value + "="
+        end;
+      ($content | @base64) as $encoded |
+      (if $mode == "invalid-base64" then ("!" + $encoded[1:])
+       elif $mode == "trailing-base64-garbage" then ($encoded + "!")
+       elif $mode == "missing-base64-padding" then
+         (if ($encoded | endswith("=")) then ($encoded | sub("=+$"; "")) else $encoded[0:-1] end)
+       elif $mode == "extra-base64-padding" then ($encoded + "=")
+       elif $mode == "noncanonical-base64-pad-bits" then ($encoded | noncanonical_pad_bits)
+       else $encoded
+       end) as $transport |
+      {sha:$sha,encoding:"base64",size:$size,
+       content:($transport | wrap)}
+    '
     ;;
   POST:repos/example/env-vault/git/blobs)
     [[ -f $input && ! -L $input ]] || exit 95
