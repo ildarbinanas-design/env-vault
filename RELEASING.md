@@ -15,6 +15,10 @@ product or repeat version-independent source quality.
 Never move or delete an existing release tag, overwrite a Release asset, mix
 artifacts from workflow attempts, or lower the Homebrew version.
 
+For the end-to-end operator path, role boundaries, exact no-LLM command
+equivalents, and the incident matrix, see
+[`docs/release-operator-runbook.md`](docs/release-operator-runbook.md).
+
 ## Sources of truth
 
 - [`release/contract.v1.json`](release/contract.v1.json) is the single
@@ -106,36 +110,33 @@ post-release verification.
 Opening, updating, approving, or closing the generated PR is not publication
 authorization. Do not create a tag or Release manually.
 
-## One-time abandoned `v0.0.12` recovery
+## Completed one-time abandoned `v0.0.12` recovery
 
 Generated PR #31 was merged at
 `a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b` before its exact authorization
 could be recorded on GitHub. It is permanently abandoned: tag `v0.0.12` and a
-GitHub Release for that version must never exist. The active recovery record in
-the release contract pins PR #31, its head, merge source, lifecycle labels,
-and the expected next version. The temporary top-level `last-release-sha` in
-`release-please-config.json` is the exact merge commit on `main`, not the PR
-head; Release Please treats it as an exclusive commit boundary.
+GitHub Release for that version must never exist. The completed recovery record
+in the release contract still pins PR #31, its head, merge source, lifecycle
+labels, reason code, and both absence guarantees. It additionally pins the
+verified `v0.0.13` release source
+`6206b472cda81f7a87656055d8eb6627c26a0fef`. The checker permanently rejects a
+rollback from `complete` to `active`.
 
-On the first ordinary green-main planning run, the offline checker requires
-the active contract, config, and `0.0.12` manifest to agree byte-for-byte on
-that boundary. The narrow reconciliation step then uses `gh` to re-observe
-current `main`, exact PR metadata and ancestry, and explicit HTTP 404 results
-for both the tag and Release. Only then does it add the truthful
-`autorelease: abandoned` label and remove `autorelease: pending`. It never adds
-`autorelease: tagged`. Mutations are single-attempt and followed by bounded
-read reconciliation, so an ambiguous response is not retried blindly. The
-step emits versioned JSON evidence before Release Please proposes `v0.0.13`.
+The temporary top-level `last-release-sha` and active-only planning override
+have been removed. Every ordinary planning run validates the complete config
+and a manifest at or above `0.0.13` offline. Immediately before any new tag,
+the permanent policy verifier still re-observes PR #31 and requires explicit
+HTTP 404 results for both the `v0.0.12` tag and Release. Unknown transport or
+authentication state is not absence.
 
-Keep the boundary active through the successful `v0.0.13` tag, publication,
-Homebrew update, health check, and durable evidence. The first subsequent
-change to `main` must be a non-release cleanup PR that removes
-`last-release-sha`, marks the incident complete with the exact successful
-release source SHA in both the contract and the checker pin
-`completedReleaseSource013`, and removes the temporary reconciliation step. Until that
-cleanup lands, an ordinary planning run with a manifest newer than `0.0.12`
-fails closed. After cleanup, a real planning run must prove that no `v0.0.14`
-proposal is created from the `chore(release)` cleanup commit.
+This completion uses the authorized one-time exception; it does not rewrite
+the `v0.0.13` outcome. That version has the correct immutable tag, ten assets,
+attestations, and Homebrew state, but its health job failed on the deterministic
+Homebrew parser bug and its durable evidence run was skipped. It has no
+successful evidence run. The next release must complete publisher, Homebrew,
+health, and durable evidence successfully. See the
+[`v0.0.12`/`v0.0.13` record](docs/release-operator-runbook.md#honest-v0012-and-v0013-record)
+for the exact run and commit identities.
 
 ## Normal release sequence
 
