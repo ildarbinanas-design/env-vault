@@ -37,7 +37,7 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if document.ReleaseContractSchema != releasecontract.SchemaID || len(document.SemanticContractSHA256) != 64 {
 		t.Fatalf("contract identity=%+v", document)
 	}
-	for _, schema := range []string{"release_contract", "release_contract_matrix", "releasecheck_version", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_observation", "release_health_proof", "release_authorization", "attestation_verification_bundle", "release_evidence", "repository_release_settings_check", "repository_release_settings_proof"} {
+	for _, schema := range []string{"release_contract", "release_contract_matrix", "releasecheck_version", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_observation", "release_health_proof", "release_authorization", "release_please_recovery", "release_please_recovery_check", "attestation_verification_bundle", "release_evidence", "repository_release_settings_check", "repository_release_settings_proof"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 1 || versions[0] != 1 {
 			t.Fatalf("supported %s versions=%v", schema, versions)
 		}
@@ -288,6 +288,63 @@ func TestValidateContractJSON(t *testing.T) {
 	}
 }
 
+func TestRecoveryValidateConfigCLI(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"recovery", "validate-config",
+		"--contract", canonicalContractPath(t),
+		"--config", canonicalRepositoryFile(t, "release-please-config.json"),
+		"--manifest", writeTestFile(t, []byte(`{".":"0.0.12"}`)),
+		"--json",
+	}, &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var document releasecontract.ReleasePleaseRecoveryCheck
+	decodeOneJSON(t, stdout.Bytes(), &document)
+	if !document.OK || document.SchemaID != releasecontract.ReleasePleaseRecoveryCheckSchemaID || document.SchemaVersion != 1 || document.State != "active" ||
+		document.AbandonedVersion != "v0.0.12" || document.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
+		document.GeneratedReleasePRNumber != 31 || document.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" || document.ResumeVersion != "v0.0.13" ||
+		document.PendingLabel != "autorelease: pending" || document.AbandonedLabel != "autorelease: abandoned" || document.TaggedLabel != "autorelease: tagged" ||
+		!document.TagMustNotExist || !document.GitHubReleaseMustNotExist || document.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" || len(document.SemanticContractSHA256) != 64 {
+		t.Fatalf("recovery=%+v", document)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr=%q", stderr.String())
+	}
+}
+
+func TestRecoveryValidateConfigCLIFailsClosed(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"recovery", "validate-config",
+		"--contract", canonicalContractPath(t),
+		"--config", canonicalRepositoryFile(t, "release-please-config.json"),
+		"--manifest", writeTestFile(t, []byte(`{".":"0.0.13"}`)),
+		"--json",
+	}, &stdout, &stderr)
+	if code != exitSnapshotInvalid {
+		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var document errorDocument
+	decodeOneJSON(t, stdout.Bytes(), &document)
+	if document.OK || document.Error.Code != "INPUT_INVALID" {
+		t.Fatalf("failure=%+v", document)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr=%q", stderr.String())
+	}
+}
+
+func TestRecoveryCommandRequiresExactSubcommandAndFiles(t *testing.T) {
+	for _, args := range [][]string{{"recovery"}, {"recovery", "unknown"}, {"recovery", "validate-config", "--config", "config.json"}} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != exitUsage || !strings.Contains(stderr.String(), "recovery validate-config") {
+			t.Fatalf("args=%v code=%d stderr=%q", args, code, stderr.String())
+		}
+	}
+}
+
 func TestClassifyAttemptCLICompleteSuccess(t *testing.T) {
 	contractPath := canonicalContractPath(t)
 	contract, err := releasecontract.LoadFile(contractPath)
@@ -413,6 +470,15 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write fa
 func canonicalContractPath(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", "..", filepath.FromSlash(releasecontract.CanonicalPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func canonicalRepositoryFile(t *testing.T, name string) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("..", "..", name))
 	if err != nil {
 		t.Fatal(err)
 	}

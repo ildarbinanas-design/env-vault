@@ -42,3 +42,8 @@ ensure_label \
   'autorelease%3A%20tagged' \
   '0e8a16' \
   'Reviewed Release Please proposal with an exact release tag'
+ensure_label \
+  'autorelease: abandoned' \
+  'autorelease%3A%20abandoned' \
+  'b60205' \
+  'Merged Release Please proposal permanently abandoned before tagging'

@@ -3,6 +3,20 @@
   "schema_version": 1,
   "version_policy": {
     "pattern": "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+    "release_please_recovery": {
+      "state": "active",
+      "abandoned_version": "v0.0.12",
+      "abandoned_source_sha": "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b",
+      "generated_release_pr_number": 31,
+      "generated_release_pr_head_sha": "c7169946d9c430209928266d95be7629c93d5878",
+      "resume_version": "v0.0.13",
+      "pending_label": "autorelease: pending",
+      "abandoned_label": "autorelease: abandoned",
+      "tagged_label": "autorelease: tagged",
+      "tag_must_not_exist": true,
+      "github_release_must_not_exist": true,
+      "reason_code": "PRETAG_AUTHORIZATION_MISSING"
+    },
     "blocked_versions": [
       {
         "version": "v0.0.8",
@@ -189,13 +203,15 @@
     "dispatch_health_repair",
     "dispatch_legacy_rebuild",
     "inspect_failure",
-    "resolve_inconsistency"
+    "resolve_inconsistency",
+    "mark_release_pr_abandoned"
   ],
   "reason_codes": [
     "ATTEMPT_MATRIX_COMPLETE",
     "ATTEMPT_NOT_COMPLETED",
     "ATTEMPT_MATRIX_INCOMPLETE",
-    "CI_ATTEMPT_FAILED"
+    "CI_ATTEMPT_FAILED",
+    "PRETAG_AUTHORIZATION_MISSING"
   ],
   "error_codes": [
     "CONTRACT_INVALID",
@@ -250,6 +266,8 @@
     "repository_release_settings_check": "env-vault.repository-release-settings-check.v1",
     "repository_release_settings_proof": "env-vault.repository-release-settings-proof.v1",
     "release_authorization": "env-vault.release-authorization.v1",
+    "release_please_recovery": "env-vault.release-please-recovery.v1",
+    "release_please_recovery_check": "env-vault.release-please-recovery-check.v1",
     "attestation_verification_bundle": "env-vault.attestation-verification-bundle.v1",
     "release_evidence": "env-vault.release-evidence.v1",
     "release_metrics": "env-vault.release-metrics.v1",

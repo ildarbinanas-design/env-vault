@@ -24,8 +24,12 @@ esac
 
 repository=${GITHUB_REPOSITORY:-}
 expected_app_slug=${RELEASE_APP_SLUG:-}
+expected_release_version=${EXPECTED_RELEASE_VERSION:-}
 release_require_repository "$repository"
 [[ "$expected_app_slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || release_die "release App slug is missing or malformed"
+if [[ -n "$expected_release_version" ]]; then
+  release_require_version "$expected_release_version"
+fi
 release_require_command gh
 release_require_command jq
 
@@ -110,6 +114,9 @@ version=$(jq -nr --arg title "$title" '
   $title |
   capture("^chore\\(main\\): release env-vault v(?<version>(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*))$").version
 ') || release_die "release proposal title is not deterministic"
+if [[ -n "$expected_release_version" && "v$version" != "$expected_release_version" ]]; then
+  release_die "release proposal version does not equal the active recovery resume version"
+fi
 head_sha=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' "$pull") || release_die "release proposal head SHA is malformed"
 
 commit="$probe_dir/commit.json"
