@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.15](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.14...v0.0.15) (2026-07-17)
+
+
+### Bug Fixes
+
+* **release:** harden durable evidence identity ([#41](https://github.com/ildarbinanas-design/env-vault/issues/41)) ([8bf408a](https://github.com/ildarbinanas-design/env-vault/commit/8bf408acf804d8ef16644d9015928b3b1872e75b))
+* **release:** require evidence branch bootstrap ([#44](https://github.com/ildarbinanas-design/env-vault/issues/44)) ([95a6293](https://github.com/ildarbinanas-design/env-vault/commit/95a62938edfa6206d1f1bcc34d0fefdbdff1bd5e))
+* **release:** verify wrapped evidence blobs ([#43](https://github.com/ildarbinanas-design/env-vault/issues/43)) ([dc2bb7e](https://github.com/ildarbinanas-design/env-vault/commit/dc2bb7e989179698655e6dd139e3b0f94277d314))
+
 ## [0.0.14](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.13...v0.0.14) (2026-07-17)
 
 
