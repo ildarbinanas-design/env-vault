@@ -2,11 +2,38 @@ package githubtransport
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestExactIntEnforcesNativeRangeBeforeConversion(t *testing.T) {
+	maximum, overflow := "9223372036854775807", "9223372036854775808"
+	if strconv.IntSize == 32 {
+		maximum, overflow = "2147483647", "2147483648"
+	}
+	value, err := exactInt(map[string]json.RawMessage{"value": json.RawMessage(maximum)}, "value")
+	if err != nil || strconv.Itoa(value) != maximum {
+		t.Fatalf("native maximum value=%d error=%v", value, err)
+	}
+	for name, input := range map[string]string{
+		"native overflow": overflow,
+		"negative":        "-1",
+		"zero":            "0",
+		"non-integer":     "1.5",
+		"exponent":        "1e0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, err := exactInt(map[string]json.RawMessage{"value": json.RawMessage(input)}, "value")
+			if err == nil || value != 0 || !strings.Contains(err.Error(), "outside integer range") {
+				t.Fatalf("value=%d error=%v", value, err)
+			}
+		})
+	}
+}
 
 func TestActionsIdentitySurvivesCustomRunNameAndEmptyPullRequests(t *testing.T) {
 	repository := "example/repo"

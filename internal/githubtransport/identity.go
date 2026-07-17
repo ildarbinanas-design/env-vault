@@ -429,11 +429,22 @@ func exactInt64(object map[string]json.RawMessage, field string) (int64, error) 
 }
 
 func exactInt(object map[string]json.RawMessage, field string) (int, error) {
-	value, err := exactInt64(object, field)
-	if err != nil || int64(int(value)) != value {
+	raw, ok := object[field]
+	if !ok {
 		return 0, fmt.Errorf("field %s is outside integer range", field)
 	}
-	return int(value), nil
+	var number json.Number
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err != nil {
+		return 0, fmt.Errorf("field %s is outside integer range", field)
+	}
+	// A run attempt is accepted only in the native-int range [1, MaxInt].
+	value, err := strconv.Atoi(number.String())
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("field %s is outside integer range", field)
+	}
+	return value, nil
 }
 
 func nestedString(object map[string]json.RawMessage, field, child string) (string, error) {
