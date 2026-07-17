@@ -1,0 +1,441 @@
+name: bootstrap-release-assets
+run-name: env-vault-release-assets-bootstrap version=${{ inputs.version }} source=${{ inputs.source_sha }} failed-publisher=${{ inputs.failed_publisher_run_id }}/${{ inputs.failed_publisher_run_attempt }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact existing immutable vX.Y.Z tag with an empty GitHub Release."
+        required: true
+        type: string
+      source_sha:
+        description: "Exact 40-character commit targeted by the immutable tag."
+        required: true
+        type: string
+      source_ci_run_id:
+        description: "Exact successful source CI run ID."
+        required: true
+        type: string
+      source_ci_run_attempt:
+        description: "Exact successful source CI run attempt."
+        required: true
+        type: string
+      failed_publisher_run_id:
+        description: "Exact failed first publisher run ID."
+        required: true
+        type: string
+      failed_publisher_run_attempt:
+        description: "Exact failed first publisher run attempt."
+        required: true
+        type: string
+      failed_publisher_job_id:
+        description: "Exact failed release job ID."
+        required: true
+        type: string
+      failed_publisher_bundle_artifact_id:
+        description: "Exact retained verified publisher-bundle artifact ID."
+        required: true
+        type: string
+      failed_publisher_bundle_sha256:
+        description: "Exact sha256: digest reported for the retained publisher bundle."
+        required: true
+        type: string
+      release_id:
+        description: "Exact existing empty GitHub Release ID."
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: env-vault-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: release
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build reviewed release tooling once
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasecheck" ./cmd/releasecheck
+          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+
+      - name: Validate protected-main control plane, contracts, tag, and empty Release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_version "$VERSION"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source SHA is malformed" >&2; exit 1; }
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]] || { echo "release ID is malformed" >&2; exit 1; }
+          [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" && "$GITHUB_SHA" == "$(git rev-parse HEAD)" ]] || {
+            echo "bootstrap must execute from the checked-out protected default branch" >&2
+            exit 1
+          }
+
+          "$RUNNER_TEMP/releasecheck" validate-contract --json > "$RUNNER_TEMP/current-contract-validation.json"
+          git show "${SOURCE_SHA}:release/contract.v1.json" > "$RUNNER_TEMP/source-contract.v1.json"
+          "$RUNNER_TEMP/releasecheck" validate-contract \
+            --contract "$RUNNER_TEMP/source-contract.v1.json" --json > "$RUNNER_TEMP/source-contract-validation.json"
+          jq -e --slurp '
+            .[0].schema_id == "env-vault.release-contract.v1" and
+            .[1].schema_id == "env-vault.release-contract.v1" and
+            .[0].naming == .[1].naming and
+            .[0].platforms == .[1].platforms and
+            .[0].assets == .[1].assets and
+            .[0].schemas.promotion_manifest == .[1].schemas.promotion_manifest and
+            ([.[0].workflows[] | select(.id == "ci" or .id == "publisher")] ==
+             [.[1].workflows[] | select(.id == "ci" or .id == "publisher")])
+          ' release/contract.v1.json "$RUNNER_TEMP/source-contract.v1.json" >/dev/null || {
+            echo "reviewed control plane and immutable source disagree on release bytes or workflow identities" >&2
+            exit 1
+          }
+
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/default-branch-ref.json" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}"
+          jq -e --arg control "$GITHUB_SHA" '.object.type == "commit" and .object.sha == $control' \
+            "$RUNNER_TEMP/default-branch-ref.json" >/dev/null || {
+            echo "protected default branch advanced after dispatch" >&2
+            exit 1
+          }
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/control-ci-runs.json" \
+            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f "head_sha=${GITHUB_SHA}" -f event=push -F per_page=100
+          control_ci_tuple=$(jq -er --arg repository "$GITHUB_REPOSITORY" --arg control "$GITHUB_SHA" \
+            --arg branch "$DEFAULT_BRANCH" '
+            [.[]?.workflow_runs[]? | select(
+              .repository.full_name == $repository and .head_repository.full_name == $repository and
+              .head_sha == $control and .head_branch == $branch and
+              .path == ".github/workflows/ci.yml" and .event == "push" and
+              .status == "completed" and .conclusion == "success" and
+              (.id | type) == "number" and .id > 0 and
+              (.run_attempt | type) == "number" and .run_attempt > 0
+            )] | if length == 1 then [.[0].id, .[0].run_attempt] | @tsv
+                 else error("expected one successful exact-control main CI attempt") end
+          ' "$RUNNER_TEMP/control-ci-runs.json")
+          IFS=$'\t' read -r control_ci_run_id control_ci_run_attempt <<< "$control_ci_tuple"
+          scripts/release/releasetransport.sh actions identity \
+            --output "$RUNNER_TEMP/control-ci-identity.json" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$control_ci_run_id" --run-attempt "$control_ci_run_attempt" \
+            --workflow-path .github/workflows/ci.yml --event push \
+            --head-sha "$GITHUB_SHA" --head-ref "$DEFAULT_BRANCH"
+          [[ "$(scripts/release/resolve-tag-sha.sh "$VERSION")" == "$SOURCE_SHA" ]] || {
+            echo "immutable tag does not resolve to the exact source" >&2
+            exit 1
+          }
+
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/release-before.json" \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}"
+          jq -e --arg version "$VERSION" --argjson release_id "$RELEASE_ID" '
+            type == "object" and .id == $release_id and .tag_name == $version and
+            .draft == false and .prerelease == false
+          ' "$RUNNER_TEMP/release-before.json" >/dev/null || {
+            echo "existing GitHub Release identity/state is incompatible" >&2
+            exit 1
+          }
+          release_write_asset_names "$RUNNER_TEMP/release-before.json" "$RUNNER_TEMP/release-before-assets.txt"
+          [[ "$(awk 'END { print NR }' "$RUNNER_TEMP/release-before-assets.txt")" == "0" ]] || {
+            echo "bootstrap requires exactly zero existing Release assets" >&2
+            exit 1
+          }
+
+      - name: Bind exact source CI, failed publisher graph, and retained bundle
+        env:
+          BUNDLE_ARTIFACT_ID: ${{ inputs.failed_publisher_bundle_artifact_id }}
+          BUNDLE_SHA256: ${{ inputs.failed_publisher_bundle_sha256 }}
+          CI_RUN_ATTEMPT: ${{ inputs.source_ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FAILED_JOB_ID: ${{ inputs.failed_publisher_job_id }}
+          PUBLISHER_RUN_ATTEMPT: ${{ inputs.failed_publisher_run_attempt }}
+          PUBLISHER_RUN_ID: ${{ inputs.failed_publisher_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for value in "$CI_RUN_ID" "$CI_RUN_ATTEMPT" "$PUBLISHER_RUN_ID" "$PUBLISHER_RUN_ATTEMPT" "$FAILED_JOB_ID" "$BUNDLE_ARTIFACT_ID"; do
+            [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "workflow/artifact identity is malformed" >&2; exit 1; }
+          done
+          [[ "$BUNDLE_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "publisher bundle digest is malformed" >&2; exit 1; }
+          bundle_name="env-vault-publisher-bundle-${SOURCE_SHA}-attempt-${PUBLISHER_RUN_ATTEMPT}"
+          mkdir "$RUNNER_TEMP/incident"
+
+          scripts/release/releasetransport.sh actions identity \
+            --output "$RUNNER_TEMP/incident/source-ci-identity.json" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$CI_RUN_ID" --run-attempt "$CI_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/ci.yml --event push \
+            --head-sha "$SOURCE_SHA" --head-ref "$DEFAULT_BRANCH"
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/source-ci-runs.json" \
+            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f "head_sha=${SOURCE_SHA}" -f event=push -F per_page=100
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_SHA" --arg branch "$DEFAULT_BRANCH" \
+            --argjson run_id "$CI_RUN_ID" --argjson attempt "$CI_RUN_ATTEMPT" '
+            [.[]?.workflow_runs[]? | select(
+              .repository.full_name == $repository and .head_repository.full_name == $repository and
+              .head_sha == $source and .head_branch == $branch and
+              .path == ".github/workflows/ci.yml" and .event == "push" and
+              .status == "completed" and .conclusion == "success"
+            )] | length == 1 and .[0].id == $run_id and .[0].run_attempt == $attempt
+          ' "$RUNNER_TEMP/incident/source-ci-runs.json" >/dev/null
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/source-ci-run.json" \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}"
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/source-ci-artifacts.json" \
+            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}/artifacts?per_page=100"
+          "$RUNNER_TEMP/releasecheck" classify-attempt \
+            --contract "$RUNNER_TEMP/source-contract.v1.json" \
+            --run "$RUNNER_TEMP/incident/source-ci-run.json" \
+            --artifacts "$RUNNER_TEMP/incident/source-ci-artifacts.json" --json \
+            > "$RUNNER_TEMP/incident/source-ci-classification.json"
+          jq -e --arg source "$SOURCE_SHA" --argjson run_id "$CI_RUN_ID" --argjson attempt "$CI_RUN_ATTEMPT" '
+            .ok == true and .action_code == "none" and .reason_code == "ATTEMPT_MATRIX_COMPLETE" and
+            .source_sha == $source and .run_id == $run_id and .attempt == $attempt and
+            .matrix_complete == true and (.missing_targets | length) == 0 and (.missing_artifacts | length) == 0
+          ' "$RUNNER_TEMP/incident/source-ci-classification.json" >/dev/null
+
+          scripts/release/releasetransport.sh actions identity \
+            --output "$RUNNER_TEMP/incident/failed-publisher-identity.json" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$PUBLISHER_RUN_ID" --run-attempt "$PUBLISHER_RUN_ATTEMPT" \
+            --workflow-path .github/workflows/build-binaries.yml --event push \
+            --head-sha "$SOURCE_SHA" --head-ref "$VERSION" --conclusion failure
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/publisher-runs.json" \
+            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/build-binaries.yml/runs" \
+            -f "head_sha=${SOURCE_SHA}" -f event=push -F per_page=100
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_SHA" --arg version "$VERSION" \
+            --argjson run_id "$PUBLISHER_RUN_ID" --argjson attempt "$PUBLISHER_RUN_ATTEMPT" '
+            [.[]?.workflow_runs[]? | select(
+              .repository.full_name == $repository and .head_repository.full_name == $repository and
+              .head_sha == $source and .head_branch == $version and
+              .path == ".github/workflows/build-binaries.yml" and .event == "push"
+            )] | length == 1 and .[0].id == $run_id and .[0].run_attempt == $attempt and
+            .[0].status == "completed" and .[0].conclusion == "failure"
+          ' "$RUNNER_TEMP/incident/publisher-runs.json" >/dev/null
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/failed-publisher-jobs.json" \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISHER_RUN_ID}/attempts/${PUBLISHER_RUN_ATTEMPT}/jobs?per_page=100"
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg source "$SOURCE_SHA" \
+            --arg step "No-clobber reconcile all ten release assets" \
+            --argjson run_id "$PUBLISHER_RUN_ID" --argjson failed_job_id "$FAILED_JOB_ID" '
+            select(type == "array" and length > 0 and
+              all(.[]; type == "object" and (.jobs | type) == "array") and
+              ([.[].total_count] | unique) == [7]) |
+            [.[].jobs[]] as $jobs |
+            ($jobs | length) == 7 and ($jobs | map(.id) | unique | length) == 7 and
+            ($jobs | map({name, conclusion}) | sort_by(.name)) == [
+              {name:"health",conclusion:"skipped"}, {name:"homebrew",conclusion:"skipped"},
+              {name:"metadata",conclusion:"success"}, {name:"preflight",conclusion:"success"},
+              {name:"promotion",conclusion:"success"}, {name:"release",conclusion:"failure"},
+              {name:"supply_chain",conclusion:"skipped"}
+            ] and
+            ([$jobs[] | select(.id == $failed_job_id and .run_id == $run_id and .head_sha == $source and
+              .name == "release" and .status == "completed" and .conclusion == "failure" and
+              .html_url == ("https://github.com/" + $repository + "/actions/runs/" + ($run_id|tostring) + "/job/" + ($failed_job_id|tostring)) and
+              ([.steps[] | select(.conclusion == "failure")] | length == 1) and
+              ([.steps[] | select(.conclusion == "failure")][0].name == $step)
+            )] | length) == 1
+          ' "$RUNNER_TEMP/incident/failed-publisher-jobs.json" >/dev/null
+
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/incident/failed-publisher-artifacts.json" \
+            --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISHER_RUN_ID}/artifacts?per_page=100"
+          jq -L scripts/release -e --arg name "$bundle_name" --arg digest "$BUNDLE_SHA256" \
+            --arg source "$SOURCE_SHA" --arg version "$VERSION" \
+            --argjson artifact_id "$BUNDLE_ARTIFACT_ID" --argjson run_id "$PUBLISHER_RUN_ID" '
+            include "artifact-pages";
+            env_vault_exact_artifact($name; $run_id; $source) |
+            .id == $artifact_id and .digest == $digest and
+            (.size_in_bytes | type) == "number" and .size_in_bytes > 0 and
+            .workflow_run.head_branch == $version
+          ' "$RUNNER_TEMP/incident/failed-publisher-artifacts.json" >/dev/null
+
+      - name: Download exact source CI promotion manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-promotion-${{ inputs.source_sha }}-attempt-${{ inputs.source_ci_run_attempt }}
+          path: source-promotion
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_ci_run_id }}
+
+      - name: Download all five exact source CI native artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: env-vault-release-*-attempt-${{ inputs.source_ci_run_attempt }}
+          path: source-native
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_ci_run_id }}
+
+      - name: Download exact retained failed-publisher bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: env-vault-publisher-bundle-${{ inputs.source_sha }}-attempt-${{ inputs.failed_publisher_run_attempt }}
+          path: failed-publisher-bundle
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.failed_publisher_run_id }}
+
+      - name: Verify source CI and retained publisher bytes entirely offline
+        env:
+          CI_RUN_ATTEMPT: ${{ inputs.source_ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t source_manifests < <(find source-promotion -type f -name promotion-manifest.json -print | LC_ALL=C sort)
+          [[ ${#source_manifests[@]} -eq 1 ]] || { echo "source promotion manifest count is not one" >&2; exit 1; }
+          [[ -f failed-publisher-bundle/promotion-manifest.json && ! -L failed-publisher-bundle/promotion-manifest.json &&
+             -d failed-publisher-bundle/assets && ! -L failed-publisher-bundle/assets ]] || {
+            echo "retained publisher bundle shape is invalid" >&2
+            exit 1
+          }
+          [[ "$(find source-native -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" == "10" &&
+             "$(find source-native -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "10" &&
+             "$(find failed-publisher-bundle -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" == "2" &&
+             "$(find failed-publisher-bundle/assets -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" == "10" &&
+             "$(find failed-publisher-bundle/assets -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" == "10" ]] || {
+            echo "source or publisher bundle inventory is incomplete" >&2
+            exit 1
+          }
+
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/offline-home" \
+            "$RUNNER_TEMP/releasecheck" promotion verify \
+              --contract "$RUNNER_TEMP/source-contract.v1.json" \
+              --manifest "${source_manifests[0]}" --source-sha "$SOURCE_SHA" --release-version "$VERSION" \
+              --repository "$GITHUB_REPOSITORY" --run-id "$CI_RUN_ID" --run-attempt "$CI_RUN_ATTEMPT" \
+              --artifacts-root source-native --json > "$RUNNER_TEMP/source-promotion-verification.json"
+          env -i PATH="$PATH" HOME="$RUNNER_TEMP/offline-home" \
+            "$RUNNER_TEMP/releasecheck" promotion verify \
+              --contract "$RUNNER_TEMP/source-contract.v1.json" \
+              --manifest failed-publisher-bundle/promotion-manifest.json \
+              --source-sha "$SOURCE_SHA" --release-version "$VERSION" \
+              --repository "$GITHUB_REPOSITORY" --run-id "$CI_RUN_ID" --run-attempt "$CI_RUN_ATTEMPT" \
+              --artifacts-root failed-publisher-bundle/assets --json > "$RUNNER_TEMP/publisher-promotion-verification.json"
+          cmp -s -- "${source_manifests[0]}" failed-publisher-bundle/promotion-manifest.json
+          diff -r --no-dereference source-native failed-publisher-bundle/assets
+          jq -e --slurp '.[0] == .[1] and .[0].ok == true and .[0].result == "pass"' \
+            "$RUNNER_TEMP/source-promotion-verification.json" \
+            "$RUNNER_TEMP/publisher-promotion-verification.json" >/dev/null
+          bootstrap_archive=$(jq -er '.platforms[0].archive' "$RUNNER_TEMP/source-contract.v1.json")
+          printf 'BOOTSTRAP_ARCHIVE=%s\n' "$bootstrap_archive" >> "$GITHUB_ENV"
+
+      - name: Recheck protected main immediately before pair mutation
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/release/gh-api-read.sh "$RUNNER_TEMP/default-branch-before-mutation.json" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}"
+          jq -e --arg control "$GITHUB_SHA" '
+            type == "object" and .object.type == "commit" and .object.sha == $control
+          ' "$RUNNER_TEMP/default-branch-before-mutation.json" >/dev/null || {
+            echo "protected default branch advanced before bootstrap mutation" >&2
+            exit 1
+          }
+
+      - name: Upload and verify only the minimum exact bootstrap pair
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: >-
+          scripts/release/bootstrap-release-asset-pair.sh
+          "$VERSION" "$SOURCE_SHA" failed-publisher-bundle/assets "$BOOTSTRAP_ARCHIVE"
+          "$RELEASE_ID" "$RUNNER_TEMP/bootstrap-pair-result.json" "$GITHUB_REPOSITORY"
+
+      - name: Emit versioned bootstrap result
+        env:
+          BUNDLE_ARTIFACT_ID: ${{ inputs.failed_publisher_bundle_artifact_id }}
+          BUNDLE_SHA256: ${{ inputs.failed_publisher_bundle_sha256 }}
+          CI_RUN_ATTEMPT: ${{ inputs.source_ci_run_attempt }}
+          CI_RUN_ID: ${{ inputs.source_ci_run_id }}
+          FAILED_JOB_ID: ${{ inputs.failed_publisher_job_id }}
+          PUBLISHER_RUN_ATTEMPT: ${{ inputs.failed_publisher_run_attempt }}
+          PUBLISHER_RUN_ID: ${{ inputs.failed_publisher_run_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --slurpfile pair "$RUNNER_TEMP/bootstrap-pair-result.json" \
+            --slurpfile control_ci "$RUNNER_TEMP/control-ci-identity.json" \
+            --slurpfile ci "$RUNNER_TEMP/incident/source-ci-identity.json" \
+            --slurpfile publisher "$RUNNER_TEMP/incident/failed-publisher-identity.json" \
+            --slurpfile promotion "$RUNNER_TEMP/source-promotion-verification.json" \
+            --arg repository "$GITHUB_REPOSITORY" --arg version "$VERSION" --arg source_sha "$SOURCE_SHA" \
+            --arg control_sha "$GITHUB_SHA" --arg control_ref "$GITHUB_REF" \
+            --arg bundle_sha256 "$BUNDLE_SHA256" \
+            --argjson workflow_run_id "$GITHUB_RUN_ID" --argjson workflow_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson release_id "$RELEASE_ID" --argjson ci_run_id "$CI_RUN_ID" \
+            --argjson ci_run_attempt "$CI_RUN_ATTEMPT" --argjson publisher_run_id "$PUBLISHER_RUN_ID" \
+            --argjson publisher_run_attempt "$PUBLISHER_RUN_ATTEMPT" --argjson failed_job_id "$FAILED_JOB_ID" \
+            --argjson bundle_artifact_id "$BUNDLE_ARTIFACT_ID" '
+            ($pair[0]) as $pair_result |
+            {
+              schema_id: "env-vault.release-assets-bootstrap.v1",
+              schema_version: 1,
+              ok: true,
+              repository: $repository,
+              version: $version,
+              source_sha: $source_sha,
+              release_id: $release_id,
+              control_workflow: {
+                run_id:$workflow_run_id, run_attempt:$workflow_run_attempt, sha:$control_sha, ref:$control_ref,
+                ci_identity:$control_ci[0]
+              },
+              source_ci: {run_id:$ci_run_id, run_attempt:$ci_run_attempt, identity:$ci[0], promotion:$promotion[0]},
+              failed_publisher: {
+                run_id:$publisher_run_id, run_attempt:$publisher_run_attempt, job_id:$failed_job_id,
+                identity:$publisher[0], bundle_artifact_id:$bundle_artifact_id, bundle_sha256:$bundle_sha256
+              },
+              bootstrap_pair: $pair_result.assets,
+              next_action: "dispatch_tag_scoped_release_assets_repair"
+            } |
+            select(
+              $pair_result.ok == true and $pair_result.repository == $repository and
+              $pair_result.version == $version and $pair_result.source_sha == $source_sha and
+              $pair_result.release_id == $release_id and ($pair_result.assets | length) == 2 and
+              .control_workflow.ci_identity.ok == true and
+              .source_ci.identity.ok == true and .source_ci.promotion.ok == true and
+              .failed_publisher.identity.ok == true
+            )
+          ' > "$RUNNER_TEMP/release-assets-bootstrap-result.json"
+          jq -e '
+            .schema_id == "env-vault.release-assets-bootstrap.v1" and .schema_version == 1 and .ok == true and
+            .next_action == "dispatch_tag_scoped_release_assets_repair" and (.bootstrap_pair | length) == 2
+          ' "$RUNNER_TEMP/release-assets-bootstrap-result.json" >/dev/null
+          jq . "$RUNNER_TEMP/release-assets-bootstrap-result.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload exact bootstrap result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-release-assets-bootstrap-${{ inputs.version }}-${{ inputs.source_sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-assets-bootstrap-result.json
+          if-no-files-found: error
+          retention-days: 30

@@ -397,10 +397,14 @@ func TestArtifactAttestationStateIsIdempotentAndFailClosed(t *testing.T) {
 func TestReconcileReleaseAssets(t *testing.T) {
 	tests := []struct {
 		name          string
+		empty         bool
 		missing       []string
 		corrupt       string
 		divergentPair bool
 		extra         string
+		releaseJSON   string
+		ambiguous     string
+		reject        string
 		wantUploads   []string
 		wantStatus    int
 		wantInOutput  string
@@ -408,6 +412,21 @@ func TestReconcileReleaseAssets(t *testing.T) {
 	}{
 		{
 			name:          "complete release performs zero uploads",
+			wantStatus:    0,
+			verifySuccess: true,
+		},
+		{
+			name:          "brand-new valid empty release uploads and re-downloads all ten exact bytes",
+			empty:         true,
+			wantUploads:   releaseTestAssetNames(),
+			wantStatus:    0,
+			verifySuccess: true,
+		},
+		{
+			name:          "empty release reconciles ambiguity after earlier successful uploads",
+			empty:         true,
+			ambiguous:     releaseTestArchives[0] + ".sha256",
+			wantUploads:   releaseTestAssetNames(),
 			wantStatus:    0,
 			verifySuccess: true,
 		},
@@ -451,6 +470,58 @@ func TestReconcileReleaseAssets(t *testing.T) {
 			wantStatus:   1,
 			wantInOutput: "unexpected release asset",
 		},
+		{
+			name:         "null release response is malformed",
+			releaseJSON:  `null`,
+			wantStatus:   1,
+			wantInOutput: "malformed release asset data",
+		},
+		{
+			name:         "null assets are malformed",
+			releaseJSON:  `{"assets":null}`,
+			wantStatus:   1,
+			wantInOutput: "malformed release asset data",
+		},
+		{
+			name:         "wrong-type assets are malformed",
+			releaseJSON:  `{"assets":{}}`,
+			wantStatus:   1,
+			wantInOutput: "malformed release asset data",
+		},
+		{
+			name:         "multiple valid JSON roots are malformed",
+			releaseJSON:  "{\"assets\":[]}\n{\"assets\":[]}",
+			wantStatus:   5,
+			wantInOutput: "MALFORMED_RESPONSE",
+		},
+		{
+			name:         "unsafe asset name is malformed",
+			releaseJSON:  `{"assets":[{"name":"../env-vault"}]}`,
+			wantStatus:   1,
+			wantInOutput: "malformed release asset data",
+		},
+		{
+			name: "duplicate asset is fatal",
+			releaseJSON: fmt.Sprintf(`{"assets":[{"name":%q},{"name":%q}]}`,
+				releaseTestArchives[0], releaseTestArchives[0]),
+			wantStatus:   1,
+			wantInOutput: "duplicate asset names",
+		},
+		{
+			name:          "ambiguous upload is reconciled by inventory and exact bytes without retry",
+			missing:       []string{releaseTestArchives[0]},
+			ambiguous:     releaseTestArchives[0],
+			wantUploads:   []string{releaseTestArchives[0]},
+			wantStatus:    0,
+			verifySuccess: true,
+		},
+		{
+			name:         "failed upload without postcondition is not retried",
+			missing:      []string{releaseTestArchives[0]},
+			reject:       releaseTestArchives[0],
+			wantStatus:   1,
+			wantInOutput: "ambiguous without an exact postcondition",
+		},
 	}
 
 	for _, test := range tests {
@@ -468,7 +539,9 @@ func TestReconcileReleaseAssets(t *testing.T) {
 			makeDirectory(t, remoteDir)
 			makeDirectory(t, tmpDir)
 			writeReleaseAssetFixture(t, localDir)
-			copyReleaseAssetFixture(t, localDir, remoteDir)
+			if !test.empty {
+				copyReleaseAssetFixture(t, localDir, remoteDir)
+			}
 			for _, name := range test.missing {
 				if err := os.Remove(filepath.Join(remoteDir, name)); err != nil {
 					t.Fatalf("remove remote fixture %s: %v", name, err)
@@ -504,11 +577,14 @@ func TestReconcileReleaseAssets(t *testing.T) {
 				"../scripts/release/reconcile-release-assets.sh",
 				[]string{releaseTestVersion, localDir, verifiedDir, releaseTestRepository},
 				map[string]string{
-					"FAKE_GH_CALL_LOG":   callLog,
-					"FAKE_GH_REMOTE_DIR": remoteDir,
-					"FAKE_GH_UPLOAD_LOG": uploadLog,
-					"PATH":               fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
-					"TMPDIR":             tmpDir,
+					"FAKE_GH_AMBIGUOUS_UPLOAD": test.ambiguous,
+					"FAKE_GH_CALL_LOG":         callLog,
+					"FAKE_GH_REJECT_UPLOAD":    test.reject,
+					"FAKE_GH_RELEASE_JSON":     test.releaseJSON,
+					"FAKE_GH_REMOTE_DIR":       remoteDir,
+					"FAKE_GH_UPLOAD_LOG":       uploadLog,
+					"PATH":                     fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"TMPDIR":                   tmpDir,
 				},
 			)
 			if status != test.wantStatus {
@@ -533,6 +609,237 @@ func TestReconcileReleaseAssets(t *testing.T) {
 			if test.verifySuccess {
 				assertReleaseAssetDirectory(t, remoteDir)
 				assertReleaseAssetDirectory(t, verifiedDir)
+			}
+		})
+	}
+}
+
+func TestDownloadReleaseAssetsRejectsIncompleteAndMalformedInventories(t *testing.T) {
+	duplicateInventory := make([]string, 0, 10)
+	duplicateInventory = append(duplicateInventory, releaseTestArchives[0], releaseTestArchives[0])
+	duplicateInventory = append(duplicateInventory, releaseTestAssetNames()[2:]...)
+	duplicateInventory = duplicateInventory[:10]
+	duplicateAssets := make([]string, 0, len(duplicateInventory))
+	for _, name := range duplicateInventory {
+		duplicateAssets = append(duplicateAssets, fmt.Sprintf(`{"name":%q}`, name))
+	}
+
+	tests := []struct {
+		name         string
+		fullRemote   bool
+		releaseJSON  string
+		wantStatus   int
+		wantInOutput string
+	}{
+		{name: "complete exact inventory", fullRemote: true, wantStatus: 0},
+		{name: "valid empty inventory is incomplete", wantStatus: 1, wantInOutput: "must contain exactly 10 assets"},
+		{name: "null response", releaseJSON: `null`, wantStatus: 1, wantInOutput: "malformed release asset data"},
+		{name: "null assets", releaseJSON: `{"assets":null}`, wantStatus: 1, wantInOutput: "malformed release asset data"},
+		{name: "wrong-type assets", releaseJSON: `{"assets":"invalid"}`, wantStatus: 1, wantInOutput: "malformed release asset data"},
+		{name: "multiple valid roots", releaseJSON: "{\"assets\":[]}\n{\"assets\":[]}", wantStatus: 5, wantInOutput: "MALFORMED_RESPONSE"},
+		{name: "bad name", releaseJSON: `{"assets":[{"name":"../bad"}]}`, wantStatus: 1, wantInOutput: "malformed release asset data"},
+		{name: "duplicate names", releaseJSON: `{"assets":[` + strings.Join(duplicateAssets, ",") + `]}`, wantStatus: 1, wantInOutput: "missing or duplicated"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			remoteDir := filepath.Join(root, "remote")
+			localDir := filepath.Join(root, "local")
+			fakeBin := filepath.Join(root, "bin")
+			makeDirectory(t, remoteDir)
+			makeDirectory(t, localDir)
+			if test.fullRemote {
+				writeReleaseAssetFixture(t, remoteDir)
+			}
+			installReleaseAssetsFakeGH(t, fakeBin)
+			output, status := runReleaseScript(t,
+				"../scripts/release/download-release-assets.sh",
+				[]string{releaseTestVersion, filepath.Join(root, "download"), releaseTestRepository},
+				map[string]string{
+					"FAKE_GH_CALL_LOG":     filepath.Join(root, "calls.log"),
+					"FAKE_GH_RELEASE_JSON": test.releaseJSON,
+					"FAKE_GH_REMOTE_DIR":   remoteDir,
+					"FAKE_GH_UPLOAD_LOG":   filepath.Join(root, "uploads.log"),
+					"PATH":                 fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"TMPDIR":               localDir,
+				},
+			)
+			if status != test.wantStatus || (test.wantInOutput != "" && !strings.Contains(output, test.wantInOutput)) {
+				t.Fatalf("status=%d want=%d output=%s", status, test.wantStatus, output)
+			}
+			if test.wantStatus == 0 {
+				assertReleaseAssetDirectory(t, filepath.Join(root, "download"))
+			}
+		})
+	}
+}
+
+func TestReleaseWriteAssetNamesRejectsMultipleJSONRoots(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "release.json")
+	output := filepath.Join(root, "asset-names.txt")
+	if err := os.WriteFile(input, []byte("{\"assets\":[]}\n{\"assets\":[]}\n"), 0o600); err != nil {
+		t.Fatalf("write release fixture: %v", err)
+	}
+
+	command := exec.Command("bash", "-c", `set -euo pipefail
+source ../scripts/release/lib.sh
+release_write_asset_names "$1" "$2"`, "release-write-asset-names", input, output)
+	combined, err := command.CombinedOutput()
+	exitError, ok := err.(*exec.ExitError)
+	if !ok || exitError.ExitCode() != 1 {
+		t.Fatalf("multiple roots exit=%v output=%s", err, combined)
+	}
+	if !strings.Contains(string(combined), "malformed release asset data") {
+		t.Fatalf("multiple roots did not fail closed: %s", combined)
+	}
+	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
+		t.Fatalf("malformed inventory created output: %v", statErr)
+	}
+}
+
+func TestBootstrapReleaseAssetPairIsExactNoClobberAndAmbiguitySafe(t *testing.T) {
+	tests := []struct {
+		name         string
+		preexisting  bool
+		releaseJSON  string
+		tagSHA       string
+		ambiguous    string
+		reject       string
+		concurrent   string
+		duplicate    string
+		wantStatus   int
+		wantInOutput string
+		wantUploads  []string
+	}{
+		{
+			name:        "empty release receives only one exact pair",
+			wantStatus:  0,
+			wantUploads: []string{releaseTestArchives[0], releaseTestArchives[0] + ".sha256"},
+		},
+		{
+			name:         "preexisting asset forbids bootstrap",
+			preexisting:  true,
+			wantStatus:   1,
+			wantInOutput: "exactly zero assets",
+		},
+		{
+			name:         "wrong release identity forbids bootstrap",
+			releaseJSON:  `{"id":999,"tag_name":"v1.2.3","draft":false,"prerelease":false,"assets":[]}`,
+			wantStatus:   1,
+			wantInOutput: "identity or publication state changed",
+		},
+		{
+			name:         "wrong immutable tag source forbids bootstrap before upload",
+			tagSHA:       annotatedCommitSHA,
+			wantStatus:   1,
+			wantInOutput: "does not resolve to the exact source SHA",
+		},
+		{
+			name:        "ambiguous first upload is read back byte-exactly and not retried",
+			ambiguous:   releaseTestArchives[0],
+			wantStatus:  0,
+			wantUploads: []string{releaseTestArchives[0], releaseTestArchives[0] + ".sha256"},
+		},
+		{
+			name:         "rejected upload with no postcondition stops before checksum",
+			reject:       releaseTestArchives[0],
+			wantStatus:   1,
+			wantInOutput: "has no exact postcondition",
+		},
+		{
+			name:         "concurrent unexpected asset stops before checksum mutation",
+			concurrent:   "unexpected-debug-binary",
+			wantStatus:   1,
+			wantInOutput: "unexpected release asset during bootstrap",
+			wantUploads:  []string{releaseTestArchives[0]},
+		},
+		{
+			name:         "concurrent duplicate asset stops before checksum mutation",
+			duplicate:    releaseTestArchives[0],
+			wantStatus:   1,
+			wantInOutput: "duplicate release asset during bootstrap",
+			wantUploads:  []string{releaseTestArchives[0]},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			localDir := filepath.Join(root, "local")
+			remoteDir := filepath.Join(root, "remote")
+			fakeBin := filepath.Join(root, "bin")
+			makeDirectory(t, localDir)
+			makeDirectory(t, remoteDir)
+			writeReleaseAssetFixture(t, localDir)
+			if test.preexisting {
+				if err := os.WriteFile(filepath.Join(remoteDir, releaseTestArchives[1]), []byte("conflict\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			installReleaseAssetsFakeGH(t, fakeBin)
+			outputPath := filepath.Join(root, "bootstrap-result.json")
+			uploadLog := filepath.Join(root, "uploads.log")
+			output, status := runReleaseScript(t,
+				"../scripts/release/bootstrap-release-asset-pair.sh",
+				[]string{releaseTestVersion, lightweightCommitSHA, localDir, releaseTestArchives[0], "4242", outputPath, releaseTestRepository},
+				map[string]string{
+					"FAKE_GH_AMBIGUOUS_UPLOAD": test.ambiguous,
+					"FAKE_GH_CALL_LOG":         filepath.Join(root, "calls.log"),
+					"FAKE_GH_CONCURRENT_ASSET": test.concurrent,
+					"FAKE_GH_DUPLICATE_AFTER":  test.duplicate,
+					"FAKE_GH_REJECT_UPLOAD":    test.reject,
+					"FAKE_GH_RELEASE_JSON":     test.releaseJSON,
+					"FAKE_GH_REMOTE_DIR":       remoteDir,
+					"FAKE_GH_TAG_SHA":          test.tagSHA,
+					"FAKE_GH_UPLOAD_LOG":       uploadLog,
+					"PATH":                     fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"TMPDIR":                   root,
+				},
+			)
+			if status != test.wantStatus || (test.wantInOutput != "" && !strings.Contains(output, test.wantInOutput)) {
+				t.Fatalf("status=%d want=%d output=%s", status, test.wantStatus, output)
+			}
+			gotUploads := nonemptyLines(readOptionalFile(t, uploadLog))
+			if !slices.Equal(gotUploads, test.wantUploads) {
+				t.Fatalf("uploads=%v want=%v output=%s", gotUploads, test.wantUploads, output)
+			}
+			calls := readOptionalFile(t, filepath.Join(root, "calls.log"))
+			if strings.Contains(calls, "--clobber") {
+				t.Fatalf("bootstrap used clobber: %s", calls)
+			}
+			if test.wantStatus == 0 {
+				var result struct {
+					SchemaID string `json:"schema_id"`
+					OK       bool   `json:"ok"`
+					Assets   []struct {
+						Name   string `json:"name"`
+						SHA256 string `json:"sha256"`
+					} `json:"assets"`
+				}
+				data, err := os.ReadFile(outputPath)
+				if err != nil || json.Unmarshal(data, &result) != nil || result.SchemaID != "env-vault.release-assets-bootstrap-pair.v1" || !result.OK || len(result.Assets) != 2 {
+					t.Fatalf("invalid bootstrap result: err=%v data=%s", err, data)
+				}
+				for _, asset := range result.Assets {
+					local, err := os.ReadFile(filepath.Join(localDir, asset.Name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					remote, err := os.ReadFile(filepath.Join(remoteDir, asset.Name))
+					if err != nil || !slices.Equal(local, remote) {
+						t.Fatalf("remote bootstrap bytes differ for %s: %v", asset.Name, err)
+					}
+					digest := sha256.Sum256(local)
+					if asset.SHA256 != fmt.Sprintf("%x", digest) {
+						t.Fatalf("result digest for %s=%s", asset.Name, asset.SHA256)
+					}
+				}
+				entries, err := os.ReadDir(remoteDir)
+				if err != nil || len(entries) != 2 {
+					t.Fatalf("remote entry count=%d err=%v", len(entries), err)
+				}
 			}
 		})
 	}
@@ -691,7 +998,16 @@ done
 
 if [[ ${1:-} == api ]]; then
   printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
-  printf '{"assets":['
+  endpoint=${!#}
+  if [[ $endpoint == repos/example/env-vault/git/ref/tags/v1.2.3 ]]; then
+    printf '{"object":{"type":"commit","sha":"%s"}}\n' "${FAKE_GH_TAG_SHA:-1111111111111111111111111111111111111111}"
+    exit 0
+  fi
+  if [[ -n ${FAKE_GH_RELEASE_JSON:-} ]]; then
+    printf '%s\n' "$FAKE_GH_RELEASE_JSON"
+    exit 0
+  fi
+  printf '{"id":4242,"tag_name":"v1.2.3","draft":false,"prerelease":false,"assets":['
   first=true
   shopt -s nullglob
   for path in "$remote_dir"/*; do
@@ -704,6 +1020,10 @@ if [[ ${1:-} == api ]]; then
     first=false
     printf '{"name":"%s"}' "$name"
   done
+  if [[ -n ${FAKE_GH_DUPLICATE_AFTER:-} ]] && grep -Fqx -- "$FAKE_GH_DUPLICATE_AFTER" "$upload_log" 2>/dev/null; then
+    if [[ $first == false ]]; then printf ','; fi
+    printf '{"name":"%s"}' "$FAKE_GH_DUPLICATE_AFTER"
+  fi
   printf ']}\n'
   exit 0
 fi
@@ -776,8 +1096,19 @@ case "$operation" in
         printf 'fake gh: refusing to overwrite remote asset: %s\n' "$name" >&2
         exit 103
       }
+      if [[ ${FAKE_GH_REJECT_UPLOAD:-} == "$name" ]]; then
+        printf 'fake gh: upload rejected before mutation: %s\n' "$name" >&2
+        exit 105
+      fi
       cp -- "$path" "$remote_dir/$name"
       printf '%s\n' "$name" >> "$upload_log"
+      if [[ -n ${FAKE_GH_CONCURRENT_ASSET:-} ]]; then
+        printf 'concurrent\n' > "$remote_dir/$FAKE_GH_CONCURRENT_ASSET"
+      fi
+      if [[ ${FAKE_GH_AMBIGUOUS_UPLOAD:-} == "$name" ]]; then
+        printf 'fake gh: connection lost after upload: %s\n' "$name" >&2
+        exit 106
+      fi
     done
     ;;
   *)

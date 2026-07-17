@@ -45,14 +45,13 @@ trap cleanup EXIT
 remote_names="$staging/.remote-asset-names"
 release_state="$staging/.release-state.json"
 "$SCRIPT_DIR/gh-api-read.sh" "$release_state" "repos/$repository/releases/tags/$version"
-jq -er 'select(type == "object" and (.assets | type) == "array" and all(.assets[]; type == "object" and (.name | type) == "string")) | .assets[].name' \
-  "$release_state" > "$remote_names" || release_die "GitHub returned malformed release asset data"
+release_write_asset_names "$release_state" "$remote_names"
 remote_count=$(LC_ALL=C awk 'END { print NR }' "$remote_names")
 [[ "$remote_count" == "${#RELEASE_ASSETS[@]}" ]] ||
   release_die "release must contain exactly ${#RELEASE_ASSETS[@]} assets"
 while IFS= read -r remote_name; do
   release_is_expected_asset "$remote_name" || release_die "unexpected release asset: $remote_name"
-done < "$remote_names"
+done <"$remote_names"
 for asset in "${RELEASE_ASSETS[@]}"; do
   count=$(LC_ALL=C grep -Fxc -- "$asset" "$remote_names" || true)
   [[ "$count" == "1" ]] || release_die "release asset is missing or duplicated: $asset"

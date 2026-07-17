@@ -36,6 +36,55 @@ download_remote_pair_members() {
   gh release download "$version" --repo "$repository" --dir "$destination" "${patterns[@]}"
 }
 
+validate_remote_names() {
+  local names=$1
+  local remote_name asset count
+  while IFS= read -r remote_name; do
+    release_is_expected_asset "$remote_name" || release_die "unexpected release asset: $remote_name"
+  done <"$names"
+  for asset in "${RELEASE_ASSETS[@]}"; do
+    count=$(LC_ALL=C grep -Fxc -- "$asset" "$names" || true)
+    [[ "$count" == "0" || "$count" == "1" ]] ||
+      release_die "release contains duplicate asset names: $asset"
+  done
+}
+
+upload_or_reconcile_ambiguous() {
+  local asset=$1
+  local upload_status post_state post_names expected before_count after_count reconcile_dir
+
+  set +e
+  gh release upload "$version" "$local_dir/$asset" --repo "$repository"
+  upload_status=$?
+  set -e
+
+  post_state="$work_dir/post-upload-${asset}.json"
+  post_names="$work_dir/post-upload-${asset}.txt"
+  "$SCRIPT_DIR/gh-api-read.sh" "$post_state" "repos/$repository/releases/tags/$version"
+  release_write_asset_names "$post_state" "$post_names"
+  validate_remote_names "$post_names"
+  for expected in "${RELEASE_ASSETS[@]}"; do
+    before_count=$(LC_ALL=C grep -Fxc -- "$expected" "$remote_names" || true)
+    after_count=$(LC_ALL=C grep -Fxc -- "$expected" "$post_names" || true)
+    if [[ "$expected" == "$asset" ]]; then
+      [[ "$before_count" == "0" && "$after_count" == "1" ]] ||
+        release_die "release asset upload outcome is ambiguous without an exact postcondition: $asset"
+    else
+      [[ "$after_count" == "$before_count" ]] ||
+        release_die "release asset inventory changed concurrently during upload: $expected"
+    fi
+  done
+
+  if [[ "$upload_status" != "0" ]]; then
+    reconcile_dir="$work_dir/post-upload-bytes-${asset}"
+    mkdir "$reconcile_dir"
+    download_remote_pair_members "$reconcile_dir" "$asset"
+    cmp -s -- "$local_dir/$asset" "$reconcile_dir/$asset" ||
+      release_die "ambiguous release upload produced different bytes: $asset"
+  fi
+  cp -- "$post_names" "$remote_names"
+}
+
 [[ $# -le 4 ]] || usage
 version=${1:-${VERSION:-}}
 local_dir=${2:-${RELEASE_ASSET_DIR:-dist}}
@@ -57,18 +106,8 @@ trap cleanup EXIT
 remote_names="$work_dir/remote-assets.txt"
 release_state="$work_dir/release-state.json"
 "$SCRIPT_DIR/gh-api-read.sh" "$release_state" "repos/$repository/releases/tags/$version"
-jq -er 'select(type == "object" and (.assets | type) == "array" and all(.assets[]; type == "object" and (.name | type) == "string")) | .assets[].name' \
-  "$release_state" > "$remote_names" || release_die "GitHub returned malformed release asset data"
-
-while IFS= read -r remote_name; do
-  release_is_expected_asset "$remote_name" || release_die "unexpected release asset: $remote_name"
-done < "$remote_names"
-
-for asset in "${RELEASE_ASSETS[@]}"; do
-  count=$(remote_count "$asset")
-  [[ "$count" == "0" || "$count" == "1" ]] ||
-    release_die "release contains duplicate asset names: $asset"
-done
+release_write_asset_names "$release_state" "$remote_names"
+validate_remote_names "$remote_names"
 
 # Promotion is the sole byte source. Validate all local pairs and every
 # existing remote member before performing the first upload so a mismatch in a
@@ -77,39 +116,39 @@ remote_dir="$work_dir/remote"
 mkdir "$remote_dir"
 for archive in "${RELEASE_ARCHIVES[@]}"; do
   checksum="$archive.sha256"
-	[[ -f "$local_dir/$archive" && ! -L "$local_dir/$archive" ]] ||
-		release_die "local release archive is missing or unsafe: $archive"
-	[[ -f "$local_dir/$checksum" && ! -L "$local_dir/$checksum" ]] ||
-		release_die "local release checksum is missing or unsafe: $checksum"
-	release_verify_checksum_pair "$local_dir/$archive" "$local_dir/$checksum"
+  [[ -f "$local_dir/$archive" && ! -L "$local_dir/$archive" ]] ||
+    release_die "local release archive is missing or unsafe: $archive"
+  [[ -f "$local_dir/$checksum" && ! -L "$local_dir/$checksum" ]] ||
+    release_die "local release checksum is missing or unsafe: $checksum"
+  release_verify_checksum_pair "$local_dir/$archive" "$local_dir/$checksum"
 
   archive_count=$(remote_count "$archive")
   checksum_count=$(remote_count "$checksum")
-	if [[ "$archive_count" == "1" ]]; then
-		download_remote_pair_members "$remote_dir" "$archive"
-		cmp -s -- "$local_dir/$archive" "$remote_dir/$archive" ||
-			release_die "existing release archive differs from verified promotion: $archive"
-	fi
-	if [[ "$checksum_count" == "1" ]]; then
-		download_remote_pair_members "$remote_dir" "$checksum"
-		cmp -s -- "$local_dir/$checksum" "$remote_dir/$checksum" ||
-			release_die "existing release checksum differs from verified promotion: $checksum"
-	fi
-	if [[ "$archive_count" == "1" && "$checksum_count" == "1" ]]; then
-		release_verify_checksum_pair "$remote_dir/$archive" "$remote_dir/$checksum"
+  if [[ "$archive_count" == "1" ]]; then
+    download_remote_pair_members "$remote_dir" "$archive"
+    cmp -s -- "$local_dir/$archive" "$remote_dir/$archive" ||
+      release_die "existing release archive differs from verified promotion: $archive"
+  fi
+  if [[ "$checksum_count" == "1" ]]; then
+    download_remote_pair_members "$remote_dir" "$checksum"
+    cmp -s -- "$local_dir/$checksum" "$remote_dir/$checksum" ||
+      release_die "existing release checksum differs from verified promotion: $checksum"
+  fi
+  if [[ "$archive_count" == "1" && "$checksum_count" == "1" ]]; then
+    release_verify_checksum_pair "$remote_dir/$archive" "$remote_dir/$checksum"
   fi
 done
 
 for archive in "${RELEASE_ARCHIVES[@]}"; do
-	checksum="$archive.sha256"
-	archive_count=$(remote_count "$archive")
-	checksum_count=$(remote_count "$checksum")
-	if [[ "$archive_count" == "0" ]]; then
-		gh release upload "$version" "$local_dir/$archive" --repo "$repository"
-	fi
-	if [[ "$checksum_count" == "0" ]]; then
-		gh release upload "$version" "$local_dir/$checksum" --repo "$repository"
-	fi
+  checksum="$archive.sha256"
+  archive_count=$(remote_count "$archive")
+  checksum_count=$(remote_count "$checksum")
+  if [[ "$archive_count" == "0" ]]; then
+    upload_or_reconcile_ambiguous "$archive"
+  fi
+  if [[ "$checksum_count" == "0" ]]; then
+    upload_or_reconcile_ambiguous "$checksum"
+  fi
 done
 
 if [[ -z "$verified_dir" ]]; then
@@ -120,7 +159,7 @@ fi
 
 "$SCRIPT_DIR/download-release-assets.sh" "$version" "$verified_dir" "$repository"
 for asset in "${RELEASE_ASSETS[@]}"; do
-	cmp -s -- "$local_dir/$asset" "$verified_dir/$asset" ||
-		release_die "published release asset differs from verified promotion: $asset"
+  cmp -s -- "$local_dir/$asset" "$verified_dir/$asset" ||
+    release_die "published release asset differs from verified promotion: $asset"
 done
 printf 'release assets reconciled and verified for %s\n' "$version"

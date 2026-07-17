@@ -837,6 +837,48 @@ dispatch first publication as a repair, use `main` as a repair ref, rebuild
 product bytes, repeat a deterministic defect, or use `gh release upload
 --clobber`.
 
+#### 13a. Reviewed bootstrap when the immutable publisher cannot parse an empty Release
+
+This is an incident-only bridge, not another normal repair. First merge the
+reviewed parser/bootstrap PR after exact-head green CI and require its `main`
+CI to succeed. Re-observe an exact public Release with `assets: []`, one failed
+publisher, no successful publisher for the source, and the retained verified
+publisher bundle. Dispatch only from the protected default branch:
+
+```sh
+gh workflow run bootstrap-release-assets.yml \
+  --repo "$REPOSITORY" --ref main \
+  -f version="$VERSION" \
+  -f source_sha="$SOURCE_SHA" \
+  -f source_ci_run_id="$CI_RUN_ID" \
+  -f source_ci_run_attempt="$CI_RUN_ATTEMPT" \
+  -f failed_publisher_run_id="$PUBLISHER_RUN_ID" \
+  -f failed_publisher_run_attempt="$PUBLISHER_RUN_ATTEMPT" \
+  -f failed_publisher_job_id="$FAILED_PUBLISHER_JOB_ID" \
+  -f failed_publisher_bundle_artifact_id="$PUBLISHER_BUNDLE_ARTIFACT_ID" \
+  -f failed_publisher_bundle_sha256="$PUBLISHER_BUNDLE_SHA256" \
+  -f release_id="$RELEASE_ID"
+```
+
+The workflow must use the shared `env-vault-release` concurrency group, the
+`release` environment, and only `actions: read` plus `contents: write`. Its
+dispatched control SHA must have one exact successful main CI attempt. Its
+machine artifact must have schema `env-vault.release-assets-bootstrap.v1`,
+bind the reviewed control SHA, exact source CI and failed publisher identities,
+and contain exactly one archive/checksum pair. Re-read the Release and require
+exactly those two byte-identical assets and no others. Only then dispatch the
+ordinary card-13 `release-assets` repair at `--ref "$VERSION"`; that frozen
+workflow must verify the pair and publish the remaining eight assets before
+the normal supply-chain, Homebrew, health, and evidence stages proceed.
+
+Stop on every input mismatch, expired/missing bundle, nonempty initial asset
+set, unexpected/duplicate name, byte difference, concurrent mutation, or
+ambiguous result without an exact read-back. Do not rerun the frozen failed
+job, move the tag, delete the Release, upload locally, use `--clobber`, or add
+Workflows/Attestations/administration permissions to the bootstrap.
+Immediately before mutation, the workflow must re-read the protected default
+branch and require the same dispatched control SHA.
+
 ### 14. Provenance, SBOM, Homebrew, and both tap CI gates
 
 **Command.** Verify the published assets and both attestation predicate types,
@@ -1293,6 +1335,7 @@ credentials, semantic authorization, or release truth.
 | 18. GitHub Actions UI appeared to show duplicate jobs for Release Please PR #39 | `pr-title` runs `29562392487` (`synchronize`, cancelled before steps) and `29562393511` (`edited`, success), both for head `40d12c48fe87a7a4ef7fbb735d7b2759d88c53a9`; CI and Dependency Review used the release PR title, while CodeQL appeared as the separate `PR #39` row | Release Please force-pushed the proposal and then edited PR body; different workflows still describe the same PR/head, while `pr-title` intentionally listens to both events and uses one PR-scoped concurrency group | Keep both triggers and `cancel-in-progress: true`; treat the later successful run as canonical; defer optional event-aware `run-name` observability | Group runs by workflow, event, head SHA, and time; distinguish a cancelled zero-step replacement from a rerun or duplicated workflow | `gh run list`/`gh run view` on both IDs and `gh pr checks 39 --required`; inspect `.github/workflows/pr-title.yml` | Read-only Actions/PR metadata; no workflow mutation required for release | Cancelled run has no executed steps, successor succeeds, and all required checks remain green; same pattern is limited to near-simultaneous Release Please `synchronize`/`edited` events | Expected steady-state cancellation noise; optional observability item is backlog only |
 | 19. Identity repair assembled valid evidence, but append-only publish rejected the first real Git blob | publisher health repair `29566697259` succeeded; evidence run `29566800374`; `assemble` job `87841128421` succeeded; `publish` job `87841199069`, step “Publish durable no-clobber evidence branch state” failed; candidate artifact `8401417490` | Git Blobs API returned 1,475,773 bytes as 2,000,495 characters with 32,795 LF separators (32,796 lines); the fake returned one unwrapped line, and `jq '.content \| @base64d'` rejects wrapped input. The immutable `v0.0.14` checkout also freezes the defective helper, so changing only `main` would not affect a later repair | Stream `.content` through CR/LF removal, fail-closed decode, and an exact canonical-base64 round trip before retaining declared-size and exact-byte checks; make the realistic fake wrap at 60 characters and reject malformed/trailing/extra/missing-padding variants; keep assembly/replay on publisher source but execute the mutation helper from a separate checkout pinned to protected listener `github.sha` | Stop after the first failure; verify the evidence ref is still HTTP 404 and classify the created blob as unreachable; fix through a new reviewed PR rather than rerunning the old workflow | Query the exact orphan blob only for metadata/shape; run publisher-script create/no-op/append/race/malformed tests and workflow graph tests; after merge use one new health repair because rerun preserves the old listener/tooling | Read-only diagnosis plus normal reviewed PR; one exact tag-scoped health dispatch after green main; no tag/release/asset/tap mutation | Real wrapped-blob fixture passes; malformed and non-canonical base64 fail before tree/commit/ref; exact-head CI/main CI pass; health repair `29569706872` and evidence run `29569819553` attempt 1 proved candidate replay, then exposed the separate ref-bootstrap defect in row 20 | One-time deterministic transport-fixture and historical-tooling defect; wrapped decode and dual-source trust boundary are steady-state |
 | 20. Valid replay could not create the first protected evidence ref | health repair `29569706872` succeeded; evidence run `29569819553` attempt 1; `assemble` `87850701462` succeeded; `publish` `87850792886` failed with `Resource not accessible by integration (HTTP 403)` at `POST git/refs`; candidate replay digest `124a7706b4129c053fd3b76588b2591296bdda26c31235e98589ba898eabcb0c` | The absent-branch path inherited the release source tree and parent, making ten `.github/workflows/*` files reachable through the new ref. GitHub therefore required `Workflows: write`; the deliberately narrow workflow token had only `Contents: write`. The ruleset allowed creation and fast-forward and was not the cause | Treat `release-evidence` as one-time repository infrastructure: bootstrap it without force at the exact first release source; enforce that source with exact operator pre/post checks; fail before Git-object writes when absent; keep subsequent writes as `force:false` fast-forwards. Track an automated evidence-only root ledger as refactor backlog rather than granting a broad token | Preserve the 403 and branch 404, audit token permissions/ruleset, bootstrap only exact `c42a92144a82c19edea41c76328ec7fd1e408ceb`, then rerun the whole evidence workflow so attempt-qualified artifacts are rebuilt | Run the exact absence/ruleset checks, `git push origin "${SOURCE_SHA}:refs/heads/release-evidence"`, verify the ref, then `gh run rerun 29569819553`; never use `--failed`, `--force`, current `main`, or a different SHA | One authenticated one-time branch creation; steady-state workflow remains `actions: read`, `contents: write`; no App permission, bypass, tag, Release, asset, or tap change | Attempt 2: `assemble` `87853060534` and `publish` `87853170330` succeeded; evidence commit `68547bd880a4d49f44389476b77046aac2ab1675` fast-forwarded from the source; replay artifact `8402901139`; exact tuple verifies offline | Historical one-time bootstrap resolution only. Fresh-ledger automation was later implemented by ADR 0003; the production legacy root remains unchanged |
+| 21. Valid new `v0.0.16` Release with `assets: []` was reported as malformed | publisher `29610907056` attempt 1; `release` job `87985286552`; “No-clobber reconcile all ten release assets”; source `ddfd38c3144ed3d0968d2c5e7e4b2acfef841478`; Release `355905998` | The combined jq program selected a valid shape and immediately iterated `.assets[].name`; an empty array emitted no value, so `jq -e` exited `4` and the shell treated valid empty state as malformed. The Release had no partial assets and downstream supply-chain/Homebrew/health jobs were skipped | Validate response shape separately, allow zero extracted names only in reconciliation, retain exact-ten enforcement in the downloader, and reconcile every upload response by a fresh inventory. Because the fix cannot alter the tag-frozen script, use the ADR-0004 protected-main bootstrap to upload only one source-bound pair, then resume the frozen tag-scoped `release-assets` path | Preserve the exact run/job/Release/bundle tuple, merge the reviewed fix, dispatch card 13a once, inspect its versioned result, then dispatch the standard tag repair | Card 13a with source CI `29610157051/1`, failed publisher `29610907056/1`, failed job `87985286552`, bundle artifact `8418684412` and its recorded digest; values are incident inputs, never defaults | Bootstrap uses `actions: read`, `contents: write`, shared release concurrency, and protected `release` environment; standard repair keeps existing scoped permissions | Brand-new empty fixture uploads/re-downloads all ten exact bytes; malformed/null/wrong-type/bad/duplicate/unexpected/concurrent/ambiguous cases fail closed; real bootstrap and subsequent publisher/evidence must be observed before this row can claim completion | One-time immutable-tag bridge; separated parsing and ambiguity-safe reconciliation are steady-state |
 
 ## Honest `v0.0.12` and `v0.0.13` record
 

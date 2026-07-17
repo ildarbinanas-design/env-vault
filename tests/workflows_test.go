@@ -844,6 +844,206 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 	}
 }
 
+func TestEmptyReleaseBootstrapIsMainBoundMinimalAndFailClosed(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/bootstrap-release-assets.yml")
+	assertGlobalReleaseConcurrency(t, "release asset bootstrap", wf)
+	assertPermissions(t, "release asset bootstrap", wf.Permissions, map[string]string{
+		"actions": "read", "contents": "write",
+	})
+	assertJobIDs(t, wf, "bootstrap")
+	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
+	wantInputs := []string{
+		"version", "source_sha", "source_ci_run_id", "source_ci_run_attempt",
+		"failed_publisher_run_id", "failed_publisher_run_attempt", "failed_publisher_job_id",
+		"failed_publisher_bundle_artifact_id", "failed_publisher_bundle_sha256", "release_id",
+	}
+	if len(dispatch.Inputs) != len(wantInputs) {
+		t.Fatalf("bootstrap inputs=%v, want exact %v", dispatch.Inputs, wantInputs)
+	}
+	for _, name := range wantInputs {
+		input, ok := dispatch.Inputs[name]
+		if !ok || !input.Required || input.Type != "string" || input.Default != "" || len(input.Options) != 0 {
+			t.Fatalf("bootstrap input %q is not exact required string: %+v", name, input)
+		}
+	}
+
+	job := wf.Jobs["bootstrap"]
+	if job.Environment != "release" || job.TimeoutMinutes != 25 {
+		t.Fatalf("bootstrap environment/timeout=%q/%d", job.Environment, job.TimeoutMinutes)
+	}
+	control := namedStep(t, job, "Validate protected-main control plane, contracts, tag, and empty Release")
+	if !containsAll(control.Run,
+		`refs/heads/${DEFAULT_BRANCH}`, `"$GITHUB_SHA" == "$(git rev-parse HEAD)"`,
+		"validate-contract", `git show "${SOURCE_SHA}:release/contract.v1.json"`,
+		".naming == .[1].naming", ".platforms == .[1].platforms", ".assets == .[1].assets",
+		"default-branch-ref.json", `resolve-tag-sha.sh "$VERSION"`,
+		"control-ci-runs.json", "expected one successful exact-control main CI attempt", "control-ci-identity.json",
+		".id == $release_id", ".draft == false", ".prerelease == false",
+		"release_write_asset_names", "exactly zero existing Release assets",
+	) {
+		t.Fatalf("bootstrap control-plane/empty-Release guard is incomplete: %s", control.Run)
+	}
+	identity := namedStep(t, job, "Bind exact source CI, failed publisher graph, and retained bundle")
+	if !containsAll(identity.Run,
+		"actions identity", ".github/workflows/ci.yml", `--head-ref "$DEFAULT_BRANCH"`,
+		`.head_branch == $branch`, "classify-attempt", "ATTEMPT_MATRIX_COMPLETE",
+		".github/workflows/build-binaries.yml", "--conclusion failure", "([.[].total_count] | unique) == [7]", "($jobs | length) == 7",
+		"No-clobber reconcile all ten release assets", "supply_chain", "skipped", "homebrew", "health",
+		"artifact-pages", "env_vault_exact_artifact($name; $run_id; $source)",
+		".id == $artifact_id", ".digest == $digest", ".workflow_run.head_branch == $version",
+	) {
+		t.Fatalf("bootstrap exact CI/publisher/bundle guard is incomplete: %s", identity.Run)
+	}
+
+	sourceManifest := namedStep(t, job, "Download exact source CI promotion manifest")
+	sourceAssets := namedStep(t, job, "Download all five exact source CI native artifacts")
+	publisherBundle := namedStep(t, job, "Download exact retained failed-publisher bundle")
+	for label, step := range map[string]workflowStep{
+		"source manifest": sourceManifest, "source assets": sourceAssets, "publisher bundle": publisherBundle,
+	} {
+		if step.Uses != downloadAction || step.With["github-token"] != "${{ github.token }}" || step.With["repository"] != "${{ github.repository }}" {
+			t.Fatalf("bootstrap %s is not an exact authenticated artifact download: %+v", label, step.With)
+		}
+	}
+	if sourceManifest.With["run-id"] != "${{ inputs.source_ci_run_id }}" || sourceAssets.With["run-id"] != "${{ inputs.source_ci_run_id }}" ||
+		publisherBundle.With["run-id"] != "${{ inputs.failed_publisher_run_id }}" ||
+		!containsAll(publisherBundle.With["name"], "source_sha", "failed_publisher_run_attempt") {
+		t.Fatalf("bootstrap artifact downloads are not run/attempt bound")
+	}
+
+	offline := namedStep(t, job, "Verify source CI and retained publisher bytes entirely offline")
+	if !containsAll(offline.Run,
+		"env -i", "source-contract.v1.json", "promotion verify", "source-native",
+		"failed-publisher-bundle/assets", "cmp -s", "diff -r --no-dereference", ".[0] == .[1]",
+		"BOOTSTRAP_ARCHIVE", ".platforms[0].archive",
+	) {
+		t.Fatalf("bootstrap does not replay both exact ten-asset bundles offline: %s", offline.Run)
+	}
+	recheck := namedStep(t, job, "Recheck protected main immediately before pair mutation")
+	if !containsAll(recheck.Run,
+		"default-branch-before-mutation.json", "git/ref/heads/${DEFAULT_BRANCH}",
+		`.object.sha == $control`, "protected default branch advanced before bootstrap mutation",
+	) {
+		t.Fatalf("bootstrap lacks an immediate exact control-SHA recheck: %s", recheck.Run)
+	}
+	mutation := namedStep(t, job, "Upload and verify only the minimum exact bootstrap pair")
+	if !containsAll(mutation.Run,
+		"bootstrap-release-asset-pair.sh", `"$VERSION"`, `"$SOURCE_SHA"`,
+		"failed-publisher-bundle/assets", `"$BOOTSTRAP_ARCHIVE"`, `"$RELEASE_ID"`,
+	) {
+		t.Fatalf("bootstrap mutation does not use the exact source-bound pair: %s", mutation.Run)
+	}
+	result := namedStep(t, job, "Emit versioned bootstrap result")
+	if !containsAll(result.Run,
+		"env-vault.release-assets-bootstrap.v1", "control_workflow", "ci_identity", "source_ci", "failed_publisher",
+		"bundle_artifact_id", "bundle_sha256", "bootstrap_pair", "dispatch_tag_scoped_release_assets_repair",
+	) {
+		t.Fatalf("bootstrap machine result omits required identities: %s", result.Run)
+	}
+	upload := namedStep(t, job, "Upload exact bootstrap result")
+	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "source_sha", "github.run_id", "github.run_attempt") ||
+		upload.With["path"] != "${{ runner.temp }}/release-assets-bootstrap-result.json" {
+		t.Fatalf("bootstrap result artifact is not exact-run qualified: %+v", upload.With)
+	}
+	assertStepOrder(t, job,
+		"Validate protected-main control plane, contracts, tag, and empty Release",
+		"Bind exact source CI, failed publisher graph, and retained bundle",
+		"Download exact source CI promotion manifest",
+		"Download all five exact source CI native artifacts",
+		"Download exact retained failed-publisher bundle",
+		"Verify source CI and retained publisher bytes entirely offline",
+		"Recheck protected main immediately before pair mutation",
+		"Upload and verify only the minimum exact bootstrap pair",
+		"Emit versioned bootstrap result",
+		"Upload exact bootstrap result",
+	)
+	raw := readFile(t, "../.github/workflows/bootstrap-release-assets.yml")
+	for _, forbidden := range []string{"--clobber", "gh release create", "gh release edit", "gh release delete", "gh run rerun", "gh workflow run", "git tag", "git push"} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("bootstrap workflow contains forbidden mutation %q", forbidden)
+		}
+	}
+}
+
+func TestEmptyReleaseBootstrapFailedPublisherPredicateUsesRealisticJobPages(t *testing.T) {
+	identityRun := namedStep(t,
+		readWorkflow(t, "../.github/workflows/bootstrap-release-assets.yml").Jobs["bootstrap"],
+		"Bind exact source CI, failed publisher graph, and retained bundle").Run
+	input := `"$RUNNER_TEMP/incident/failed-publisher-jobs.json" >/dev/null`
+	closing := "' " + input
+	closingIndex := strings.Index(identityRun, closing)
+	if closingIndex < 0 {
+		t.Fatalf("failed-publisher jq input not found")
+	}
+	openingIndex := strings.LastIndex(identityRun[:closingIndex], "'")
+	if openingIndex < 0 {
+		t.Fatalf("failed-publisher jq program opening quote not found")
+	}
+	predicate := strings.TrimSpace(identityRun[openingIndex+1 : closingIndex])
+	const (
+		repository  = "example/env-vault"
+		source      = "1111111111111111111111111111111111111111"
+		runID       = 7001
+		failedJobID = 8004
+	)
+	job := func(id int, name, conclusion string) map[string]any {
+		return map[string]any{"id": id, "name": name, "conclusion": conclusion}
+	}
+	fixture := func(mutate func([]any)) []any {
+		jobs := []any{
+			job(8005, "health", "skipped"), job(8006, "homebrew", "skipped"),
+			job(8001, "metadata", "success"), job(8002, "preflight", "success"),
+			job(8003, "promotion", "success"),
+			map[string]any{
+				"id": failedJobID, "run_id": runID, "head_sha": source, "name": "release",
+				"status": "completed", "conclusion": "failure",
+				"html_url": fmt.Sprintf("https://github.com/%s/actions/runs/%d/job/%d", repository, runID, failedJobID),
+				"steps": []any{
+					map[string]any{"name": "Create or verify stable GitHub Release", "status": "completed", "conclusion": "success"},
+					map[string]any{"name": "No-clobber reconcile all ten release assets", "status": "completed", "conclusion": "failure"},
+				},
+			},
+			job(8007, "supply_chain", "skipped"),
+		}
+		if mutate != nil {
+			mutate(jobs)
+		}
+		return []any{map[string]any{"total_count": len(jobs), "jobs": jobs}}
+	}
+	run := func(t *testing.T, value any, wantPass bool) {
+		t.Helper()
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command("jq", "-e",
+			"--arg", "repository", repository, "--arg", "source", source,
+			"--arg", "step", "No-clobber reconcile all ten release assets",
+			"--argjson", "run_id", fmt.Sprint(runID), "--argjson", "failed_job_id", fmt.Sprint(failedJobID), predicate)
+		command.Stdin = strings.NewReader(string(data))
+		output, err := command.CombinedOutput()
+		if wantPass && err != nil {
+			t.Fatalf("valid failed publisher graph rejected: %v\n%s", err, output)
+		}
+		if !wantPass && err == nil {
+			t.Fatalf("invalid failed publisher graph accepted: %s", output)
+		}
+	}
+	run(t, fixture(nil), true)
+	invalid := map[string]func([]any){
+		"extra job":        func(jobs []any) { jobs[0] = job(8010, "unexpected", "success") },
+		"downstream ran":   func(jobs []any) { jobs[0].(map[string]any)["conclusion"] = "success" },
+		"duplicate job ID": func(jobs []any) { jobs[0].(map[string]any)["id"] = 8001 },
+		"wrong failed step": func(jobs []any) {
+			jobs[5].(map[string]any)["steps"].([]any)[1].(map[string]any)["name"] = "Different step"
+		},
+		"wrong failed head": func(jobs []any) { jobs[5].(map[string]any)["head_sha"] = strings.Repeat("2", 40) },
+	}
+	for name, mutate := range invalid {
+		t.Run(name, func(t *testing.T) { run(t, fixture(mutate), false) })
+	}
+}
+
 func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
 	assertPermissions(t, "release evidence", wf.Permissions, map[string]string{
