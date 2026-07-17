@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.14](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.13...v0.0.14) (2026-07-17)
+
+
+### Bug Fixes
+
+* **release:** complete recovery and document operations ([#38](https://github.com/ildarbinanas-design/env-vault/issues/38)) ([c92467f](https://github.com/ildarbinanas-design/env-vault/commit/c92467faecf165795ab842dddc372ad97b183a8c))
+* **release:** parse Homebrew health state exactly ([#37](https://github.com/ildarbinanas-design/env-vault/issues/37)) ([d4c8ac7](https://github.com/ildarbinanas-design/env-vault/commit/d4c8ac7c7364e8bc7f85a40bc8fb162bb506a48f))
+
+
+### Tests
+
+* **release:** accept forward manifest versions ([#40](https://github.com/ildarbinanas-design/env-vault/issues/40)) ([accd9fa](https://github.com/ildarbinanas-design/env-vault/commit/accd9fa79aa1378f012f83962e07d11ab20597c5))
+
 ## [0.0.13](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.12...v0.0.13) (2026-07-17)
 
 
