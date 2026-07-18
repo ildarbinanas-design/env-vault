@@ -101,8 +101,11 @@ output=$6
 repository=$7
 checksum="$archive.sha256"
 
+release_require_typed_contract_projection
 release_require_version "$version"
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] ||
+  release_die "repository differs from the typed release contract"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || release_die "source SHA must be a full 40-character commit SHA"
 [[ "$release_id" =~ ^[1-9][0-9]*$ ]] || release_die "release ID must be a positive integer"
 [[ -d "$local_dir" && ! -L "$local_dir" ]] || release_die "local asset directory not found: $local_dir"

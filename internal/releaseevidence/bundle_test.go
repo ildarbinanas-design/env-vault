@@ -66,7 +66,7 @@ func TestBundleV2BuildVerifyAndParityAreDeterministicAndDeduplicated(t *testing.
 
 func TestBundleV2SemanticFailureCodeMatchesLegacyV1(t *testing.T) {
 	fixture, evidence, files := newBundleFixture(t)
-	changed := contractWithChangedPublisherWorkflow(t, fixture.contract)
+	changed := contractWithChangedExtensibleCode(t, fixture.contract)
 	legacyErr := Verify(evidence, changed)
 	_, bundleErr := VerifyBundle(files, changed)
 	legacyCode := ErrorCode(legacyErr)
@@ -76,20 +76,10 @@ func TestBundleV2SemanticFailureCodeMatchesLegacyV1(t *testing.T) {
 	}
 }
 
-func contractWithChangedPublisherWorkflow(t *testing.T, contract releasecontract.Contract) releasecontract.Contract {
+func contractWithChangedExtensibleCode(t *testing.T, contract releasecontract.Contract) releasecontract.Contract {
 	t.Helper()
 	changed := contract
-	changed.Workflows = append([]releasecontract.Workflow(nil), contract.Workflows...)
-	found := false
-	for index := range changed.Workflows {
-		if changed.Workflows[index].ID == "publisher" {
-			changed.Workflows[index].Name += "-semantic-mismatch"
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("fixture contract has no publisher workflow")
-	}
+	changed.ActionCodes = append(append([]string(nil), contract.ActionCodes...), "future_offline_diagnostic")
 	if err := changed.Validate(); err != nil {
 		t.Fatalf("changed contract must remain structurally valid: %v", err)
 	}
@@ -471,7 +461,7 @@ func TestBundleV2CleanExportReplaysThroughCLIWithNetworkAndCredentialsDenied(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	contractPath := filepath.Join(repositoryRoot, "release", "contract.v1.json")
+	contractPath := filepath.Join(repositoryRoot, filepath.FromSlash(releasecontract.CanonicalPath))
 	goBinary, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatal(err)
@@ -526,7 +516,7 @@ func TestBundleV2CleanExportReplaysThroughCLIWithNetworkAndCredentialsDenied(t *
 	if err := json.Unmarshal(parityOutput, &parityDocument); err != nil || !parityDocument.OK || !parityDocument.ReconstructedByteExact || parityDocument.Result != "pass" {
 		t.Fatalf("parity=%+v err=%v output=%s", parityDocument, err, parityOutput)
 	}
-	changedContract := contractWithChangedPublisherWorkflow(t, fixture.contract)
+	changedContract := contractWithChangedExtensibleCode(t, fixture.contract)
 	changedContractBytes, err := json.MarshalIndent(changedContract, "", "  ")
 	if err != nil {
 		t.Fatal(err)

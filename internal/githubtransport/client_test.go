@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -163,6 +164,23 @@ func TestReadBoundsRateLimitAttemptsAndWaitBudget(t *testing.T) {
 	})
 }
 
+func TestPaginatedReadRejectsSaturatedResetWithoutAccumulatedWaitOverflow(t *testing.T) {
+	next := `<https://api.github.com/repos/example/repo/items?per_page=1&page=2>; rel="next"`
+	runner := &scriptedRunner{responses: []CommandResult{
+		failureResponse(429, "Retry-After: 1\r\n", `{"message":"rate limited"}`),
+		liveResponse(200, "Link: "+next+"\r\n", `[{"id":1}]`),
+		failureResponse(429, "X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 9223372036854775807\r\n", `{"message":"rate limited"}`),
+	}}
+	var sleeps []time.Duration
+	_, transportErr := testClient(runner, &sleeps).Read(context.Background(), ReadRequest{
+		Endpoint: "repos/example/repo/items?per_page=1", Paginate: true, Slurp: true,
+	})
+	if transportErr == nil || transportErr.Code != "RATE_LIMITED" || transportErr.Retriable ||
+		!strings.Contains(transportErr.Message, "bounded transport budget") || len(runner.apiCalls) != 3 || fmt.Sprint(sleeps) != "[1s]" {
+		t.Fatalf("error=%+v calls=%d sleeps=%v", transportErr, len(runner.apiCalls), sleeps)
+	}
+}
+
 func TestReadFailsOnCLICapabilityDriftBeforeAPI(t *testing.T) {
 	runner := &scriptedRunner{}
 	runner.allCalls = nil
@@ -226,6 +244,7 @@ func TestReadClassifiesFailuresWithoutConvertingUnknownToAbsence(t *testing.T) {
 		{"403", failureResponse(403, "", `{"message":"forbidden"}`), "AUTH_FORBIDDEN", 403, 1, false},
 		{"404", failureResponse(404, "", `{"message":"not found"}`), "REMOTE_NOT_FOUND", 404, 1, false},
 		{"malformed retry after", failureResponse(403, "Retry-After: later\r\n", `{"message":"secondary rate limit"}`), "RATE_LIMITED", 403, 1, false},
+		{"overflowing retry after", failureResponse(403, "Retry-After: 9223372036854775807\r\n", `{"message":"secondary rate limit"}`), "RATE_LIMITED", 403, 1, false},
 		{"incomplete HTTP", CommandResult{Stdout: []byte(`{"partial":`), Err: errors.New("dns failure")}, "TRANSPORT_FAILED", 0, 5, false},
 	}
 	for _, test := range tests {
@@ -499,6 +518,393 @@ func TestPaginationAcceptsExactPageProgression(t *testing.T) {
 	}
 }
 
+func TestReadEnforcesPerRequestAndEndToEndDeadlines(t *testing.T) {
+	t.Run("per request", func(t *testing.T) {
+		runner := &deadlineRunner{}
+		client := &Client{
+			Runner:           runner,
+			Now:              time.Now,
+			Sleep:            func(context.Context, time.Duration) error { return nil },
+			requestTimeout:   40 * time.Millisecond,
+			operationTimeout: 500 * time.Millisecond,
+		}
+		_, transportErr := client.Read(context.Background(), ReadRequest{Endpoint: "repos/example/repo"})
+		if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || transportErr.Attempts != maxAttempts {
+			t.Fatalf("error=%+v", transportErr)
+		}
+		if len(runner.apiDeadlines) != maxAttempts {
+			t.Fatalf("API deadline count=%d want=%d", len(runner.apiDeadlines), maxAttempts)
+		}
+		for _, remaining := range runner.apiDeadlines {
+			if remaining <= 0 || remaining > 60*time.Millisecond {
+				t.Fatalf("request deadline remaining=%s", remaining)
+			}
+		}
+	})
+
+	t.Run("operation", func(t *testing.T) {
+		response := failureResponse(429, "Retry-After: 60\r\n", `{"message":"rate limited"}`)
+		runner := &scriptedRunner{responses: []CommandResult{response}}
+		client := &Client{
+			Runner:           runner,
+			Now:              time.Now,
+			Sleep:            sleepContext,
+			requestTimeout:   500 * time.Millisecond,
+			operationTimeout: 50 * time.Millisecond,
+		}
+		started := time.Now()
+		_, transportErr := client.Read(context.Background(), ReadRequest{Endpoint: "repos/example/repo"})
+		if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || !strings.Contains(transportErr.Message, "cancelled") || time.Since(started) > time.Second {
+			t.Fatalf("error=%+v elapsed=%s", transportErr, time.Since(started))
+		}
+	})
+}
+
+func TestReadNeverTrustsCompleteLookingResponseAfterRequestDeadline(t *testing.T) {
+	runner := &completeResponseAfterDeadlineRunner{}
+	client := &Client{
+		Runner: runner, Now: time.Now,
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		requestTimeout: 40 * time.Millisecond, operationTimeout: 500 * time.Millisecond,
+	}
+	data, transportErr := client.Read(context.Background(), ReadRequest{Endpoint: "repos/example/repo"})
+	if len(data) != 0 || transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" ||
+		transportErr.Attempts != maxAttempts || transportErr.Retriable || runner.apiCalls != maxAttempts {
+		t.Fatalf("data=%q error=%+v calls=%d", data, transportErr, runner.apiCalls)
+	}
+}
+
+func TestCapabilityProbesAreInsideRequestOperationAndCallerDeadlines(t *testing.T) {
+	t.Run("per request", func(t *testing.T) {
+		runner := &capabilityBudgetRunner{blockVersion: true}
+		client := &Client{Runner: runner, Now: time.Now, Sleep: sleepContext, requestTimeout: 40 * time.Millisecond, operationTimeout: 500 * time.Millisecond}
+		started := time.Now()
+		_, transportErr := client.Preflight(context.Background())
+		if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || time.Since(started) > time.Second ||
+			len(runner.deadlines) != 1 || runner.deadlines[0] <= 0 || runner.deadlines[0] > 60*time.Millisecond {
+			t.Fatalf("error=%+v elapsed=%s deadlines=%v", transportErr, time.Since(started), runner.deadlines)
+		}
+	})
+
+	t.Run("end to end includes both probes", func(t *testing.T) {
+		runner := &capabilityBudgetRunner{versionDelay: 50 * time.Millisecond, blockHelp: true}
+		client := &Client{Runner: runner, Now: time.Now, Sleep: sleepContext, requestTimeout: 500 * time.Millisecond, operationTimeout: 100 * time.Millisecond}
+		started := time.Now()
+		_, transportErr := client.Preflight(context.Background())
+		if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || time.Since(started) > time.Second ||
+			len(runner.deadlines) != 2 || runner.deadlines[1] <= 0 || runner.deadlines[1] >= 80*time.Millisecond {
+			t.Fatalf("error=%+v elapsed=%s deadlines=%v", transportErr, time.Since(started), runner.deadlines)
+		}
+	})
+
+	t.Run("caller earlier deadline", func(t *testing.T) {
+		runner := &capabilityBudgetRunner{blockVersion: true}
+		client := &Client{Runner: runner, Now: time.Now, Sleep: sleepContext, requestTimeout: 500 * time.Millisecond, operationTimeout: time.Second}
+		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		_, transportErr := client.Preflight(ctx)
+		if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || time.Since(started) > time.Second ||
+			len(runner.deadlines) != 1 || runner.deadlines[0] > 60*time.Millisecond {
+			t.Fatalf("error=%+v elapsed=%s deadlines=%v", transportErr, time.Since(started), runner.deadlines)
+		}
+	})
+}
+
+func TestCapabilitySingleflightWaiterHonorsDeadlineAndSuccessCaches(t *testing.T) {
+	runner := &singleflightCapabilityRunner{versionStarted: make(chan struct{}), releaseVersion: make(chan struct{})}
+	client := &Client{Runner: runner, Now: time.Now, Sleep: sleepContext, requestTimeout: 2 * time.Second, operationTimeout: 5 * time.Second}
+	ownerResult := make(chan *TransportError, 1)
+	go func() {
+		_, transportErr := client.Preflight(context.Background())
+		ownerResult <- transportErr
+	}()
+	<-runner.versionStarted
+
+	waiterCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, transportErr := client.Preflight(waiterCtx); transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || time.Since(started) > time.Second {
+		t.Fatalf("waiter error=%+v elapsed=%s", transportErr, time.Since(started))
+	}
+	close(runner.releaseVersion)
+	if transportErr := <-ownerResult; transportErr != nil {
+		t.Fatalf("owner error=%+v", transportErr)
+	}
+	if _, transportErr := client.Preflight(context.Background()); transportErr != nil {
+		t.Fatalf("cached preflight error=%+v", transportErr)
+	}
+	versionCalls, helpCalls := runner.calls()
+	if versionCalls != 1 || helpCalls != 1 {
+		t.Fatalf("capability calls version=%d help=%d, want one successful singleflight", versionCalls, helpCalls)
+	}
+}
+
+func TestCapabilitySingleflightOwnerCancellationIsNotCached(t *testing.T) {
+	runner := &transientCapabilityRunner{}
+	client := &Client{Runner: runner, Now: time.Now, Sleep: sleepContext, requestTimeout: 500 * time.Millisecond, operationTimeout: 2 * time.Second}
+	ownerCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, transportErr := client.Preflight(ownerCtx); transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || time.Since(started) > time.Second {
+		t.Fatalf("cancelled owner error=%+v elapsed=%s", transportErr, time.Since(started))
+	}
+	if _, transportErr := client.Preflight(context.Background()); transportErr != nil {
+		t.Fatalf("later capability owner did not recover: %+v", transportErr)
+	}
+	if _, transportErr := client.Preflight(context.Background()); transportErr != nil {
+		t.Fatalf("successful capability result was not cached: %+v", transportErr)
+	}
+	versionCalls, helpCalls := runner.calls()
+	if versionCalls != 2 || helpCalls != 1 {
+		t.Fatalf("capability calls version=%d help=%d, want transient owner plus one cached success", versionCalls, helpCalls)
+	}
+}
+
+func TestReadRejectsAggregateResponseBytesBeforeSlurp(t *testing.T) {
+	next := `<https://api.github.com/repos/example/repo/actions/runs?per_page=1&page=2>; rel="next"`
+	firstBody := `{"total_count":2,"workflow_runs":[{"id":1,"padding":"aaaaaaaa"}]}`
+	secondBody := `{"total_count":2,"workflow_runs":[{"id":2,"padding":"bbbbbbbb"}]}`
+	runner := &scriptedRunner{responses: []CommandResult{
+		liveResponse(200, "Link: "+next+"\r\n", firstBody),
+		liveResponse(200, "", secondBody),
+	}}
+	var sleeps []time.Duration
+	client := testClient(runner, &sleeps)
+	client.maxAggregateResponseBytes = 100
+	_, transportErr := client.Read(context.Background(), ReadRequest{
+		Endpoint: "repos/example/repo/actions/runs?per_page=1", Paginate: true, Slurp: true,
+	})
+	if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || !strings.Contains(transportErr.Message, "aggregate response") || len(runner.apiCalls) != 2 {
+		t.Fatalf("error=%+v calls=%d", transportErr, len(runner.apiCalls))
+	}
+
+	exactRunner := &scriptedRunner{responses: []CommandResult{
+		liveResponse(200, "Link: "+next+"\r\n", firstBody),
+		liveResponse(200, "", secondBody),
+	}}
+	exactClient := testClient(exactRunner, &sleeps)
+	exactClient.maxAggregateResponseBytes = int64(len(firstBody) + len(secondBody))
+	if _, exactErr := exactClient.Read(context.Background(), ReadRequest{
+		Endpoint: "repos/example/repo/actions/runs?per_page=1", Paginate: true, Slurp: true,
+	}); exactErr != nil {
+		t.Fatalf("exact aggregate boundary error=%+v", exactErr)
+	}
+}
+
+func TestReadChargesEveryAttemptAgainstAggregateResponseBudget(t *testing.T) {
+	for name, responses := range map[string][]CommandResult{
+		"malformed JSON retries": {
+			liveResponse(200, "", `{"id":`),
+			liveResponse(200, "", `{"id":`),
+		},
+		"rate limit retry": {
+			failureResponse(429, "Retry-After: 0\r\n", `{"message":"rate limited"}`),
+			liveResponse(200, "", `{"ok":true}`),
+		},
+		"incomplete HTTP retries": {
+			{Stdout: []byte(`{"partial":`), Err: errors.New("network failure")},
+			{Stdout: []byte(`{"partial":`), Err: errors.New("network failure")},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			firstBytes := int64(len(responses[0].Stdout))
+			if parsed, err := parseHTTPResponse(responses[0].Stdout); err == nil {
+				firstBytes = int64(len(parsed.Body))
+			}
+			secondBytes := int64(len(responses[1].Stdout))
+			if parsed, err := parseHTTPResponse(responses[1].Stdout); err == nil {
+				secondBytes = int64(len(parsed.Body))
+			}
+			runner := &scriptedRunner{responses: responses}
+			var sleeps []time.Duration
+			client := testClient(runner, &sleeps)
+			client.maxAggregateResponseBytes = firstBytes + secondBytes - 1
+			_, transportErr := client.Read(context.Background(), ReadRequest{Endpoint: "repos/example/repo"})
+			if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" ||
+				!strings.Contains(transportErr.Message, "aggregate response bytes") ||
+				transportErr.Attempts != 2 || len(runner.apiCalls) != 2 {
+				t.Fatalf("error=%+v calls=%d", transportErr, len(runner.apiCalls))
+			}
+		})
+	}
+}
+
+func TestReadEnforcesNonPaginatedAggregateLimitAndResetsPerPublicOperation(t *testing.T) {
+	body := `{"id":1}`
+	for name, limit := range map[string]int64{"exact": int64(len(body)), "plus one": int64(len(body) - 1)} {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{responses: []CommandResult{liveResponse(200, "", body)}}
+			var sleeps []time.Duration
+			client := testClient(runner, &sleeps)
+			client.maxAggregateResponseBytes = limit
+			_, transportErr := client.Read(context.Background(), ReadRequest{Endpoint: "repos/example/repo"})
+			if name == "exact" && transportErr != nil {
+				t.Fatalf("exact boundary error=%+v", transportErr)
+			}
+			if name == "plus one" && (transportErr == nil || transportErr.Code != "TRANSPORT_FAILED") {
+				t.Fatalf("over-boundary error=%+v", transportErr)
+			}
+		})
+	}
+
+	runner := &scriptedRunner{responses: []CommandResult{liveResponse(200, "", body), liveResponse(200, "", body)}}
+	var sleeps []time.Duration
+	client := testClient(runner, &sleeps)
+	client.maxAggregateResponseBytes = int64(len(body))
+	for index := 0; index < 2; index++ {
+		if _, transportErr := client.Read(context.Background(), ReadRequest{Endpoint: "repos/example/repo"}); transportErr != nil {
+			t.Fatalf("independent public read %d reused aggregate budget: %+v", index+1, transportErr)
+		}
+	}
+}
+
+type deadlineRunner struct {
+	apiDeadlines []time.Duration
+}
+
+type completeResponseAfterDeadlineRunner struct{ apiCalls int }
+
+func (runner *completeResponseAfterDeadlineRunner) Run(ctx context.Context, args []string, _ []string) CommandResult {
+	if len(args) == 1 && args[0] == "--version" {
+		return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\n")}
+	}
+	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
+	}
+	runner.apiCalls++
+	<-ctx.Done()
+	response := liveResponse(200, "", `{"id":1}`)
+	response.Err = ctx.Err()
+	return response
+}
+
+type capabilityBudgetRunner struct {
+	versionDelay time.Duration
+	blockVersion bool
+	blockHelp    bool
+	deadlines    []time.Duration
+}
+
+type singleflightCapabilityRunner struct {
+	mu             sync.Mutex
+	versionStarted chan struct{}
+	releaseVersion chan struct{}
+	versionCalls   int
+	helpCalls      int
+}
+
+type transientCapabilityRunner struct {
+	mu           sync.Mutex
+	versionCalls int
+	helpCalls    int
+}
+
+func (runner *transientCapabilityRunner) Run(ctx context.Context, args []string, _ []string) CommandResult {
+	if len(args) == 1 && args[0] == "--version" {
+		runner.mu.Lock()
+		runner.versionCalls++
+		call := runner.versionCalls
+		runner.mu.Unlock()
+		if call == 1 {
+			<-ctx.Done()
+			return CommandResult{Err: ctx.Err()}
+		}
+		return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\n")}
+	}
+	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+		runner.mu.Lock()
+		runner.helpCalls++
+		runner.mu.Unlock()
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
+	}
+	return CommandResult{Err: errors.New("unexpected API call")}
+}
+
+func (runner *transientCapabilityRunner) calls() (int, int) {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.versionCalls, runner.helpCalls
+}
+
+func (runner *singleflightCapabilityRunner) Run(ctx context.Context, args []string, _ []string) CommandResult {
+	if len(args) == 1 && args[0] == "--version" {
+		runner.mu.Lock()
+		runner.versionCalls++
+		if runner.versionCalls == 1 {
+			close(runner.versionStarted)
+		}
+		runner.mu.Unlock()
+		select {
+		case <-runner.releaseVersion:
+			return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\n")}
+		case <-ctx.Done():
+			return CommandResult{Err: ctx.Err()}
+		}
+	}
+	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+		runner.mu.Lock()
+		runner.helpCalls++
+		runner.mu.Unlock()
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
+	}
+	return CommandResult{Err: errors.New("unexpected API call")}
+}
+
+func (runner *singleflightCapabilityRunner) calls() (int, int) {
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	return runner.versionCalls, runner.helpCalls
+}
+
+func (runner *capabilityBudgetRunner) Run(ctx context.Context, args []string, _ []string) CommandResult {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return CommandResult{Err: errors.New("capability probe had no deadline")}
+	}
+	runner.deadlines = append(runner.deadlines, time.Until(deadline))
+	if len(args) == 1 && args[0] == "--version" {
+		if runner.blockVersion {
+			<-ctx.Done()
+			return CommandResult{Err: ctx.Err()}
+		}
+		if runner.versionDelay > 0 {
+			timer := time.NewTimer(runner.versionDelay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return CommandResult{Err: ctx.Err()}
+			case <-timer.C:
+			}
+		}
+		return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\n")}
+	}
+	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+		if runner.blockHelp {
+			<-ctx.Done()
+			return CommandResult{Err: ctx.Err()}
+		}
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
+	}
+	return CommandResult{Err: errors.New("unexpected API call")}
+}
+
+func (runner *deadlineRunner) Run(ctx context.Context, args []string, _ []string) CommandResult {
+	if len(args) == 1 && args[0] == "--version" {
+		return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\n")}
+	}
+	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return CommandResult{Err: errors.New("API request had no deadline")}
+	}
+	runner.apiDeadlines = append(runner.apiDeadlines, time.Until(deadline))
+	<-ctx.Done()
+	return CommandResult{Err: ctx.Err()}
+}
+
 func TestPaginationRejectsUnsafeOrAmbiguousNextLinkBeforeSecondRequest(t *testing.T) {
 	base := "https://api.github.com/repos/example/repo/actions/runs"
 	for name, link := range map[string]string{
@@ -589,8 +995,13 @@ func TestPreflightAdvertisesOptionalOneShotMutationCapability(t *testing.T) {
 	runner := &scriptedRunner{}
 	var sleeps []time.Duration
 	document, transportErr := testClient(runner, &sleeps).Preflight(context.Background())
-	if transportErr != nil || !containsAll(strings.Join(document.Capabilities, " "), "one_shot_git_data_mutation") {
+	if transportErr != nil || !containsAll(strings.Join(document.Capabilities, " "),
+		"one_shot_git_data_mutation", "bounded_request_time", "bounded_operation_time", "bounded_aggregate_response_bytes") {
 		t.Fatalf("preflight=%+v error=%v", document, transportErr)
+	}
+	if document.SchemaID != "env-vault.github-transport-capabilities.v2" || document.SchemaVersion != 2 || document.TransportVersion != "1.2.0" ||
+		document.MaxRequestSeconds != 60 || document.MaxOperationSeconds != 300 || document.MaxAggregateResponseBytes != 256<<20 {
+		t.Fatalf("preflight numerical bounds=%+v", document)
 	}
 }
 

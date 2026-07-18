@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	homebrewMergeRepository = "example/homebrew-tap"
+	homebrewMergeRepository = "ildarbinanas-design/homebrew-tap"
 	homebrewMergePR         = "42"
 	homebrewMergeHeadSHA    = "5555555555555555555555555555555555555555"
 	homebrewMergeCommitSHA  = "6666666666666666666666666666666666666666"

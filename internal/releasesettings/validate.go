@@ -25,28 +25,34 @@ var (
 	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 )
 
-var canonicalRulesets = []rulesetIdentity{
-	{Name: "Protect env-vault main", Target: "branch"},
-	{Name: "Protect env-vault release tags", Target: "tag"},
-	{Name: "Protect env-vault release evidence", Target: "branch"},
-}
-
 type rulesetIdentity struct {
 	Name   string
 	Target string
 }
 
+type settingsPolicy struct {
+	Repository     string
+	DefaultBranch  string
+	MainRef        string
+	TagRef         string
+	Rulesets       []rulesetIdentity
+	RequiredChecks []string
+}
+
 // Seal validates untrusted saved observations, binds their exact bytes to the
 // tuple, and returns a self-digested proof.
 func Seal(contract releasecontract.Contract, tuple Tuple, raw RawInputs) (Proof, error) {
-	mainRequiredChecks, err := mainRequiredCheckNames(contract)
+	policy, err := settingsPolicyFromContract(contract)
 	if err != nil {
 		return Proof{}, err
 	}
 	if err := validateTuple(tuple); err != nil {
 		return Proof{}, err
 	}
-	inputs, err := validateRawInputs(tuple.Repository, raw, mainRequiredChecks)
+	if tuple.Repository != policy.Repository {
+		return Proof{}, fail(CodeTupleMismatch, "repository settings tuple differs from the release contract repository", nil)
+	}
+	inputs, err := validateRawInputs(tuple.Repository, raw, policy)
 	if err != nil {
 		return Proof{}, err
 	}
@@ -65,11 +71,14 @@ func Seal(contract releasecontract.Contract, tuple Tuple, raw RawInputs) (Proof,
 // Check validates the same untrusted saved observations as Seal without
 // creating a release-tuple proof. It performs no network access.
 func Check(contract releasecontract.Contract, repository string, raw RawInputs) (CheckResult, error) {
-	mainRequiredChecks, err := mainRequiredCheckNames(contract)
+	policy, err := settingsPolicyFromContract(contract)
 	if err != nil {
 		return CheckResult{}, err
 	}
-	if _, err := validateRawInputs(repository, raw, mainRequiredChecks); err != nil {
+	if repository != policy.Repository {
+		return CheckResult{}, fail(CodeTupleMismatch, "repository differs from the release contract repository", nil)
+	}
+	if _, err := validateRawInputs(repository, raw, policy); err != nil {
 		return CheckResult{}, err
 	}
 	return CheckResult{
@@ -81,7 +90,7 @@ func Check(contract releasecontract.Contract, repository string, raw RawInputs) 
 // Verify replays the complete offline decision and requires the caller's
 // independently known tuple to equal the sealed tuple exactly.
 func Verify(contract releasecontract.Contract, proof Proof, expected Tuple) error {
-	mainRequiredChecks, err := mainRequiredCheckNames(contract)
+	policy, err := settingsPolicyFromContract(contract)
 	if err != nil {
 		return err
 	}
@@ -101,7 +110,10 @@ func Verify(contract releasecontract.Contract, proof Proof, expected Tuple) erro
 	if !reflect.DeepEqual(proof.Tuple, expected) {
 		return fail(CodeTupleMismatch, "repository settings proof tuple differs from the expected exact tuple", nil)
 	}
-	if err := validateInputs(proof.Tuple.Repository, proof.Inputs, mainRequiredChecks); err != nil {
+	if expected.Repository != policy.Repository {
+		return fail(CodeTupleMismatch, "repository settings tuple differs from the release contract repository", nil)
+	}
+	if err := validateInputs(proof.Tuple.Repository, proof.Inputs, policy); err != nil {
 		return err
 	}
 	return nil
@@ -129,7 +141,7 @@ func validateRepository(repository string) error {
 	return nil
 }
 
-func validateRawInputs(repository string, raw RawInputs, mainRequiredChecks []string) (Inputs, error) {
+func validateRawInputs(repository string, raw RawInputs, policy settingsPolicy) (Inputs, error) {
 	if err := validateRepository(repository); err != nil {
 		return Inputs{}, err
 	}
@@ -149,13 +161,13 @@ func validateRawInputs(repository string, raw RawInputs, mainRequiredChecks []st
 		MainRuleset: documents[2], TagRuleset: documents[3],
 		EvidenceRuleset: documents[4],
 	}
-	if err := validateInputs(repository, inputs, mainRequiredChecks); err != nil {
+	if err := validateInputs(repository, inputs, policy); err != nil {
 		return Inputs{}, err
 	}
 	return inputs, nil
 }
 
-func validateInputs(repository string, inputs Inputs, mainRequiredChecks []string) error {
+func validateInputs(repository string, inputs Inputs, policy settingsPolicy) error {
 	documents := []struct {
 		name     string
 		document Document
@@ -171,24 +183,24 @@ func validateInputs(repository string, inputs Inputs, mainRequiredChecks []strin
 			return err
 		}
 	}
-	graphqlIDs, err := validateMergeSettings([]byte(inputs.MergeSettings.DocumentJSON), repository)
+	graphqlIDs, err := validateMergeSettings([]byte(inputs.MergeSettings.DocumentJSON), repository, policy)
 	if err != nil {
 		return err
 	}
-	restIDs, err := validateRulesetPages([]byte(inputs.RulesetPages.DocumentJSON), repository)
+	restIDs, err := validateRulesetPages([]byte(inputs.RulesetPages.DocumentJSON), repository, policy.Rulesets)
 	if err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(graphqlIDs, restIDs) {
 		return fail(CodePolicyInvalid, "GraphQL and REST canonical ruleset IDs differ", nil)
 	}
-	if err := validateMainRuleset([]byte(inputs.MainRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[0].Name], mainRequiredChecks); err != nil {
+	if err := validateMainRuleset([]byte(inputs.MainRuleset.DocumentJSON), repository, restIDs[policy.Rulesets[0].Name], policy); err != nil {
 		return err
 	}
-	if err := validateTagRuleset([]byte(inputs.TagRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[1].Name]); err != nil {
+	if err := validateTagRuleset([]byte(inputs.TagRuleset.DocumentJSON), repository, restIDs[policy.Rulesets[1].Name], policy); err != nil {
 		return err
 	}
-	if err := validateEvidenceRuleset([]byte(inputs.EvidenceRuleset.DocumentJSON), repository, restIDs[canonicalRulesets[2].Name]); err != nil {
+	if err := validateEvidenceRuleset([]byte(inputs.EvidenceRuleset.DocumentJSON), repository, restIDs[policy.Rulesets[2].Name], policy); err != nil {
 		return err
 	}
 	return nil
@@ -257,7 +269,7 @@ type graphqlPageInfo struct {
 	HasNextPage *bool `json:"hasNextPage"`
 }
 
-func validateMergeSettings(data []byte, repositoryName string) (map[string]int64, error) {
+func validateMergeSettings(data []byte, repositoryName string, policy settingsPolicy) (map[string]int64, error) {
 	var response mergeSettingsResponse
 	if err := strictjson.Decode(data, maxJSONBytes, &response); err != nil {
 		return nil, fail(CodeInputInvalid, "strictly decode merge settings", err)
@@ -266,7 +278,7 @@ func validateMergeSettings(data []byte, repositoryName string) (map[string]int64
 		return nil, fail(CodePolicyInvalid, "GraphQL merge settings response contains errors", nil)
 	}
 	repository := response.Data.Repository
-	if repository == nil || repository.DefaultBranchRef == nil || repository.DefaultBranchRef.Name == nil || *repository.DefaultBranchRef.Name != "main" ||
+	if repository == nil || repository.DefaultBranchRef == nil || repository.DefaultBranchRef.Name == nil || *repository.DefaultBranchRef.Name != policy.DefaultBranch ||
 		repository.SquashMergeAllowed == nil || !*repository.SquashMergeAllowed ||
 		repository.MergeCommitAllowed == nil || *repository.MergeCommitAllowed ||
 		repository.RebaseMergeAllowed == nil || *repository.RebaseMergeAllowed ||
@@ -274,16 +286,16 @@ func validateMergeSettings(data []byte, repositoryName string) (map[string]int64
 		repository.SquashMergeCommitMessage == nil || *repository.SquashMergeCommitMessage != "PR_BODY" {
 		return nil, fail(CodePolicyInvalid, "repository merge settings do not preserve the canonical squash-only policy", nil)
 	}
-	return validateGraphQLRulesets(repository.Rulesets, repositoryName)
+	return validateGraphQLRulesets(repository.Rulesets, repositoryName, policy.Rulesets)
 }
 
-func validateGraphQLRulesets(connection *graphqlRulesets, repository string) (map[string]int64, error) {
-	if connection == nil || connection.TotalCount == nil || *connection.TotalCount != len(canonicalRulesets) ||
-		connection.Nodes == nil || len(*connection.Nodes) != len(canonicalRulesets) ||
+func validateGraphQLRulesets(connection *graphqlRulesets, repository string, rulesets []rulesetIdentity) (map[string]int64, error) {
+	if connection == nil || connection.TotalCount == nil || *connection.TotalCount != len(rulesets) ||
+		connection.Nodes == nil || len(*connection.Nodes) != len(rulesets) ||
 		connection.PageInfo == nil || connection.PageInfo.HasNextPage == nil || *connection.PageInfo.HasNextPage {
 		return nil, fail(CodePolicyInvalid, "GraphQL ruleset inventory must be complete, unpaginated, and contain exactly three rulesets", nil)
 	}
-	ids := make(map[string]int64, len(canonicalRulesets))
+	ids := make(map[string]int64, len(rulesets))
 	for _, node := range *connection.Nodes {
 		if node == nil || node.DatabaseID == nil || *node.DatabaseID <= 0 || node.Name == nil || node.Target == nil || node.Enforcement == nil ||
 			node.Source == nil || node.Source.TypeName == nil || *node.Source.TypeName != "Repository" || node.Source.NameWithOwner == nil || *node.Source.NameWithOwner != repository ||
@@ -291,9 +303,9 @@ func validateGraphQLRulesets(connection *graphqlRulesets, repository string) (ma
 			return nil, fail(CodePolicyInvalid, "GraphQL ruleset node is incomplete, foreign, or bypassable", nil)
 		}
 		var expected *rulesetIdentity
-		for index := range canonicalRulesets {
-			if canonicalRulesets[index].Name == *node.Name {
-				expected = &canonicalRulesets[index]
+		for index := range rulesets {
+			if rulesets[index].Name == *node.Name {
+				expected = &rulesets[index]
 				break
 			}
 		}
@@ -305,11 +317,11 @@ func validateGraphQLRulesets(connection *graphqlRulesets, repository string) (ma
 		}
 		ids[*node.Name] = *node.DatabaseID
 	}
-	if len(ids) != len(canonicalRulesets) {
+	if len(ids) != len(rulesets) {
 		return nil, fail(CodePolicyInvalid, "GraphQL ruleset inventory omits a canonical ruleset", nil)
 	}
 	seenIDs := make(map[int64]bool, len(ids))
-	for _, expected := range canonicalRulesets {
+	for _, expected := range rulesets {
 		id, found := ids[expected.Name]
 		if !found || seenIDs[id] {
 			return nil, fail(CodePolicyInvalid, "GraphQL canonical rulesets do not have distinct positive IDs", nil)
@@ -345,16 +357,16 @@ type rulesetLink struct {
 	Href string `json:"href"`
 }
 
-func validateRulesetPages(data []byte, repository string) (map[string]int64, error) {
+func validateRulesetPages(data []byte, repository string, rulesets []rulesetIdentity) (map[string]int64, error) {
 	var pages [][]rulesetSummary
 	if err := strictjson.Decode(data, maxJSONBytes, &pages); err != nil {
 		return nil, fail(CodeInputInvalid, "strictly decode slurped ruleset pages", err)
 	}
-	ids := make(map[string]int64, len(canonicalRulesets))
-	counts := make(map[string]int, len(canonicalRulesets))
+	ids := make(map[string]int64, len(rulesets))
+	counts := make(map[string]int, len(rulesets))
 	for _, page := range pages {
 		for _, summary := range page {
-			for _, expected := range canonicalRulesets {
+			for _, expected := range rulesets {
 				if summary.Name == expected.Name && summary.Target == expected.Target && summary.SourceType == "Repository" && summary.Enforcement == "active" {
 					if summary.ID <= 0 || (summary.Source != "" && summary.Source != repository) {
 						return nil, fail(CodePolicyInvalid, fmt.Sprintf("canonical ruleset %q has an invalid ID or source", expected.Name), nil)
@@ -365,12 +377,12 @@ func validateRulesetPages(data []byte, repository string) (map[string]int64, err
 			}
 		}
 	}
-	for _, expected := range canonicalRulesets {
+	for _, expected := range rulesets {
 		if counts[expected.Name] != 1 {
 			return nil, fail(CodePolicyInvalid, fmt.Sprintf("canonical active ruleset %q count=%d, want 1", expected.Name, counts[expected.Name]), nil)
 		}
 	}
-	if ids[canonicalRulesets[0].Name] == ids[canonicalRulesets[1].Name] || ids[canonicalRulesets[0].Name] == ids[canonicalRulesets[2].Name] || ids[canonicalRulesets[1].Name] == ids[canonicalRulesets[2].Name] {
+	if ids[rulesets[0].Name] == ids[rulesets[1].Name] || ids[rulesets[0].Name] == ids[rulesets[2].Name] || ids[rulesets[1].Name] == ids[rulesets[2].Name] {
 		return nil, fail(CodePolicyInvalid, "canonical rulesets do not have distinct IDs", nil)
 	}
 	return ids, nil
@@ -436,12 +448,12 @@ type requiredStatusCheck struct {
 	IntegrationID *int64 `json:"integration_id"`
 }
 
-func validateMainRuleset(data []byte, repository string, expectedID int64, mainRequiredChecks []string) error {
+func validateMainRuleset(data []byte, repository string, expectedID int64, policy settingsPolicy) error {
 	detail, err := decodeRulesetDetail(data)
 	if err != nil {
 		return err
 	}
-	if err := validateDetailIdentity(detail, expectedID, canonicalRulesets[0], repository, []string{"refs/heads/main"}); err != nil {
+	if err := validateDetailIdentity(detail, expectedID, policy.Rulesets[0], repository, []string{policy.MainRef}); err != nil {
 		return err
 	}
 	rules := *detail.Rules
@@ -477,30 +489,50 @@ func validateMainRuleset(data []byte, repository string, expectedID int64, mainR
 		actualChecks = append(actualChecks, check.Context)
 	}
 	sort.Strings(actualChecks)
-	if !reflect.DeepEqual(actualChecks, mainRequiredChecks) {
+	if !reflect.DeepEqual(actualChecks, policy.RequiredChecks) {
 		return fail(CodePolicyInvalid, fmt.Sprintf("main required checks=%q, want exact canonical set", actualChecks), nil)
 	}
 	return nil
 }
 
-func mainRequiredCheckNames(contract releasecontract.Contract) ([]string, error) {
+func settingsPolicyFromContract(contract releasecontract.Contract) (settingsPolicy, error) {
 	if err := contract.Validate(); err != nil {
-		return nil, fail(CodeInputInvalid, "release contract is invalid", err)
+		return settingsPolicy{}, fail(CodeInputInvalid, "release contract is invalid", err)
 	}
 	names := make([]string, 0, len(contract.MainRequiredChecks))
 	for _, check := range contract.MainRequiredChecks {
 		names = append(names, check.Name)
 	}
 	sort.Strings(names)
-	return names, nil
+	product := contract.Naming.Product
+	source, ok := contract.RepositoryByID("source")
+	if !ok {
+		return settingsPolicy{}, fail(CodeInputInvalid, "release contract has no source repository identity", nil)
+	}
+	tagPrefix := contract.VersionPolicy.TagPrefix
+	if contract.SchemaID == releasecontract.LegacySchemaID && contract.SchemaVersion == releasecontract.LegacySchemaVersion {
+		tagPrefix = "v"
+	}
+	return settingsPolicy{
+		Repository:    source.FullName,
+		DefaultBranch: source.DefaultBranch,
+		MainRef:       "refs/heads/" + source.DefaultBranch,
+		TagRef:        "refs/tags/" + tagPrefix + "*",
+		Rulesets: []rulesetIdentity{
+			{Name: "Protect " + product + " " + source.DefaultBranch, Target: "branch"},
+			{Name: "Protect " + product + " release tags", Target: "tag"},
+			{Name: "Protect " + product + " release evidence", Target: "branch"},
+		},
+		RequiredChecks: names,
+	}, nil
 }
 
-func validateTagRuleset(data []byte, repository string, expectedID int64) error {
+func validateTagRuleset(data []byte, repository string, expectedID int64, policy settingsPolicy) error {
 	detail, err := decodeRulesetDetail(data)
 	if err != nil {
 		return err
 	}
-	if err := validateDetailIdentity(detail, expectedID, canonicalRulesets[1], repository, []string{"refs/tags/v*"}); err != nil {
+	if err := validateDetailIdentity(detail, expectedID, policy.Rulesets[1], repository, []string{policy.TagRef}); err != nil {
 		return err
 	}
 	if _, err := uniqueRules(*detail.Rules, []string{"deletion", "update"}); err != nil {
@@ -514,12 +546,12 @@ func validateTagRuleset(data []byte, repository string, expectedID int64) error 
 	return nil
 }
 
-func validateEvidenceRuleset(data []byte, repository string, expectedID int64) error {
+func validateEvidenceRuleset(data []byte, repository string, expectedID int64, policy settingsPolicy) error {
 	detail, err := decodeRulesetDetail(data)
 	if err != nil {
 		return err
 	}
-	if err := validateDetailIdentity(detail, expectedID, canonicalRulesets[2], repository, []string{"refs/heads/release-evidence"}); err != nil {
+	if err := validateDetailIdentity(detail, expectedID, policy.Rulesets[2], repository, []string{"refs/heads/release-evidence"}); err != nil {
 		return err
 	}
 	if _, err := uniqueRules(*detail.Rules, []string{"deletion", "non_fast_forward"}); err != nil {

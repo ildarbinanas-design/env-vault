@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -74,31 +76,84 @@ func runEvidenceBundleCreate(args []string, stdout, stderr io.Writer) int {
 func runEvidenceBundleVerify(args []string, stdout, stderr io.Writer) int {
 	set := newFlagSet("evidence bundle-verify")
 	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
+	historicalContractPath := set.String("historical-contract", releasecontract.LegacyArchivePath, "immutable archival v1 release contract JSON")
+	registryPath := set.String("registry", releasecontract.HistoricalRegistryPath, "closed historical compatibility registry")
+	historicalEvidenceCommit := set.String("historical-evidence-commit", "", "immutable release-evidence branch commit SHA for registry-bound replay")
+	historicalEvidenceParent := set.String("historical-evidence-parent", "", "exact parent of the immutable evidence commit")
+	historicalEvidenceRunID := set.Int64("historical-evidence-run-id", 0, "exact evidence workflow run ID")
+	historicalEvidenceRunAttempt := set.Int("historical-evidence-run-attempt", 0, "exact evidence workflow run attempt")
+	historicalArtifactID := set.Int64("historical-artifact-id", 0, "exact compact evidence artifact ID")
+	historicalArtifactDigest := set.String("historical-artifact-digest", "", "exact sha256: digest of the compact evidence artifact")
 	bundleDir := set.String("bundle-dir", "", "complete v2 bundle directory")
 	jsonOutput := set.Bool("json", false, "emit typed verification JSON")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || *bundleDir == "" {
-		fmt.Fprint(stderr, "usage: releasecheck evidence bundle-verify --bundle-dir DIR [--contract FILE] [--json]\n")
+		fmt.Fprint(stderr, "usage: releasecheck evidence bundle-verify --bundle-dir DIR [--contract FILE] [--historical-contract FILE --registry FILE --historical-evidence-commit SHA --historical-evidence-parent SHA --historical-evidence-run-id ID --historical-evidence-run-attempt N --historical-artifact-id ID --historical-artifact-digest sha256:DIGEST] [--json]\n")
 		return exitUsage
-	}
-	contract, err := releasecontract.LoadFile(*contractPath)
-	if err != nil {
-		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
 	}
 	files, err := readBundleDirectory(*bundleDir)
 	if err != nil {
 		return writeFailure(stdout, stderr, *jsonOutput, "INPUT_INVALID", err, exitSnapshotInvalid)
 	}
-	evidence, err := releaseevidence.VerifyBundle(files, contract)
+	bundle, err := releaseevidence.ParseBundle(files.Root)
 	if err != nil {
 		return writeEvidenceFailure(stdout, stderr, *jsonOutput, err)
 	}
-	bundle, err := releaseevidence.ParseBundle(files.Root)
+	var contract releasecontract.Contract
+	var historicalIdentity releasecontract.HistoricalIdentity
+	historicalCoordinatesSupplied := *historicalEvidenceParent != "" || *historicalEvidenceRunID != 0 ||
+		*historicalEvidenceRunAttempt != 0 || *historicalArtifactID != 0 || *historicalArtifactDigest != ""
+	if *historicalEvidenceCommit == "" {
+		if historicalCoordinatesSupplied {
+			fmt.Fprint(stderr, "historical bundle coordinates require an exact evidence commit\n")
+			return exitUsage
+		}
+		contract, err = releasecontract.LoadFile(*contractPath)
+	} else {
+		artifactDigestValue := strings.TrimPrefix(*historicalArtifactDigest, "sha256:")
+		artifactDigestBytes, artifactDigestErr := hex.DecodeString(artifactDigestValue)
+		if !evidenceSHA.MatchString(*historicalEvidenceCommit) || !evidenceSHA.MatchString(*historicalEvidenceParent) ||
+			*historicalEvidenceRunID <= 0 || *historicalEvidenceRunAttempt <= 0 || *historicalArtifactID <= 0 ||
+			!strings.HasPrefix(*historicalArtifactDigest, "sha256:") || len(artifactDigestValue) != 64 || artifactDigestErr != nil || len(artifactDigestBytes) != 32 {
+			fmt.Fprint(stderr, "historical bundle coordinates are incomplete or malformed\n")
+			return exitUsage
+		}
+		rootDigest := sha256.Sum256(files.Root)
+		contract, historicalIdentity, err = releasecontract.LoadHistoricalBundleContract(
+			*historicalContractPath,
+			*registryPath,
+			releasecontract.HistoricalBundleObservation{
+				Repository: bundle.Repository, ReleaseVersion: bundle.ReleaseVersion, SourceSHA: bundle.SourceSHA,
+				EvidenceCommitSHA:      *historicalEvidenceCommit,
+				EvidenceRootFileSHA256: hex.EncodeToString(rootDigest[:]), EvidenceRootSemanticSHA256: bundle.BundleSHA256,
+				EvidenceRootSchemaID: bundle.SchemaID, EvidenceRootSchemaVersion: bundle.SchemaVersion,
+				ReconstructedLegacyEvidenceSHA256:      bundle.LegacyEvidenceSHA256,
+				ReconstructedLegacyCanonicalJSONSHA256: bundle.LegacyCanonicalJSONSHA256,
+				ReconstructedLegacyCanonicalJSONSize:   bundle.LegacyCanonicalJSONSize,
+				EvidenceParentCommitSHA:                *historicalEvidenceParent,
+				PublisherRunID:                         bundle.PublisherRunID, PublisherRunAttempt: bundle.PublisherRunAttempt,
+				EvidenceRunID: *historicalEvidenceRunID, EvidenceRunAttempt: *historicalEvidenceRunAttempt,
+				CompactArtifactID: *historicalArtifactID, CompactArtifactDigest: *historicalArtifactDigest,
+			},
+		)
+	}
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	evidence, err := releaseevidence.VerifyBundle(files, contract)
 	if err != nil {
 		return writeEvidenceFailure(stdout, stderr, *jsonOutput, err)
 	}
 	legacy, err := releaseevidence.MarshalJSON(evidence)
 	if err != nil {
 		return writeFailure(stdout, stderr, *jsonOutput, "OUTPUT_FAILED", err, exitInternal)
+	}
+	if *historicalEvidenceCommit != "" {
+		canonicalDigest := sha256.Sum256(legacy)
+		if err := releasecontract.ValidateHistoricalBundleReconstruction(
+			historicalIdentity, evidence.EvidenceSHA256, hex.EncodeToString(canonicalDigest[:]), int64(len(legacy)),
+		); err != nil {
+			return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+		}
 	}
 	if *jsonOutput {
 		document := bundleVerificationDocument{

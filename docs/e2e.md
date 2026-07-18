@@ -189,7 +189,7 @@ Verify the migration proof entirely offline:
 ```sh
 GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline verify-migration \
   --repository-root . \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --baseline evidence/e2e-baseline-migration/migrated-baseline.json \
   --migration evidence/e2e-baseline-migration/migration.json
 ```
@@ -207,7 +207,7 @@ the baseline and machine diff:
 ```sh
 GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline update \
   --repository-root . \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --proof reports-download/matrix-validation.json \
   --baseline docs/e2e-baseline.json \
   --diff-output baseline.diff.json
@@ -341,7 +341,7 @@ Validate a downloaded five-platform set with:
 
 ```sh
 GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --reports reports-download --phase candidate \
   --expected-commit "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
   --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
@@ -356,7 +356,7 @@ checked-in baseline with the same exact coordinates:
 ```sh
 GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline verify \
   --repository-root . \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --baseline docs/e2e-baseline.json \
   --proof reports-download/matrix-validation.json \
   --output baseline-verification \

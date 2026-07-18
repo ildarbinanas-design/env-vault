@@ -71,6 +71,25 @@ func TestActionsIdentitySurvivesCustomRunNameAndEmptyPullRequests(t *testing.T) 
 	}
 }
 
+func TestActionsIdentitySharesAggregateBudgetAcrossNestedReads(t *testing.T) {
+	repository := "example/repo"
+	head := strings.Repeat("a", 40)
+	jobURL := "https://github.com/example/repo/actions/runs/92/job/93"
+	runBody := fmt.Sprintf(`{"id":92,"run_attempt":2,"repository":{"full_name":"example/repo"},"head_repository":{"full_name":"example/repo"},"head_sha":%q,"head_branch":"main","event":"push","status":"completed","conclusion":"success","path":".github/workflows/ci.yml","html_url":"https://github.com/example/repo/actions/runs/92"}`, head)
+	jobsBody := fmt.Sprintf(`{"total_count":1,"jobs":[{"id":93,"run_id":92,"head_sha":%q,"name":"quality-gate","status":"completed","conclusion":"success","html_url":%q}]}`, head, jobURL)
+	runner := &scriptedRunner{responses: []CommandResult{liveResponse(200, "", runBody), liveResponse(200, "", jobsBody)}}
+	var sleeps []time.Duration
+	client := testClient(runner, &sleeps)
+	client.maxAggregateResponseBytes = int64(len(runBody) + len(jobsBody) - 1)
+	_, transportErr := client.ResolveActionsIdentity(context.Background(), ActionsIdentityOptions{
+		Repository: repository, RunID: 92, RunAttempt: 2, WorkflowPath: ".github/workflows/ci.yml",
+		Event: "push", HeadSHA: head, HeadRef: "main", JobID: 93, JobName: "quality-gate", JobURL: jobURL,
+	})
+	if transportErr == nil || transportErr.Code != "TRANSPORT_FAILED" || !strings.Contains(transportErr.Message, "aggregate response") || len(runner.apiCalls) != 2 {
+		t.Fatalf("error=%+v calls=%d", transportErr, len(runner.apiCalls))
+	}
+}
+
 func TestActionsIdentityRejectsWrongAttemptHeadURLAndStaleJob(t *testing.T) {
 	repository := "example/repo"
 	head := strings.Repeat("a", 40)

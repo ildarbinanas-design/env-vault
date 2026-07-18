@@ -25,7 +25,7 @@ proof that replaced the expiring historical E2E comparator with
 ```sh
 go run ./cmd/e2e-baseline verify-migration \
   --repository-root . \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --baseline docs/e2e-baseline.json \
   --migration evidence/e2e-baseline-migration/migration.json
 ```

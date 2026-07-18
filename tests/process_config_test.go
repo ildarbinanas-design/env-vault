@@ -12,7 +12,7 @@ import (
 )
 
 func TestCanonicalE2EBaselineIdentityIsPinned(t *testing.T) {
-	contract, err := releasecontract.LoadFile("../release/contract.v1.json")
+	contract, err := releasecontract.LoadFile("../release/contract.v2.json")
 	if err != nil {
 		t.Fatalf("load release contract: %v", err)
 	}

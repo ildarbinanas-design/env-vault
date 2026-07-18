@@ -31,6 +31,8 @@ func runEvidence(args []string, stdout, stderr io.Writer) int {
 		return runEvidenceAssemble(args[1:], stdout, stderr)
 	case "verify":
 		return runEvidenceVerify(args[1:], stdout, stderr)
+	case "verify-historical":
+		return runEvidenceVerifyHistorical(args[1:], stdout, stderr)
 	case "bundle-create":
 		return runEvidenceBundleCreate(args[1:], stdout, stderr)
 	case "bundle-verify":
@@ -203,23 +205,46 @@ func runEvidenceVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeFailure(stdout, stderr, *jsonOutput, "INPUT_INVALID", err, exitSnapshotInvalid)
 	}
+	return verifyEvidenceBytes(contract, data, *markdownOutput, *jsonOutput, stdout, stderr)
+}
+
+func runEvidenceVerifyHistorical(args []string, stdout, stderr io.Writer) int {
+	set := newFlagSet("evidence verify-historical")
+	contractPath := set.String("contract", releasecontract.LegacyArchivePath, "immutable archival v1 release contract JSON")
+	registryPath := set.String("registry", releasecontract.HistoricalRegistryPath, "closed historical compatibility registry")
+	input := set.String("input", "", "historical durable evidence JSON")
+	evidenceCommit := set.String("evidence-commit", "", "immutable release-evidence branch commit SHA")
+	markdownOutput := set.String("markdown-output", "", "optional new deterministic Markdown index")
+	jsonOutput := set.Bool("json", false, "emit the verified evidence JSON")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *input == "" || !evidenceSHA.MatchString(*evidenceCommit) {
+		fmt.Fprint(stderr, evidenceVerifyHistoricalUsage())
+		return exitUsage
+	}
+	contract, data, err := releasecontract.LoadHistoricalEvidence(*contractPath, *registryPath, *input, *evidenceCommit)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	return verifyEvidenceBytes(contract, data, *markdownOutput, *jsonOutput, stdout, stderr)
+}
+
+func verifyEvidenceBytes(contract releasecontract.Contract, data []byte, markdownOutput string, jsonOutput bool, stdout, stderr io.Writer) int {
 	evidence, err := releaseevidence.ParseEvidence(data)
 	if err != nil {
-		return writeEvidenceFailure(stdout, stderr, *jsonOutput, err)
+		return writeEvidenceFailure(stdout, stderr, jsonOutput, err)
 	}
 	if err := releaseevidence.Verify(evidence, contract); err != nil {
-		return writeEvidenceFailure(stdout, stderr, *jsonOutput, err)
+		return writeEvidenceFailure(stdout, stderr, jsonOutput, err)
 	}
-	if *markdownOutput != "" {
+	if markdownOutput != "" {
 		markdown, err := releaseevidence.Markdown(evidence, contract)
 		if err != nil {
-			return writeEvidenceFailure(stdout, stderr, *jsonOutput, err)
+			return writeEvidenceFailure(stdout, stderr, jsonOutput, err)
 		}
-		if err := writeExclusiveFile(*markdownOutput, markdown); err != nil {
-			return writeFailure(stdout, stderr, *jsonOutput, "OUTPUT_FAILED", err, exitInternal)
+		if err := writeExclusiveFile(markdownOutput, markdown); err != nil {
+			return writeFailure(stdout, stderr, jsonOutput, "OUTPUT_FAILED", err, exitInternal)
 		}
 	}
-	if *jsonOutput {
+	if jsonOutput {
 		encoded, err := releaseevidence.MarshalJSON(evidence)
 		if err != nil {
 			return writeFailure(stdout, stderr, true, "OUTPUT_FAILED", err, exitInternal)
@@ -330,7 +355,8 @@ func evidenceUsage() string {
 Commands:
   seal-health  strictly parse and self-digest a passing health proof
   assemble     bind authorization, promotion, metrics, raw attestations, observation, and health into evidence
-  verify       revalidate durable evidence entirely offline
+	verify       revalidate durable evidence entirely offline
+	verify-historical revalidate a registry-bound v1 release entirely offline
   bundle-create compact canonical v1 evidence into a deterministic v2 bundle
   bundle-verify reconstruct and revalidate a complete v2 bundle offline
   bundle-parity require byte-exact v1/v2 reconstruction and decision parity
@@ -350,4 +376,8 @@ func evidenceAssembleUsage() string {
 
 func evidenceVerifyUsage() string {
 	return "usage: releasecheck evidence verify --input FILE [--markdown-output FILE] [--contract FILE] [--json]\n"
+}
+
+func evidenceVerifyHistoricalUsage() string {
+	return "usage: releasecheck evidence verify-historical --input FILE --evidence-commit SHA [--markdown-output FILE] [--contract FILE] [--registry FILE] [--json]\n"
 }

@@ -297,14 +297,14 @@ func TestPublishReleaseEvidenceIsNoClobberAndRaceSafe(t *testing.T) {
 			if strings.Contains(calls, "--method DELETE") || strings.Contains(calls, "force=true") || strings.Contains(calls, "--force") {
 				t.Fatalf("evidence publication attempted a destructive ref operation:\n%s", calls)
 			}
-			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/blobs", test.wantBlobCreates)
-			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/trees", test.wantTreeCreates)
-			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/commits", test.wantCommitCreate)
-			assertEvidenceCallCount(t, calls, "--method POST repos/example/env-vault/git/refs ", test.wantRefCreates)
-			assertEvidenceCallCount(t, calls, "--method PATCH repos/example/env-vault/git/refs/heads/release-evidence", test.wantRefUpdates)
+			assertEvidenceCallCount(t, calls, "--method POST repos/ildarbinanas-design/env-vault/git/blobs", test.wantBlobCreates)
+			assertEvidenceCallCount(t, calls, "--method POST repos/ildarbinanas-design/env-vault/git/trees", test.wantTreeCreates)
+			assertEvidenceCallCount(t, calls, "--method POST repos/ildarbinanas-design/env-vault/git/commits", test.wantCommitCreate)
+			assertEvidenceCallCount(t, calls, "--method POST repos/ildarbinanas-design/env-vault/git/refs ", test.wantRefCreates)
+			assertEvidenceCallCount(t, calls, "--method PATCH repos/ildarbinanas-design/env-vault/git/refs/heads/release-evidence", test.wantRefUpdates)
 			if strings.HasPrefix(test.mode, "post-blob-timeout") {
 				firstSHA := evidenceBlobSHAs(t, files)[0]
-				assertEvidenceCallCount(t, calls, "repos/example/env-vault/git/blobs/"+firstSHA, test.wantReconcileGET)
+				assertEvidenceCallCount(t, calls, "repos/ildarbinanas-design/env-vault/git/blobs/"+firstSHA, test.wantReconcileGET)
 			}
 
 			if test.mode == "bootstrap" || test.mode == "post-blob-timeout" || test.mode == "new-version" || test.mode == "append" || test.mode == "depth63-append" {
@@ -632,7 +632,7 @@ if [[ $mode == missing && ! -f $ref_state ]]; then
   branch_present=false
 fi
 
-if [[ $include == true && $method == GET && $endpoint == repos/example/env-vault/git/ref/heads/release-evidence && $branch_present == false ]]; then
+if [[ $include == true && $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/ref/heads/release-evidence && $branch_present == false ]]; then
   printf 'HTTP/2 404 Not Found\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n{"message":"Not Found"}\n'
   exit 1
 fi
@@ -774,7 +774,7 @@ emit_created_evidence_tree() {
   fi
 }
 
-if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/commits/([0-9a-f]{40})$ && -n $chain_file && -f $chain_file ]]; then
+if [[ $method == GET && $endpoint =~ ^repos/ildarbinanas-design/env-vault/git/commits/([0-9a-f]{40})$ && -n $chain_file && -f $chain_file ]]; then
   chain_commit=${BASH_REMATCH[1]}
   if jq -e --arg sha "$chain_commit" 'has($sha)' "$chain_file" >/dev/null; then
     chain_parent=$(jq -er --arg sha "$chain_commit" '.[$sha]' "$chain_file")
@@ -784,24 +784,24 @@ if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/commits/([0-9a
 fi
 
 case "$method:$endpoint" in
-  GET:repos/example/env-vault/git/ref/heads/release-evidence)
+  GET:repos/ildarbinanas-design/env-vault/git/ref/heads/release-evidence)
     [[ $branch_present == true ]] || exit 93
     emit_ref
     ;;
-  GET:repos/example/env-vault/git/commits/$source_sha)
+  GET:repos/ildarbinanas-design/env-vault/git/commits/$source_sha)
     emit_commit "$source_sha" "$source_tree" ''
     ;;
-  GET:repos/example/env-vault/git/commits/$base_sha)
+  GET:repos/ildarbinanas-design/env-vault/git/commits/$base_sha)
     emit_commit "$base_sha" "$base_tree" "$source_sha"
     ;;
-  GET:repos/example/env-vault/git/commits/$new_sha)
+  GET:repos/ildarbinanas-design/env-vault/git/commits/$new_sha)
     if [[ $mode == bootstrap || $mode == post-blob-timeout* ]]; then parent=$source_sha; else parent=$base_sha; fi
     emit_commit "$new_sha" "$new_tree" "$parent"
     ;;
-  GET:repos/example/env-vault/git/trees/$source_tree?recursive=1)
+  GET:repos/ildarbinanas-design/env-vault/git/trees/$source_tree?recursive=1)
     jq -n --arg sha "$source_tree" '{sha:$sha,truncated:false,tree:[]}'
     ;;
-  GET:repos/example/env-vault/git/trees/$base_tree?recursive=1)
+  GET:repos/ildarbinanas-design/env-vault/git/trees/$base_tree?recursive=1)
     case $mode in
       noop|depth64-noop|mismatch) emit_evidence_tree current "$base_tree" ;;
       new-version) emit_evidence_tree previous-version "$base_tree" ;;
@@ -814,7 +814,7 @@ case "$method:$endpoint" in
       *) jq -n --arg sha "$base_tree" '{sha:$sha,truncated:false,tree:[]}' ;;
     esac
     ;;
-  GET:repos/example/env-vault/git/trees/$new_tree?recursive=1)
+  GET:repos/ildarbinanas-design/env-vault/git/trees/$new_tree?recursive=1)
     case $mode in
       bootstrap|post-blob-timeout*) emit_created_evidence_tree current "$new_tree" ;;
       new-version) emit_created_evidence_tree new-version "$new_tree" ;;
@@ -823,7 +823,7 @@ case "$method:$endpoint" in
       *) emit_created_evidence_tree appended "$new_tree" ;;
     esac
     ;;
-  GET:repos/example/env-vault/git/blobs/*)
+  GET:repos/ildarbinanas-design/env-vault/git/blobs/*)
     sha=${endpoint##*/}
     path=$remote_dir/$sha
     if [[ ! -f $path || -L $path ]]; then
@@ -865,7 +865,7 @@ case "$method:$endpoint" in
        content:($transport | wrap)}
     '
     ;;
-  POST:repos/example/env-vault/git/blobs)
+  POST:repos/ildarbinanas-design/env-vault/git/blobs)
     [[ -f $input && ! -L $input ]] || exit 95
     jq -e '.encoding == "base64" and (.content|type == "string")' "$input" >/dev/null || exit 96
     count=0
@@ -892,7 +892,7 @@ case "$method:$endpoint" in
     fi
     jq -n --arg sha "$sha" '{sha:$sha}'
     ;;
-  POST:repos/example/env-vault/git/trees)
+  POST:repos/ildarbinanas-design/env-vault/git/trees)
     expected_base=$base_tree
     if [[ $mode == bootstrap || $mode == post-blob-timeout* ]]; then expected_base=$source_tree; fi
     if [[ $mode == bootstrap || $mode == post-blob-timeout* || $mode == new-version ]]; then
@@ -926,7 +926,7 @@ case "$method:$endpoint" in
     fi
     jq -n --arg sha "$new_tree" '{sha:$sha}'
     ;;
-  POST:repos/example/env-vault/git/commits)
+  POST:repos/ildarbinanas-design/env-vault/git/commits)
     expected_parent=$base_sha
     if [[ $mode == bootstrap || $mode == post-blob-timeout* ]]; then expected_parent=$source_sha; fi
     jq -e --arg parent "$expected_parent" --arg tree "$new_tree" '
@@ -934,7 +934,7 @@ case "$method:$endpoint" in
     ' "$input" >/dev/null || exit 99
     jq -n --arg sha "$new_sha" '{sha:$sha}'
     ;;
-  PATCH:repos/example/env-vault/git/refs/heads/release-evidence)
+  PATCH:repos/ildarbinanas-design/env-vault/git/refs/heads/release-evidence)
     jq -e --arg sha "$new_sha" '. == {sha:$sha,force:false}' "$input" >/dev/null || exit 103
     if [[ $mode == race ]]; then
       printf 'gh: Update is not a fast forward (HTTP 422)\n' >&2

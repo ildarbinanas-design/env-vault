@@ -108,9 +108,21 @@ real pagination. The exceptional bridge is larger than a normal repair
 because it reconstructs all preconditions from current reviewed code, but its
 only remote product mutation is the already-designed Homebrew PR/merge path.
 
-The bridge does not itself run health or durable evidence. After its typed
-result and final tap state are verified, the operator dispatches one ordinary
-tag-scoped `repair=health`; that frozen read-only stage can consume the now
-complete Release/Homebrew state and trigger durable evidence. Until those real
-runs succeed, documentation must describe the bridge as the reviewed recovery
-mechanism, not claim the release is complete.
+The bridge intentionally does not itself run health or durable evidence. Its
+typed result authorizes at most one ordinary tag-scoped `repair=health`; that
+frozen read-only stage consumes the completed Release/Homebrew state and
+triggers durable evidence.
+
+That recovery sequence is closed. Bridge run `29622303701` attempt 1 at
+control SHA `ce1ba7186a4d3133fb04075f275f06e6042c0ccb`, job `88019597858`,
+produced result artifact `8422669170` with digest
+`sha256:773757223242a4dfc3ee189952a3527d3ae3d84492de868e03285d751c6caefd`.
+It bound Homebrew PR #9 at head
+`365363826aa722ac5c2df1cc1e5278dc2c69cfcb`, PR CI `29622381037/1`, merge
+and tap SHA `8a20bec7e62c854af9bb9a3f94375ccab580cf4c`, and post-merge CI
+`29622449331/1`, both successful. Final health publisher `29622574820/1`
+then succeeded; evidence listener `29622650408/1` published commit
+`e697239298c4b5b1240fc53abe611131d45ac7c0` and compact artifact
+`8422728320`. These coordinates are immutable completion evidence, never
+operational defaults. Do not dispatch the bridge or health repair again for
+`v0.0.16`.

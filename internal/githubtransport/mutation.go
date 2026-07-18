@@ -83,6 +83,8 @@ var v2EvidenceFilenames = map[string]bool{
 // Indeterminate transport/server outcomes are returned as typed "ambiguous"
 // observations so callers may perform one fresh read-only reconciliation.
 func (c *Client) MutateOnce(ctx context.Context, request MutationRequest) (MutationDocument, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	input, err := validateMutationRequest(request)
 	if err != nil {
 		return MutationDocument{}, &TransportError{Code: "INPUT_INVALID", Message: err.Error()}
@@ -103,7 +105,12 @@ func (c *Client) MutateOnce(ctx context.Context, request MutationRequest) (Mutat
 	args := []string{"api", "--include", "--hostname", Host, "--method", request.Method,
 		"--header", "Accept: application/vnd.github+json", "--header", "X-GitHub-Api-Version: " + APIVersion,
 		request.Endpoint, "--input", "-"}
-	result := runner.RunInput(ctx, args, SanitizedEnvironment(), input)
+	requestCtx, requestCancel := c.requestContext(ctx)
+	result := runner.RunInput(requestCtx, args, SanitizedEnvironment(), input)
+	if requestCtx.Err() != nil && result.Err == nil {
+		result.Err = requestCtx.Err()
+	}
+	requestCancel()
 	document := MutationDocument{
 		SchemaID: MutationSchemaID, SchemaVersion: 1, Method: request.Method,
 		Endpoint: request.Endpoint, Outcome: "ambiguous", ErrorCode: "TRANSPORT_FAILED",

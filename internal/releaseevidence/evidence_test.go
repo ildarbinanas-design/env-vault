@@ -657,7 +657,7 @@ func TestAttestationVerificationSelectionUsesMaximumRunThenAttempt(t *testing.T)
 
 func newEvidenceFixture(t *testing.T) *evidenceFixture {
 	t.Helper()
-	contractPath := filepath.Join("..", "..", "release", "contract.v1.json")
+	contractPath := filepath.Join("..", "..", filepath.FromSlash(releasecontract.CanonicalPath))
 	contract, err := releasecontract.LoadFile(contractPath)
 	if err != nil {
 		t.Fatal(err)
@@ -905,15 +905,16 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 		attestations = append(attestations, ArchiveAttestation{AssetName: platform.Archive, AssetSHA256: assetByName[platform.Archive].SHA256, Provenance: provenance, SBOM: sbom})
 	}
 	app, _ := contract.AppByID("homebrew_tap")
+	tapRepository, _ := contract.RepositoryByID(app.RepositoryID)
 	prHead := strings.Repeat("b", 40)
 	mergeSHA := strings.Repeat("c", 40)
 	tapSHA := strings.Repeat("e", 40)
 	homebrew := HomebrewObservation{
-		Repository: app.Repository, FormulaPath: "Formula/env-vault.rb", FormulaSHA256: strings.Repeat("d", 64),
+		Repository: tapRepository.FullName, FormulaPath: "Formula/env-vault.rb", FormulaSHA256: strings.Repeat("d", 64),
 		Version: testVersion, VersionMonotonic: true, PRNumber: 42,
-		PRURL: "https://github.com/" + app.Repository + "/pull/42", PRHeadSHA: prHead, PRMergeSHA: mergeSHA, TapSHA: tapSHA, MergeIsAncestorOfTap: true,
-		PRHeadCI:    ExternalWorkflowRun{RunID: 626262, RunAttempt: 1, Workflow: app.CIWorkflowFile, Event: "pull_request", HeadSHA: prHead, Conclusion: "success", URL: "https://github.com/" + app.Repository + "/actions/runs/626262"},
-		PostMergeCI: ExternalWorkflowRun{RunID: 727272, RunAttempt: 2, Workflow: app.CIWorkflowFile, Event: "push", HeadSHA: mergeSHA, Conclusion: "success", URL: "https://github.com/" + app.Repository + "/actions/runs/727272"},
+		PRURL: "https://github.com/" + tapRepository.FullName + "/pull/42", PRHeadSHA: prHead, PRMergeSHA: mergeSHA, TapSHA: tapSHA, MergeIsAncestorOfTap: true,
+		PRHeadCI:    ExternalWorkflowRun{RunID: 626262, RunAttempt: 1, Workflow: app.CIWorkflowFile, Event: "pull_request", HeadSHA: prHead, Conclusion: "success", URL: "https://github.com/" + tapRepository.FullName + "/actions/runs/626262"},
+		PostMergeCI: ExternalWorkflowRun{RunID: 727272, RunAttempt: 2, Workflow: app.CIWorkflowFile, Event: "push", HeadSHA: mergeSHA, Conclusion: "success", URL: "https://github.com/" + tapRepository.FullName + "/actions/runs/727272"},
 	}
 	health := HealthProof{
 		SchemaID: HealthProofSchemaID, SchemaVersion: ObservationSchemaVersion,

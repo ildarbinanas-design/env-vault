@@ -1,0 +1,72 @@
+{
+  "schema_id": "env-vault.release-contract-history.v2",
+  "schema_version": 2,
+  "contract": {
+    "path": "release/history/contract.v1.json",
+    "schema_id": "env-vault.release-contract.v1",
+    "schema_version": 1,
+    "file_sha256": "69be8d6ccf4480cbdbff3c722d8080d62b31051cef0101fadb47a30cdc0e2715",
+    "semantic_sha256": "6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5"
+  },
+  "entries": [
+    {
+      "repository": "ildarbinanas-design/env-vault",
+      "release_version": "v0.0.14",
+      "source_sha": "c42a92144a82c19edea41c76328ec7fd1e408ceb",
+      "contract_generation": "v1",
+      "evidence_format": "v1",
+      "evidence_commit_sha": "68547bd880a4d49f44389476b77046aac2ab1675",
+      "evidence_parent_commit_sha": "c42a92144a82c19edea41c76328ec7fd1e408ceb",
+      "evidence_root_path": "evidence/releases/v0.0.14/release-evidence.json",
+      "evidence_root_file_sha256": "b6d56fc3675c2c4fc441a390249ac868a4453af77f7a0b8b06df8b75f1604d79",
+      "evidence_root_semantic_sha256": "6a4d45205a5a662cfb21beee5726a67473a42dd273763c0662299343c3e85076",
+      "evidence_root_schema_id": "env-vault.release-evidence.v1",
+      "evidence_root_schema_version": 1,
+      "publisher_run_id": 29569706872,
+      "publisher_run_attempt": 1,
+      "evidence_run_id": 29569819553,
+      "evidence_run_attempt": 2
+    },
+    {
+      "repository": "ildarbinanas-design/env-vault",
+      "release_version": "v0.0.15",
+      "source_sha": "c7dd1fd6176ac2abbea22f226795a0787e774c1b",
+      "contract_generation": "v1",
+      "evidence_format": "v1",
+      "evidence_commit_sha": "af521d52b898088cb49f6256964e377e33e95a5d",
+      "evidence_parent_commit_sha": "68547bd880a4d49f44389476b77046aac2ab1675",
+      "evidence_root_path": "evidence/releases/v0.0.15/release-evidence.json",
+      "evidence_root_file_sha256": "679a20101ca92f786d7417b984755305728a36fcafcc9d68bbe1540c92ab7026",
+      "evidence_root_semantic_sha256": "2c339829ad1ea77c4f8e91dc8cfb896d43978e281ee76b2e82022fe0c65fc63e",
+      "evidence_root_schema_id": "env-vault.release-evidence.v1",
+      "evidence_root_schema_version": 1,
+      "publisher_run_id": 29576465336,
+      "publisher_run_attempt": 1,
+      "evidence_run_id": 29576963736,
+      "evidence_run_attempt": 1
+    },
+    {
+      "repository": "ildarbinanas-design/env-vault",
+      "release_version": "v0.0.16",
+      "source_sha": "ddfd38c3144ed3d0968d2c5e7e4b2acfef841478",
+      "contract_generation": "v1",
+      "evidence_format": "v2",
+      "evidence_commit_sha": "e697239298c4b5b1240fc53abe611131d45ac7c0",
+      "evidence_parent_commit_sha": "af521d52b898088cb49f6256964e377e33e95a5d",
+      "evidence_root_path": "evidence/releases/v0.0.16/release-evidence-bundle.json",
+      "evidence_root_file_sha256": "e6d1014c4c1a977367446827f8764d645fab3015f77e77a843fd4485a4ecd644",
+      "evidence_root_semantic_sha256": "1cc44109f18d9f6cba0da60e3368afaa186cd5a47d03dcf6b06b7f94f311d003",
+      "evidence_root_schema_id": "env-vault.release-evidence-bundle.v2",
+      "evidence_root_schema_version": 2,
+      "reconstructed_legacy_evidence_sha256": "f0e8ab2a0e706192f7ddcffb3d5124bda51d85737f43535763e094b00b96a29f",
+      "reconstructed_legacy_canonical_json_sha256": "344568ad80a41c6ef97612d604225ce044fe5a48859e0cfd8ab3e89e019d9d70",
+      "reconstructed_legacy_canonical_json_size": 1475935,
+      "publisher_run_id": 29622574820,
+      "publisher_run_attempt": 1,
+      "evidence_run_id": 29622650408,
+      "evidence_run_attempt": 1,
+      "compact_artifact_id": 8422728320,
+      "compact_artifact_digest": "sha256:8732f0365a4564c3d063b5a2ae1909c14996dca007a1321b0c66304190030eea"
+    }
+  ]
+}

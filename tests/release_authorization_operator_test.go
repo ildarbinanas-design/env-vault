@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,6 +171,7 @@ func TestReleaseAuthorizationOperatorFailsClosed(t *testing.T) {
 		{name: "untrusted viewer", mode: "untrusted-viewer", wantError: "not the repository owner"},
 		{name: "base contract differs", mode: "contract-base-mismatch", wantError: "local release contract differs"},
 		{name: "contract validator fails", mode: "contract-validator-fails", wantError: "contract validation failed"},
+		{name: "contract validator digest mismatch", mode: "contract-validator-digest-mismatch", wantError: "validation result is malformed"},
 		{name: "resumed proposal invalid", mode: "already-merged-invalid-proposal", wantError: "generated release proposal verification failed"},
 		{name: "required checks fail", mode: "checks-fail", wantError: "required checks are not all successful"},
 		{name: "required checks empty", mode: "empty-checks", wantError: "required checks are incomplete or malformed"},
@@ -224,6 +226,8 @@ func runReleaseAuthorizationOperator(t *testing.T, root, fakeBin, callLog, mode 
 	checker := filepath.Join(fakeBin, "releasecheck")
 	if mode == "contract-validator-fails" {
 		checker = filepath.Join(fakeBin, "releasecheck-fail")
+	} else if mode == "contract-validator-digest-mismatch" {
+		checker = filepath.Join(fakeBin, "releasecheck-digest-mismatch")
 	}
 	cmd := exec.Command("bash", "../scripts/release/authorize-and-merge-release-pr.sh",
 		releaseAuthorizationVersion, releaseAuthorizationPR, releaseAuthorizationHeadSHA)
@@ -234,7 +238,7 @@ func runReleaseAuthorizationOperator(t *testing.T, root, fakeBin, callLog, mode 
 		"GITHUB_REPOSITORY":       releaseAuthorizationRepository,
 		"PATH":                    fakeBin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"RELEASECHECK":            checker,
-		"FAKE_RELEASE_CONTRACT":   filepath.Join("..", "release", "contract.v1.json"),
+		"FAKE_RELEASE_CONTRACT":   filepath.Join("..", "release", "contract.v2.json"),
 		"TMPDIR":                  root,
 		"GH_TOKEN":                "fake-gh-token",
 		"GITHUB_TOKEN":            "fake-github-token",
@@ -261,6 +265,19 @@ func runReleaseAuthorizationOperator(t *testing.T, root, fakeBin, callLog, mode 
 
 func installReleaseAuthorizationFakeGitHub(t *testing.T, root string) (binDir, callLog string) {
 	t.Helper()
+	projectionData, err := os.ReadFile(os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection struct {
+		ContractSemanticSHA256 string `json:"contract_semantic_sha256"`
+	}
+	if err := json.Unmarshal(projectionData, &projection); err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.ContractSemanticSHA256) != 64 {
+		t.Fatal("shared typed projection has a malformed semantic digest")
+	}
 	binDir = filepath.Join(root, "bin")
 	callLog = filepath.Join(root, "gh-calls.log")
 	makeDirectory(t, binDir)
@@ -272,7 +289,7 @@ case ${1:-} in
 esac
 printf '%s\n' "$1" >> "${FAKE_RELEASE_AUTH_STATE:?}/sleep-calls.log"
 `)
-	writeExecutable(t, filepath.Join(binDir, "releasecheck"), `#!/bin/bash
+	checkerScript := `#!/bin/bash
 set -euo pipefail
 for name in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
   [[ -z ${!name+x} ]] || {
@@ -286,8 +303,11 @@ done
 }
 printf '%s\n' "$*" >> "${0%/*}/releasecheck-calls.log"
 : > "${0%/*}/releasecheck-ok"
-printf '%s\n' '{"schema_id":"env-vault.contract-validation.v1","schema_version":1,"ok":true,"release_contract_schema":"env-vault.release-contract.v1","semantic_contract_sha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","platform_count":5,"asset_count":10}'
-`)
+printf '%s\n' '{"schema_id":"env-vault.contract-validation.v1","schema_version":1,"ok":true,"release_contract_schema":"env-vault.release-contract.v2","semantic_contract_sha256":"__EXPECTED_SEMANTIC_SHA256__","platform_count":5,"asset_count":10}'
+`
+	checkerScript = strings.Replace(checkerScript, "__EXPECTED_SEMANTIC_SHA256__", projection.ContractSemanticSHA256, 1)
+	writeExecutable(t, filepath.Join(binDir, "releasecheck"), checkerScript)
+	writeExecutable(t, filepath.Join(binDir, "releasecheck-digest-mismatch"), strings.Replace(checkerScript, projection.ContractSemanticSHA256, strings.Repeat("e", 64), 1))
 	writeExecutable(t, filepath.Join(binDir, "releasecheck-fail"), `#!/bin/bash
 set -euo pipefail
 for name in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
@@ -598,7 +618,7 @@ if [[ "$args" == *" repos/$repository/contents/.release-please-manifest.json?ref
   exit 0
 fi
 
-if [[ "$args" == *" repos/$repository/contents/release/contract.v1.json?ref=$base "* ]]; then
+if [[ "$args" == *" repos/$repository/contents/release/contract.v2.json?ref=$base "* ]]; then
   if [[ "$mode" == contract-base-mismatch ]]; then
     printf '{}\n'
   else

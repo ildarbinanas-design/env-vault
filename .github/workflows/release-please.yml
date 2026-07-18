@@ -86,6 +86,17 @@ jobs:
           umask 077
           mkdir -p "$SNAPSHOT_DIR"
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          "$RELEASECHECK" --version --json > "$SNAPSHOT_DIR/releasecheck-version.json"
+          "$RELEASECHECK" contract operational --json > "$SNAPSHOT_DIR/release-contract-operational.json"
+          export RELEASE_CONTRACT_CHECKER="$RELEASECHECK"
+          export RELEASE_CONTRACT_VERSION_FILE="$SNAPSHOT_DIR/releasecheck-version.json"
+          export RELEASE_CONTRACT_PROJECTION_FILE="$SNAPSHOT_DIR/release-contract-operational.json"
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
+          [[ "$GITHUB_REPOSITORY" == "$RELEASE_SOURCE_REPOSITORY" ]] || {
+            echo "planning repository differs from the typed release contract" >&2
+            exit 1
+          }
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
           export RELEASE_TRANSPORT_BIN="$RUNNER_TEMP/releasetransport"
           "$RELEASECHECK" validate-contract --json > "$SNAPSHOT_DIR/contract-validation.json"
@@ -95,10 +106,10 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$CI_RUN_ID" \
             --run-attempt "$CI_RUN_ATTEMPT" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$RELEASE_CI_WORKFLOW_PATH" \
             --event push \
             --head-sha "$EXPECTED_SHA" \
-            --head-ref main \
+            --head-ref "$RELEASE_SOURCE_DEFAULT_BRANCH" \
             --conclusion "$CI_CONCLUSION"
 
           scripts/release/gh-api-read.sh \
@@ -112,6 +123,8 @@ jobs:
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sha "$EXPECTED_SHA" \
+            --arg branch "$RELEASE_SOURCE_DEFAULT_BRANCH" \
+            --arg workflow_path "$RELEASE_CI_WORKFLOW_PATH" \
             --argjson run_id "$CI_RUN_ID" \
             --argjson attempt "$CI_RUN_ATTEMPT" '
               .id == $run_id and
@@ -119,9 +132,9 @@ jobs:
               .repository.full_name == $repository and
               .head_repository.full_name == $repository and
               .head_sha == $sha and
-              .head_branch == "main" and
+              .head_branch == $branch and
               .event == "push" and
-              .path == ".github/workflows/ci.yml" and
+              .path == $workflow_path and
               .status == "completed" and
               (.conclusion | type == "string")
             ' "$SNAPSHOT_DIR/ci-run.json" >/dev/null
@@ -141,6 +154,9 @@ jobs:
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sha "$EXPECTED_SHA" \
+            --arg branch "$RELEASE_SOURCE_DEFAULT_BRANCH" \
+            --arg workflow_name "$RELEASE_CI_WORKFLOW_NAME" \
+            --arg workflow_path "$RELEASE_CI_WORKFLOW_PATH" \
             --argjson run_id "$CI_RUN_ID" \
             --argjson attempt "$CI_RUN_ATTEMPT" '
               .schema_id == "env-vault.attempt-classification.v1" and
@@ -151,10 +167,10 @@ jobs:
               .repository == $repository and
               .head_repository == $repository and
               .event == "push" and
-              .head_branch == "main" and
+              .head_branch == $branch and
               .workflow_id == "ci" and
-              .workflow_name == "ci" and
-              .workflow_path == ".github/workflows/ci.yml" and
+              .workflow_name == $workflow_name and
+              .workflow_path == $workflow_path and
               .run_status == "completed" and
               .rerun_failed_jobs_allowed == false and
               (.prohibited_actions | index("rerun_failed_jobs") != null) and
@@ -235,11 +251,22 @@ jobs:
           umask 077
           mkdir -p "$SNAPSHOT_DIR"
           go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          "$RELEASECHECK" --version --json > "$SNAPSHOT_DIR/releasecheck-version.json"
+          "$RELEASECHECK" contract operational --json > "$SNAPSHOT_DIR/release-contract-operational.json"
+          export RELEASE_CONTRACT_CHECKER="$RELEASECHECK"
+          export RELEASE_CONTRACT_VERSION_FILE="$SNAPSHOT_DIR/releasecheck-version.json"
+          export RELEASE_CONTRACT_PROJECTION_FILE="$SNAPSHOT_DIR/release-contract-operational.json"
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
+          [[ "$GITHUB_REPOSITORY" == "$RELEASE_SOURCE_REPOSITORY" ]] || {
+            echo "rerun repository differs from the typed release contract" >&2
+            exit 1
+          }
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
           export RELEASE_TRANSPORT_BIN="$RUNNER_TEMP/releasetransport"
           scripts/release/gh-api-read.sh \
             "$SNAPSHOT_DIR/main-ref.json" \
-            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/$RELEASE_SOURCE_DEFAULT_BRANCH"
           current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
             "$SNAPSHOT_DIR/main-ref.json")"
           if [[ "$current_sha" != "$EXPECTED_SHA" ]]; then
@@ -259,10 +286,10 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$CI_RUN_ID" \
             --run-attempt "$CI_RUN_ATTEMPT" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$RELEASE_CI_WORKFLOW_PATH" \
             --event push \
             --head-sha "$EXPECTED_SHA" \
-            --head-ref main \
+            --head-ref "$RELEASE_SOURCE_DEFAULT_BRANCH" \
             --conclusion "$CI_CONCLUSION"
 
           set +e
@@ -291,7 +318,7 @@ jobs:
             ' "$SNAPSHOT_DIR/attempt-classification.json" >/dev/null
           scripts/release/gh-api-read.sh \
             "$SNAPSHOT_DIR/main-ref-final.json" \
-            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/$RELEASE_SOURCE_DEFAULT_BRANCH"
           current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
             "$SNAPSHOT_DIR/main-ref-final.json")"
           [[ "$current_sha" == "$EXPECTED_SHA" ]] || {
@@ -335,6 +362,13 @@ jobs:
           fetch-tags: true
           persist-credentials: "false"
 
+      - name: Check out the exact reviewed listener control plane
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control-plane
+          persist-credentials: "false"
+
       - id: classify
         name: Classify the exact green main commit
         env:
@@ -371,71 +405,150 @@ jobs:
         run: |
           set -euo pipefail
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
+          go build -trimpath -o "$RUNNER_TEMP/releasecheck" ./cmd/releasecheck
           echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
 
-      - id: current
-        name: Require the planning commit to remain current
-        env:
-          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          scripts/release/gh-api-read.sh \
-            "$RUNNER_TEMP/main-ref.json" \
-            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
-          current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
-            "$RUNNER_TEMP/main-ref.json")"
-          if [[ "$current_sha" == "$EXPECTED_SHA" ]]; then
-            echo 'current=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'current=false' >> "$GITHUB_OUTPUT"
-            echo "skipping stale planning run for ${EXPECTED_SHA}; current main is ${current_sha}"
-          fi
+      - name: Set up Go for the reviewed listener control plane
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: release-control-plane/go.mod
 
       - id: release-contract
-        name: Build the offline checker and validate the release contract
-        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
+        name: Route and validate the exact source release contract
         env:
           RELEASECHECK: ${{ runner.temp }}/releasecheck
+          CONTROL_RELEASECHECK: ${{ runner.temp }}/releasecheck-control
+          SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
+          VERSION: ${{ steps.classify.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          (cd release-control-plane && go build -trimpath -o "$CONTROL_RELEASECHECK" ./cmd/releasecheck)
+          "$RELEASECHECK" --version --json > "${RUNNER_TEMP}/source-releasecheck-capabilities.json"
           "$RELEASECHECK" validate-contract --json > "${RUNNER_TEMP}/release-contract-validation.json"
+          source_schema="$(jq -er '.release_contract_schema' "${RUNNER_TEMP}/source-releasecheck-capabilities.json")"
+          case "$source_schema" in
+            env-vault.release-contract.v1) source_contract=release/contract.v1.json; source_generation=v1 ;;
+            env-vault.release-contract.v2) source_contract=release/contract.v2.json; source_generation=v2 ;;
+            *) echo "unsupported source release contract schema: $source_schema" >&2; exit 1 ;;
+          esac
+          route_args=(
+            contract route-source
+            --source-contract "$source_contract"
+            --registry release-control-plane/release/contract-history.v2.json
+            --repository "$GITHUB_REPOSITORY"
+            --source-sha "$SOURCE_SHA"
+            --json
+          )
+          if [[ -n "$VERSION" ]]; then
+            route_args+=(--version "$VERSION")
+          fi
+          "$CONTROL_RELEASECHECK" "${route_args[@]}" > "${RUNNER_TEMP}/source-contract-route.json"
+          jq -e --arg generation "$source_generation" \
+            --slurpfile capabilities "${RUNNER_TEMP}/source-releasecheck-capabilities.json" '
+            .schema_id == "env-vault.release-contract-source-route.v2" and
+            .schema_version == 2 and .ok == true and
+            .contract_schema_id == $capabilities[0].release_contract_schema and
+            .contract_semantic_sha256 == $capabilities[0].semantic_contract_sha256 and
+            (.contract_file_sha256 | test("^[0-9a-f]{64}$")) and
+            .contract_generation == $generation and
+            (.evidence_format == "v1" or .evidence_format == "v2") and
+            (
+              (.contract_generation == "v1" and .historical != null and .operational == null) or
+              (.contract_generation == "v2" and .historical == null and
+                .contract_file_sha256 == $capabilities[0].contract_file_sha256 and
+                .operational.schema_id == "env-vault.release-contract-operational.v2" and
+                .operational.contract_semantic_sha256 == .contract_semantic_sha256 and
+                .operational.contract_file_sha256 == .contract_file_sha256)
+            )
+          ' "${RUNNER_TEMP}/source-contract-route.json" >/dev/null
+          if [[ "$source_generation" == v2 ]]; then
+            "$RELEASECHECK" contract operational --contract "$source_contract" --json \
+              > "${RUNNER_TEMP}/source-contract-operational.json"
+            jq -e --slurpfile generated "${RUNNER_TEMP}/source-contract-operational.json" \
+              '.operational == $generated[0]' \
+              "${RUNNER_TEMP}/source-contract-route.json" >/dev/null
+            release_please_target_branch="$(jq -er '.operational.version.release_please.target_branch' "${RUNNER_TEMP}/source-contract-route.json")"
+            release_please_config_path="$(jq -er '.operational.version.release_please.config_path' "${RUNNER_TEMP}/source-contract-route.json")"
+            release_please_manifest_path="$(jq -er '.operational.version.release_please.manifest_path' "${RUNNER_TEMP}/source-contract-route.json")"
+            {
+              printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RELEASECHECK"
+              printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "${RUNNER_TEMP}/source-releasecheck-capabilities.json"
+              printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "${RUNNER_TEMP}/source-contract-operational.json"
+            } >> "$GITHUB_ENV"
+          else
+            # Closed v1 compatibility is release-only; these immutable files
+            # predate the v2 operational projection.
+            release_please_target_branch=main
+            release_please_config_path=release-please-config.json
+            release_please_manifest_path=.release-please-manifest.json
+          fi
 
           "$RELEASECHECK" recovery validate-config \
-            --contract release/contract.v1.json \
-            --config release-please-config.json \
-            --manifest .release-please-manifest.json \
+            --contract "$source_contract" \
+            --config "$release_please_config_path" \
+            --manifest "$release_please_manifest_path" \
             --json > "${RUNNER_TEMP}/release-please-recovery-check.json"
 
-          release_app_slug="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
-            [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
-            select(length == 1) | .[0].slug |
+          release_app_slug="$(jq -er '.release_app_slug |
             select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
-          ' release/contract.v1.json)"
-          release_repository_name="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
-            [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
-            select(length == 1) | .[0].repository |
+          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          release_repository_name="$(jq -er '.repository.full_name |
             split("/") | select(length == 2) | .[1] |
             select(type == "string" and test("^[A-Za-z0-9._-]+$"))
-          ' release/contract.v1.json)"
-          platform_artifact_template="$(jq -er '
-            .naming.platform_artifact_template |
+          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          platform_artifact_template="$(jq -er '.naming.platform_artifact_template |
             select(type == "string" and test("^[a-z0-9{}._-]+$"))
-          ' release/contract.v1.json)"
-          promotion_manifest_template="$(jq -er '
-            .naming.promotion_manifest_template |
+          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          promotion_manifest_template="$(jq -er '.naming.promotion_manifest_template |
             select(type == "string" and test("^[a-z0-9{}._-]+$"))
-          ' release/contract.v1.json)"
+          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          source_default_branch="$(jq -er '.repository.default_branch |
+            select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$"))
+          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          ci_workflow_file="$(jq -er '[.workflows[] | select(.id == "ci")] |
+            select(length == 1) | .[0].file |
+            select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_.-]*\\.yml$"))
+          ' "$source_contract")"
+          ci_workflow_name="$(jq -er '[.workflows[] | select(.id == "ci")] |
+            select(length == 1) | .[0].name |
+            select(type == "string" and length > 0 and length <= 128)
+          ' "$source_contract")"
 
           {
             printf 'release_app_slug=%s\n' "$release_app_slug"
             printf 'release_repository_name=%s\n' "$release_repository_name"
             printf 'platform_artifact_template=%s\n' "$platform_artifact_template"
             printf 'promotion_manifest_template=%s\n' "$promotion_manifest_template"
+            printf 'release_please_target_branch=%s\n' "$release_please_target_branch"
+            printf 'release_please_config_path=%s\n' "$release_please_config_path"
+            printf 'release_please_manifest_path=%s\n' "$release_please_manifest_path"
+            printf 'source_default_branch=%s\n' "$source_default_branch"
+            printf 'ci_workflow_file=%s\n' "$ci_workflow_file"
+            printf 'ci_workflow_name=%s\n' "$ci_workflow_name"
+            printf 'ci_workflow_path=.github/workflows/%s\n' "$ci_workflow_file"
           } >> "$GITHUB_OUTPUT"
+
+      - id: current
+        name: Require the planning commit to remain current
+        env:
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_DEFAULT_BRANCH: ${{ steps.release-contract.outputs.source_default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/release/gh-api-read.sh \
+            "$RUNNER_TEMP/main-ref.json" \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/${SOURCE_DEFAULT_BRANCH}"
+          current_sha="$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            "$RUNNER_TEMP/main-ref.json")"
+          if [[ "$current_sha" == "$EXPECTED_SHA" ]]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'current=false' >> "$GITHUB_OUTPUT"
+            echo "skipping stale planning run for ${EXPECTED_SHA}; current ${SOURCE_DEFAULT_BRANCH} is ${current_sha}"
+          fi
 
       - id: attempt
         name: Snapshot and classify the exact triggering CI attempt
@@ -445,10 +558,13 @@ jobs:
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           EXPECTED_SHA: ${{ steps.classify.outputs.source_sha }}
           GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW_NAME: ${{ steps.release-contract.outputs.ci_workflow_name }}
+          CI_WORKFLOW_PATH: ${{ steps.release-contract.outputs.ci_workflow_path }}
           PLATFORM_ARTIFACT_TEMPLATE: ${{ steps.release-contract.outputs.platform_artifact_template }}
           PROMOTION_MANIFEST_TEMPLATE: ${{ steps.release-contract.outputs.promotion_manifest_template }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
           SNAPSHOT_DIR: ${{ runner.temp }}/pretag
+          SOURCE_DEFAULT_BRANCH: ${{ steps.release-contract.outputs.source_default_branch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -468,14 +584,16 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$CI_RUN_ID" \
             --run-attempt "$CI_RUN_ATTEMPT" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$CI_WORKFLOW_PATH" \
             --event push \
             --head-sha "$EXPECTED_SHA" \
-            --head-ref main
+            --head-ref "$SOURCE_DEFAULT_BRANCH"
 
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sha "$EXPECTED_SHA" \
+            --arg branch "$SOURCE_DEFAULT_BRANCH" \
+            --arg workflow_path "$CI_WORKFLOW_PATH" \
             --argjson run_id "$CI_RUN_ID" \
             --argjson attempt "$CI_RUN_ATTEMPT" '
               .id == $run_id and
@@ -483,11 +601,11 @@ jobs:
               .repository.full_name == $repository and
               .head_repository.full_name == $repository and
               .head_sha == $sha and
-              .head_branch == "main" and
+              .head_branch == $branch and
               .event == "push" and
               .status == "completed" and
               .conclusion == "success" and
-              .path == ".github/workflows/ci.yml"
+              .path == $workflow_path
             ' "$SNAPSHOT_DIR/ci-run.json" >/dev/null
 
           "$RELEASECHECK" classify-attempt \
@@ -498,6 +616,9 @@ jobs:
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sha "$EXPECTED_SHA" \
+            --arg branch "$SOURCE_DEFAULT_BRANCH" \
+            --arg workflow_name "$CI_WORKFLOW_NAME" \
+            --arg workflow_path "$CI_WORKFLOW_PATH" \
             --argjson run_id "$CI_RUN_ID" \
             --argjson attempt "$CI_RUN_ATTEMPT" '
               .schema_id == "env-vault.attempt-classification.v1" and
@@ -509,10 +630,10 @@ jobs:
               .repository == $repository and
               .head_repository == $repository and
               .event == "push" and
-              .head_branch == "main" and
+              .head_branch == $branch and
               .workflow_id == "ci" and
-              .workflow_name == "ci" and
-              .workflow_path == ".github/workflows/ci.yml" and
+              .workflow_name == $workflow_name and
+              .workflow_path == $workflow_path and
               .run_status == "completed" and
               .run_conclusion == "success" and
               .matrix_complete == true and
@@ -708,9 +829,9 @@ jobs:
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.release-token.outputs.token }}
-          target-branch: main
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          target-branch: ${{ steps.release-contract.outputs.release_please_target_branch }}
+          config-file: ${{ steps.release-contract.outputs.release_please_config_path }}
+          manifest-file: ${{ steps.release-contract.outputs.release_please_manifest_path }}
           skip-github-release: true
 
       - name: Verify the proposal is based on a green main commit
@@ -728,10 +849,13 @@ jobs:
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           EXPECTED_SHA: ${{ steps.classify.outputs.source_sha }}
           GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW_NAME: ${{ steps.release-contract.outputs.ci_workflow_name }}
+          CI_WORKFLOW_PATH: ${{ steps.release-contract.outputs.ci_workflow_path }}
           PROMOTION_NAME: ${{ steps.attempt.outputs.promotion_name }}
           PROMOTION_ARTIFACT_ID: ${{ steps.attempt.outputs.promotion_artifact_id }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
           SNAPSHOT_DIR: ${{ runner.temp }}/pretag
+          SOURCE_DEFAULT_BRANCH: ${{ steps.release-contract.outputs.source_default_branch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -748,10 +872,10 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$CI_RUN_ID" \
             --run-attempt "$CI_RUN_ATTEMPT" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$CI_WORKFLOW_PATH" \
             --event push \
             --head-sha "$EXPECTED_SHA" \
-            --head-ref main
+            --head-ref "$SOURCE_DEFAULT_BRANCH"
 
           "$RELEASECHECK" classify-attempt \
             --run "$SNAPSHOT_DIR/ci-run-final.json" \
@@ -760,6 +884,9 @@ jobs:
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg sha "$EXPECTED_SHA" \
+            --arg branch "$SOURCE_DEFAULT_BRANCH" \
+            --arg workflow_name "$CI_WORKFLOW_NAME" \
+            --arg workflow_path "$CI_WORKFLOW_PATH" \
             --argjson run_id "$CI_RUN_ID" \
             --argjson attempt "$CI_RUN_ATTEMPT" '
               .ok == true and
@@ -767,9 +894,9 @@ jobs:
               .repository == $repository and
               .head_repository == $repository and
               .event == "push" and
-              .head_branch == "main" and
-              .workflow_name == "ci" and
-              .workflow_path == ".github/workflows/ci.yml" and
+              .head_branch == $branch and
+              .workflow_name == $workflow_name and
+              .workflow_path == $workflow_path and
               .run_id == $run_id and
               .attempt == $attempt and
               .matrix_complete == true and

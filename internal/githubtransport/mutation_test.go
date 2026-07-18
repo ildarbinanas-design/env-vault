@@ -77,6 +77,23 @@ func TestMutateOnceReturnsStrictOneShotOutcomesWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestMutateOnceTimeoutRemainsOneShotAndAmbiguous(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(input, []byte("{\"ref\":\"refs/heads/release-evidence\",\"sha\":\"1111111111111111111111111111111111111111\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &mutationDeadlineRunner{}
+	client := &Client{Runner: runner, Now: time.Now, Sleep: sleepContext, requestTimeout: 50 * time.Millisecond, operationTimeout: 500 * time.Millisecond}
+	started := time.Now()
+	document, transportErr := client.MutateOnce(context.Background(), MutationRequest{
+		Method: "POST", Endpoint: "repos/example/env-vault/git/refs", InputPath: input, ExpectedStatus: 201,
+	})
+	if transportErr != nil || document.OK || document.Outcome != "ambiguous" || document.ErrorCode != "TRANSPORT_FAILED" ||
+		runner.mutationCalls != 1 || time.Since(started) > time.Second {
+		t.Fatalf("document=%+v error=%+v calls=%d elapsed=%s", document, transportErr, runner.mutationCalls, time.Since(started))
+	}
+}
+
 func TestMutateOnceRejectsUnreviewedShapeAndInputBeforeTransport(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "request.json")
@@ -306,6 +323,24 @@ type snapshotMutationRunner struct {
 }
 
 type missingInputCapabilityRunner struct{ mutationCalls int }
+
+type mutationDeadlineRunner struct{ mutationCalls int }
+
+func (runner *mutationDeadlineRunner) Run(_ context.Context, args []string, _ []string) CommandResult {
+	if len(args) == 1 && args[0] == "--version" {
+		return CommandResult{Stdout: []byte("gh version 2.96.0 (2026-07-02)\n")}
+	}
+	if len(args) == 2 && args[0] == "api" && args[1] == "--help" {
+		return CommandResult{Stdout: []byte("--include --hostname --method --header --raw-field --input\n")}
+	}
+	return CommandResult{Err: errors.New("unexpected non-input call")}
+}
+
+func (runner *mutationDeadlineRunner) RunInput(ctx context.Context, _ []string, _ []string, _ []byte) CommandResult {
+	runner.mutationCalls++
+	<-ctx.Done()
+	return CommandResult{Err: ctx.Err()}
+}
 
 func (r *missingInputCapabilityRunner) Run(_ context.Context, args []string, _ []string) CommandResult {
 	if len(args) == 1 && args[0] == "--version" {

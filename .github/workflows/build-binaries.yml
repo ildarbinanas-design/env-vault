@@ -52,6 +52,7 @@ jobs:
       tap_repository_owner: ${{ steps.resolve.outputs.tap_repository_owner }}
       tap_repository_name: ${{ steps.resolve.outputs.tap_repository_name }}
       tap_ci_workflow: ${{ steps.resolve.outputs.tap_ci_workflow }}
+      release_contract_artifact_id: ${{ steps.release-contract-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -70,7 +71,29 @@ jobs:
           echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
 
       - name: Validate the canonical release contract
-        run: go run ./cmd/releasecheck validate-contract --json
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$RUNNER_TEMP/releasecheck" ./cmd/releasecheck
+          "$RUNNER_TEMP/releasecheck" validate-contract --json
+          "$RUNNER_TEMP/releasecheck" --version --json > "$RUNNER_TEMP/releasecheck-version.json"
+          "$RUNNER_TEMP/releasecheck" contract operational --json > "$RUNNER_TEMP/release-contract-operational.json"
+          {
+            printf 'RELEASECHECK=%s\n' "$RUNNER_TEMP/releasecheck"
+            printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RUNNER_TEMP/releasecheck"
+            printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "$RUNNER_TEMP/releasecheck-version.json"
+            printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "$RUNNER_TEMP/release-contract-operational.json"
+          } >> "$GITHUB_ENV"
+
+      - id: release-contract-artifact
+        name: Upload typed operational release projection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: env-vault-release-contract-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/releasecheck-version.json
+            ${{ runner.temp }}/release-contract-operational.json
+          if-no-files-found: error
+          retention-days: 7
 
       - id: resolve
         name: Resolve exact tag, source, CI attempt, and repair stage
@@ -86,15 +109,20 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/release/lib.sh
+          [[ "$GITHUB_REPOSITORY" == "$RELEASE_SOURCE_REPOSITORY" ]] || {
+            echo "publisher repository differs from the typed release contract" >&2
+            exit 1
+          }
+          [[ "$DEFAULT_BRANCH" == "$RELEASE_SOURCE_DEFAULT_BRANCH" ]] || {
+            echo "publisher event default branch differs from the typed release contract" >&2
+            exit 1
+          }
+          DEFAULT_BRANCH="$RELEASE_SOURCE_DEFAULT_BRANCH"
 
-          release_app_slug="$(jq -er '
-            [.apps[] | select(.id == "release_planning")] |
-            select(length == 1) | .[0].slug |
-            select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
-          ' release/contract.v1.json)"
+          release_app_slug="$RELEASE_PLANNING_APP_SLUG"
           export RELEASE_APP_SLUG="$release_app_slug"
-          tap_app="$(jq -cer '[.apps[] | select(.id == "homebrew_tap")] | select(length == 1) | .[0]' release/contract.v1.json)"
-          tap_repository="$(jq -er '.repository | select(type == "string")' <<< "$tap_app")"
+          tap_app="$RELEASE_HOMEBREW_APP"
+          tap_repository="$RELEASE_HOMEBREW_TAP_REPOSITORY"
           tap_ci_workflow="$(jq -er '.ci_workflow_file | select(type == "string" and test("^[A-Za-z0-9._-]+\\.ya?ml$"))' <<< "$tap_app")"
           release_require_repository "$tap_repository"
           tap_repository_owner="${tap_repository%%/*}"
@@ -129,11 +157,11 @@ jobs:
 
           if jq -e --arg version "$version" '
             any(.version_policy.blocked_versions[]; .version == $version)
-          ' release/contract.v1.json >/dev/null; then
+          ' release/contract.v2.json >/dev/null; then
             echo "${version} is an intentionally failed immutable tag and must never have a GitHub Release" >&2
             exit 1
           fi
-          if [[ "$(scripts/release/semver-compare.sh "${version#v}" "0.0.8")" != "1" ]]; then
+          if [[ "$(scripts/release/semver-compare.sh "${version#"$RELEASE_TAG_PREFIX"}" "0.0.8")" != "1" ]]; then
             echo "${version} is outside the steady-state publisher; legacy rebuilds are diagnostic-only" >&2
             exit 1
           fi
@@ -180,7 +208,7 @@ jobs:
 
           scripts/release/gh-api-read.sh ci-runs.json \
             --paginate --slurp --method GET \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/${RELEASE_CI_WORKFLOW_FILE}/runs" \
             -f "head_sha=$source_sha" \
             -f "branch=$DEFAULT_BRANCH" \
             -f 'event=push' \
@@ -189,7 +217,8 @@ jobs:
           matches="$(jq -c \
             --arg source "$source_sha" \
             --arg branch "$DEFAULT_BRANCH" \
-            --arg repository "$GITHUB_REPOSITORY" '
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_path "$RELEASE_CI_WORKFLOW_PATH" '
               [.[]?.workflow_runs[]? | select(
                 .head_sha == $source and
                 .head_branch == $branch and
@@ -197,11 +226,11 @@ jobs:
                 .event == "push" and
                 .status == "completed" and
                 .conclusion == "success" and
-                .path == ".github/workflows/ci.yml"
+                .path == $workflow_path
               )]
             ' ci-runs.json)"
           [[ "$(jq 'length' <<< "$matches")" == "1" ]] || {
-            echo "expected exactly one successful ci.yml push run for ${source_sha}" >&2
+            echo "expected exactly one successful ${RELEASE_CI_WORKFLOW_FILE} push run for ${source_sha}" >&2
             exit 1
           }
           ci_run_id="$(jq -er '.[0].id | select(type == "number" and . > 0 and floor == .)' <<< "$matches")"
@@ -211,36 +240,38 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$ci_run_id" \
             --run-attempt "$ci_run_attempt" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$RELEASE_CI_WORKFLOW_PATH" \
             --event push \
             --head-sha "$source_sha" \
             --head-ref "$DEFAULT_BRANCH"
 
           scripts/release/gh-api-read.sh planning-runs.json \
             --paginate --slurp --method GET \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/release-please.yml/runs" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/${RELEASE_PLANNING_WORKFLOW_FILE}/runs" \
             -f "head_sha=$source_sha" \
             -f 'event=workflow_run' \
             -f 'status=completed' \
             -F per_page=100
           planning_matches="$(jq -c \
             --arg source "$source_sha" \
-            --arg repository "$GITHUB_REPOSITORY" '
+            --arg branch "$DEFAULT_BRANCH" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow_path "$RELEASE_PLANNING_WORKFLOW_PATH" '
               [.[]?.workflow_runs[]? | select(
                 .head_sha == $source and
-                .head_branch == "main" and
+                .head_branch == $branch and
                 .repository.full_name == $repository and
                 .head_repository.full_name == $repository and
                 .event == "workflow_run" and
                 .status == "completed" and
                 .conclusion == "success" and
-                .path == ".github/workflows/release-please.yml" and
+                .path == $workflow_path and
                 (.id | type == "number" and . > 0 and floor == .) and
                 (.run_attempt | type == "number" and . > 0 and floor == .)
               )]
             ' planning-runs.json)"
           [[ "$(jq 'length' <<< "$planning_matches")" == "1" ]] || {
-            echo "expected exactly one successful release-please.yml run for ${source_sha}" >&2
+            echo "expected exactly one successful ${RELEASE_PLANNING_WORKFLOW_FILE} run for ${source_sha}" >&2
             exit 1
           }
           planning_run_id="$(jq -er '.[0].id' <<< "$planning_matches")"
@@ -250,11 +281,11 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$planning_run_id" \
             --run-attempt "$planning_run_attempt" \
-            --workflow-path .github/workflows/release-please.yml \
+            --workflow-path "$RELEASE_PLANNING_WORKFLOW_PATH" \
             --event workflow_run \
             --head-sha "$source_sha" \
-            --head-ref main
-          settings_proof_artifact_name="env-vault-release-settings-${source_sha}-attempt-${planning_run_attempt}"
+            --head-ref "$DEFAULT_BRANCH"
+          settings_proof_artifact_name="${RELEASE_PRODUCT}-release-settings-${source_sha}-attempt-${planning_run_attempt}"
 
           scripts/release/gh-api-read.sh planning-artifacts.json \
             --paginate --slurp \
@@ -326,9 +357,10 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
           git clone --depth 1 "https://github.com/${TAP_REPOSITORY}.git" tap-preflight
-          target_version="${VERSION#v}"
-          mapfile -t versions < <(sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p' tap-preflight/Formula/env-vault.rb)
+          target_version="${VERSION#"$RELEASE_TAG_PREFIX"}"
+          mapfile -t versions < <(sed -nE 's/^[[:space:]]*version "([^"]+)"$/\1/p' "tap-preflight/$RELEASE_HOMEBREW_FORMULA_PATH")
           [[ "${#versions[@]}" == "1" ]] || {
             echo "Homebrew formula must contain exactly one version" >&2
             exit 1
@@ -365,6 +397,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Download typed operational release projection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.metadata.outputs.release_contract_artifact_id }}
+          path: ${{ runner.temp }}/release-contract-control
+
+      - name: Activate typed operational release projection
+        run: scripts/release/activate-typed-contract.sh "$RUNNER_TEMP/release-contract-control" "$GITHUB_ENV"
+
       - name: Build the strict GitHub release transport once
         run: |
           set -euo pipefail
@@ -379,6 +420,8 @@ jobs:
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
           scripts/release/gh-api-read.sh ci-run.json \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${CI_RUN_ID}"
           scripts/release/gh-api-read.sh ci-artifacts.json \
@@ -389,10 +432,10 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$CI_RUN_ID" \
             --run-attempt "$CI_RUN_ATTEMPT" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$RELEASE_CI_WORKFLOW_PATH" \
             --event push \
             --head-sha "$SOURCE_SHA" \
-            --head-ref main
+            --head-ref "$RELEASE_SOURCE_DEFAULT_BRANCH"
           set +e
           go run ./cmd/releasecheck classify-attempt \
             --run ci-run.json \
@@ -519,6 +562,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Download typed operational release projection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.metadata.outputs.release_contract_artifact_id }}
+          path: ${{ runner.temp }}/release-contract-control
+
+      - name: Activate typed operational release projection
+        run: scripts/release/activate-typed-contract.sh "$RUNNER_TEMP/release-contract-control" "$GITHUB_ENV"
+
       - name: Build the strict GitHub release transport once
         run: |
           set -euo pipefail
@@ -627,6 +679,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Download typed operational release projection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.metadata.outputs.release_contract_artifact_id }}
+          path: ${{ runner.temp }}/release-contract-control
+
+      - name: Activate typed operational release projection
+        run: scripts/release/activate-typed-contract.sh "$RUNNER_TEMP/release-contract-control" "$GITHUB_ENV"
+
       - name: Build the strict GitHub release transport once
         run: |
           set -euo pipefail
@@ -647,10 +708,12 @@ jobs:
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
           state="$(scripts/release/artifact-attestation-state.sh \
             release-dist \
             "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
+            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" \
             "$SOURCE_SHA")"
           IFS='|' read -r provenance_state sbom_state extra <<< "$state"
           for value in "$provenance_state" "$sbom_state"; do
@@ -723,13 +786,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
-        run: >-
-          scripts/release/verify-artifact-attestations.sh
-          release-dist
-          "$GITHUB_REPOSITORY"
-          "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml"
-          "$SOURCE_SHA"
-          all
+        run: |
+          set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
+          scripts/release/verify-artifact-attestations.sh \
+            release-dist "$GITHUB_REPOSITORY" \
+            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" \
+            "$SOURCE_SHA" all
 
   homebrew:
     if: >-
@@ -780,6 +844,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Download typed operational release projection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.metadata.outputs.release_contract_artifact_id }}
+          path: ${{ runner.temp }}/release-contract-control
+
+      - name: Activate typed operational release projection
+        run: scripts/release/activate-typed-contract.sh "$RUNNER_TEMP/release-contract-control" "$GITHUB_ENV"
+
       - name: Build the strict GitHub release transport once
         run: |
           set -euo pipefail
@@ -798,10 +871,12 @@ jobs:
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
           state="$(scripts/release/artifact-attestation-state.sh \
             release-dist \
             "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/.github/workflows/build-binaries.yml" \
+            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" \
             "$SOURCE_SHA")"
           [[ "$state" == "complete|complete" ]] || {
             echo "Homebrew mutation requires complete exact-source provenance and SBOM attestations; observed ${state}" >&2
@@ -812,8 +887,10 @@ jobs:
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
+          set -euo pipefail
+          source scripts/release/lib.sh
           mkdir tap-out
-          scripts/release/generate-homebrew-formula.sh "$VERSION" release-dist tap-out/env-vault.rb
+          scripts/release/generate-homebrew-formula.sh "$VERSION" release-dist tap-out/formula.rb
 
       - id: tap-token
         name: Mint scoped Homebrew App token
@@ -833,9 +910,11 @@ jobs:
           GH_TOKEN: ${{ steps.tap-token.outputs.token }}
         run: |
           set -euo pipefail
-          app="$(jq -cer '[.apps[] | select(.id == "homebrew_tap")] | select(length == 1) | .[0]' release/contract.v1.json)"
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
+          app=$RELEASE_HOMEBREW_APP
           expected_slug="$(jq -er '.slug | select(type == "string" and length > 0)' <<< "$app")"
-          expected_repository="$(jq -er '.repository | select(type == "string" and length > 0)' <<< "$app")"
+          expected_repository=$RELEASE_HOMEBREW_TAP_REPOSITORY
           [[ "$ACTUAL_APP_SLUG" == "$expected_slug" ]] || { echo "unexpected Homebrew App identity" >&2; exit 1; }
           scripts/release/gh-api-read.sh installation-repositories.json \
             --paginate --slurp installation/repositories
@@ -852,12 +931,10 @@ jobs:
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
-        run: >-
-          scripts/release/publish-homebrew-pr.sh
-          "$VERSION"
-          tap-out/env-vault.rb
-          "$TAP_REPOSITORY"
-          >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          scripts/release/publish-homebrew-pr.sh \
+            "$VERSION" tap-out/formula.rb "$TAP_REPOSITORY" >> "$GITHUB_OUTPUT"
 
       - id: tap-pr-ci
         name: Require exact Homebrew pull-request head CI
@@ -868,6 +945,7 @@ jobs:
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
           run_url="$(scripts/release/wait-tap-ci.sh \
             "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$HEAD_SHA" pull_request 900 10)"
           printf 'run_url=%s\n' "$run_url" >> "$GITHUB_OUTPUT"
@@ -999,6 +1077,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Download typed operational release projection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.metadata.outputs.release_contract_artifact_id }}
+          path: ${{ runner.temp }}/release-contract-control
+
+      - name: Activate typed operational release projection
+        run: scripts/release/activate-typed-contract.sh "$RUNNER_TEMP/release-contract-control" "$GITHUB_ENV"
+
       - name: Build the strict GitHub release transport once
         run: |
           set -euo pipefail
@@ -1062,6 +1149,8 @@ jobs:
           RELEASECHECK: ${{ runner.temp }}/releasecheck
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
           tag_sha="$(scripts/release/resolve-tag-sha.sh "$VERSION")"
           [[ "$tag_sha" == "$SOURCE_SHA" ]] || { echo "release tag source mismatch" >&2; exit 1; }
           scripts/release/gh-api-read.sh tag-ref.json \
@@ -1081,9 +1170,9 @@ jobs:
           scripts/release/download-release-assets.sh "$VERSION" health-dist
 
           mkdir health-expected
-          scripts/release/generate-homebrew-formula.sh "$VERSION" health-dist health-expected/env-vault.rb
+          scripts/release/generate-homebrew-formula.sh "$VERSION" health-dist health-expected/formula.rb
           SOURCE_SHA="$SOURCE_SHA" scripts/release/publish-homebrew-pr.sh \
-            --verify-published-pr "$VERSION" health-expected/env-vault.rb "$TAP_REPOSITORY" health-tap \
+            --verify-published-pr "$VERSION" health-expected/formula.rb "$TAP_REPOSITORY" health-tap \
             > homebrew-exact-state.env
           homebrew_state="$(jq -Rn -L scripts/release '
             include "homebrew-state";
@@ -1100,7 +1189,7 @@ jobs:
           merge_sha="$(jq -er '.merge_sha | select(test("^[0-9a-f]{40}$"))' <<< "$homebrew_state")"
           tap_sha="$(jq -er '.tap_sha | select(test("^[0-9a-f]{40}$"))' <<< "$homebrew_state")"
           merge_is_ancestor_of_tap="$(jq -er '.merge_is_ancestor_of_tap | select(. == "true")' <<< "$homebrew_state")"
-          [[ "$branch" == "release/env-vault-${VERSION}" && "$base_branch" == "main" &&
+          [[ "$branch" == "release/${RELEASE_PRODUCT}-${VERSION}" && "$base_branch" == "$RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH" &&
              "$base_sha" == "$tap_sha" && "$observed_source" == "$SOURCE_SHA" &&
              "$merge_is_ancestor_of_tap" == "true" &&
              "$(jq -r '.state' <<< "$homebrew_state")" == "MERGED" &&
@@ -1136,8 +1225,8 @@ jobs:
           tap_ci_url="$(scripts/release/wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push 900 10)"
           if [[ -n "$PUBLISHED_PR_CI_URL" && "$PUBLISHED_PR_CI_URL" != "$pr_ci_url" ]]; then echo "tap PR CI output mismatch" >&2; exit 1; fi
           if [[ -n "$PUBLISHED_TAP_CI_URL" && "$PUBLISHED_TAP_CI_URL" != "$tap_ci_url" ]]; then echo "tap push CI output mismatch" >&2; exit 1; fi
-          scripts/release/verify-homebrew-formula.sh "$VERSION" health-dist health-tap/Formula/env-vault.rb
-          formula_sha="$(shasum -a 256 health-tap/Formula/env-vault.rb | awk '{print $1}')"
+          scripts/release/verify-homebrew-formula.sh "$VERSION" health-dist "health-tap/$RELEASE_HOMEBREW_FORMULA_PATH"
+          formula_sha="$(shasum -a 256 "health-tap/$RELEASE_HOMEBREW_FORMULA_PATH" | awk '{print $1}')"
 
           pr_ci_run_id="${pr_ci_url##*/}"
           tap_ci_run_id="${tap_ci_url##*/}"
@@ -1178,7 +1267,7 @@ jobs:
             --workflow-path ".github/workflows/${TAP_CI_WORKFLOW}" \
             --event push \
             --head-sha "$merge_sha" \
-            --head-ref main
+            --head-ref "$RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH"
 
           blocked_versions='[]'
           while IFS= read -r blocked; do
@@ -1206,8 +1295,8 @@ jobs:
               --arg sha "$blocked_sha" \
               '. + [{version:$version,tag_sha:$sha,tag_exists:true,release_exists:false}]' \
               <<< "$blocked_versions")"
-          done < <(jq -c '.version_policy.blocked_versions[]' release/contract.v1.json)
-          [[ "$(jq 'length' <<< "$blocked_versions")" == "$(jq '.version_policy.blocked_versions | length' release/contract.v1.json)" ]] || {
+          done < <(jq -c '.version_policy.blocked_versions[]' release/contract.v2.json)
+          [[ "$(jq 'length' <<< "$blocked_versions")" == "$(jq '.version_policy.blocked_versions | length' release/contract.v2.json)" ]] || {
             echo "blocked-version observation is incomplete" >&2
             exit 1
           }
@@ -1221,10 +1310,10 @@ jobs:
             api_size="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .size' release-state.json)"
             [[ "$api_count" == "1" && "$api_size" == "$size" ]] || { echo "release asset API mismatch: $asset" >&2; exit 1; }
             assets="$(jq -c --arg name "$asset" --arg sha "$digest" --argjson size "$size" '. + [{name:$name,size:$size,sha256:$sha}]' <<< "$assets")"
-          done < <(jq -r '.assets[]' release/contract.v1.json)
+          done < <(printf '%s\n' "${RELEASE_ASSETS[@]}")
 
           attestations='[]'
-          signer_workflow="${GITHUB_REPOSITORY}/.github/workflows/build-binaries.yml"
+          signer_workflow="${GITHUB_REPOSITORY}/${RELEASE_PUBLISHER_WORKFLOW_PATH}"
           : > health-evidence/attestation-verification-entries.jsonl
           while IFS=$'\t' read -r platform archive; do
             archive_sha="$(shasum -a 256 "health-dist/$archive" | awk '{print $1}')"
@@ -1375,6 +1464,7 @@ jobs:
             --argjson tap_ci_attempt "$tap_ci_attempt" \
             --arg tap_ci_url "$tap_ci_url" \
             --arg tap_ci_workflow "$TAP_CI_WORKFLOW" \
+            --arg formula_path "$RELEASE_HOMEBREW_FORMULA_PATH" \
             --argjson blocked_versions "$blocked_versions" \
             --argjson abandoned_release "$abandoned_release" \
             --argjson repository_release_settings "$(jq -c . repository-release-settings-proof.json)" \
@@ -1387,7 +1477,7 @@ jobs:
                release:{state:"published",url:$release_url,tag_name:$version,target_sha:$source,
                  draft:false,prerelease:false,published_at:$published_at,no_clobber_verified:true,assets:$assets},
                attestations:$attestations,
-               homebrew:{repository:$tap_repository,formula_path:"Formula/env-vault.rb",
+               homebrew:{repository:$tap_repository,formula_path:$formula_path,
                  formula_sha256:$formula_sha,version:$version,version_monotonic:true,
                  pr_number:$pr_number,pr_url:$pr_url,pr_head_sha:$pr_head_sha,
                  pr_merge_sha:$merge_sha,tap_sha:$tap_sha,merge_is_ancestor_of_tap:true,

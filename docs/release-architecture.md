@@ -1,6 +1,6 @@
 # Release architecture and refactor baseline
 
-Status: immutable pre-refactor baseline plus dated stage deltas, 2026-07-17.
+Status: immutable pre-refactor baseline plus dated stage deltas, 2026-07-18.
 The machine-readable baseline companion is
 [`release/refactor-baseline.v1.json`](../release/refactor-baseline.v1.json). It
 pins `env-vault` to
@@ -278,6 +278,46 @@ compression-ratio claims. The bundle format, limits, migration semantics, and
 remaining bounded-history work are recorded in
 [ADR 0003](adr/0003-compact-release-evidence-ledger.md).
 
+### Stage 4 measured contract and graph delta
+
+Stage 4 moves new operational authority to `release/contract.v2.json` and
+closes v1 compatibility through an immutable archived contract plus exact
+history registry. The accepted trust-domain decision is recorded in
+[ADR 0006](adr/0006-versioned-operational-release-contract.md). Measurements
+below compare the Stage 3 base
+`ce1ba7186a4d3133fb04075f275f06e6042c0ccb` with the Stage 4 working tree,
+using the same physical/nonblank definitions as the baseline.
+
+| Scope | Before Stage 4 | After Stage 4 | Delta |
+| --- | --- | --- | --- |
+| env-vault workflows | 12 files / 27 static jobs / 5,245 physical / 4,924 nonblank | 12 / 27 / 5,926 / 5,585 | 0 files / 0 jobs / +681 / +661 |
+| `scripts/release` shell and jq | 33 files / 6,089 physical / 5,554 nonblank | 35 / 6,457 / 5,905 | +2 files / +368 / +351 |
+| `internal/releasecontract` Go | 6 files / 2,521 physical / 2,377 nonblank | 12 / 4,024 / 3,812 | +6 files / +1,503 / +1,435 |
+| transport Go (`cmd/releasetransport` + `internal/githubtransport`) | 11 files / 4,060 physical / 3,838 nonblank | 11 / 4,729 / 4,464 | 0 files / +669 / +626 |
+
+This stage preserves all 27 static jobs. The source increase is predominantly
+strict decoding/routing, bounded transport, frozen fixtures, and adversarial
+tests; it is not presented as a graph-size reduction. Five repeated publisher
+activation bodies were consolidated behind one checked helper without
+collapsing their cross-job artifact boundaries.
+
+Across workflows and release scripts, raw `release/contract.v1.json` references
+fell from 27 to 6 literal occurrences. The six surviving occurrences retrieve
+or route immutable source
+contracts; none supplies a new operational default. Exact repository literal
+matches fell from 12 to 2, and the two survivors are Go module linker paths,
+not repository-routing parameters. The digest-bound typed projection is
+required at 29 consumer call sites across 18 release workflow/script files (30
+occurrences across 19 files when the single helper definition is included).
+The contract and static parity tests prove exactly twelve workflow identities
+and exactly five shared non-cancelling concurrency participants.
+
+The product implementation diff over `cmd/env-vault`, `internal/config`,
+`internal/secretstore`, `internal/runner`, and `internal/output` is empty.
+No hosted Actions wall-time or runner-time improvement is claimed before an
+exact successful run of the new graph; the next release evidence must record
+that comparison against the immutable `v0.0.15` baseline.
+
 ## Preserved invariants and risks
 
 Every stage must retain:
@@ -311,7 +351,7 @@ them.
 | --- | --- | --- |
 | 2: typed GitHub transport | strict workflow/run/job/attempt types, pagination, bounded read retry policy, realistic fixtures | no ad-hoc direct API reads outside the transport; mutation semantics remain explicit and no-clobber |
 | 3: durable evidence | versioned automatic evidence-only genesis, dual-write migration, content-addressed compact bundle | implemented with fresh-repository genesis without Workflows write, v1/v2 parity, full offline replay, a 1,887-byte root, and measured 87.1% logical / 74.8% deterministic-export reduction; checkpoint/Merkle and frozen-v1-fixture follow-ups remain tracked |
-| 4: release contract and graph | operational repositories, targets, assets, formula and workflow identities; simpler CI/publisher graph | duplicate operational parameters removed or justified; five-target concurrency and all fail-closed gates preserved; exact before/after run metrics |
+| 4: release contract and graph | operational repositories, targets, assets, formula and workflow identities; strict historical routing | implemented with canonical v2, immutable v1 archive/registry, typed projections, static parity, twelve exact workflows and five serialized release workflows; source metrics are recorded above and hosted run metrics remain an exact-next-release measurement |
 | 5: Homebrew | release-derived URL/SHA, deterministic formula and tap transition | exact PR and merge tuple, both tap CI gates, formula merged, `brew install` and `brew test` green |
 | 6: patch release | Release Please-resolved version, authorization, tag, assets, attestations, SBOM, health, evidence and tap | exact confirmation before merge; published five-target patch; durable offline evidence; green main and tap; no temporary agent context |
 
