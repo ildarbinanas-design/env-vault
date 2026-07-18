@@ -1,0 +1,16 @@
+{
+  "schema_id": "env-vault.release-evidence-parity.v1",
+  "schema_version": 1,
+  "ok": true,
+  "repository": "ildarbinanas-design/env-vault",
+  "release_version": "v0.0.16",
+  "source_sha": "ddfd38c3144ed3d0968d2c5e7e4b2acfef841478",
+  "legacy_decision": "pass",
+  "bundle_decision": "pass",
+  "legacy_error_code": "",
+  "bundle_error_code": "",
+  "legacy_canonical_json_sha256": "344568ad80a41c6ef97612d604225ce044fe5a48859e0cfd8ab3e89e019d9d70",
+  "bundle_sha256": "1cc44109f18d9f6cba0da60e3368afaa186cd5a47d03dcf6b06b7f94f311d003",
+  "reconstructed_byte_exact": true,
+  "result": "pass"
+}
