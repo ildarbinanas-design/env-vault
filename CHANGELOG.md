@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.18](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.17...v0.0.18) (2026-07-19)
+
+
+### Documentation
+
+* add release operations journal ([#54](https://github.com/ildarbinanas-design/env-vault/issues/54)) ([c2658bc](https://github.com/ildarbinanas-design/env-vault/commit/c2658bc9ba5a6d83578b04bebb6ae22b9505daea))
+
 ## [0.0.17](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.16...v0.0.17) (2026-07-19)
 
 
