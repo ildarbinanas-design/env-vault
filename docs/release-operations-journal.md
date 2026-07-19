@@ -383,3 +383,29 @@ copying raw logs.
   metadata observation only.
 - **Interaction:** GitHub CLI/API; browser, email, interactive login, and OTP
   access were not used.
+
+## OP-0013 — Committed journal branch and draft handoff PR
+
+- **UTC:** `2026-07-19T09:59:55Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; this append-only
+  release-operations journal.
+- **Action and reason:** Created a clean sibling worktree from protected
+  `main`, committed and pushed the safe backfill, and opened
+  [draft PR #54](https://github.com/ildarbinanas-design/env-vault/pull/54) so
+  later release operations can be checkpointed for handoff without merging an
+  incomplete journal.
+- **Authorization/gate:** The user authorized all required writes through task
+  completion and specifically required a committed journal for external
+  operations. The coordinator opened this stage only after exact protected-main
+  CI and CodeQL were green.
+- **Safe identity:** Branch `agent/release-operations-journal`; base
+  `0d874277aad3bbfa21b12296d61df8a7f770d622`; initial journal commit and PR
+  head `e1b2916c5e9204bff2ee736ebe41d768b82383d8`; PR #54 is open and draft.
+- **Result and verification:** The remote branch and draft PR exactly matched
+  the local initial checkpoint. The PR remains unmerged and available for
+  append-only checkpoints through final release verification.
+- **Minimum permission surface:** Normal single-repository Contents and pull
+  request writes for one branch and draft PR. No settings, Actions dispatch,
+  tag, Release, asset, tap, evidence, permission, or ruleset mutation.
+- **Interaction:** GitHub CLI/API; browser, email, and interactive login were
+  not used.
