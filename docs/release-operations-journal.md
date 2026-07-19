@@ -597,3 +597,137 @@ copying raw logs.
   workflow dispatch, or settings mutation occurred.
 - **Interaction:** Automated GitHub Actions and repository-scoped App API;
   browser, email, authentication flow, and OTP access were not used.
+
+## OP-0020 — v0.0.17 Release, supply chain, and tap merge checkpoint
+
+- **UTC:** `2026-07-19T10:36:39Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault` publisher and
+  `ildarbinanas-design/homebrew-tap` formula transition.
+- **Action and reason:** The tag-triggered publisher promoted the exact CI
+  bytes without a rebuild, published the stable Release and supply-chain
+  attestations, then created, tested, and head-guarded the deterministic
+  Homebrew formula PR merge. At this timestamp tap post-merge CI was still
+  pending, so the publisher was not yet claimed terminal.
+- **Authorization/gate:** OP-0015 exact release authorization, OP-0018 source
+  gate, and OP-0019 exact tag. This was the contract-defined publisher path
+  with `repair=none`.
+- **Safe identity — publisher:**
+  [run `29683468172/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29683468172),
+  tag `v0.0.17`, source
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`; metadata job `88183645193`,
+  preflight `88183675072`, promotion `88183675076`, release `88183725422`,
+  and supply-chain `88183784757` all succeeded.
+- **Safe identity — Release and assets:** Stable
+  [v0.0.17 Release](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.0.17),
+  ID `356314103`, published `2026-07-19T10:32:19Z`. Its exact no-clobber
+  archive/checksum pairs were:
+  - `linux-amd64`: asset `482305350`,
+    `sha256:414624bec9c9204c6f41002eb5725ce1a4ee2e5dd46e2c3ef992dd60e3d4f800`;
+    checksum `482305358`,
+    `sha256:5a0d05265e419bd2fbcedf8babbc14612ffa9c64862f1f1a544bf57170021404`.
+  - `linux-arm64`: asset `482305362`,
+    `sha256:b51ed6dbbbb7bd6e91951fe03bd12aa7bef080858da9ea7d39c82492120880c0`;
+    checksum `482305371`,
+    `sha256:8d7b750f514797ef9a00aebc7a6a796a909fdb339986e80d9635001389de635c`.
+  - `darwin-amd64`: asset `482305375`,
+    `sha256:fa39b2621953a80fc75edff3f73c309a650c8d0394b66a1f918b2fd027693969`;
+    checksum `482305384`,
+    `sha256:7d821dab7a48335009297ccfe884f92127c20b5f483ebc56c37d52d1333f38ce`.
+  - `darwin-arm64`: asset `482305389`,
+    `sha256:52f9a07b07a8a69622369eee1732a5d938c7bb58d49d7881ad4b01606e0137e8`;
+    checksum `482305398`,
+    `sha256:e62b3fbe160d029146a136a1b7aa7121ca49b950e01ff37606f73dce72c1ceee`.
+  - `windows-amd64`: asset `482305411`,
+    `sha256:14cc1a6d16fcac6450ca463ac0c8faff87266c894655ab07af0fb93dd5fc8fe2`;
+    checksum `482305423`,
+    `sha256:7a981d6420b1168837c0b8e8f0e1877d11d506f8d14104380dbe037a3a0f9e45`.
+- **Safe identity — supply chain:** All ten Release bytes compared equal to
+  the exact CI promotion. One SLSA provenance statement and one SPDX 2.3
+  statement each bound all five archive subjects; all ten subject/predicate
+  endpoint counts were exactly one. `gh attestation verify` passed all five
+  archives against both predicates with signer
+  `build-binaries.yml@refs/tags/v0.0.17`, exact source, and invocation
+  `29683468172/1`.
+- **Safe identity — Homebrew checkpoint:** Bot-created
+  [tap PR #10](https://github.com/ildarbinanas-design/homebrew-tap/pull/10),
+  created `2026-07-19T10:34:51Z`; base
+  `8a20bec7e62c854af9bb9a3f94375ccab580cf4c`; head and sole formula commit
+  `b784483a9d2d31aef3dbd83f7519cdc3146c8e37` with the exact base as sole
+  parent. Only `Formula/env-vault.rb` changed (`+9/-9`), byte-equal to the
+  generator, formula SHA-256
+  `8b512f0b28e0b84f8ea1846485d96fb8fd11ece8336703b131401bfb7953eb21`.
+  Exact-head
+  [PR CI `29683590059/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29683590059)
+  succeeded, then the App head-guarded the squash merge at
+  `2026-07-19T10:36:39Z` to tap main
+  `fd42c1af83fac106ee29709047b57641efb8b499`.
+- **Result and verification:** Release, ten assets, provenance, SPDX SBOM, tap
+  PR-head CI, and exact tap merge were complete. Tap post-merge
+  [CI `29683642229/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29683642229)
+  was pending at this boundary; no Homebrew-job, health, publisher-terminal, or
+  evidence success is claimed here.
+- **Minimum permission surface:** Release job `Contents: write`; supply-chain
+  job `Contents: read`, `id-token: write`, and `Attestations: write`. The tap
+  App retained only `Actions: read`, `Contents: write`, and
+  `Pull requests: write`, with no bypass or manual mutation.
+- **Interaction:** Automated GitHub Actions and repository-scoped App API;
+  browser, email, authentication flow, and OTP access were not used.
+
+## OP-0021 — Homebrew post-merge CI completion
+
+- **UTC:** `2026-07-19T10:38:20Z`
+- **Repository/scope:** `ildarbinanas-design/homebrew-tap` exact PR-head and
+  protected-main formula gates; env-vault publisher Homebrew job.
+- **Action and reason:** Waited for the exact tap main CI attempt after the
+  OP-0020 head-guarded merge and bound both platform results back to the
+  publisher before allowing its health job to start.
+- **Authorization/gate:** Continuation of the OP-0020 contract-defined
+  Homebrew transition; no new release or repair authorization.
+- **Safe identity:** PR-head
+  [CI `29683590059/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29683590059)
+  succeeded at `2026-07-19T10:36:30Z` on exact head
+  `b784483a9d2d31aef3dbd83f7519cdc3146c8e37`: arm64 `macos-15` job
+  `88183969485`, x86_64 `macos-15-intel` job `88183969473`, gate
+  `88184084997`. After PR #10 merged to
+  `fd42c1af83fac106ee29709047b57641efb8b499`, post-merge
+  [CI `29683642229/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29683642229)
+  succeeded at `2026-07-19T10:38:20Z`: x86_64 job `88184107486`, arm64 job
+  `88184107493`, gate `88184224018`.
+- **Result and verification:** Both architectures passed `brew style`,
+  `brew audit`, `brew install`, and `brew test` in PR-head and post-merge runs.
+  Publisher Homebrew job `88183884470` succeeded. Health job `88184241254` was
+  active at this boundary; its result, publisher terminal status, and durable
+  evidence are not claimed here.
+- **Minimum permission surface:** Tap App `Actions: read`, `Contents: write`,
+  and `Pull requests: write`; no manual merge, rerun, settings change, or
+  ruleset bypass.
+- **Interaction:** Automated GitHub Actions and repository-scoped App API;
+  browser, email, authentication flow, and OTP access were not used.
+
+## OP-0022 — First v0.0.17 publisher completed without repair
+
+- **UTC:** `2026-07-19T10:39:42Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; terminal status of
+  the first tag-triggered v0.0.17 publisher.
+- **Action and reason:** Waited for the sealed health job and re-observed the
+  whole publisher attempt after OP-0021 Homebrew completion.
+- **Authorization/gate:** OP-0015 exact release authorization and the normal
+  `repair=none` publisher path; no repair authorization was consumed.
+- **Safe identity:** Publisher
+  [run `29683468172/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29683468172),
+  event `push`, tag `v0.0.17`, exact source
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`, completed `success` at
+  `2026-07-19T10:39:42Z`. All seven jobs succeeded: metadata `88183645193`,
+  preflight `88183675072`, promotion `88183675076`, release `88183725422`,
+  supply-chain `88183784757`, Homebrew `88183884470`, and sealed health
+  `88184241254`.
+- **Result and verification:** The first publisher completed successfully with
+  no repair, workflow dispatch, or rerun. Release, assets, attestations,
+  Homebrew, and health are terminally green for this attempt. The automatic
+  evidence listener is expected next, but no evidence run or ledger result is
+  claimed by this record.
+- **Minimum permission surface:** No additional mutation surface beyond the
+  isolated OP-0020 publisher jobs; sealed health used read-only observations.
+  No settings change, bypass, or permission expansion.
+- **Interaction:** Automated GitHub Actions; browser, email, authentication
+  flow, and OTP access were not used.
