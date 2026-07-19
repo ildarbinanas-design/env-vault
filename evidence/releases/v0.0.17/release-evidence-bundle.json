@@ -1,0 +1,44 @@
+{
+  "schema_id": "env-vault.release-evidence-bundle.v2",
+  "schema_version": 2,
+  "repository": "ildarbinanas-design/env-vault",
+  "release_version": "v0.0.17",
+  "source_sha": "53d256eaa07a2c25f49ae373f26aa3f2946ae82c",
+  "publisher_repair_mode": "none",
+  "publisher_run_id": 29683468172,
+  "publisher_run_attempt": 1,
+  "evidence_schema_id": "env-vault.release-evidence.v1",
+  "evidence_schema_version": 1,
+  "legacy_evidence_sha256": "949636f066591e44c3dadd39352b548bc1513a4fe17e5d111105b09964b01830",
+  "legacy_canonical_json_sha256": "1ac43114bb7eba554913c317a9ece73468e5135bb550ba4f67610238f1eb33fd",
+  "legacy_canonical_json_size": 1476724,
+  "evidence_core_object_sha256": "dd0fc06c547aa8d05125aa60adbb79ce7352a179a46d8c17534ec54005cfeeaa",
+  "objects": [
+    {
+      "sha256": "c8833a28f92e87e823f81946703db336e108311403a555db79079722665f2eb6",
+      "media_type": "application/json",
+      "encoding": "gzip",
+      "uncompressed_size": 253509,
+      "compressed_size": 253547,
+      "compressed_sha256": "92c199814447857b534ab81a5b3c8ac705f72afd0591d057234ff885c0fc4a1d"
+    },
+    {
+      "sha256": "cecaf6467d1aa32d6131de63999aed74bed472bb866a32d725e3aaf0820d0695",
+      "media_type": "application/json",
+      "encoding": "gzip",
+      "uncompressed_size": 15426,
+      "compressed_size": 15449,
+      "compressed_sha256": "69cbe9f6d3c025531699eb566aa4f486271d9cf058450992c1d9d5c9d5b48fbf"
+    },
+    {
+      "sha256": "dd0fc06c547aa8d05125aa60adbb79ce7352a179a46d8c17534ec54005cfeeaa",
+      "media_type": "application/vnd.env-vault.release-evidence-core.v2+json",
+      "encoding": "gzip",
+      "uncompressed_size": 89039,
+      "compressed_size": 89067,
+      "compressed_sha256": "1f35f42c620c69f9a6e6803769c1f4e1aa464a5259c74a75e6742c2659b4876f"
+    }
+  ],
+  "result": "pass",
+  "bundle_sha256": "7ef2713bae2efb6fed4dc80aad3e199997c7a7dcd207f7b10b41fb50b1fca5fd"
+}
