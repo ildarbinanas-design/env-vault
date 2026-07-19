@@ -474,3 +474,28 @@ copying raw logs.
   authorized tuple and must revalidate it before each mutation.
 - **Interaction:** Authorization arrived directly in the user task; browser,
   email, GitHub login, and OTP access were not used.
+
+## OP-0016 — Current-task head-guarded automerge preference
+
+- **UTC:** `2026-07-19T10:14:21Z`
+- **Repository/scope:** Operator preference for the remaining head-guarded
+  merge actions in this already confirmed env-vault release task.
+- **Action and reason:** Recorded the user's instruction:
+  `Ты в следующий раз можешь не ждать такую строку? Даю разрешение на автомердж тобой.`
+  This avoids asking for a duplicate gate while autonomously completing the
+  exact task already authorized in OP-0015.
+- **Authorization/gate:** For later head-guarded merge actions within this
+  current confirmed task, no repeated confirmation gate is required. The
+  exact `v0.0.17` authorization remains OP-0015 and is not broadened to a
+  different release version, PR, or head.
+- **Safe identity:** Current release authorization remains version `v0.0.17`,
+  PR #50, head `f60b39333f1b18e53cdc499a095ec29fcad6c54b` from OP-0015.
+- **Result and verification:** The operator preference is recorded only. It
+  does not change repository protections, release contract, rulesets, required
+  checks, App permissions, or any GitHub object. Future separate releases still
+  follow the current repository contract unless a distinct reviewed policy
+  change is merged.
+- **Minimum permission surface:** No GitHub or repository write permission was
+  exercised by this decision record.
+- **Interaction:** Instruction arrived directly in the user task; browser,
+  email, GitHub login, and OTP access were not used.
