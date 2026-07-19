@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.17](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.16...v0.0.17) (2026-07-19)
+
+
+### Bug Fixes
+
+* **release:** recover empty release assets ([#49](https://github.com/ildarbinanas-design/env-vault/issues/49)) ([6989b73](https://github.com/ildarbinanas-design/env-vault/commit/6989b737c0e0a7407b5b7949840b0e139f406f16))
+* **release:** recover Homebrew publication safely ([#52](https://github.com/ildarbinanas-design/env-vault/issues/52)) ([ce1ba71](https://github.com/ildarbinanas-design/env-vault/commit/ce1ba7186a4d3133fb04075f275f06e6042c0ccb))
+* **release:** require GET for workflow queries ([#51](https://github.com/ildarbinanas-design/env-vault/issues/51)) ([2f92b66](https://github.com/ildarbinanas-design/env-vault/commit/2f92b66ee02eb77bb7bc6e628c4c2766c889ff20))
+
+
+### Refactoring
+
+* **release:** centralize operational contract ([#53](https://github.com/ildarbinanas-design/env-vault/issues/53)) ([0d87427](https://github.com/ildarbinanas-design/env-vault/commit/0d874277aad3bbfa21b12296d61df8a7f770d622))
+
 ## [0.0.16](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.15...v0.0.16) (2026-07-17)
 
 
