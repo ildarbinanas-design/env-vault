@@ -15,11 +15,11 @@ const rerunClassificationToken = "token-must-never-appear-in-output"
 
 func TestRerunClassifiedAttemptInvokesOnlyFullRerun(t *testing.T) {
 	root := t.TempDir()
-	classification := writeRerunClassification(t, root, validRerunClassification())
+	classification := writeRerunClassification(t, root, validRerunClassification(t))
 	logPath := filepath.Join(root, "gh.log")
 	path := installRerunFakeGH(t, root, logPath)
 
-	output, status := runRerunHelper(t, classification, "example/env-vault", path)
+	output, status := runRerunHelper(t, classification, "ildarbinanas-design/env-vault", path)
 	if status != 0 {
 		t.Fatalf("status=%d, want 0\n%s", status, output)
 	}
@@ -27,7 +27,7 @@ func TestRerunClassifiedAttemptInvokesOnlyFullRerun(t *testing.T) {
 		t.Fatalf("helper exposed a token: %q", output)
 	}
 	arguments := nonemptyRerunLines(readRerunFile(t, logPath))
-	want := []string{"run", "rerun", "29475939348", "--repo", "example/env-vault"}
+	want := []string{"run", "rerun", "29475939348", "--repo", "ildarbinanas-design/env-vault"}
 	if !slices.Equal(arguments, want) {
 		t.Fatalf("gh arguments=%q, want exactly %q", arguments, want)
 	}
@@ -37,7 +37,7 @@ func TestRerunClassifiedAttemptInvokesOnlyFullRerun(t *testing.T) {
 }
 
 func TestRerunClassifiedAttemptFailsClosedWithoutCallingGH(t *testing.T) {
-	valid := validRerunClassification()
+	valid := validRerunClassification(t)
 	validJSON := marshalRerunJSON(t, valid)
 
 	tests := []struct {
@@ -72,7 +72,8 @@ func TestRerunClassifiedAttemptFailsClosedWithoutCallingGH(t *testing.T) {
 			value["observed_artifacts"] = value["expected_artifacts"]
 			value["missing_artifacts"] = []string{}
 		})},
-		{name: "invalid repository", document: validJSON, repository: "example/env-vault/extra"},
+		{name: "invalid repository", document: validJSON, repository: "ildarbinanas-design/env-vault/extra"},
+		{name: "foreign canonical repository", document: validJSON, repository: "attacker/env-vault"},
 	}
 
 	for _, test := range tests {
@@ -86,7 +87,7 @@ func TestRerunClassifiedAttemptFailsClosedWithoutCallingGH(t *testing.T) {
 			path := installRerunFakeGH(t, root, logPath)
 			repository := test.repository
 			if repository == "" {
-				repository = "example/env-vault"
+				repository = "ildarbinanas-design/env-vault"
 			}
 
 			output, status := runRerunHelper(t, classification, repository, path)
@@ -103,7 +104,21 @@ func TestRerunClassifiedAttemptFailsClosedWithoutCallingGH(t *testing.T) {
 	}
 }
 
-func validRerunClassification() map[string]any {
+func validRerunClassification(t *testing.T) map[string]any {
+	t.Helper()
+	projectionData, err := os.ReadFile(os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection struct {
+		ContractSemanticSHA256 string `json:"contract_semantic_sha256"`
+	}
+	if err := json.Unmarshal(projectionData, &projection); err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.ContractSemanticSHA256) != 64 {
+		t.Fatal("shared typed projection has a malformed semantic digest")
+	}
 	targets := []string{"darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64", "windows-amd64"}
 	var artifacts []string
 	for _, target := range targets {
@@ -128,13 +143,13 @@ func validRerunClassification() map[string]any {
 		"schema_id":                 "env-vault.attempt-classification.v1",
 		"schema_version":            1,
 		"ok":                        false,
-		"release_contract_schema":   "env-vault.release-contract.v1",
-		"semantic_contract_sha256":  strings.Repeat("b", 64),
+		"release_contract_schema":   "env-vault.release-contract.v2",
+		"semantic_contract_sha256":  projection.ContractSemanticSHA256,
 		"run_id":                    int64(29475939348),
 		"attempt":                   3,
 		"source_sha":                strings.Repeat("a", 40),
-		"repository":                "example/env-vault",
-		"head_repository":           "example/env-vault",
+		"repository":                "ildarbinanas-design/env-vault",
+		"head_repository":           "ildarbinanas-design/env-vault",
 		"event":                     "push",
 		"head_branch":               "main",
 		"workflow_id":               "ci",

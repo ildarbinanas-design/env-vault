@@ -11,6 +11,14 @@ import (
 
 func TestCanonicalContract(t *testing.T) {
 	contract := loadCanonicalForTest(t)
+	if contract.SchemaID != "env-vault.release-contract.v2" || contract.SchemaVersion != 2 || CanonicalPath != "release/contract.v2.json" {
+		t.Fatalf("canonical contract identity=%s/%d path=%s", contract.SchemaID, contract.SchemaVersion, CanonicalPath)
+	}
+	if contract.Evolution.PreviousSchemaID != "env-vault.release-contract.v1" ||
+		contract.Evolution.PreviousSchemaVersion != 1 ||
+		contract.Evolution.PreviousSemanticSHA256 != "6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5" {
+		t.Fatalf("contract evolution=%+v", contract.Evolution)
+	}
 	if len(contract.Platforms) != 5 || len(contract.Assets) != 10 {
 		t.Fatalf("platforms=%d assets=%d", len(contract.Platforms), len(contract.Assets))
 	}
@@ -85,6 +93,77 @@ func TestCanonicalContract(t *testing.T) {
 	}
 }
 
+func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
+	contract := loadCanonicalForTest(t)
+	if contract.Repositories.Source.FullName != "ildarbinanas-design/env-vault" || contract.Repositories.Source.DefaultBranch != "main" ||
+		contract.Repositories.HomebrewTap.FullName != "ildarbinanas-design/homebrew-tap" || contract.Repositories.HomebrewTap.DefaultBranch != "main" {
+		t.Fatalf("repositories=%+v", contract.Repositories)
+	}
+	if contract.VersionPolicy.TagPrefix != "v" || contract.VersionPolicy.ReleasePlease.Component != "env-vault" ||
+		contract.VersionPolicy.ReleasePlease.TargetBranch != contract.Repositories.Source.DefaultBranch ||
+		contract.VersionPolicy.ReleasePlease.Branch != "release-please--branches--main--components--env-vault" ||
+		contract.VersionPolicy.ReleasePlease.ManifestKey != "." ||
+		contract.VersionPolicy.ReleasePlease.ConfigPath != "release-please-config.json" ||
+		contract.VersionPolicy.ReleasePlease.ManifestPath != ".release-please-manifest.json" {
+		t.Fatalf("version policy=%+v", contract.VersionPolicy)
+	}
+	if contract.Homebrew.FormulaName != "env-vault" || contract.Homebrew.FormulaPath != "Formula/env-vault.rb" ||
+		contract.Homebrew.HomepageURLTemplate != "https://github.com/{repository}" ||
+		contract.Homebrew.ReleaseDownloadURLTemplate != "https://github.com/{repository}/releases/download/{version}/{asset}" ||
+		!reflect.DeepEqual(contract.Homebrew.Platforms, []string{"darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"}) {
+		t.Fatalf("homebrew=%+v", contract.Homebrew)
+	}
+	if contract.Concurrency.Release.Group != "env-vault-release" || contract.Concurrency.Release.CancelInProgress || contract.Concurrency.Release.Queue != "max" ||
+		!reflect.DeepEqual(contract.Concurrency.Release.Workflows, []string{"planning", "publisher", "release_assets_bootstrap", "homebrew_bridge", "release_evidence"}) ||
+		!contract.Concurrency.CI.CancelInProgress {
+		t.Fatalf("concurrency=%+v", contract.Concurrency)
+	}
+	wantPlatforms := []Platform{
+		{ID: "linux-amd64", Runner: "ubuntu-latest", GOOS: "linux", GOARCH: "amd64", CGO: "0", Archive: "env-vault-linux-amd64.tar.gz", Checksum: "env-vault-linux-amd64.tar.gz.sha256", ArchiveFormat: "tar.gz", Binary: "env-vault"},
+		{ID: "linux-arm64", Runner: "ubuntu-24.04-arm", GOOS: "linux", GOARCH: "arm64", CGO: "0", Archive: "env-vault-linux-arm64.tar.gz", Checksum: "env-vault-linux-arm64.tar.gz.sha256", ArchiveFormat: "tar.gz", Binary: "env-vault"},
+		{ID: "darwin-amd64", Runner: "macos-15-intel", GOOS: "darwin", GOARCH: "amd64", CGO: "1", Archive: "env-vault-darwin-amd64.tar.gz", Checksum: "env-vault-darwin-amd64.tar.gz.sha256", ArchiveFormat: "tar.gz", Binary: "env-vault"},
+		{ID: "darwin-arm64", Runner: "macos-15", GOOS: "darwin", GOARCH: "arm64", CGO: "1", Archive: "env-vault-darwin-arm64.tar.gz", Checksum: "env-vault-darwin-arm64.tar.gz.sha256", ArchiveFormat: "tar.gz", Binary: "env-vault"},
+		{ID: "windows-amd64", Runner: "windows-latest", GOOS: "windows", GOARCH: "amd64", CGO: "0", Archive: "env-vault-windows-amd64.zip", Checksum: "env-vault-windows-amd64.zip.sha256", ArchiveFormat: "zip", Binary: "env-vault.exe"},
+	}
+	if !reflect.DeepEqual(contract.Platforms, wantPlatforms) {
+		t.Fatalf("platforms=%+v", contract.Platforms)
+	}
+	wantWorkflows := []Workflow{
+		{ID: "ci", Name: "ci", File: "ci.yml", Events: []string{"push", "pull_request", "workflow_dispatch"}, Jobs: []string{"quality", "quality-gate"}},
+		{ID: "quality", Name: "reusable-quality", File: "reusable-quality.yml", Events: []string{"workflow_call"}, Jobs: []string{"resolve", "source-quality", "license", "native", "e2e-gate"}},
+		{ID: "planning", Name: "release-please", File: "release-please.yml", Events: []string{"workflow_run"}, Jobs: []string{"inspect", "rerun-incomplete-attempt", "plan"}},
+		{ID: "publisher", Name: "build-binaries", File: "build-binaries.yml", Events: []string{"workflow_dispatch", "push"}, Jobs: []string{"metadata", "preflight", "promotion", "release", "supply_chain", "homebrew", "health"}},
+		{ID: "release_assets_bootstrap", Name: "bootstrap-release-assets", File: "bootstrap-release-assets.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"bootstrap"}},
+		{ID: "homebrew_bridge", Name: "publish-homebrew-bridge", File: "publish-homebrew-bridge.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"homebrew_bridge"}},
+		{ID: "release_evidence", Name: "release-evidence", File: "release-evidence.yml", Events: []string{"workflow_run"}, Jobs: []string{"assemble", "publish"}},
+		{ID: "legacy_rebuild", Name: "legacy-rebuild", File: "legacy-rebuild.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"resolve", "diagnostic"}},
+		{ID: "planning_app_audit", Name: "audit-release-planning-app", File: "audit-release-planning-app.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"scope"}},
+		{ID: "tap_app_audit", Name: "audit-release-app", File: "audit-release-app.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"scope"}},
+		{ID: "dependency_review", Name: "Dependency review", File: "dependency-review.yml", Events: []string{"pull_request"}, Jobs: []string{"dependency-review"}},
+		{ID: "pr_title", Name: "pr-title", File: "pr-title.yml", Events: []string{"pull_request"}, Jobs: []string{"pr-title"}},
+	}
+	if !reflect.DeepEqual(contract.Workflows, wantWorkflows) {
+		t.Fatalf("workflows=%+v", contract.Workflows)
+	}
+	wantApps := []App{
+		{ID: "release_planning", Slug: "env-vault-release-planning", RepositoryID: "source", Environment: "release-planning", AuditWorkflow: "planning_app_audit"},
+		{ID: "homebrew_tap", Slug: "env-vault-tap-release", RepositoryID: "homebrew_tap", Environment: "release", AuditWorkflow: "tap_app_audit", CIWorkflowFile: "test-formula.yml", CIWorkflowName: "test-formula"},
+	}
+	if !reflect.DeepEqual(contract.Apps, wantApps) {
+		t.Fatalf("apps=%+v", contract.Apps)
+	}
+	wantRepairActions := []RepairAction{
+		{ID: "rerun-ci-attempt", ActionCode: "rerun_all_jobs", ResumeStage: "source_quality", Rebuilds: true, PublicationEligible: true},
+		{ID: "release-assets", ActionCode: "dispatch_release_assets_repair", ResumeStage: "publication", PublicationEligible: true},
+		{ID: "homebrew", ActionCode: "dispatch_homebrew_repair", ResumeStage: "homebrew", PublicationEligible: true},
+		{ID: "health", ActionCode: "dispatch_health_repair", ResumeStage: "health", PublicationEligible: true},
+		{ID: "legacy-rebuild-diagnostic", ActionCode: "dispatch_legacy_rebuild", ResumeStage: "exact_version_artifact_quality", Rebuilds: true},
+	}
+	if !reflect.DeepEqual(contract.AllowedRepairActions, wantRepairActions) {
+		t.Fatalf("repair actions=%+v", contract.AllowedRepairActions)
+	}
+}
+
 func TestIsVersionUsesStrictCanonicalPolicy(t *testing.T) {
 	for _, value := range []string{"v0.0.9", "v1.20.300"} {
 		if !IsVersion(value) {
@@ -106,7 +185,7 @@ func TestLoadFileRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
 		"unknown":           []byte(strings.TrimSuffix(string(canonical), "\n}") + ",\n  \"unknown\": true\n}\n"),
 		"case variant":      []byte(strings.Replace(string(canonical), `"schema_id":`, `"Schema_ID":`, 1)),
 		"nested variant":    []byte(strings.Replace(string(canonical), `"archive_prefix":`, `"Archive_Prefix":`, 1)),
-		"duplicate":         []byte(strings.Replace(string(canonical), `"schema_id": "env-vault.release-contract.v1",`, `"schema_id": "env-vault.release-contract.v1", "schema_id": "env-vault.release-contract.v1",`, 1)),
+		"duplicate":         []byte(strings.Replace(string(canonical), `"schema_id": "env-vault.release-contract.v2",`, `"schema_id": "env-vault.release-contract.v2", "schema_id": "env-vault.release-contract.v2",`, 1)),
 		"completed missing": withoutCompleted,
 		"completed null": []byte(strings.Replace(string(canonical),
 			`"completed_release_source_sha": "6206b472cda81f7a87656055d8eb6627c26a0fef"`, `"completed_release_source_sha": null`, 1)),
@@ -116,11 +195,63 @@ func TestLoadFileRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
 		"completed case variant": []byte(strings.Replace(string(canonical), `"completed_release_source_sha"`, `"Completed_Release_Source_SHA"`, 1)),
 		"rollback active":        []byte(strings.Replace(string(withoutCompleted), `"state": "complete"`, `"state": "active"`, 1)),
 		"trailing":               append(append([]byte(nil), canonical...), []byte("{}")...),
+		"repository null": []byte(strings.Replace(string(canonical),
+			`"source": {`, `"source": null, "ignored_source": {`, 1)),
+		"repository alias": []byte(strings.Replace(string(canonical),
+			`"default_branch": "main"`, `"defaultBranch": "main"`, 1)),
+		"workflow events null": []byte(strings.Replace(string(canonical),
+			`"events": [
+        "push",
+        "pull_request",
+        "workflow_dispatch"
+      ]`, `"events": null`, 1)),
+		"evolution downgrade": []byte(strings.Replace(string(canonical),
+			`"previous_schema_version": 1`, `"previous_schema_version": 0`, 1)),
+		"required false null": []byte(strings.Replace(string(canonical),
+			`"cancel_in_progress": false`, `"cancel_in_progress": null`, 1)),
+		"required true null": []byte(strings.Replace(string(canonical),
+			`"cancel_in_progress": true`, `"cancel_in_progress": null`, 1)),
+		"required int null": []byte(strings.Replace(string(canonical),
+			`"schema_version": 2`, `"schema_version": null`, 1)),
+		"required string null": []byte(strings.Replace(string(canonical),
+			`"tag_prefix": "v"`, `"tag_prefix": null`, 1)),
+		"required array null": []byte(strings.Replace(string(canonical),
+			`"platforms": [`, `"platforms": null, "ignored_platforms": [`, 1)),
+		"required map null": []byte(strings.Replace(string(canonical),
+			`"schemas": {`, `"schemas": null, "ignored_schemas": {`, 1)),
+		"missing required false": []byte(strings.Replace(string(canonical),
+			`      "cancel_in_progress": false,
+`, "", 1)),
+		"missing required nested field": []byte(strings.Replace(string(canonical),
+			`    "manifest_key": ".",
+`, "", 1)),
 	}
 	for name, data := range tests {
 		t.Run(name, func(t *testing.T) {
 			if _, err := LoadFile(writeTempFile(t, data)); err == nil {
 				t.Fatal("invalid JSON was accepted")
+			}
+		})
+	}
+}
+
+func TestCanonicalLoaderRejectsArchivedV1Downgrade(t *testing.T) {
+	if _, err := LoadFile(filepath.Join("..", "..", "release", "contract.v1.json")); err == nil {
+		t.Fatal("archival v1 contract was accepted as the operational contract")
+	}
+	canonical := readCanonicalForTest(t)
+	for name, data := range map[string][]byte{
+		"predecessor digest": []byte(strings.Replace(string(canonical),
+			"6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5",
+			strings.Repeat("f", 64), 1)),
+		"schema id": []byte(strings.Replace(string(canonical),
+			"env-vault.release-contract.v2", "env-vault.release-contract.v1", 1)),
+		"schema version": []byte(strings.Replace(string(canonical),
+			`"schema_version": 2`, `"schema_version": 1`, 1)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := LoadFile(writeTempFile(t, data)); err == nil {
+				t.Fatal("contract downgrade/tamper was accepted")
 			}
 		})
 	}
@@ -153,10 +284,58 @@ func TestSemanticSHAIgnoresFormattingAndObjectOrder(t *testing.T) {
 	}
 }
 
+func TestSemanticSHACommitsToOperationalListOrder(t *testing.T) {
+	canonical := loadCanonicalForTest(t)
+	wantDigest, err := SemanticSHA256(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("workflows", func(t *testing.T) {
+		contract := canonical
+		contract.Workflows = append([]Workflow(nil), canonical.Workflows...)
+		contract.Workflows[0], contract.Workflows[1] = contract.Workflows[1], contract.Workflows[0]
+		if err := contract.Validate(); err != nil {
+			t.Fatalf("coordinated workflow reordering should remain structurally valid: %v", err)
+		}
+		got, err := SemanticSHA256(contract)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == wantDigest {
+			t.Fatal("workflow order did not change the semantic contract digest")
+		}
+	})
+
+	t.Run("platforms and adjacent assets", func(t *testing.T) {
+		contract := canonical
+		contract.Platforms = append([]Platform(nil), canonical.Platforms...)
+		contract.Assets = append([]string(nil), canonical.Assets...)
+		contract.Platforms[0], contract.Platforms[1] = contract.Platforms[1], contract.Platforms[0]
+		firstPair := append([]string(nil), contract.Assets[0:2]...)
+		copy(contract.Assets[0:2], contract.Assets[2:4])
+		copy(contract.Assets[2:4], firstPair)
+		if err := contract.Validate(); err != nil {
+			t.Fatalf("coordinated platform/asset reordering should remain structurally valid: %v", err)
+		}
+		got, err := SemanticSHA256(contract)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == wantDigest {
+			t.Fatal("platform/asset order did not change the semantic contract digest")
+		}
+		matrix := contract.Matrix().Include
+		if matrix[0].ID != canonical.Platforms[1].ID || matrix[1].ID != canonical.Platforms[0].ID {
+			t.Fatalf("matrix did not preserve contract order: %+v", matrix)
+		}
+	})
+}
+
 func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 	tests := map[string]func(*Contract){
-		"asset drift":  func(c *Contract) { c.Assets[0] = "replacement.tar.gz" },
-		"target drift": func(c *Contract) { c.Platforms[1].Runner = "ubuntu-latest" },
+		"asset drift":    func(c *Contract) { c.Assets[0] = "replacement.tar.gz" },
+		"invalid target": func(c *Contract) { c.Platforms[1].Runner = "" },
 		"failed tag release": func(c *Contract) {
 			c.VersionPolicy.BlockedVersions[0].GitHubReleaseMustNotExist = false
 		},
@@ -189,7 +368,15 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"artifact naming": func(c *Contract) {
 			c.Naming.PlatformArtifactTemplate = "env-vault-release-{platform}"
 		},
-		"repair rebuild":        func(c *Contract) { c.AllowedRepairActions[1].Rebuilds = true },
+		"artifact naming control": func(c *Contract) {
+			c.Naming.PlatformArtifactTemplate = "env-vault-\n{platform}-{attempt}"
+		},
+		"duplicate repair":   func(c *Contract) { c.AllowedRepairActions[1].ID = c.AllowedRepairActions[0].ID },
+		"repair rebuild":     func(c *Contract) { c.AllowedRepairActions[1].Rebuilds = true },
+		"legacy can publish": func(c *Contract) { c.AllowedRepairActions[4].PublicationEligible = true },
+		"mutating stage weakened": func(c *Contract) {
+			c.ReleaseStages[2].StateMutating = false
+		},
 		"action code separator": func(c *Contract) { c.ActionCodes[2] = "rerun-all-jobs" },
 		"missing recovery action": func(c *Contract) {
 			c.ActionCodes = c.ActionCodes[:len(c.ActionCodes)-1]
@@ -202,12 +389,34 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"missing required check": func(c *Contract) {
 			c.MainRequiredChecks = c.MainRequiredChecks[:len(c.MainRequiredChecks)-1]
 		},
-		"required check event drift": func(c *Contract) {
-			c.MainRequiredChecks[0].Event = "pull_request"
+		"invalid required check event": func(c *Contract) {
+			c.MainRequiredChecks[0].Event = "schedule"
 		},
 		"duplicate required check": func(c *Contract) {
 			c.MainRequiredChecks[1] = c.MainRequiredChecks[0]
 		},
+		"reordered target": func(c *Contract) {
+			c.Platforms[0], c.Platforms[1] = c.Platforms[1], c.Platforms[0]
+		},
+		"duplicate target": func(c *Contract) { c.Platforms[1] = c.Platforms[0] },
+		"reordered asset": func(c *Contract) {
+			c.Assets[0], c.Assets[1] = c.Assets[1], c.Assets[0]
+		},
+		"duplicate asset":    func(c *Contract) { c.Assets[1] = c.Assets[0] },
+		"duplicate workflow": func(c *Contract) { c.Workflows[1] = c.Workflows[0] },
+		"invalid source repository": func(c *Contract) {
+			c.Repositories.Source.FullName = "env-vault"
+		},
+		"source default branch":     func(c *Contract) { c.Repositories.Source.DefaultBranch = "trunk" },
+		"same tap repository":       func(c *Contract) { c.Repositories.HomebrewTap = c.Repositories.Source },
+		"app repository id":         func(c *Contract) { c.Apps[0].RepositoryID = "homebrew_tap" },
+		"formula path":              func(c *Contract) { c.Homebrew.FormulaPath = "Formula/other.rb" },
+		"release please branch":     func(c *Contract) { c.VersionPolicy.ReleasePlease.Branch = "release/other" },
+		"tag prefix":                func(c *Contract) { c.VersionPolicy.TagPrefix = "release-" },
+		"duplicate workflow event":  func(c *Contract) { c.Workflows[0].Events[1] = c.Workflows[0].Events[0] },
+		"duplicate workflow job":    func(c *Contract) { c.Workflows[0].Jobs[1] = c.Workflows[0].Jobs[0] },
+		"missing release workflow":  func(c *Contract) { c.Concurrency.Release.Workflows = c.Concurrency.Release.Workflows[:2] },
+		"missing Homebrew platform": func(c *Contract) { c.Homebrew.Platforms = c.Homebrew.Platforms[:3] },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

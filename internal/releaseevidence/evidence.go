@@ -132,6 +132,9 @@ func Verify(evidence Evidence, contract releasecontract.Contract) error {
 	if contract.Schemas["release_evidence"] != SchemaID {
 		return fail(CodeInputInvalid, "release contract does not declare the evidence schema", nil)
 	}
+	if err := contract.ValidateHistoricalEvidenceIdentity(evidence.Repository, evidence.ReleaseVersion, evidence.SourceSHA, evidence.EvidenceSHA256); err != nil {
+		return fail(CodeInputInvalid, "historical evidence compatibility binding differs", err)
+	}
 	manifest := evidence.Promotion.Manifest
 	if evidence.Promotion.ManifestSHA256 != manifest.ManifestSHA256 {
 		return fail(CodeDigestMismatch, "promotion manifest record digest is inconsistent", nil)
@@ -469,22 +472,29 @@ func validateHomebrew(contract releasecontract.Contract, manifest releasepromoti
 	if !ok {
 		return fail(CodeInputIncomplete, "release contract has no Homebrew app", nil)
 	}
-	wantFormula := "Formula/" + contract.Naming.Product + ".rb"
-	wantPRURL := "https://github.com/" + app.Repository + "/pull/" + strconv.FormatInt(homebrew.PRNumber, 10)
-	if homebrew.Repository != app.Repository || homebrew.FormulaPath != wantFormula || !digestPattern.MatchString(homebrew.FormulaSHA256) || homebrew.Version != manifest.ReleaseVersion || !homebrew.VersionMonotonic || homebrew.PRNumber <= 0 || homebrew.PRURL != wantPRURL || !shaPattern.MatchString(homebrew.PRHeadSHA) || !shaPattern.MatchString(homebrew.PRMergeSHA) || !shaPattern.MatchString(homebrew.TapSHA) || !homebrew.MergeIsAncestorOfTap {
+	repository, repositoryOK := contract.RepositoryByID(app.RepositoryID)
+	if !repositoryOK {
+		return fail(CodeInputIncomplete, "release contract has no Homebrew repository", nil)
+	}
+	wantFormula := contract.Homebrew.FormulaPath
+	if wantFormula == "" {
+		wantFormula = "Formula/" + contract.Naming.Product + ".rb"
+	}
+	wantPRURL := "https://github.com/" + repository.FullName + "/pull/" + strconv.FormatInt(homebrew.PRNumber, 10)
+	if homebrew.Repository != repository.FullName || homebrew.FormulaPath != wantFormula || !digestPattern.MatchString(homebrew.FormulaSHA256) || homebrew.Version != manifest.ReleaseVersion || !homebrew.VersionMonotonic || homebrew.PRNumber <= 0 || homebrew.PRURL != wantPRURL || !shaPattern.MatchString(homebrew.PRHeadSHA) || !shaPattern.MatchString(homebrew.PRMergeSHA) || !shaPattern.MatchString(homebrew.TapSHA) || !homebrew.MergeIsAncestorOfTap {
 		return fail(CodeHomebrewStateInvalid, "Homebrew formula or exact PR state is invalid", nil)
 	}
-	if err := validateExternalRun(homebrew.PRHeadCI, app, "pull_request", homebrew.PRHeadSHA); err != nil {
+	if err := validateExternalRun(homebrew.PRHeadCI, app, repository.FullName, "pull_request", homebrew.PRHeadSHA); err != nil {
 		return fail(CodeHomebrewStateInvalid, "Homebrew PR-head CI is invalid", err)
 	}
-	if err := validateExternalRun(homebrew.PostMergeCI, app, "push", homebrew.PRMergeSHA); err != nil {
+	if err := validateExternalRun(homebrew.PostMergeCI, app, repository.FullName, "push", homebrew.PRMergeSHA); err != nil {
 		return fail(CodeHomebrewStateInvalid, "Homebrew post-merge CI is invalid", err)
 	}
 	return nil
 }
 
-func validateExternalRun(run ExternalWorkflowRun, app releasecontract.App, event, headSHA string) error {
-	wantURL := "https://github.com/" + app.Repository + "/actions/runs/" + strconv.FormatInt(run.RunID, 10)
+func validateExternalRun(run ExternalWorkflowRun, app releasecontract.App, repository, event, headSHA string) error {
+	wantURL := "https://github.com/" + repository + "/actions/runs/" + strconv.FormatInt(run.RunID, 10)
 	if run.RunID <= 0 || run.RunAttempt <= 0 || run.Workflow != app.CIWorkflowFile || run.Event != event || run.HeadSHA != headSHA || run.Conclusion != "success" || run.URL != wantURL {
 		return errors.New("external workflow run does not match the exact head/event/workflow tuple")
 	}

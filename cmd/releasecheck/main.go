@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	checkerVersion = "1.3.0"
+	checkerVersion = "1.4.0"
 
 	exitOK              = 0
 	exitUsage           = 2
@@ -54,6 +54,7 @@ type versionDocument struct {
 	SupportedSchemaVersions map[string][]int `json:"supported_schema_versions"`
 	ReleaseContractSchema   string           `json:"release_contract_schema"`
 	SemanticContractSHA256  string           `json:"semantic_contract_sha256"`
+	ContractFileSHA256      string           `json:"contract_file_sha256"`
 }
 
 type validationDocument struct {
@@ -140,8 +141,9 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 	}
 	revision, modified, revisionAvailable := buildRevision()
 	document := versionDocument{
-		SchemaID: releasecontract.VersionSchemaID, SchemaVersion: 1, OK: true,
-		CheckerVersion: checkerVersion,
+		SchemaID: releasecontract.VersionSchemaID, SchemaVersion: releasecontract.VersionSchemaVersion, OK: true,
+		CheckerVersion:     checkerVersion,
+		ContractFileSHA256: contract.FileSHA256(),
 		SupportedSchemaVersions: map[string][]int{
 			"attempt_classification":                {1},
 			"contract_validation":                   {1},
@@ -149,9 +151,13 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 			"legacy_rebuild_query":                  {1},
 			"legacy_rebuild_diagnostic":             {1},
 			"release_contract":                      {releasecontract.SchemaVersion},
+			"release_contract_history":              {releasecontract.HistoricalRegistryVersion},
+			"release_contract_historical_source":    {1},
+			"release_contract_operational":          {releasecontract.OperationalProjectionVersion},
+			"release_contract_source_route":         {releasecontract.SourceRouteSchemaVersion},
 			"release_contract_matrix":               {1},
 			"releasecheck_error":                    {1},
-			"releasecheck_version":                  {1},
+			"releasecheck_version":                  {releasecontract.VersionSchemaVersion},
 			"release_metrics":                       {1},
 			"release_metrics_baseline":              {1},
 			"release_metrics_comparison":            {1},
@@ -233,14 +239,30 @@ func runLegacy(args []string, stdout, stderr io.Writer) int {
 }
 
 func runContract(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "matrix" {
+	if len(args) == 0 {
 		fmt.Fprint(stderr, contractUsage())
 		return exitUsage
 	}
+	switch args[0] {
+	case "matrix":
+		return runContractMatrix(args[1:], stdout, stderr)
+	case "operational":
+		return runContractOperational(args[1:], stdout, stderr)
+	case "historical-source":
+		return runContractHistoricalSource(args[1:], stdout, stderr)
+	case "route-source":
+		return runContractRouteSource(args[1:], stdout, stderr)
+	default:
+		fmt.Fprint(stderr, contractUsage())
+		return exitUsage
+	}
+}
+
+func runContractMatrix(args []string, stdout, stderr io.Writer) int {
 	set := newFlagSet("contract matrix")
 	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
 	jsonOutput := set.Bool("json", false, "emit GitHub Actions matrix JSON")
-	if err := set.Parse(args[1:]); err != nil || set.NArg() != 0 {
+	if err := set.Parse(args); err != nil || set.NArg() != 0 {
 		fmt.Fprint(stderr, contractUsage())
 		return exitUsage
 	}
@@ -258,6 +280,87 @@ func runContract(args []string, stdout, stderr io.Writer) int {
 		for _, platform := range matrix.Include {
 			fmt.Fprintf(stdout, "%s %s\n", platform.ID, platform.Runner)
 		}
+	}
+	return exitOK
+}
+
+func runContractOperational(args []string, stdout, stderr io.Writer) int {
+	set := newFlagSet("contract operational")
+	contractPath := set.String("contract", releasecontract.CanonicalPath, "release contract JSON")
+	jsonOutput := set.Bool("json", false, "emit the validated operational projection")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 {
+		fmt.Fprint(stderr, contractUsage())
+		return exitUsage
+	}
+	contract, err := releasecontract.LoadFile(*contractPath)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	projection, err := contract.OperationalProjection()
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	if *jsonOutput {
+		if err := writeJSON(stdout, projection); err != nil {
+			fmt.Fprintf(stderr, "write JSON: %v\n", err)
+			return exitInternal
+		}
+	} else {
+		fmt.Fprintf(stdout, "operational release contract: schema=%s digest=%s\n", projection.ContractSchemaID, projection.ContractSemanticSHA256)
+	}
+	return exitOK
+}
+
+func runContractHistoricalSource(args []string, stdout, stderr io.Writer) int {
+	set := newFlagSet("contract historical-source")
+	contractPath := set.String("contract", releasecontract.LegacyArchivePath, "immutable archival v1 release contract JSON")
+	registryPath := set.String("registry", releasecontract.HistoricalRegistryPath, "closed historical compatibility registry")
+	repository := set.String("repository", "", "exact source repository")
+	version := set.String("version", "", "exact historical release version")
+	sourceSHA := set.String("source-sha", "", "exact historical source SHA")
+	jsonOutput := set.Bool("json", false, "emit the historical source authorization")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *repository == "" || !releasecontract.IsVersion(*version) || !evidenceSHA.MatchString(*sourceSHA) {
+		fmt.Fprint(stderr, contractUsage())
+		return exitUsage
+	}
+	document, err := releasecontract.AuthorizeHistoricalSource(*contractPath, *registryPath, *repository, *version, *sourceSHA)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	if *jsonOutput {
+		if err := writeJSON(stdout, document); err != nil {
+			fmt.Fprintf(stderr, "write JSON: %v\n", err)
+			return exitInternal
+		}
+	} else {
+		fmt.Fprintf(stdout, "authorized historical source: version=%s source_sha=%s evidence_commit=%s\n", document.Identity.ReleaseVersion, document.Identity.SourceSHA, document.Identity.EvidenceCommitSHA)
+	}
+	return exitOK
+}
+
+func runContractRouteSource(args []string, stdout, stderr io.Writer) int {
+	set := newFlagSet("contract route-source")
+	sourceContractPath := set.String("source-contract", "", "release contract from the exact triggering source checkout")
+	registryPath := set.String("registry", releasecontract.HistoricalRegistryPath, "closed historical compatibility registry from the current control plane")
+	repository := set.String("repository", "", "exact source repository")
+	version := set.String("version", "", "exact release version for a historical source")
+	sourceSHA := set.String("source-sha", "", "exact source SHA")
+	jsonOutput := set.Bool("json", false, "emit the normalized source route")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *sourceContractPath == "" || *repository == "" || !evidenceSHA.MatchString(*sourceSHA) {
+		fmt.Fprint(stderr, contractUsage())
+		return exitUsage
+	}
+	document, err := releasecontract.RouteSourceContract(*sourceContractPath, *registryPath, *repository, *version, *sourceSHA)
+	if err != nil {
+		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
+	}
+	if *jsonOutput {
+		if err := writeJSON(stdout, document); err != nil {
+			fmt.Fprintf(stderr, "write JSON: %v\n", err)
+			return exitInternal
+		}
+	} else {
+		fmt.Fprintf(stdout, "source release contract route: contract_generation=%s evidence_format=%s schema=%s digest=%s\n", document.ContractGeneration, document.EvidenceFormat, document.ContractSchemaID, document.ContractSemanticSHA256)
 	}
 	return exitOK
 }
@@ -577,7 +680,12 @@ func legacyUsage() string {
 }
 
 func contractUsage() string {
-	return "usage: releasecheck contract matrix [--contract FILE] [--json]\n"
+	return `usage:
+  releasecheck contract matrix [--contract FILE] [--json]
+  releasecheck contract operational [--contract FILE] [--json]
+  releasecheck contract historical-source --repository OWNER/REPO --version vMAJOR.MINOR.PATCH --source-sha SHA [--contract FILE] [--registry FILE] [--json]
+  releasecheck contract route-source --source-contract FILE --repository OWNER/REPO --source-sha SHA [--version vMAJOR.MINOR.PATCH] [--registry FILE] [--json]
+`
 }
 
 func recoveryUsage() string {

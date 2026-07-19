@@ -74,7 +74,7 @@ jobs:
 
           if [[ "$resolved" == "auto" ]]; then
             resolved="ci-${SOURCE_SHA}"
-            if [[ "$CALLER_EVENT_NAME" == "pull_request" && "$PR_HEAD_REF" == "release-please--branches--main--components--env-vault" ]]; then
+            if [[ "$CALLER_EVENT_NAME" == "pull_request" && "$PR_HEAD_REF" == "$RELEASE_PLEASE_BRANCH" ]]; then
               [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
                 echo "Release Please head SHA is missing or malformed" >&2
                 exit 1
@@ -466,7 +466,7 @@ jobs:
         shell: bash
         run: >-
           go run ./e2e/cmd/e2e-runner validate-matrix
-          --contract release/contract.v1.json
+          --contract release/contract.v2.json
           --reports reports-download
           --phase candidate
           --expected-commit "${{ inputs.source_sha }}"
@@ -481,7 +481,7 @@ jobs:
         run: >-
           go run ./cmd/e2e-baseline verify
           --baseline docs/e2e-baseline.json
-          --contract release/contract.v1.json
+          --contract release/contract.v2.json
           --proof reports-download/matrix-validation.json
           --output baseline-verification
           --repository-root .

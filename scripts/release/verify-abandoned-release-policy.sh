@@ -10,6 +10,7 @@ unset GIT_TRACE GIT_TRACE_CURL GIT_CURL_VERBOSE GIT_TRACE_PACKET
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 
 usage() {
   printf 'usage: %s RELEASE_VERSION RELEASE_SOURCE_SHA OUTPUT_JSON\n' "$(basename "$0")" >&2
@@ -60,7 +61,7 @@ trap cleanup EXIT
 ) > "$snapshot_dir/contract-validation.json"
 jq -e '
   .schema_id == "env-vault.contract-validation.v1" and .schema_version == 1 and .ok == true and
-  .release_contract_schema == "env-vault.release-contract.v1" and
+  .release_contract_schema == "env-vault.release-contract.v2" and
   (.semantic_contract_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
 ' "$snapshot_dir/contract-validation.json" >/dev/null || release_die "offline release contract validation is incomplete"
 
@@ -94,23 +95,25 @@ reason_code=$(jq -er '.reason_code' <<< "$policy")
   release_die "release source is not distinct from the abandoned incident"
 [[ "$(git rev-parse HEAD)" == "$release_source_sha" ]] || release_die "checkout is not the exact release source"
 
-release_app_slug=$(jq -er --arg repository "$repository" '
-  [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
-  select(length == 1) | .[0].slug |
-  select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
-' "$RELEASE_CONTRACT_PATH")
-expected_author="${release_app_slug}[bot]"
-expected_title="chore(main): release env-vault ${abandoned_version}"
-expected_branch=release-please--branches--main--components--env-vault
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] ||
+  release_die "repository differs from the typed operational release projection"
+# These values describe the immutable v0.0.12/PR #31 incident, not the
+# current operational naming policy. Keep the historical trust domain explicit
+# so a future product, branch, or App rename cannot rewrite the old predicate.
+historical_base_branch=main
+historical_head_branch=release-please--branches--main--components--env-vault
+historical_author='env-vault-release-planning[bot]'
+historical_title="chore(main): release env-vault ${abandoned_version}"
 
 "$SCRIPT_DIR/gh-api-read.sh" "$snapshot_dir/pr.json" "repos/$repository/pulls/$pr_number"
 jq -e \
   --arg repository "$repository" \
-  --arg branch "$expected_branch" \
+  --arg branch "$historical_head_branch" \
+  --arg base "$historical_base_branch" \
   --arg head "$pr_head_sha" \
   --arg boundary "$boundary_sha" \
-  --arg title "$expected_title" \
-  --arg author "$expected_author" \
+  --arg title "$historical_title" \
+  --arg author "$historical_author" \
   --arg pending "$pending_label" \
   --arg abandoned "$abandoned_label" \
   --arg tagged "$tagged_label" \
@@ -118,7 +121,7 @@ jq -e \
     .number == $pr and .state == "closed" and .merged == true and .draft == false and
     (.merged_at | type == "string" and try fromdateiso8601 != null) and
     .merge_commit_sha == $boundary and .title == $title and .user.login == $author and
-    .base.ref == "main" and .base.repo.full_name == $repository and
+    .base.ref == $base and .base.repo.full_name == $repository and
     .head.ref == $branch and .head.repo.full_name == $repository and .head.sha == $head and
     ([.labels[].name] | index($abandoned) != null) and
     ([.labels[].name] | index($pending) == null) and
@@ -168,8 +171,9 @@ jq -n \
   --arg source "$boundary_sha" \
   --arg head "$pr_head_sha" \
   --arg merged_at "$(jq -er '.merged_at' "$snapshot_dir/pr.json")" \
-  --arg title "$expected_title" \
-  --arg author "$expected_author" \
+  --arg title "$historical_title" \
+  --arg author "$historical_author" \
+  --arg base "$historical_base_branch" \
   --arg repository "$repository" \
   --arg reason "$reason_code" \
   --arg observed_at "$observed_at" \
@@ -179,7 +183,7 @@ jq -n \
     {state:$state,version:$version,source_sha:$source,
      generated_release_pr:{number:$pr,head_sha:$head,merge_sha:$source,merged_at:$merged_at},
      pull_request_state:"closed",pull_request_merged:true,pull_request_title:$title,
-     pull_request_author:$author,base_ref:"main",base_repository:$repository,labels:$labels,
+     pull_request_author:$author,base_ref:$base,base_repository:$repository,labels:$labels,
      boundary_is_ancestor_of_release:true,tag_exists:false,github_release_exists:false,
      reason_code:$reason,observed_at:$observed_at,semantic_contract_sha256:$contract_sha}
   ' > "$temporary_output"

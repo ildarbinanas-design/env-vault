@@ -575,7 +575,7 @@ func writeVersionEvidence(t *testing.T, root string, platform releasecontract.Pl
 
 func loadTestContract(t *testing.T) (string, releasecontract.Contract) {
 	t.Helper()
-	path := filepath.Join("..", "..", "release", "contract.v1.json")
+	path := filepath.Join("..", "..", "release", "contract.v2.json")
 	contract, err := releasecontract.LoadFile(path)
 	if err != nil {
 		t.Fatal(err)

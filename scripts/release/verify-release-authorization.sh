@@ -27,6 +27,7 @@ authorization_output=${RELEASE_AUTHORIZATION_OUTPUT:-}
 
 release_require_version "$version"
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || release_die "repository differs from the release contract"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || release_die "source commit SHA is malformed"
 [[ "$expected_app_slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || release_die "release App slug is missing or malformed"
 case "$label_state" in
@@ -43,7 +44,7 @@ repository_json="$probe_dir/repository.json"
 "$SCRIPT_DIR/gh-api-read.sh" "$repository_json" "repos/$repository"
 default_branch=$(jq -er '.default_branch | select(type == "string" and length > 0)' "$repository_json") ||
   release_die "GitHub returned a malformed default branch"
-[[ "$default_branch" == "main" ]] || release_die "release authorization requires main as the default branch"
+[[ "$default_branch" == "$RELEASE_SOURCE_DEFAULT_BRANCH" ]] || release_die "release authorization default branch differs from the contract"
 
 main_ref="$probe_dir/main-ref.json"
 "$SCRIPT_DIR/gh-api-read.sh" "$main_ref" "repos/$repository/git/ref/heads/$default_branch"
@@ -58,35 +59,35 @@ comparison_status=$(jq -er '.status | select(. == "ahead" or . == "identical")' 
 
 source_manifest="$probe_dir/source-manifest.json"
 "$SCRIPT_DIR/releasetransport.sh" contents read --output "$source_manifest" --repository "$repository" \
-  --path .release-please-manifest.json --ref "$source_sha"
-source_manifest_version=$(jq -er 'if type == "object" and (keys == ["."]) and ((.["."] | type) == "string") then .["."] else empty end' "$source_manifest") ||
+  --path "$RELEASE_PLEASE_MANIFEST_PATH" --ref "$source_sha"
+source_manifest_version=$(jq -er --arg key "$RELEASE_PLEASE_MANIFEST_KEY" 'if type == "object" and (keys == [$key]) and ((.[$key] | type) == "string") then .[$key] else empty end' "$source_manifest") ||
   release_die "exact release source manifest is malformed"
-[[ "v$source_manifest_version" == "$version" ]] ||
+[[ "$RELEASE_TAG_PREFIX$source_manifest_version" == "$version" ]] ||
   release_die "release version does not match the exact release source manifest"
 
 main_manifest="$probe_dir/main-manifest.json"
 "$SCRIPT_DIR/releasetransport.sh" contents read --output "$main_manifest" --repository "$repository" \
-  --path .release-please-manifest.json --ref "$main_sha"
-main_manifest_version=$(jq -er 'if type == "object" and (keys == ["."]) and ((.["."] | type) == "string") then .["."] else empty end' "$main_manifest") ||
+  --path "$RELEASE_PLEASE_MANIFEST_PATH" --ref "$main_sha"
+main_manifest_version=$(jq -er --arg key "$RELEASE_PLEASE_MANIFEST_KEY" 'if type == "object" and (keys == [$key]) and ((.[$key] | type) == "string") then .[$key] else empty end' "$main_manifest") ||
   release_die "current main release manifest is malformed"
 if [[ "$label_state" == "prepublish" ]]; then
-  [[ "v$main_manifest_version" == "$version" ]] ||
+  [[ "$RELEASE_TAG_PREFIX$main_manifest_version" == "$version" ]] ||
     release_die "release version does not match the current main manifest before tag creation"
 else
-  main_comparison=$("$SCRIPT_DIR/semver-compare.sh" "$main_manifest_version" "${version#v}")
+  main_comparison=$("$SCRIPT_DIR/semver-compare.sh" "$main_manifest_version" "${version#"$RELEASE_TAG_PREFIX"}")
   [[ "$main_comparison" == "0" || "$main_comparison" == "1" ]] ||
     release_die "current main release manifest predates the immutable tagged release"
 fi
 
 workflow_runs="$probe_dir/workflow-runs.json"
 "$SCRIPT_DIR/gh-api-read.sh" "$workflow_runs" --paginate --slurp --method GET \
-  "repos/$repository/actions/workflows/ci.yml/runs" \
+  "repos/$repository/actions/workflows/$RELEASE_CI_WORKFLOW_FILE/runs" \
   --raw-field "head_sha=$source_sha" \
   --raw-field "branch=$default_branch" \
   --raw-field 'event=push' \
   --raw-field 'status=completed' \
   --raw-field 'per_page=100'
-ci_identity=$(jq -cer --arg sha "$source_sha" --arg branch "$default_branch" --arg repository "$repository" '
+ci_identity=$(jq -cer --arg sha "$source_sha" --arg branch "$default_branch" --arg repository "$repository" --arg workflow_path "$RELEASE_CI_WORKFLOW_PATH" '
   [.[] | .workflow_runs[] |
     select(
       .repository.full_name == $repository and
@@ -94,7 +95,7 @@ ci_identity=$(jq -cer --arg sha "$source_sha" --arg branch "$default_branch" --a
       .head_sha == $sha and
       .head_branch == $branch and
       .event == "push" and
-      .path == ".github/workflows/ci.yml" and
+      .path == $workflow_path and
       .status == "completed" and
       .conclusion == "success" and
       (.id | type == "number" and . > 0 and floor == .) and
@@ -110,7 +111,7 @@ ci_run_attempt=$(jq -er '.run_attempt' <<< "$ci_identity")
   --repository "$repository" \
   --run-id "$ci_run_id" \
   --run-attempt "$ci_run_attempt" \
-  --workflow-path .github/workflows/ci.yml \
+  --workflow-path "$RELEASE_CI_WORKFLOW_PATH" \
   --event push \
   --head-sha "$source_sha" \
   --head-ref "$default_branch" || release_die "release commit CI typed identity mismatch"
@@ -122,8 +123,8 @@ pulls="$probe_dir/pulls.json"
   --header 'Accept: application/vnd.github+json' \
   "repos/$repository/commits/$source_sha/pulls?per_page=100"
 
-expected_title="chore(main): release env-vault $version"
-expected_branch="release-please--branches--main--components--env-vault"
+expected_title="$RELEASE_PR_TITLE_PREFIX$version"
+expected_branch="$RELEASE_PLEASE_BRANCH"
 expected_author="${expected_app_slug}[bot]"
 release_pr="$probe_dir/release-pr.json"
 jq -e \
@@ -133,6 +134,9 @@ jq -e \
   --arg head "$expected_branch" \
   --arg author "$expected_author" \
   --arg title "$expected_title" \
+  --arg header "$RELEASE_PR_HEADER" \
+  --arg pending "$RELEASE_PENDING_LABEL" \
+  --arg tagged "$RELEASE_TAGGED_LABEL" \
   --arg label_state "$label_state" '
     [.[][] |
       select(
@@ -146,15 +150,15 @@ jq -e \
         .head.repo.full_name == $repository and
         .user.login == $author and
         .title == $title and
-        ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
+        ((.body // "") | contains($header)) and
         ((.body // "") | contains("This PR was generated with Release Please.")) and
         ([.labels[].name] as $labels |
           if $label_state == "tagged" then
-            ($labels | index("autorelease: tagged") != null) and
-            ($labels | index("autorelease: pending") == null)
+            ($labels | index($tagged) != null) and
+            ($labels | index($pending) == null)
           else
-            ($labels | index("autorelease: pending") != null) or
-            ($labels | index("autorelease: tagged") != null)
+            ($labels | index($pending) != null) or
+            ($labels | index($tagged) != null)
           end
         )
       )

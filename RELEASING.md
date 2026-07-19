@@ -21,10 +21,18 @@ equivalents, and the incident matrix, see
 
 ## Sources of truth
 
-- [`release/contract.v1.json`](release/contract.v1.json) is the single
-  declarative release contract. It defines the five native platforms, ten
-  archive/checksum assets, workflow identities, App identities, release
-  stages, repair actions, schemas, and stable action/reason/error codes.
+- [`release/contract.v2.json`](release/contract.v2.json) is the canonical
+  operational release contract. It defines the repositories/default branches,
+  version and tag policy, five native platforms, ten archive/checksum assets,
+  Homebrew templates, twelve workflow identities, five shared-concurrency
+  participants, App identities/environments, required checks, repair actions,
+  schemas, and stable action/reason/error codes.
+- [`release/history/contract.v1.json`](release/history/contract.v1.json) and
+  [`release/contract-history.v2.json`](release/contract-history.v2.json) are the
+  closed v1 compatibility authority. They admit only exact historical
+  repository/version/source tuples and record contract generation separately
+  from evidence format. The live `release/contract.v1.json` is a transition
+  artifact, not the immutable archive or a source of new operational defaults.
 - [`docs/e2e-baseline.json`](docs/e2e-baseline.json) is the durable E2E
   compatibility baseline. CI verifies it from the current checkout; it does
   not download an expiring historical comparator artifact.
@@ -74,6 +82,7 @@ steps:
 
 ```sh
 GITHUB_REPOSITORY=ildarbinanas-design/env-vault \
+  scripts/release/with-typed-contract.sh \
   scripts/release/authorize-and-merge-release-pr.sh \
   <version> <pr-number> <full-head-sha>
 ```
@@ -118,12 +127,12 @@ race after launcher validation remain operating-system failures, not transport
 documents.
 
 One read is limited to 100 pages and 500 REST requests; each `gh` process is
-limited to 64 MiB stdout and 256 KiB stderr. These are not end-to-end time or
-aggregate-memory guarantees: the command has no internal request/operation
-deadline beyond signal cancellation and the enclosing workflow timeout, and
-the paginated body has no separate total-byte cap. Stage 4 owns the documented
-60-second request, 300-second operation, and 256 MiB aggregate-response targets
-before they may be described as enforced limits.
+limited to 64 MiB stdout and 256 KiB stderr. The transport enforces a 60-second
+deadline for each request process, a 300-second deadline for the entire public
+operation, and a 256 MiB aggregate response budget. Every attempt—including a
+malformed, incomplete, rate-limited, or otherwise retried response—consumes
+that aggregate budget before response classification. Capability probes share
+the operation deadline and singleflight waiters honor their own cancellation.
 
 Use the typed boundary when a run or required-check job authorizes release
 state:
@@ -333,7 +342,8 @@ transport shim validates the entire document and deliberately invokes
 diagnostic reproduction:
 
 ```sh
-scripts/release/rerun-classified-attempt.sh \
+scripts/release/with-typed-contract.sh \
+  scripts/release/rerun-classified-attempt.sh \
   attempt-classification.json ildarbinanas-design/env-vault
 ```
 
@@ -536,6 +546,13 @@ also contains genesis, while production retains immutable legacy history.
 byte-for-byte offline. `parity.json` is emitted only for a successful v1/v2
 replay; it is not failure evidence.
 
+Routing is tuple-based, not inferred from the current branch: `v0.0.14` and
+`v0.0.15` are contract-generation v1/evidence-format v1, while `v0.0.16` is
+contract-generation v1/evidence-format v2. The reviewed current checker binds
+the history registry and archived contract bytes; the checker built from the
+immutable source validates the historical generation. See
+[ADR 0006](docs/adr/0006-versioned-operational-release-contract.md).
+
 Replaying the same run/attempt is a no-op only when every file for that format
 is byte-identical. A partial tuple directory, unexpected path, conflicting
 bytes, rewritten earlier object, or inherited-path change fails closed; a
@@ -554,9 +571,10 @@ release App, or add a ruleset bypass.
 The already published production ledger remains `legacy-compatible` and is
 never migrated or rewritten. Both v1 and v2 listeners validate its bounded
 first-parent history and refuse a new append before any mutation when the
-64-commit validation window is full. The two-commit baseline leaves 62 append
-slots before this refactor and 61 after the next successful patch; land a
-reviewed checkpoint/Merkle design before that window is exhausted. See
+64-commit validation window is full. The two-commit baseline left 62 append
+slots; published `v0.0.16` added the third entry, so 61 slots remain now and
+the next successful patch will leave 60. Land a reviewed checkpoint/Merkle
+design before that window is exhausted. See
 [ADR 0003](docs/adr/0003-compact-release-evidence-ledger.md).
 
 Metrics are derived from a saved complete `gh run view` document:

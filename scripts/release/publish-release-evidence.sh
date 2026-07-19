@@ -9,6 +9,7 @@ unset GH_DEBUG GIT_TRACE GIT_TRACE_CURL GIT_CURL_VERBOSE
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 # shellcheck source=scripts/release/evidence-ledger-common.sh
 source "$SCRIPT_DIR/evidence-ledger-common.sh"
 
@@ -471,6 +472,7 @@ metrics_comparison_md=$7
 release_require_version "$version"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || release_die "source SHA must be exactly 40 lowercase hexadecimal characters"
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || release_die "repository differs from the release contract source"
 release_require_command gh
 release_require_command jq
 release_require_command cmp
@@ -481,7 +483,8 @@ validate_local_file "$index_md" "release evidence index"
 validate_local_file "$metrics_comparison_json" "metrics comparison JSON"
 validate_local_file "$metrics_comparison_md" "metrics comparison Markdown"
 
-evidence_identity=$(jq -cer --arg version "$version" --arg source_sha "$source_sha" --arg repository "$repository" '
+evidence_identity=$(jq -cer --arg version "$version" --arg source_sha "$source_sha" --arg repository "$repository" \
+  --arg publisher_workflow "$RELEASE_PUBLISHER_WORKFLOW_NAME" '
   select(
   type == "object" and
   .schema_id == "env-vault.release-evidence.v1" and
@@ -495,7 +498,7 @@ evidence_identity=$(jq -cer --arg version "$version" --arg source_sha "$source_s
   .publisher_metrics.schema_id == "env-vault.release-metrics.v1" and
   (.publisher_metrics.run_id | type == "number" and floor == . and . >= 1 and . <= 9007199254740991) and
   (.publisher_metrics.attempt | type == "number" and floor == . and . >= 1 and . <= 2147483647) and
-  .publisher_metrics.workflow_name == "build-binaries" and
+  .publisher_metrics.workflow_name == $publisher_workflow and
   .publisher_metrics.head_sha == $source_sha and
   .publisher_metrics.conclusion == "success" and
   (.publisher_repair_mode | type == "string" and

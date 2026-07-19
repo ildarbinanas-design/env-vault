@@ -8,6 +8,7 @@ unset GH_DEBUG GIT_TRACE GIT_TRACE_CURL GIT_CURL_VERBOSE
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 
 usage() {
   printf 'usage: %s [--verify-only|--verify-published-pr|--require-unpublished] vMAJOR.MINOR.PATCH FORMULA OWNER/REPO [WORK_DIR]\n' "$(basename "$0")" >&2
@@ -57,11 +58,11 @@ require_formula_blob_at_commit() {
 
   git -C "$work_dir" cat-file -e "${commit}^{commit}" 2>/dev/null ||
     release_die "tap head is not a commit"
-  tree_entry=$(git -C "$work_dir" ls-tree "$commit" -- Formula/env-vault.rb) ||
+  tree_entry=$(git -C "$work_dir" ls-tree "$commit" -- "$RELEASE_HOMEBREW_FORMULA_PATH") ||
     release_die "cannot inspect formula at tap head"
   read -r mode object_type object_id object_path <<< "$tree_entry"
-  [[ "$mode" == "100644" && "$object_type" == "blob" && "$object_id" =~ ^[0-9a-f]{40,64}$ && "$object_path" == "Formula/env-vault.rb" ]] ||
-    release_die "tap head must contain Formula/env-vault.rb as a regular file"
+  [[ "$mode" == "100644" && "$object_type" == "blob" && "$object_id" =~ ^[0-9a-f]{40,64}$ && "$object_path" == "$RELEASE_HOMEBREW_FORMULA_PATH" ]] ||
+    release_die "tap head must contain $RELEASE_HOMEBREW_FORMULA_PATH as a regular file"
 }
 
 validate_formula_at_commit() {
@@ -69,7 +70,7 @@ validate_formula_at_commit() {
   local snapshot=$2
 
   require_formula_blob_at_commit "$commit"
-  git -C "$work_dir" show "${commit}:Formula/env-vault.rb" > "$snapshot" ||
+  git -C "$work_dir" show "${commit}:$RELEASE_HOMEBREW_FORMULA_PATH" > "$snapshot" ||
     release_die "cannot read formula at tap head"
   cmp -s "$formula" "$snapshot" ||
     release_die "tap head formula does not exactly match the generated formula"
@@ -91,8 +92,8 @@ validate_branch_content() {
     release_die "release branch does not share history with the tap default branch"
   changed_paths=$(git -C "$work_dir" diff --name-only --no-renames "$merge_base" "$commit") ||
     release_die "cannot inspect release branch changes"
-  [[ "$changed_paths" == "Formula/env-vault.rb" ]] ||
-    release_die "release branch must change only Formula/env-vault.rb"
+  [[ "$changed_paths" == "$RELEASE_HOMEBREW_FORMULA_PATH" ]] ||
+    release_die "release branch must change only $RELEASE_HOMEBREW_FORMULA_PATH"
 }
 
 load_pr() {
@@ -157,15 +158,15 @@ validate_pr() {
     --json files \
     --jq '.files[].path') ||
     release_die "cannot inspect Homebrew pull request files"
-  [[ "$files" == "Formula/env-vault.rb" ]] ||
-    release_die "pull request must change only Formula/env-vault.rb"
+  [[ "$files" == "$RELEASE_HOMEBREW_FORMULA_PATH" ]] ||
+    release_die "pull request must change only $RELEASE_HOMEBREW_FORMULA_PATH"
 
   body=$(gh pr view "$pr_number" \
     --repo "$tap_repository" \
     --json body \
     --jq '.body') ||
     release_die "cannot inspect Homebrew pull request body"
-  marker_count=$(printf '%s\n' "$body" | grep -F -c '<!-- env-vault-release ' || true)
+  marker_count=$(printf '%s\n' "$body" | grep -F -c "<!-- ${RELEASE_PRODUCT}-release " || true)
   exact_marker_count=$(printf '%s\n' "$body" | grep -F -x -c "$expected_marker" || true)
   [[ "$marker_count" == "1" && "$exact_marker_count" == "1" ]] ||
     release_die "pull request release marker does not match version, source SHA, and formula digest"
@@ -246,11 +247,12 @@ requested_work_dir=${4:-}
 release_require_version "$version"
 release_require_regular_file "$formula"
 release_require_repository "$tap_repository"
+[[ "$tap_repository" == "$RELEASE_HOMEBREW_TAP_REPOSITORY" ]] || release_die "repository differs from the release contract Homebrew tap"
 release_require_command git
 release_require_command cmp
 
 formula=$(cd "$(dirname "$formula")" && pwd -P)/$(basename "$formula")
-target_version=${version#v}
+target_version=${version#"$RELEASE_TAG_PREFIX"}
 formula_version=$(parse_formula_version "$formula")
 [[ "$formula_version" == "$target_version" ]] ||
   release_die "generated formula version does not match $version"
@@ -265,12 +267,12 @@ if [[ -n "$expected_tap_base_sha" ]]; then
     release_die "EXPECTED_TAP_BASE_SHA must be a lowercase hexadecimal commit SHA"
 fi
 formula_sha=$(release_sha256_file "$formula")
-expected_marker="<!-- env-vault-release version=$version source_sha=$source_sha formula_sha256=$formula_sha -->"
+expected_marker="<!-- ${RELEASE_PRODUCT}-release version=$version source_sha=$source_sha formula_sha256=$formula_sha -->"
 
-branch="release/env-vault-$version"
+branch="release/$RELEASE_PRODUCT-$version"
 git check-ref-format --branch "$branch" >/dev/null 2>&1 ||
   release_die "invalid deterministic release branch"
-[[ "$branch" != "main" ]] || release_die "refusing to use main as a release branch"
+[[ "$branch" != "$RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH" ]] || release_die "refusing to use the tap default branch"
 
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-homebrew-pr.XXXXXX")
 trap cleanup EXIT
@@ -299,6 +301,7 @@ base_remote_ref=$(git -C "$work_dir" symbolic-ref --quiet --short refs/remotes/o
 base_branch=${base_remote_ref#origin/}
 git check-ref-format --branch "$base_branch" >/dev/null 2>&1 ||
   release_die "tap default branch name is invalid"
+[[ "$base_branch" == "$RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH" ]] || release_die "tap default branch differs from the release contract"
 [[ "$branch" != "$base_branch" ]] || release_die "release branch matches the tap default branch"
 
 git -C "$work_dir" fetch --no-tags origin \
@@ -311,8 +314,8 @@ if [[ -n "$expected_tap_base_sha" && "$base_sha" != "$expected_tap_base_sha" ]];
   release_die "tap default branch changed from the expected pre-publication base"
 fi
 require_formula_blob_at_commit "$base_sha"
-git -C "$work_dir" show "${base_sha}:Formula/env-vault.rb" > "$scratch_dir/published-formula.rb" ||
-  release_die "tap default branch has no env-vault formula"
+git -C "$work_dir" show "${base_sha}:$RELEASE_HOMEBREW_FORMULA_PATH" > "$scratch_dir/published-formula.rb" ||
+  release_die "tap default branch has no $RELEASE_HOMEBREW_FORMULA_PATH"
 published_version=$(parse_formula_version "$scratch_dir/published-formula.rb")
 comparison=$("$SCRIPT_DIR/semver-compare.sh" "$target_version" "$published_version")
 
@@ -361,8 +364,8 @@ if [[ "$comparison" == "-1" ]]; then
   release_die "refusing to lower Homebrew from $published_version to $target_version"
 fi
 
-expected_title="env-vault $version"
-expected_body=$(printf 'Automated Homebrew formula update for env-vault %s.\n\nSource release: https://github.com/ildarbinanas-design/env-vault/releases/tag/%s\n\n%s' "$version" "$version" "$expected_marker")
+expected_title="$RELEASE_PRODUCT $version"
+expected_body=$(printf 'Automated Homebrew formula update for %s %s.\n\nSource release: https://github.com/%s/releases/tag/%s\n\n%s' "$RELEASE_PRODUCT" "$version" "$RELEASE_SOURCE_REPOSITORY" "$version" "$expected_marker")
 load_pr
 
 if [[ "$operation" == "verify_published_pr" ]]; then
@@ -439,15 +442,15 @@ fi
 if [[ -z "$remote_branch_sha" ]]; then
   git -C "$work_dir" checkout --detach "refs/remotes/origin/$base_branch" >&2
   git -C "$work_dir" switch -c "$branch" >&2
-  mkdir -p "$work_dir/Formula"
-  install -m 0644 "$formula" "$work_dir/Formula/env-vault.rb"
-  git -C "$work_dir" add -- Formula/env-vault.rb
+  mkdir -p "$work_dir/$(dirname "$RELEASE_HOMEBREW_FORMULA_PATH")"
+  install -m 0644 "$formula" "$work_dir/$RELEASE_HOMEBREW_FORMULA_PATH"
+  git -C "$work_dir" add -- "$RELEASE_HOMEBREW_FORMULA_PATH"
   staged_paths=$(git -C "$work_dir" diff --cached --name-only --no-renames)
-  [[ "$staged_paths" == "Formula/env-vault.rb" ]] ||
-    release_die "new release branch must change only Formula/env-vault.rb"
-  git -C "$work_dir" config user.name "env-vault release bot"
+  [[ "$staged_paths" == "$RELEASE_HOMEBREW_FORMULA_PATH" ]] ||
+    release_die "new release branch must change only $RELEASE_HOMEBREW_FORMULA_PATH"
+  git -C "$work_dir" config user.name "$RELEASE_PRODUCT release bot"
   git -C "$work_dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git -C "$work_dir" commit -m "env-vault $version" >&2
+  git -C "$work_dir" commit -m "$RELEASE_PRODUCT $version" >&2
   head_sha=$(git -C "$work_dir" rev-parse HEAD)
   validate_branch_content "$head_sha"
   require_expected_base_unchanged

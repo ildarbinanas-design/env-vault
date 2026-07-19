@@ -32,7 +32,18 @@ jobs:
           set -euo pipefail
           go build -trimpath -o "$RUNNER_TEMP/releasecheck" ./cmd/releasecheck
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
-          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/releasecheck" --contract release/contract.v2.json --version --json \
+            > "$RUNNER_TEMP/releasecheck-version.json"
+          "$RUNNER_TEMP/releasecheck" contract operational \
+            --contract release/contract.v2.json --json \
+            > "$RUNNER_TEMP/release-contract-operational.json"
+          {
+            printf 'RELEASECHECK=%s\n' "$RUNNER_TEMP/releasecheck"
+            printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RUNNER_TEMP/releasecheck"
+            printf 'RELEASE_TRANSPORT_BIN=%s\n' "$RUNNER_TEMP/releasetransport"
+            printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "$RUNNER_TEMP/releasecheck-version.json"
+            printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "$RUNNER_TEMP/release-contract-operational.json"
+          } >> "$GITHUB_ENV"
 
       - id: app-token
         name: Mint read-only installation audit token
@@ -50,7 +61,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$ACTUAL_APP_SLUG" != "env-vault-release-planning" ]]; then
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
+          if [[ "$ACTUAL_APP_SLUG" != "$RELEASE_PLANNING_APP_SLUG" ]]; then
             echo "unexpected release planning App identity" >&2
             exit 1
           fi
@@ -68,16 +81,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          source scripts/release/lib.sh
+          release_require_typed_contract_projection
+          expected_repository=$RELEASE_SOURCE_REPOSITORY
           scripts/release/gh-api-read.sh installation-repositories.json \
             --paginate --slurp installation/repositories
           mapfile -t repositories < <(jq -r '.[]?.repositories[]?.full_name' installation-repositories.json)
-          if [[ "${#repositories[@]}" != "1" || "${repositories[0]:-}" != "ildarbinanas-design/env-vault" ]]; then
+          if [[ "${#repositories[@]}" != "1" || "${repositories[0]:-}" != "$expected_repository" ]]; then
             echo "release planning App installation scope must contain only env-vault" >&2
             exit 1
           fi
           {
             printf '## Release planning App scope audit\n\n'
-            printf -- '- Installation contains only `ildarbinanas-design/env-vault`.\n'
+            printf -- '- Installation contains only `%s`.\n' "$expected_repository"
             printf -- '- Audit token permissions: metadata read and administration read.\n'
             printf -- '- Global bypass actor counts were read through GraphQL and validated offline.\n'
             printf -- '- The token is revoked by the action post-step.\n'

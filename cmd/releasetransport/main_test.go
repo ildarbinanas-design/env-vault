@@ -54,6 +54,33 @@ func TestHelpRemainsHumanReadableAndSuccessful(t *testing.T) {
 	}
 }
 
+func TestPreflightCLIEmitsVersionedNumericalBounds(t *testing.T) {
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	script := `#!/bin/sh
+if [ "$1" = --version ]; then printf 'gh version 2.96.0 (2026-07-02)\n'; exit 0; fi
+if [ "$1" = api ] && [ "$2" = --help ]; then printf '%s\n' '--include --hostname --method --header --raw-field --input'; exit 0; fi
+exit 1
+`
+	if err := os.WriteFile(gh, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var stdout, stderr bytes.Buffer
+	if status := run([]string{"preflight", "--output", "-"}, &stdout, &stderr); status != githubtransport.ExitOK || stderr.Len() != 0 {
+		t.Fatalf("status=%d stderr=%q", status, stderr.String())
+	}
+	var document githubtransport.CapabilitiesDocument
+	if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.SchemaID != "env-vault.github-transport-capabilities.v2" || document.SchemaVersion != 2 ||
+		document.TransportVersion != "1.2.0" || document.MaxRequestSeconds != 60 || document.MaxOperationSeconds != 300 ||
+		document.MaxAggregateResponseBytes != 268435456 {
+		t.Fatalf("capabilities=%+v", document)
+	}
+}
+
 func TestReadRejectsExistingOutputBeforeLookingForGH(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "snapshot.json")
 	if err := os.WriteFile(path, []byte("trusted\n"), 0o600); err != nil {

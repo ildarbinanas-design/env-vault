@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 
 usage() {
   printf 'usage: %s [vMAJOR.MINOR.PATCH] [LOCAL_ASSET_DIR] [VERIFIED_DOWNLOAD_DIR] [OWNER/REPO]\n' "$(basename "$0")" >&2
@@ -93,6 +94,7 @@ repository=${4:-${GITHUB_REPOSITORY:-}}
 [[ -n "$repository" && -n "$version" && -n "$local_dir" ]] || usage
 
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || release_die "repository differs from the release contract source"
 release_require_version "$version"
 release_require_command gh
 release_require_command jq

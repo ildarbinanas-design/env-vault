@@ -66,10 +66,6 @@ type releasePleaseExtraFile struct {
 	Path string `json:"path"`
 }
 
-type releasePleaseManifest struct {
-	Version json.RawMessage `json:"."`
-}
-
 // CheckReleasePleaseRecoveryFiles validates the checked-in Release Please
 // config and manifest without network access. The strict decoder rejects
 // unknown, duplicate, and case-variant fields at every level.
@@ -98,14 +94,22 @@ func CheckReleasePleaseRecovery(contract Contract, configData, manifestData []by
 	if err := decodeJSON(configData, &config, true); err != nil {
 		return ReleasePleaseRecoveryCheck{}, fmt.Errorf("decode release-please config: %w", err)
 	}
-	if err := validateCanonicalReleasePleaseConfig(config); err != nil {
+	if err := validateCanonicalReleasePleaseConfig(contract, config); err != nil {
 		return ReleasePleaseRecoveryCheck{}, fmt.Errorf("validate release-please config: %w", err)
 	}
-	var manifest releasePleaseManifest
+	var manifest map[string]json.RawMessage
 	if err := decodeJSON(manifestData, &manifest, true); err != nil {
 		return ReleasePleaseRecoveryCheck{}, fmt.Errorf("decode release-please manifest: %w", err)
 	}
-	manifestVersion, err := requiredJSONString(manifest.Version, "manifest package version")
+	manifestKey := contract.VersionPolicy.ReleasePlease.ManifestKey
+	if len(manifest) != 1 {
+		return ReleasePleaseRecoveryCheck{}, errors.New("release-please manifest must contain exactly the contract package key")
+	}
+	manifestVersionRaw, ok := manifest[manifestKey]
+	if !ok {
+		return ReleasePleaseRecoveryCheck{}, errors.New("release-please manifest contract package key is missing")
+	}
+	manifestVersion, err := requiredJSONString(manifestVersionRaw, "manifest package version")
 	if err != nil {
 		return ReleasePleaseRecoveryCheck{}, err
 	}
@@ -120,8 +124,8 @@ func CheckReleasePleaseRecovery(contract Contract, configData, manifestData []by
 		if lastReleaseSHA != recovery.AbandonedSourceSHA {
 			return ReleasePleaseRecoveryCheck{}, errors.New("last-release-sha does not equal the abandoned source SHA")
 		}
-		if manifestVersion != "0.0.12" {
-			return ReleasePleaseRecoveryCheck{}, errors.New("active recovery requires manifest version 0.0.12")
+		if manifestVersion != strings.TrimPrefix(recovery.AbandonedVersion, contract.VersionPolicy.TagPrefix) {
+			return ReleasePleaseRecoveryCheck{}, errors.New("active recovery requires the abandoned contract version in the manifest")
 		}
 	case "complete":
 		if config.LastReleaseSHA != nil {
@@ -176,30 +180,31 @@ func versionAtLeast(actual, floor string) bool {
 	return true
 }
 
-func validateCanonicalReleasePleaseConfig(config releasePleaseConfig) error {
+func validateCanonicalReleasePleaseConfig(contract Contract, config releasePleaseConfig) error {
 	if config.Schema != "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json" {
 		return errors.New("$schema must pin Release Please v17.6.0")
 	}
 	if config.SeparatePullRequests == nil || !*config.SeparatePullRequests {
 		return errors.New("separate-pull-requests must be present and true")
 	}
+	policy := contract.VersionPolicy.ReleasePlease
 	if len(config.Packages) != 1 {
-		return errors.New("packages must contain exactly the repository root")
+		return errors.New("packages must contain exactly the contract manifest key")
 	}
-	pkg, ok := config.Packages["."]
+	pkg, ok := config.Packages[policy.ManifestKey]
 	if !ok {
-		return errors.New("root package is missing")
+		return errors.New("contract package is missing")
 	}
-	if pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" {
+	if pkg.ReleaseType != "go" || pkg.PackageName != contract.Naming.Product || pkg.Component != policy.Component || pkg.ChangelogPath != "CHANGELOG.md" {
 		return errors.New("root package release identity is invalid")
 	}
 	if pkg.SkipGitHubRelease == nil || !*pkg.SkipGitHubRelease || pkg.IncludeVInTag == nil || !*pkg.IncludeVInTag || pkg.IncludeComponentInTag == nil || *pkg.IncludeComponentInTag {
 		return errors.New("root package tag and publication controls are invalid or missing")
 	}
-	if pkg.PullRequestTitlePattern != "chore${scope}: release env-vault v${version}" {
+	if pkg.PullRequestTitlePattern != "chore${scope}: release "+contract.Naming.Product+" "+contract.VersionPolicy.TagPrefix+"${version}" {
 		return errors.New("pull-request-title-pattern is invalid")
 	}
-	if pkg.PullRequestHeader != "Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI." {
+	if pkg.PullRequestHeader != "Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes "+contract.Repositories.Source.DefaultBranch+" CI." {
 		return errors.New("pull-request-header is invalid")
 	}
 	if pkg.PullRequestFooter != "This PR was generated with Release Please." {

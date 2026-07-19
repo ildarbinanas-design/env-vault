@@ -24,8 +24,11 @@ const (
 	maxPages             = 100
 	maxTotalRequests     = maxAttempts * maxPages
 	maxTotalRetryWait    = 120 * time.Second
+	maxRequestDuration   = 60 * time.Second
+	maxOperationDuration = 300 * time.Second
 	maxStdoutBytes       = 64 << 20
 	maxStderrBytes       = 256 << 10
+	maxAggregateBytes    = 256 << 20
 	maxEvidenceBlobBytes = 17 << 20
 )
 
@@ -83,21 +86,83 @@ func (r ExecRunner) run(ctx context.Context, args, environment []string, input [
 }
 
 type Client struct {
-	Runner            CommandRunner
-	Sleep             func(context.Context, time.Duration) error
-	Now               func() time.Time
-	capabilityMu      sync.Mutex
-	capabilityChecked bool
-	capabilityError   *TransportError
-	capabilityVersion string
-	mutationInput     bool
+	Runner                    CommandRunner
+	Sleep                     func(context.Context, time.Duration) error
+	Now                       func() time.Time
+	capabilityMu              sync.Mutex
+	capabilityChecked         bool
+	capabilityChecking        bool
+	capabilityDone            chan struct{}
+	capabilityError           *TransportError
+	capabilityVersion         string
+	mutationInput             bool
+	requestTimeout            time.Duration
+	operationTimeout          time.Duration
+	maxAggregateResponseBytes int64
 }
 
 func NewClient() *Client {
 	return &Client{Runner: ExecRunner{}, Sleep: sleepContext, Now: time.Now}
 }
 
+type operationContextKey struct{}
+
+type operationBudget struct {
+	mu            sync.Mutex
+	responseBytes int64
+}
+
+func (c *Client) operationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Value(operationContextKey{}).(*operationBudget); ok {
+		return ctx, func() {}
+	}
+	operation, cancel := context.WithTimeout(ctx, c.operationDuration())
+	return context.WithValue(operation, operationContextKey{}, &operationBudget{}), cancel
+}
+
+func (c *Client) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, c.requestDuration())
+}
+
+func (c *Client) requestDuration() time.Duration {
+	if c.requestTimeout > 0 {
+		return c.requestTimeout
+	}
+	return maxRequestDuration
+}
+
+func (c *Client) operationDuration() time.Duration {
+	if c.operationTimeout > 0 {
+		return c.operationTimeout
+	}
+	return maxOperationDuration
+}
+
+func (c *Client) aggregateResponseLimit() int64 {
+	if c.maxAggregateResponseBytes > 0 {
+		return c.maxAggregateResponseBytes
+	}
+	return maxAggregateBytes
+}
+
+func (c *Client) acceptResponseBytes(ctx context.Context, count int64) *TransportError {
+	budget, ok := ctx.Value(operationContextKey{}).(*operationBudget)
+	if !ok {
+		return &TransportError{Code: "TRANSPORT_FAILED", Message: "transport operation budget is missing"}
+	}
+	budget.mu.Lock()
+	defer budget.mu.Unlock()
+	limit := c.aggregateResponseLimit()
+	if count < 0 || count > limit-budget.responseBytes {
+		return &TransportError{Code: "TRANSPORT_FAILED", Message: fmt.Sprintf("aggregate response bytes exceeded %d", limit), Attempts: 1}
+	}
+	budget.responseBytes += count
+	return nil
+}
+
 func (c *Client) Preflight(ctx context.Context) (CapabilitiesDocument, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	if capabilityErr := c.checkCapabilities(ctx); capabilityErr != nil {
 		return CapabilitiesDocument{}, capabilityErr
 	}
@@ -105,20 +170,24 @@ func (c *Client) Preflight(ctx context.Context) (CapabilitiesDocument, *Transpor
 	ghVersion := c.capabilityVersion
 	mutationInput := c.mutationInput
 	c.capabilityMu.Unlock()
-	capabilities := []string{"strict_raw_rest_get", "complete_pagination", "actions_attempt_identity", "git_blob_exact_bytes", "atomic_no_clobber_output"}
+	capabilities := []string{"strict_raw_rest_get", "complete_pagination", "actions_attempt_identity", "git_blob_exact_bytes", "atomic_no_clobber_output", "bounded_request_time", "bounded_operation_time", "bounded_aggregate_response_bytes"}
 	if mutationInput {
 		capabilities = append(capabilities, "one_shot_git_data_mutation")
 	}
 	return CapabilitiesDocument{
-		SchemaID: CapabilitiesSchemaID, SchemaVersion: 1, OK: true,
+		SchemaID: CapabilitiesSchemaID, SchemaVersion: CapabilitiesSchemaVersion, OK: true,
 		TransportVersion: TransportVersion, GitHubAPIVersion: APIVersion,
 		Host: Host, GHVersion: ghVersion, MaxAttemptsPerPage: maxAttempts, MaxPages: maxPages,
 		MaxTotalRequests: maxTotalRequests, MaxTotalRetryWaitSecs: int(maxTotalRetryWait / time.Second),
-		Capabilities: capabilities,
+		MaxRequestSeconds: int(c.requestDuration() / time.Second), MaxOperationSeconds: int(c.operationDuration() / time.Second),
+		MaxAggregateResponseBytes: c.aggregateResponseLimit(),
+		Capabilities:              capabilities,
 	}, nil
 }
 
 func (c *Client) Read(ctx context.Context, request ReadRequest) ([]byte, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	result, transportErr := c.read(ctx, request)
 	return result.Body, transportErr
 }
@@ -180,6 +249,8 @@ func (c *Client) read(ctx context.Context, request ReadRequest) (readResult, *Tr
 }
 
 func (c *Client) Observe(ctx context.Context, endpoint string) (ObservationDocument, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	result, transportErr := c.read(ctx, ReadRequest{Endpoint: endpoint})
 	if transportErr != nil {
 		return ObservationDocument{}, transportErr
@@ -199,26 +270,76 @@ func (c *Client) Observe(ctx context.Context, endpoint string) (ObservationDocum
 }
 
 func (c *Client) checkCapabilities(ctx context.Context) *TransportError {
-	c.capabilityMu.Lock()
-	defer c.capabilityMu.Unlock()
-	if c.capabilityChecked {
-		return c.capabilityError
+	for {
+		c.capabilityMu.Lock()
+		if c.capabilityChecked {
+			capabilityErr := c.capabilityError
+			c.capabilityMu.Unlock()
+			if ctx.Err() != nil {
+				return &TransportError{Code: "TRANSPORT_FAILED", Message: "gh capability wait was cancelled by a bounded deadline", Cause: ctx.Err()}
+			}
+			return capabilityErr
+		}
+		if c.capabilityChecking {
+			done := c.capabilityDone
+			c.capabilityMu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return &TransportError{Code: "TRANSPORT_FAILED", Message: "gh capability wait was cancelled by a bounded deadline", Cause: ctx.Err()}
+			}
+		}
+		c.capabilityChecking = true
+		c.capabilityDone = make(chan struct{})
+		done := c.capabilityDone
+		c.capabilityMu.Unlock()
+
+		version, mutationInput, capabilityErr, cache := c.probeCapabilities(ctx)
+		c.capabilityMu.Lock()
+		if cache {
+			c.capabilityChecked = true
+			c.capabilityError = capabilityErr
+			c.capabilityVersion = version
+			c.mutationInput = mutationInput
+		}
+		c.capabilityChecking = false
+		close(done)
+		c.capabilityMu.Unlock()
+		return capabilityErr
 	}
-	c.capabilityChecked = true
-	version := c.Runner.Run(ctx, []string{"--version"}, SanitizedEnvironment())
+}
+
+func (c *Client) probeCapabilities(ctx context.Context) (string, bool, *TransportError, bool) {
+	requestCtx, cancel := c.requestContext(ctx)
+	version := c.Runner.Run(requestCtx, []string{"--version"}, SanitizedEnvironment())
+	requestErr := requestCtx.Err()
+	cancel()
+	if requestErr != nil || ctx.Err() != nil {
+		if requestErr == nil {
+			requestErr = ctx.Err()
+		}
+		return "", false, &TransportError{Code: "TRANSPORT_FAILED", Message: "gh capability probe was cancelled by a bounded deadline", Cause: requestErr}, false
+	}
 	versionMatch := regexp.MustCompile(`^gh version ([0-9]+\.[0-9]+\.[0-9]+) \([0-9]{4}-[0-9]{2}-[0-9]{2}\)\r?\n`).FindSubmatch(version.Stdout)
 	if version.Err != nil || versionMatch == nil {
-		c.capabilityError = &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "gh version is unavailable or malformed"}
-		return c.capabilityError
+		return "", false, &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "gh version is unavailable or malformed"}, true
 	}
-	c.capabilityVersion = string(versionMatch[1])
-	help := c.Runner.Run(ctx, []string{"api", "--help"}, SanitizedEnvironment())
+	capabilityVersion := string(versionMatch[1])
+	requestCtx, cancel = c.requestContext(ctx)
+	help := c.Runner.Run(requestCtx, []string{"api", "--help"}, SanitizedEnvironment())
+	requestErr = requestCtx.Err()
+	cancel()
+	if requestErr != nil || ctx.Err() != nil {
+		if requestErr == nil {
+			requestErr = ctx.Err()
+		}
+		return "", false, &TransportError{Code: "TRANSPORT_FAILED", Message: "gh capability probe was cancelled by a bounded deadline", Cause: requestErr}, false
+	}
 	if help.Err != nil || !containsAll(string(help.Stdout), "--include", "--hostname", "--method", "--header", "--raw-field") {
-		c.capabilityError = &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "gh api lacks required transport flags"}
-		return c.capabilityError
+		return "", false, &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "gh api lacks required transport flags"}, true
 	}
-	c.mutationInput = strings.Contains(string(help.Stdout), "--input")
-	return nil
+	return capabilityVersion, strings.Contains(string(help.Stdout), "--input"), nil, true
 }
 
 type pageReadResult struct {
@@ -233,6 +354,9 @@ type pageReadResult struct {
 func (c *Client) readPage(ctx context.Context, endpoint string, request ReadRequest, priorWait time.Duration, pagination paginationScope, currentPage uint64) (pageReadResult, *TransportError) {
 	waited := time.Duration(0)
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return pageReadResult{Wait: waited}, &TransportError{Code: "TRANSPORT_FAILED", Message: "transport operation was cancelled by a bounded deadline", Attempts: attempt, Cause: ctx.Err()}
+		}
 		accept := request.Accept
 		if accept == "" {
 			accept = "application/vnd.github+json"
@@ -242,13 +366,36 @@ func (c *Client) readPage(ctx context.Context, endpoint string, request ReadRequ
 		for _, field := range request.Fields {
 			args = append(args, "--raw-field", field)
 		}
-		result := c.Runner.Run(ctx, args, sanitizedEnvironment())
+		requestCtx, cancel := c.requestContext(ctx)
+		result := c.Runner.Run(requestCtx, args, sanitizedEnvironment())
+		requestErr := requestCtx.Err()
+		cancel()
+		if ctx.Err() != nil {
+			return pageReadResult{Wait: waited}, &TransportError{Code: "TRANSPORT_FAILED", Message: "transport operation was cancelled by a bounded deadline", Attempts: attempt, Cause: ctx.Err()}
+		}
+		if requestErr != nil && result.Err == nil {
+			result.Err = requestErr
+		}
 		response, parseErr := parseHTTPResponse(result.Stdout)
-		if parseErr == nil && response.SelectedVersion != APIVersion {
-			return pageReadResult{Wait: waited}, &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "GitHub selected an unexpected API version", HTTPStatus: response.Status, Attempts: attempt}
+		responseBytes := int64(len(result.Stdout))
+		if parseErr == nil {
+			responseBytes = int64(len(response.Body))
+		}
+		if budgetErr := c.acceptResponseBytes(ctx, responseBytes); budgetErr != nil {
+			budgetErr.Attempts = attempt
+			return pageReadResult{Wait: waited}, budgetErr
 		}
 		var classified *TransportError
-		if parseErr == nil {
+		if requestErr != nil {
+			classified = &TransportError{
+				Code: "TRANSPORT_FAILED", Message: "GitHub read request was cancelled by a bounded deadline",
+				Retriable: true, Attempts: attempt, Cause: requestErr,
+			}
+		}
+		if classified == nil && parseErr == nil && response.SelectedVersion != APIVersion {
+			return pageReadResult{Wait: waited}, &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "GitHub selected an unexpected API version", HTTPStatus: response.Status, Attempts: attempt}
+		}
+		if classified == nil && parseErr == nil {
 			classified = validateReviewedResponse(response, request, attempt)
 		}
 		if classified == nil {
@@ -275,7 +422,14 @@ func (c *Client) readPage(ctx context.Context, endpoint string, request ReadRequ
 		if !classified.RetryDelaySet {
 			delay = time.Duration(1<<uint(attempt-1)) * time.Second
 		}
-		if priorWait+waited+delay > maxTotalRetryWait {
+		consumed := priorWait
+		if consumed < 0 || waited < 0 || consumed > maxTotalRetryWait || waited > maxTotalRetryWait-consumed {
+			classified.Retriable = false
+			classified.Message = "retry wait exceeds bounded transport budget"
+			return pageReadResult{Wait: waited}, classified
+		}
+		consumed += waited
+		if delay < 0 || delay > maxTotalRetryWait-consumed {
 			classified.Retriable = false
 			classified.Message = "retry wait exceeds bounded transport budget"
 			return pageReadResult{Wait: waited}, classified
@@ -444,7 +598,7 @@ func containsAll(value string, needles ...string) bool {
 func retryDelay(headers map[string]string, now time.Time, rateLimited bool) (time.Duration, bool) {
 	if value := headers["retry-after"]; value != "" {
 		seconds, err := strconv.Atoi(value)
-		if err == nil && seconds >= 0 {
+		if err == nil && seconds >= 0 && seconds <= int(maxTotalRetryWait/time.Second) {
 			return time.Duration(seconds) * time.Second, true
 		}
 		return 0, false
@@ -455,11 +609,15 @@ func retryDelay(headers map[string]string, now time.Time, rateLimited bool) (tim
 		}
 		reset, err := strconv.ParseInt(headers["x-ratelimit-reset"], 10, 64)
 		if err == nil {
-			delay := time.Unix(reset, 0).Sub(now)
-			if delay < 0 {
+			nowSeconds := now.Unix()
+			if reset <= nowSeconds {
 				return 0, true
 			}
-			return delay, true
+			delaySeconds := reset - nowSeconds
+			if delaySeconds <= 0 || delaySeconds > int64(maxTotalRetryWait/time.Second) {
+				return maxTotalRetryWait + time.Second, true
+			}
+			return time.Duration(delaySeconds) * time.Second, true
 		}
 		return 0, false
 	}

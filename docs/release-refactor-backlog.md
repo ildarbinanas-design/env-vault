@@ -21,9 +21,12 @@ work completed by the documentation release.
   must not move, while their historical tree and the current policy remain two
   distinct sources of evidence. A single-checkout operator is therefore easy
   to misuse when investigating an old tag.
-- **Affected files/workflows:** a new release-only package under
-  `internal/releasecontract` or `internal/releasehistory`, `cmd/releasecheck`,
-  `release/contract.v1.json`, `legacy-rebuild.yml`, and releasecheck tests.
+- **Affected files/workflows:** the existing closed router under
+  `internal/releasecontract`, `cmd/releasecheck`,
+  `release/history/contract.v1.json`, `release/contract-history.v2.json`,
+  `legacy-rebuild.yml`, and releasecheck tests. Stage 4 completed exact routing
+  for published `v0.0.14`-`v0.0.16`; this item remains only for the older
+  observation-only failed-tag export workflow.
 - **Guarantee preserved:** tags are read only, blocked Release absences remain
   permanent, historical code is never promoted, and current policy is the only
   authorization source.
@@ -54,7 +57,7 @@ work completed by the documentation release.
   steps, and adversarial tests spread across contract, Go, shell, and workflow
   files. Hand-maintained pins are appropriate for the incident but do not scale
   to another recovery without duplicated logic.
-- **Affected files/workflows:** `release/contract.v1.json`,
+- **Affected files/workflows:** `release/contract.v2.json`,
   `internal/releasecontract/recovery.go`, `cmd/releasecheck`,
   `release-please.yml`, and recovery/operator tests.
 - **Guarantee preserved:** transitions are declarative and offline; incident
@@ -87,7 +90,7 @@ work completed by the documentation release.
   similar implementation.
 - **Affected files/workflows:** `audit-release-app.yml`,
   `audit-release-planning-app.yml`, `build-binaries.yml`,
-  `release-please.yml`, `release/contract.v1.json`, and workflow tests.
+  `release-please.yml`, `release/contract.v2.json`, and workflow tests.
 - **Guarantee preserved:** short-lived tokens, exact App slug, exactly one
   allowed repository, least permissions, no token or private-key output, and
   automatic token revocation.
@@ -161,14 +164,12 @@ or substituted for the immutable baseline JSON.
 - **Implemented bounds and residual:** each page has at most five attempts; one
   read has at most 100 pages, 500 REST requests, and 120 seconds cumulative
   retry wait; each `gh` process permits at most 64 MiB stdout and 256 KiB
-  stderr. Pagination preserves the complete initial query scope and permits
-  only exactly consecutive canonical `page` controls for the endpoints in
-  scope. The CLI still has no own per-request/end-to-end deadline beyond signal
-  cancellation and its enclosing workflow timeout, and page aggregation has no
-  separate total-byte cap (up to 6,400 MiB of accepted page bodies before
-  overhead in theory). Stage 4 release-engineering targets are 60 seconds per
-  request, 300 seconds end to end, and 256 MiB aggregate response bytes, with
-  adversarial timeout/cancellation/overflow tests before claiming those bounds.
+  stderr. Stage 4 added a 60-second request-process deadline, 300-second public
+  operation deadline, and 256 MiB aggregate response budget. Every attempt is
+  charged before classification, including malformed, incomplete,
+  rate-limited, and retryable responses. Capability singleflight waiters honor
+  cancellation. Pagination still preserves the complete initial query scope
+  and exactly consecutive canonical `page` controls.
 - **Proposed architecture:** a small release-only transport executable reports
   a versioned capability/preflight JSON, performs atomic read pagination, and
   classifies authentication, permission, rate-limit, sandbox/DNS, and malformed
@@ -448,16 +449,69 @@ accepted legacy parent/source observation with a dynamic, independently bound
 proof before removing any compatibility fixture. Neither follow-up authorizes
 rewriting the current branch.
 
+## 12. Versioned operational release contract and workflow parity
+
+**Implemented in refactor Stage 4 (2026-07-18).** The accepted trust-domain
+decision is recorded in
+[ADR 0006](adr/0006-versioned-operational-release-contract.md).
+`release/contract.v2.json` now owns current repository/default-branch, version,
+tag, naming, target, asset, Homebrew, workflow, concurrency, App/environment,
+and required-check identities. Runtime mutation consumers require a dedicated
+same-checkout checker to strictly validate the exact local contract and
+byte-for-byte corroborate its freshly generated checker-version and operational
+projection documents. Self-declared digests cannot authorize different bytes.
+The operator wrapper builds one private checker, overrides caller projection
+variables, and cleans up on success, failure, and signals; jq fallback remains
+read-only and non-authoritative.
+
+Historical v1 authority is closed to exact archived bytes and exact
+repository/version/source tuples in `release/contract-history.v2.json`.
+Contract generation and evidence format are separate: `v0.0.14` and `v0.0.15`
+route v1/v1, while `v0.0.16` routes v1/v2. Arbitrary in-memory v1 documents and
+the live transition file have no compatibility authority. Frozen capability
+fixtures and the compact `v0.0.16` bundle verify that route fully offline.
+
+Static parity tests bind Actions fields that cannot consume runtime shell:
+workflow trigger names/branches/tags, exact events/jobs, five shared release
+concurrency participants, App-token environments/repositories, required-check
+identity, and the five provenance/SBOM subject archives. Five repeated
+publisher activation bodies were reduced to one checked helper without
+removing the cross-job artifact boundary.
+
+Measured from Stage 3 base `ce1ba7186a4d3133fb04075f275f06e6042c0ccb`,
+workflow files/jobs remain 12/27 while workflow source grows 5,245/4,924 to
+5,926/5,585 physical/nonblank lines. Release shell/jq grows from 33 files and
+6,089/5,554 lines to 35 and 6,457/5,905. Contract Go grows from 6 files and
+2,521/2,377 lines to 12 and 4,024/3,812; transport Go remains 11 files and grows
+4,060/3,838 to 4,729/4,464. Raw live-v1 literal occurrences fall 27 to 6 (all
+historical source routing), and exact repository literals fall 12 to 2 (both
+Go module linker paths). Product implementation paths are unchanged. These are source
+measurements, not a runtime speedup claim.
+
+**Genuine follow-ups only:**
+
+- record exact hosted main/PR/publisher wall and runner metrics from the first
+  successful v2-contract release and compare them with the immutable baseline;
+- keep the residual checkpoint/Merkle work in item 11 before the 64-commit
+  evidence validation window is exhausted;
+- keep the failed legacy-tag export in item 1, generic recovery transitions in
+  item 2, reusable App proof in item 3, inventory engine in item 5, and any CI
+  job reduction in item 6 as separately reviewed changes;
+- do not remove the live v1 transition file until no supported immutable source
+  needs its source-tree path; never remove or rewrite the archived v1 bytes or
+  tuple registry.
+
 ## Suggested implementation order
 
-1. Add metrics/graph assertions and the typed GitHub transport/run-identity
-   read boundary, including custom-name and post-merge association fixtures.
-2. Make test-tool bootstrap hermetic.
-3. Consolidate App audits and promotion inventory with parity dual-runs.
-4. Preserve the completed Stage 3 automatic genesis and compact-bundle
-   invariants; schedule its checkpoint/Merkle and frozen-v1 follow-ups before
-   the validation window becomes operationally tight.
-5. Reduce the CI/publisher graph using measurements from successful runs.
+1. Record exact hosted metrics from the first successful v2-contract release;
+   retain the immutable v1 and pre-refactor comparators.
+2. Design the evidence checkpoint/Merkle transition before the bounded history
+   window becomes operationally tight; keep legacy history immutable.
+3. Consolidate App audits and promotion inventory only through typed-proof
+   parity dual-runs.
+4. Make the remaining test-tool bootstrap hermetic.
+5. Reduce the CI/publisher graph only from successful-run measurements while
+   retaining five native jobs and both named gates.
 6. Add event-aware run names and measure title-check event fan-out without
    changing triggers.
 7. Add the diagnostic evidence collector.

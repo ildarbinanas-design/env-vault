@@ -129,16 +129,16 @@ func TestPublishReleaseEvidenceV2ParentlessGenesisIsBash3SafeAndRaceReconciled(t
 				t.Fatalf("fresh source probes=%d want=%d\n%s", got, test.wantSourceProbes, output)
 			}
 			calls := readOptionalFile(t, callLog)
-			if got := strings.Count(calls, "POST repos/example/env-vault/git/blobs\n"); got != test.wantBlobPosts {
+			if got := strings.Count(calls, "POST repos/ildarbinanas-design/env-vault/git/blobs\n"); got != test.wantBlobPosts {
 				t.Fatalf("blob creates=%d want=%d\n%s", got, test.wantBlobPosts, calls)
 			}
-			if got := strings.Count(calls, "POST repos/example/env-vault/git/refs\n"); got != test.wantRefPosts {
+			if got := strings.Count(calls, "POST repos/ildarbinanas-design/env-vault/git/refs\n"); got != test.wantRefPosts {
 				t.Fatalf("ref creates=%d want=%d\n%s", got, test.wantRefPosts, calls)
 			}
 			if strings.Contains(calls, "force=true") || strings.Contains(calls, "DELETE ") {
 				t.Fatalf("destructive mutation observed:\n%s", calls)
 			}
-			if strings.Contains(calls, "GET repos/example/env-vault/git/trees/1010101010101010101010101010101010101010") {
+			if strings.Contains(calls, "GET repos/ildarbinanas-design/env-vault/git/trees/1010101010101010101010101010101010101010") {
 				t.Fatalf("parentless genesis read or inherited the source tree:\n%s", calls)
 			}
 			assertGenesisMutationSourceOrder(t, calls)
@@ -252,16 +252,16 @@ func TestPublishReleaseEvidenceV2PreservesLegacyLineageAndUpdatesByFastForward(t
 				t.Fatalf("failure output lacks %q:\n%s", test.wantOutput, output)
 			}
 			calls := readOptionalFile(t, callLog)
-			if got := strings.Count(calls, "POST repos/example/env-vault/git/blobs\n"); got != test.wantBlobs {
+			if got := strings.Count(calls, "POST repos/ildarbinanas-design/env-vault/git/blobs\n"); got != test.wantBlobs {
 				t.Fatalf("blob posts=%d want=%d\n%s", got, test.wantBlobs, calls)
 			}
-			if got := strings.Count(calls, "POST repos/example/env-vault/git/trees\n"); got != test.wantTrees {
+			if got := strings.Count(calls, "POST repos/ildarbinanas-design/env-vault/git/trees\n"); got != test.wantTrees {
 				t.Fatalf("tree posts=%d want=%d\n%s", got, test.wantTrees, calls)
 			}
-			if got := strings.Count(calls, "POST repos/example/env-vault/git/commits\n"); got != test.wantCommits {
+			if got := strings.Count(calls, "POST repos/ildarbinanas-design/env-vault/git/commits\n"); got != test.wantCommits {
 				t.Fatalf("commit posts=%d want=%d\n%s", got, test.wantCommits, calls)
 			}
-			if got := strings.Count(calls, "PATCH repos/example/env-vault/git/refs/heads/release-evidence\n"); got != test.wantUpdates {
+			if got := strings.Count(calls, "PATCH repos/ildarbinanas-design/env-vault/git/refs/heads/release-evidence\n"); got != test.wantUpdates {
 				t.Fatalf("ref updates=%d want=%d\n%s", got, test.wantUpdates, calls)
 			}
 			if test.wantUpdates == 0 {
@@ -379,10 +379,10 @@ func TestPublishReleaseEvidenceV2AnchoredAmbiguousUpdateReplaysBoundedRootThreeT
 	}
 	calls := readOptionalFile(t, callLog)
 	for fragment, want := range map[string]int{
-		"POST repos/example/env-vault/git/blobs\n":                        6,
-		"POST repos/example/env-vault/git/trees\n":                        1,
-		"POST repos/example/env-vault/git/commits\n":                      1,
-		"PATCH repos/example/env-vault/git/refs/heads/release-evidence\n": 1,
+		"POST repos/ildarbinanas-design/env-vault/git/blobs\n":                        6,
+		"POST repos/ildarbinanas-design/env-vault/git/trees\n":                        1,
+		"POST repos/ildarbinanas-design/env-vault/git/commits\n":                      1,
+		"PATCH repos/ildarbinanas-design/env-vault/git/refs/heads/release-evidence\n": 1,
 	} {
 		if got := strings.Count(calls, fragment); got != want {
 			t.Fatalf("calls containing %q=%d want=%d\n%s", fragment, got, want, calls)
@@ -392,7 +392,7 @@ func TestPublishReleaseEvidenceV2AnchoredAmbiguousUpdateReplaysBoundedRootThreeT
 		t.Fatalf("anchored replay used the 64 MiB Contents transport instead of bounded blob reads:\n%s", calls)
 	}
 	for path, sha := range rootBlobSHAs {
-		if got := strings.Count(calls, "GET repos/example/env-vault/git/blobs/"+sha+"\n"); got != 3 {
+		if got := strings.Count(calls, "GET repos/ildarbinanas-design/env-vault/git/blobs/"+sha+"\n"); got != 3 {
 			t.Fatalf("anchored %s validation reads=%d want=3\n%s", path, got, calls)
 		}
 	}
@@ -453,7 +453,7 @@ func TestPublishReleaseEvidenceV2AnchoredRootRejectsAmplificationBeforeBlockedBl
 				t.Fatalf("status=%v want failure containing %q\n%s", runErr, test.wantOutput, outputBytes)
 			}
 			calls := readOptionalFile(t, callLog)
-			if strings.Contains(calls, "GET repos/example/env-vault/git/blobs/"+blockedSHA+"\n") {
+			if strings.Contains(calls, "GET repos/ildarbinanas-design/env-vault/git/blobs/"+blockedSHA+"\n") {
 				t.Fatalf("blocked oversized or inconsistent blob %s was read:\n%s", blockedSHA, calls)
 			}
 			if strings.Contains(calls, "POST ") || strings.Contains(calls, "PATCH ") {
@@ -979,7 +979,7 @@ base_commit=2222222222222222222222222222222222222222
 base_tree=3333333333333333333333333333333333333333
 full_ref=refs/heads/release-evidence
 
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/commits/$source_sha ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/commits/$source_sha ]]; then
   count=0; [[ ! -f $source_count ]] || count=$(<"$source_count"); count=$((count + 1)); printf '%s\n' "$count" >"$source_count"
   if [[ $mode == source-disappears && $count -ge 2 ]]; then respond 404 'Not Found' 1 '{"message":"Not Found"}'; fi
   if [[ $mode == source-disappears-late && $count -ge 6 ]]; then respond 404 'Not Found' 1 '{"message":"Not Found"}'; fi
@@ -988,7 +988,7 @@ if [[ $method == GET && $endpoint == repos/example/env-vault/git/commits/$source
   respond 200 OK 0 "$body"
 fi
 
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/ref/heads/release-evidence ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/ref/heads/release-evidence ]]; then
   if [[ ! -f $ref_state ]]; then
     if [[ $mode == probe-403 ]]; then respond 403 Forbidden 1 '{"message":"Forbidden"}'; fi
     if [[ $mode == probe-429 ]]; then respond 429 'Too Many Requests' 1 '{"message":"rate limited"}' $'Retry-After: 0\r\n'; fi
@@ -1003,10 +1003,10 @@ if [[ $method == GET && $endpoint == repos/example/env-vault/git/ref/heads/relea
   respond 200 OK 0 "$body"
 fi
 
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/commits/$new_commit && -f $commit_state ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/commits/$new_commit && -f $commit_state ]]; then
   respond 200 OK 0 "$(<"$commit_state")"
 fi
-if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/commits/([0-9a-f]{40})$ && -n $chain_file && -f $chain_file ]]; then
+if [[ $method == GET && $endpoint =~ ^repos/ildarbinanas-design/env-vault/git/commits/([0-9a-f]{40})$ && -n $chain_file && -f $chain_file ]]; then
   chain_commit=${BASH_REMATCH[1]}
   if jq -e --arg sha "$chain_commit" 'has($sha)' "$chain_file" >/dev/null; then
     chain_parent=$(jq -er --arg sha "$chain_commit" '.[$sha]' "$chain_file")
@@ -1014,30 +1014,30 @@ if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/commits/([0-9a
     respond 200 OK 0 "$body"
   fi
 fi
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/commits/$base_commit && $mode == anchored-* ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/commits/$base_commit && $mode == anchored-* ]]; then
   body=$(jq -cn --arg sha "$base_commit" --arg tree "$base_tree" '{sha:$sha,tree:{sha:$tree},parents:[],message:"chore(evidence): create ledger at v1.2.2 from 1111111111111111111111111111111111111111"}')
   respond 200 OK 0 "$body"
 fi
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/commits/$base_commit && $mode == legacy-* ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/commits/$base_commit && $mode == legacy-* ]]; then
   body=$(jq -cn --arg sha "$base_commit" --arg tree "$base_tree" --arg parent "$source_sha" '{sha:$sha,tree:{sha:$tree},parents:[{sha:$parent}],message:"chore(evidence): legacy baseline"}')
   respond 200 OK 0 "$body"
 fi
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/commits/$conflict_commit ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/commits/$conflict_commit ]]; then
   respond 404 'Not Found' 1 '{"message":"Not Found"}'
 fi
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/trees/$new_tree\?recursive=1 && -f $tree_state ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/trees/$new_tree\?recursive=1 && -f $tree_state ]]; then
   if [[ $mode == wrong-tree-sha ]]; then
     respond 200 OK 0 "$(jq -c '.sha="7777777777777777777777777777777777777777"' "$tree_state")"
   fi
   respond 200 OK 0 "$(<"$tree_state")"
 fi
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/trees/$base_tree\?recursive=1 && -n $base_tree_file ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/trees/$base_tree\?recursive=1 && -n $base_tree_file ]]; then
   respond 200 OK 0 "$(<"$base_tree_file")"
 fi
-if [[ $method == GET && $endpoint == repos/example/env-vault/git/trees/$source_tree\?recursive=1 && -n $source_tree_file ]]; then
+if [[ $method == GET && $endpoint == repos/ildarbinanas-design/env-vault/git/trees/$source_tree\?recursive=1 && -n $source_tree_file ]]; then
   respond 200 OK 0 "$(<"$source_tree_file")"
 fi
-if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/blobs/([0-9a-f]{40})$ ]]; then
+if [[ $method == GET && $endpoint =~ ^repos/ildarbinanas-design/env-vault/git/blobs/([0-9a-f]{40})$ ]]; then
   sha=${BASH_REMATCH[1]}
   file="$remote_dir/blob-$sha"
   [[ -f $file ]] || respond 404 'Not Found' 1 '{"message":"Not Found"}'
@@ -1046,7 +1046,7 @@ if [[ $method == GET && $endpoint =~ ^repos/example/env-vault/git/blobs/([0-9a-f
   respond 200 OK 0 "$body"
 fi
 
-if [[ $method == POST && $endpoint == repos/example/env-vault/git/blobs && $input == - ]]; then
+if [[ $method == POST && $endpoint == repos/ildarbinanas-design/env-vault/git/blobs && $input == - ]]; then
   count=0; [[ ! -f $blob_count ]] || count=$(<"$blob_count"); count=$((count + 1)); printf '%s\n' "$count" >"$blob_count"
   payload="$payload_dir/blob-$count.json"; cat >"$payload"
   encoded="$payload_dir/blob-$count.base64"; decoded="$payload_dir/blob-$count.bin"; jq -er '.content' "$payload" >"$encoded"
@@ -1054,7 +1054,7 @@ if [[ $method == POST && $endpoint == repos/example/env-vault/git/blobs && $inpu
   sha=$(git hash-object -- "$decoded"); cp "$decoded" "$remote_dir/blob-$sha"
   respond 201 Created 0 "$(jq -cn --arg sha "$sha" '{sha:$sha}')"
 fi
-if [[ $method == POST && $endpoint == repos/example/env-vault/git/trees && $input == - ]]; then
+if [[ $method == POST && $endpoint == repos/ildarbinanas-design/env-vault/git/trees && $input == - ]]; then
   payload="$payload_dir/tree-request.json"; cat >"$payload"
   if [[ $mode == legacy-* || $mode == anchored-* ]]; then
     jq -c --arg sha "$new_tree" --slurpfile base "$base_tree_file" '
@@ -1078,12 +1078,12 @@ if [[ $method == POST && $endpoint == repos/example/env-vault/git/trees && $inpu
   fi
   respond 201 Created 0 "$(jq -cn --arg sha "$new_tree" '{sha:$sha}')"
 fi
-if [[ $method == POST && $endpoint == repos/example/env-vault/git/commits && $input == - ]]; then
+if [[ $method == POST && $endpoint == repos/ildarbinanas-design/env-vault/git/commits && $input == - ]]; then
   payload="$payload_dir/commit-request.json"; cat >"$payload"
   jq -c --arg sha "$new_commit" '{sha:$sha,tree:{sha:.tree},parents:[.parents[]|{sha:.}],message:.message}' "$payload" >"$commit_state"
   respond 201 Created 0 "$(jq -cn --arg sha "$new_commit" '{sha:$sha}')"
 fi
-if [[ $method == POST && $endpoint == repos/example/env-vault/git/refs && $input == - ]]; then
+if [[ $method == POST && $endpoint == repos/ildarbinanas-design/env-vault/git/refs && $input == - ]]; then
   cat >"$payload_dir/ref-request.json"
   case $mode in
     ref-ambiguous) printf '%s\n' "$new_commit" >"$ref_state"; exit 1 ;;
@@ -1092,7 +1092,7 @@ if [[ $method == POST && $endpoint == repos/example/env-vault/git/refs && $input
     *) printf '%s\n' "$new_commit" >"$ref_state"; body=$(jq -cn --arg ref "$full_ref" --arg sha "$new_commit" '{ref:$ref,object:{type:"commit",sha:$sha}}'); respond 201 Created 0 "$body" ;;
   esac
 fi
-if [[ $method == PATCH && $endpoint == repos/example/env-vault/git/refs/heads/release-evidence && $input == - ]]; then
+if [[ $method == PATCH && $endpoint == repos/ildarbinanas-design/env-vault/git/refs/heads/release-evidence && $input == - ]]; then
   cat >"$payload_dir/update-ref-request.json"
   case $mode in
     legacy-update-ambiguous) printf '%s\n' "$new_commit" >"$ref_state"; exit 1 ;;
@@ -1183,9 +1183,9 @@ func assertEvidenceV2ParentlessRequests(t *testing.T, payloadDirectory string) {
 func assertGenesisMutationSourceOrder(t *testing.T, calls string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(calls), "\n")
-	const sourceRead = "GET repos/example/env-vault/git/commits/" + evidenceSourceSHA
+	const sourceRead = "GET repos/ildarbinanas-design/env-vault/git/commits/" + evidenceSourceSHA
 	for index, line := range lines {
-		if !strings.HasPrefix(line, "POST repos/example/env-vault/git/") {
+		if !strings.HasPrefix(line, "POST repos/ildarbinanas-design/env-vault/git/") {
 			continue
 		}
 		if index == 0 || lines[index-1] != sourceRead {

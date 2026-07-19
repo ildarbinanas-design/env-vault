@@ -178,22 +178,22 @@ func parseRun(data []byte, contract Contract) (parsedRun, error) {
 		return parsedRun{}, inputError("INPUT_INCOMPLETE", "run.head_sha", errors.New("lowercase full source SHA is required"))
 	}
 	workflow, ok := contract.WorkflowByID("ci")
-	expectedRepository, repositoryOK := releaseRepository(contract)
+	expectedRepository, repositoryOK := contract.RepositoryByID("source")
 	expectedPath := ".github/workflows/" + workflow.File
 	if !ok || raw.Path == nil || *raw.Path != expectedPath {
 		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.path", errors.New("run is not the contract CI workflow"))
 	}
-	if !repositoryOK || raw.Repository == nil || raw.Repository.FullName == nil || *raw.Repository.FullName != expectedRepository {
+	if !repositoryOK || raw.Repository == nil || raw.Repository.FullName == nil || *raw.Repository.FullName != expectedRepository.FullName {
 		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.repository.full_name", errors.New("run is not bound to the contract repository"))
 	}
-	if raw.HeadRepository == nil || raw.HeadRepository.FullName == nil || *raw.HeadRepository.FullName != expectedRepository {
+	if raw.HeadRepository == nil || raw.HeadRepository.FullName == nil || *raw.HeadRepository.FullName != expectedRepository.FullName {
 		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.head_repository.full_name", errors.New("run head is not owned by the contract repository"))
 	}
 	if raw.Event == nil || *raw.Event != "push" {
 		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.event", errors.New("run is not a push"))
 	}
-	if raw.HeadBranch == nil || *raw.HeadBranch != "main" {
-		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.head_branch", errors.New("run is not on main"))
+	if raw.HeadBranch == nil || *raw.HeadBranch != expectedRepository.DefaultBranch {
+		return parsedRun{}, inputError("ATTEMPT_STATE_INCONSISTENT", "run.head_branch", errors.New("run is not on the contract default branch"))
 	}
 	conclusion, present, err := nullableString(raw.Conclusion)
 	if err != nil || !present {
@@ -208,8 +208,8 @@ func parseRun(data []byte, contract Contract) (parsedRun, error) {
 	}
 	return parsedRun{
 		id: *raw.ID, attempt: *raw.RunAttempt, status: *raw.Status, conclusion: conclusion,
-		headSHA: *raw.HeadSHA, repository: expectedRepository, headRepository: expectedRepository,
-		event: "push", headBranch: "main", workflowName: workflow.Name, workflowPath: expectedPath,
+		headSHA: *raw.HeadSHA, repository: expectedRepository.FullName, headRepository: expectedRepository.FullName,
+		event: "push", headBranch: expectedRepository.DefaultBranch, workflowName: workflow.Name, workflowPath: expectedPath,
 	}, nil
 }
 
@@ -405,15 +405,6 @@ func supportedConclusion(conclusion string) bool {
 	default:
 		return false
 	}
-}
-
-func releaseRepository(contract Contract) (string, bool) {
-	for _, app := range contract.Apps {
-		if app.ID == "release_planning" {
-			return app.Repository, true
-		}
-	}
-	return "", false
 }
 
 func inputError(code, field string, err error) error {

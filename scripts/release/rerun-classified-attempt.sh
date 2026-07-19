@@ -2,6 +2,11 @@
 set -euo pipefail
 export LC_ALL=C
 
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scripts/release/lib.sh
+source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
+
 usage() {
   printf 'usage: %s CLASSIFICATION.json OWNER/REPO\n' "$(basename "$0")" >&2
   exit 2
@@ -23,6 +28,7 @@ repository=$2
 repository_name=${repository#*/}
 [[ "$repository_name" != '.' && "$repository_name" != '..' ]] ||
   die 'repository must use canonical OWNER/REPO syntax'
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || die 'repository differs from the release contract source'
 command -v jq >/dev/null 2>&1 || die 'required command is unavailable: jq'
 command -v gh >/dev/null 2>&1 || die 'required command is unavailable: gh'
 
@@ -86,7 +92,28 @@ if ! jq --stream --slurp --exit-status '
   die 'classification JSON has duplicate, case-variant, missing, or unknown fields'
 fi
 
-if ! run_id=$(jq --slurp --raw-output --exit-status --arg repository "$repository" '
+expected_targets=$(jq -cer '[.platforms[].id] | sort' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") || die 'contract target inventory is invalid'
+classification_attempt=$(jq -er '.attempt | select(type == "number" and . == floor and . > 0 and . <= 2147483647)' <<< "$classification_json") ||
+  die 'classification attempt identity is invalid'
+expected_artifacts=$(jq -cer --arg attempt "$classification_attempt" '
+  [
+    .platforms[].id as $platform |
+    .naming.platform_artifact_template,
+    .naming.platform_evidence_template |
+    gsub("\\{platform\\}"; $platform) |
+    gsub("\\{attempt\\}"; $attempt)
+  ] | sort
+' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") || die 'contract workflow artifact inventory is invalid'
+expected_semantic_sha256=$(jq -er '.contract_semantic_sha256' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") || die 'contract semantic identity is invalid'
+
+if ! run_id=$(jq --slurp --raw-output --exit-status \
+  --arg repository "$repository" \
+  --arg branch "$RELEASE_SOURCE_DEFAULT_BRANCH" \
+  --arg workflow_name "$(jq -er '[.workflows[] | select(.id == "ci")][0].name' <<< "$RELEASE_CONTRACT_PROJECTION_JSON")" \
+  --arg workflow_path "$RELEASE_CI_WORKFLOW_PATH" \
+  --arg semantic_sha256 "$expected_semantic_sha256" \
+  --argjson expected_targets "$expected_targets" \
+  --argjson expected_artifacts "$expected_artifacts" '
   def expected_fields: [
     "action_code",
     "attempt",
@@ -138,29 +165,29 @@ if ! run_id=$(jq --slurp --raw-output --exit-status --arg repository "$repositor
       and $c.schema_id == "env-vault.attempt-classification.v1"
       and $c.schema_version == 1
       and $c.ok == false
-      and $c.release_contract_schema == "env-vault.release-contract.v1"
-      and ($c.semantic_contract_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and $c.release_contract_schema == "env-vault.release-contract.v2"
+      and $c.semantic_contract_sha256 == $semantic_sha256
       and ($c.run_id | type == "number" and . == floor and . > 0 and . <= 9007199254740991)
       and ($c.attempt | type == "number" and . == floor and . > 0 and . <= 2147483647)
       and ($c.source_sha | type == "string" and test("^[0-9a-f]{40}$"))
       and $c.repository == $repository
       and $c.head_repository == $repository
       and $c.event == "push"
-      and $c.head_branch == "main"
+      and $c.head_branch == $branch
       and $c.workflow_id == "ci"
-      and $c.workflow_name == "ci"
-      and $c.workflow_path == ".github/workflows/ci.yml"
+      and $c.workflow_name == $workflow_name
+      and $c.workflow_path == $workflow_path
       and $c.run_status == "completed"
       and ([
         "action_required", "cancelled", "failure", "neutral", "skipped",
         "stale", "startup_failure", "success", "timed_out"
       ] | index($c.run_conclusion)) != null
       and $c.matrix_complete == false
-      and ($c.expected_targets | canonical_strings and length == 5)
+      and ($c.expected_targets | canonical_strings and . == $expected_targets)
       and ($c.observed_targets | canonical_strings)
       and ($c.missing_targets | canonical_strings)
       and (($c.observed_targets + $c.missing_targets) | sort) == $c.expected_targets
-      and ($c.expected_artifacts | canonical_strings and length == 10)
+      and ($c.expected_artifacts | canonical_strings and . == $expected_artifacts)
       and ($c.observed_artifacts | canonical_strings)
       and ($c.missing_artifacts | canonical_strings)
       and ($c.unexpected_artifacts | canonical_strings)

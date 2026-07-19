@@ -16,6 +16,18 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - Release evidence must be versioned machine JSON generated from exact workflow
   and artifact identities. A generated Markdown index may summarize that JSON;
   append-only narrative evidence is not an authorization or release gate.
+- `release/contract.v2.json` is the only current operational release contract.
+  Runtime mutation code must consume a digest-bound releasecheck version plus
+  operational-projection pair and call
+  `release_require_typed_contract_projection` before GitHub access. Static
+  Actions fields that cannot consume the projection must have exact contract
+  parity tests.
+- Historical v1 authority is closed: only the exact bytes in
+  `release/history/contract.v1.json` and exact tuples in
+  `release/contract-history.v2.json` may route a v1 source. The live
+  `release/contract.v1.json` is not the archive or a source of new operational
+  defaults. Contract generation and evidence format are independent versioned
+  dimensions; never infer one from the other.
 - Compact evidence capabilities fail closed: v1 is selected only when both v2
   capability keys are absent, while v2 requires the exact supported
   bundle/genesis versions. Content-addressed objects must reconstruct canonical

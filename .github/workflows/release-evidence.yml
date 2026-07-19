@@ -32,7 +32,14 @@ jobs:
     outputs:
       version: ${{ steps.identity.outputs.version }}
       source_sha: ${{ steps.identity.outputs.source_sha }}
-      format: ${{ steps.capabilities.outputs.format }}
+      format: ${{ steps.identity.outputs.format }}
+      contract_generation: ${{ steps.identity.outputs.contract_generation }}
+      historical_evidence_commit: ${{ steps.identity.outputs.historical_evidence_commit }}
+      historical_evidence_parent: ${{ steps.identity.outputs.historical_evidence_parent }}
+      historical_evidence_run_id: ${{ steps.identity.outputs.historical_evidence_run_id }}
+      historical_evidence_run_attempt: ${{ steps.identity.outputs.historical_evidence_run_attempt }}
+      historical_artifact_id: ${{ steps.identity.outputs.historical_artifact_id }}
+      historical_artifact_digest: ${{ steps.identity.outputs.historical_artifact_digest }}
     steps:
       - name: Check out the exact publisher source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -41,37 +48,90 @@ jobs:
           fetch-depth: 2
           persist-credentials: "false"
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - name: Check out the exact reviewed listener control plane
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control-plane
+          persist-credentials: "false"
+
+      - name: Set up Go for the exact publisher source
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
 
-      - id: capabilities
-        name: Build source tooling and select the exact evidence format capability
+      - name: Build exact source tooling
         env:
-          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source
         run: |
           set -euo pipefail
-          go build -trimpath -o "$RELEASECHECK" ./cmd/releasecheck
+          go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
-          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
-          "$RELEASECHECK" --version --json > "$RUNNER_TEMP/releasecheck-capabilities.json"
-          cat "$RUNNER_TEMP/releasecheck-capabilities.json"
-          "$RELEASECHECK" validate-contract --json
+          {
+            printf 'RELEASE_TRANSPORT_BIN=%s\n' "$RUNNER_TEMP/releasetransport"
+            printf 'SOURCE_RELEASECHECK=%s\n' "$SOURCE_RELEASECHECK"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Go for the reviewed listener control plane
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: release-control-plane/go.mod
+
+      - id: capabilities
+        name: Build reviewed control-plane tooling and route source capabilities
+        env:
+          SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source
+          CONTROL_RELEASECHECK: ${{ runner.temp }}/releasecheck-control
+        run: |
+          set -euo pipefail
+          (cd release-control-plane && go build -trimpath -o "$CONTROL_RELEASECHECK" ./cmd/releasecheck)
+          echo "CONTROL_RELEASECHECK=$CONTROL_RELEASECHECK" >> "$GITHUB_ENV"
+          "$SOURCE_RELEASECHECK" --version --json > "$RUNNER_TEMP/source-releasecheck-capabilities.json"
+          "$SOURCE_RELEASECHECK" validate-contract --json > "$RUNNER_TEMP/source-contract-validation.json"
+          "$CONTROL_RELEASECHECK" --version --contract release-control-plane/release/contract.v2.json --json \
+            > "$RUNNER_TEMP/control-releasecheck-capabilities.json"
+          "$CONTROL_RELEASECHECK" validate-contract --contract release-control-plane/release/contract.v2.json --json \
+            > "$RUNNER_TEMP/control-contract-validation.json"
+          source_schema="$(jq -er '.release_contract_schema' "$RUNNER_TEMP/source-releasecheck-capabilities.json")"
+          if [[ "$source_schema" == "env-vault.release-contract.v1" ]]; then
+            source_contract=release/contract.v1.json
+            source_contract_generation=v1
+          elif [[ "$source_schema" == "env-vault.release-contract.v2" ]] &&
+            jq -e '.supported_schema_versions.release_contract_operational == [2]' \
+              "$RUNNER_TEMP/source-releasecheck-capabilities.json" >/dev/null; then
+            source_contract=release/contract.v2.json
+            source_contract_generation=v2
+            "$SOURCE_RELEASECHECK" contract operational --contract "$source_contract" --json \
+              > "$RUNNER_TEMP/source-operational-contract.json"
+            {
+              printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$SOURCE_RELEASECHECK"
+              printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "$RUNNER_TEMP/source-releasecheck-capabilities.json"
+              printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "$RUNNER_TEMP/source-operational-contract.json"
+            } >> "$GITHUB_ENV"
+          else
+            echo "source release contract generation is unsupported" >&2
+            exit 1
+          fi
           if jq -e '.supported_schema_versions | type == "object" and
             (has("release_evidence_bundle") | not) and
             (has("release_evidence_genesis") | not)' \
-            "$RUNNER_TEMP/releasecheck-capabilities.json" >/dev/null; then
-            format=v1
+            "$RUNNER_TEMP/source-releasecheck-capabilities.json" >/dev/null; then
+            source_evidence_format=v1
           elif jq -e '.supported_schema_versions | type == "object" and
-            .release_evidence_bundle == [2] and
-            .release_evidence_genesis == [1]' \
-            "$RUNNER_TEMP/releasecheck-capabilities.json" >/dev/null; then
-            format=v2
+            .release_evidence_bundle == [2] and .release_evidence_genesis == [1]' \
+            "$RUNNER_TEMP/source-releasecheck-capabilities.json" >/dev/null; then
+            source_evidence_format=v2
           else
-            echo "release evidence capabilities are present-but-partial, null, empty, or unsupported" >&2
+            echo "source evidence capabilities are partial or unsupported" >&2
             exit 1
           fi
-          printf 'format=%s\n' "$format" >> "$GITHUB_OUTPUT"
+          [[ "$source_contract_generation" != v2 || "$source_evidence_format" == v2 ]] || {
+            echo "operational v2 contract requires compact v2 evidence capabilities" >&2
+            exit 1
+          }
+          echo "SOURCE_CONTRACT_PATH=$source_contract" >> "$GITHUB_ENV"
+          echo "SOURCE_CONTRACT_GENERATION=$source_contract_generation" >> "$GITHUB_ENV"
+          echo "SOURCE_CAPABILITY_EVIDENCE_FORMAT=$source_evidence_format" >> "$GITHUB_ENV"
 
       - name: Download the exact publisher-attempt observation
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -91,7 +151,7 @@ jobs:
           PUBLISHER_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           PUBLISHER_EVENT: ${{ github.event.workflow_run.event }}
           PUBLISHER_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
-          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          RELEASECHECK: ${{ runner.temp }}/releasecheck-source
         run: |
           set -euo pipefail
           umask 077
@@ -112,6 +172,97 @@ jobs:
           ' "$observation" >/dev/null
           version="$(jq -er '.release_version' "$observation")"
           source_sha="$(jq -er '.source_sha | select(test("^[0-9a-f]{40}$"))' "$observation")"
+          "$CONTROL_RELEASECHECK" contract route-source \
+            --source-contract "$SOURCE_CONTRACT_PATH" \
+            --registry release-control-plane/release/contract-history.v2.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --version "$version" \
+            --source-sha "$source_sha" \
+            --json > "$RUNNER_TEMP/source-contract-route.json"
+          jq -e --arg version "$version" --arg generation "$SOURCE_CONTRACT_GENERATION" \
+            --arg evidence_format "$SOURCE_CAPABILITY_EVIDENCE_FORMAT" \
+            --slurpfile capabilities "$RUNNER_TEMP/source-releasecheck-capabilities.json" '
+            .schema_id == "env-vault.release-contract-source-route.v2" and
+            .schema_version == 2 and .ok == true and
+            .contract_schema_id == $capabilities[0].release_contract_schema and
+            .contract_semantic_sha256 == $capabilities[0].semantic_contract_sha256 and
+            (.contract_file_sha256 | test("^[0-9a-f]{64}$")) and
+            .contract_generation == $generation and .evidence_format == $evidence_format and
+            (
+              (.contract_generation == "v1" and .historical.release_version == $version and .operational == null) or
+              (.contract_generation == "v2" and .historical == null and
+                .contract_file_sha256 == $capabilities[0].contract_file_sha256 and
+                .operational.schema_id == "env-vault.release-contract-operational.v2" and
+                .operational.contract_semantic_sha256 == .contract_semantic_sha256 and
+                .operational.contract_file_sha256 == .contract_file_sha256)
+            )
+          ' "$RUNNER_TEMP/source-contract-route.json" >/dev/null
+          contract_generation="$(jq -er '.contract_generation | select(. == "v1" or . == "v2")' "$RUNNER_TEMP/source-contract-route.json")"
+          evidence_format="$(jq -er '.evidence_format | select(. == "v1" or . == "v2")' "$RUNNER_TEMP/source-contract-route.json")"
+          historical_evidence_commit="$(jq -r '.historical.evidence_commit_sha // ""' "$RUNNER_TEMP/source-contract-route.json")"
+          historical_evidence_parent="$(jq -r '.historical.evidence_parent_commit_sha // ""' "$RUNNER_TEMP/source-contract-route.json")"
+          historical_evidence_run_id="$(jq -r '.historical.evidence_run_id // ""' "$RUNNER_TEMP/source-contract-route.json")"
+          historical_evidence_run_attempt="$(jq -r '.historical.evidence_run_attempt // ""' "$RUNNER_TEMP/source-contract-route.json")"
+          historical_artifact_id="$(jq -r '.historical.compact_artifact_id // ""' "$RUNNER_TEMP/source-contract-route.json")"
+          historical_artifact_digest="$(jq -r '.historical.compact_artifact_digest // ""' "$RUNNER_TEMP/source-contract-route.json")"
+          release_app_slug="$(jq -er '.release_app_slug | select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))' "$RUNNER_TEMP/source-contract-route.json")"
+          default_branch="$(jq -er '.repository.default_branch' "$RUNNER_TEMP/source-contract-route.json")"
+          product="$(jq -er '.naming.product' "$RUNNER_TEMP/source-contract-route.json")"
+          ci_workflow_file="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "ci")][0].file
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          ci_workflow_name="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "ci")][0].name
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          planning_workflow_file="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "planning")][0].file
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          planning_workflow_name="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "planning")][0].name
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          publisher_workflow_file="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "publisher")][0].file
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          evidence_workflow_file="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "release_evidence")][0].file
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          evidence_workflow_name="$(jq -er --arg generation "$contract_generation" '
+            if $generation == "v2" then [.operational.workflows[] | select(.id == "release_evidence")][0].name
+            else empty end
+          ' "$RUNNER_TEMP/source-contract-route.json")" || true
+          if [[ "$contract_generation" == "v2" ]]; then
+            release_please_branch="$(jq -er '.operational.version.release_please.branch' "$RUNNER_TEMP/source-contract-route.json")"
+            release_please_target_branch="$(jq -er '.operational.version.release_please.target_branch' "$RUNNER_TEMP/source-contract-route.json")"
+          else
+            # The closed v0.0.14-v0.0.16 source tuples use the immutable v1
+            # contract generation; their operational identities are archive-bound.
+            release_please_branch=release-please--branches--main--components--env-vault
+            release_please_target_branch=main
+            ci_workflow_file=ci.yml
+            ci_workflow_name=ci
+            planning_workflow_file=release-please.yml
+            planning_workflow_name=release-please
+            publisher_workflow_file=build-binaries.yml
+            evidence_workflow_file=release-evidence.yml
+            evidence_workflow_name=release-evidence
+          fi
+          [[ "$ci_workflow_file" =~ ^[a-z0-9][a-z0-9-]*\.yml$ && -n "$ci_workflow_name" &&
+             "$planning_workflow_file" =~ ^[a-z0-9][a-z0-9-]*\.yml$ && -n "$planning_workflow_name" &&
+             "$publisher_workflow_file" =~ ^[a-z0-9][a-z0-9-]*\.yml$ &&
+             "$evidence_workflow_file" =~ ^[a-z0-9][a-z0-9-]*\.yml$ && -n "$evidence_workflow_name" ]] || {
+            echo "routed workflow identity is malformed" >&2
+            exit 1
+          }
+          release_pr_title="chore(${release_please_target_branch}): release ${product} ${version}"
+          ci_workflow_path=".github/workflows/$ci_workflow_file"
+          planning_workflow_path=".github/workflows/$planning_workflow_file"
+          publisher_workflow_path=".github/workflows/$publisher_workflow_file"
           jq -e '.repository_release_settings' "$observation" > snapshots/repository-release-settings-proof.json
           planning_run_id="$(jq -er '.tuple.planning_run_id | select(type == "number" and . > 0 and floor == .)' snapshots/repository-release-settings-proof.json)"
           planning_attempt="$(jq -er '.tuple.planning_run_attempt | select(type == "number" and . > 0 and floor == .)' snapshots/repository-release-settings-proof.json)"
@@ -133,13 +284,14 @@ jobs:
             --arg source "$source_sha" \
             --arg version "$version" \
             --argjson run_id "$PUBLISHER_RUN_ID" \
-            --argjson attempt "$PUBLISHER_ATTEMPT" '
+            --argjson attempt "$PUBLISHER_ATTEMPT" \
+            --arg publisher_path "$publisher_workflow_path" '
               .id == $run_id and .run_attempt == $attempt and
               .repository.full_name == $repository and .head_repository.full_name == $repository and
               .head_sha == $source and .head_branch == $version and
               (.event == "push" or .event == "workflow_dispatch") and
               .status == "completed" and .conclusion == "success" and
-              .path == ".github/workflows/build-binaries.yml"
+              .path == $publisher_path
             ' snapshots/publisher-run.json >/dev/null || {
               echo "publisher run identity mismatch" >&2
               exit 1
@@ -149,21 +301,21 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$PUBLISHER_RUN_ID" \
             --run-attempt "$PUBLISHER_ATTEMPT" \
-            --workflow-path .github/workflows/build-binaries.yml \
+            --workflow-path "$publisher_workflow_path" \
             --event "$PUBLISHER_EVENT" \
             --head-sha "$source_sha" \
             --head-ref "$version"
 
           scripts/release/gh-api-read.sh snapshots/ci-runs.json \
             --paginate --slurp --method GET \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
-            -f "head_sha=$source_sha" -f branch=main -f event=push -f status=completed -F per_page=100
-          ci_matches="$(jq -c --arg repository "$GITHUB_REPOSITORY" --arg source "$source_sha" '
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/$ci_workflow_file/runs" \
+            -f "head_sha=$source_sha" -f "branch=$default_branch" -f event=push -f status=completed -F per_page=100
+          ci_matches="$(jq -c --arg repository "$GITHUB_REPOSITORY" --arg source "$source_sha" --arg branch "$default_branch" --arg workflow_path "$ci_workflow_path" '
             [.[]?.workflow_runs[]? | select(
               .repository.full_name == $repository and .head_repository.full_name == $repository and
-              .head_sha == $source and .head_branch == "main" and .event == "push" and
+              .head_sha == $source and .head_branch == $branch and .event == "push" and
               .status == "completed" and .conclusion == "success" and
-              .path == ".github/workflows/ci.yml"
+              .path == $workflow_path
             )]
           ' snapshots/ci-runs.json)"
           [[ "$(jq 'length' <<< "$ci_matches")" == "1" ]] || { echo "exact successful main CI run is ambiguous" >&2; exit 1; }
@@ -174,10 +326,10 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$ci_run_id" \
             --run-attempt "$ci_attempt" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$ci_workflow_path" \
             --event push \
             --head-sha "$source_sha" \
-            --head-ref main
+            --head-ref "$default_branch"
           scripts/release/gh-api-read.sh snapshots/ci-run.json \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}"
           scripts/release/gh-api-read.sh snapshots/ci-artifacts.json \
@@ -191,10 +343,6 @@ jobs:
             .matrix_complete == true and .action_code == "none" and .reason_code == "ATTEMPT_MATRIX_COMPLETE"
           ' snapshots/ci-classification.json >/dev/null
 
-          release_app_slug="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
-            [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
-            select(length == 1) | .[0].slug
-          ' release/contract.v1.json)"
           export RELEASE_APP_SLUG="$release_app_slug"
           export RELEASE_AUTHORIZATION_OUTPUT="snapshots/release-authorization-checkpoint.json"
           release_pr_number="$(scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged)"
@@ -204,14 +352,17 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             --arg source "$source_sha" \
             --arg version "$version" \
-            --argjson number "$release_pr_number" '
+            --argjson number "$release_pr_number" \
+            --arg base "$release_please_target_branch" \
+            --arg branch "$release_please_branch" \
+            --arg title "$release_pr_title" '
               select(
                 .number == $number and .state == "closed" and .merged_at != null and
                 .merge_commit_sha == $source and
-                .base.ref == "main" and .base.repo.full_name == $repository and
-                .head.ref == "release-please--branches--main--components--env-vault" and
+                .base.ref == $base and .base.repo.full_name == $repository and
+                .head.ref == $branch and
                 .head.repo.full_name == $repository and
-                .title == ("chore(main): release env-vault " + $version) and
+                .title == $title and
                 (.head.sha | test("^[0-9a-f]{40}$"))
               ) | .head.sha
             ' snapshots/release-pr.json)"
@@ -232,9 +383,9 @@ jobs:
           jq -e --arg merged_at "$release_pr_merged_at" '.merged_at == $merged_at' snapshots/release-pr.json >/dev/null
           gh pr checks "$release_pr_number" --repo "$GITHUB_REPOSITORY" \
             --json name,state,workflow,link,bucket,event > snapshots/release-pr-checks.json
-          quality_link="$(jq -er '
+          quality_link="$(jq -er --arg workflow "$ci_workflow_name" '
             [.[] | select(
-              .workflow == "ci" and .name == "quality-gate" and .state == "SUCCESS" and
+              .workflow == $workflow and .name == "quality-gate" and .state == "SUCCESS" and
               .bucket == "pass" and .event == "pull_request"
             )] | select(length == 1) | .[0].link
           ' snapshots/release-pr-checks.json)"
@@ -256,23 +407,24 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$pr_ci_run_id" \
             --run-attempt "$pr_ci_attempt" \
-            --workflow-path .github/workflows/ci.yml \
+            --workflow-path "$ci_workflow_path" \
             --event pull_request \
             --head-sha "$release_pr_head_sha" \
-            --head-ref release-please--branches--main--components--env-vault \
+            --head-ref "$release_please_branch" \
             --job-id "$pr_ci_job_id" \
             --job-name quality-gate \
             --job-url "$quality_link"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg branch "release-please--branches--main--components--env-vault" \
+            --arg branch "$release_please_branch" \
+            --arg workflow_path "$ci_workflow_path" \
             --arg release_pr_head "$release_pr_head_sha" \
             --argjson run_id "$pr_ci_run_id" \
             --argjson attempt "$pr_ci_attempt" '
               .id == $run_id and .repository.full_name == $repository and .head_repository.full_name == $repository and
               .head_sha == $release_pr_head and .head_branch == $branch and
               .event == "pull_request" and .status == "completed" and
-              .conclusion == "success" and .path == ".github/workflows/ci.yml" and
+              .conclusion == "success" and .path == $workflow_path and
               .run_attempt == $attempt
           ' snapshots/pr-ci-run.json >/dev/null || {
             echo "release PR CI run identity mismatch" >&2
@@ -286,12 +438,14 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             --arg source "$source_sha" \
             --argjson run_id "$planning_run_id" \
-            --argjson attempt "$planning_attempt" '
+            --argjson attempt "$planning_attempt" \
+            --arg branch "$default_branch" \
+            --arg workflow_path "$planning_workflow_path" '
               .id == $run_id and .run_attempt == $attempt and
               .repository.full_name == $repository and .head_repository.full_name == $repository and
-              .head_sha == $source and .head_branch == "main" and .event == "workflow_run" and
+              .head_sha == $source and .head_branch == $branch and .event == "workflow_run" and
               .status == "completed" and .conclusion == "success" and
-              .path == ".github/workflows/release-please.yml"
+              .path == $workflow_path
             ' snapshots/planning-run.json >/dev/null || {
               echo "release planning run identity mismatch" >&2
               exit 1
@@ -301,10 +455,10 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$planning_run_id" \
             --run-attempt "$planning_attempt" \
-            --workflow-path .github/workflows/release-please.yml \
+            --workflow-path "$planning_workflow_path" \
             --event workflow_run \
             --head-sha "$source_sha" \
-            --head-ref main
+            --head-ref "$default_branch"
 
           jq -n \
             --arg repository "$GITHUB_REPOSITORY" \
@@ -319,19 +473,25 @@ jobs:
             --argjson pr_ci_attempt "$pr_ci_attempt" \
             --argjson evidence_run_id "$GITHUB_RUN_ID" \
             --argjson evidence_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg ci_name "$ci_workflow_name" \
+            --arg ci_file "$ci_workflow_file" \
+            --arg planning_name "$planning_workflow_name" \
+            --arg planning_file "$planning_workflow_file" \
+            --arg evidence_name "$evidence_workflow_name" \
+            --arg evidence_file "$evidence_workflow_file" \
             --slurpfile checkpoint "$RELEASE_AUTHORIZATION_OUTPUT" '
               {schema_id:"env-vault.release-authorization.v1",schema_version:1,
                repository:$repository,release_version:$version,
                generated_release_pr:$checkpoint[0].generated_release_pr,
                confirmation:$checkpoint[0].confirmation,
                release_source_sha:$source,
-               planning_workflow:{id:"planning",name:"release-please",file:"release-please.yml",
+               planning_workflow:{id:"planning",name:$planning_name,file:$planning_file,
                  run_id:$planning_run_id,run_attempt:$planning_attempt,head_sha:$source,conclusion:"success"},
-               release_pr_ci:{id:"ci",name:"ci",file:"ci.yml",
+               release_pr_ci:{id:"ci",name:$ci_name,file:$ci_file,
                  run_id:$pr_ci_run_id,run_attempt:$pr_ci_attempt,event:"pull_request",
                  head_sha:$pr_ci_head,pull_request_number:$release_pr_number,
                  generated_release_pr_head_sha:$release_pr_head,conclusion:"success"},
-               evidence_workflow:{id:"release_evidence",name:"release-evidence",file:"release-evidence.yml",
+               evidence_workflow:{id:"release_evidence",name:$evidence_name,file:$evidence_file,
                  run_id:$evidence_run_id,run_attempt:$evidence_attempt},
                result:"pass"}
             ' > snapshots/release-authorization.json
@@ -346,6 +506,14 @@ jobs:
             printf 'release_pr_number=%s\n' "$release_pr_number"
             printf 'pr_ci_run_id=%s\n' "$pr_ci_run_id"
             printf 'pr_ci_attempt=%s\n' "$pr_ci_attempt"
+            printf 'format=%s\n' "$evidence_format"
+            printf 'contract_generation=%s\n' "$contract_generation"
+            printf 'historical_evidence_commit=%s\n' "$historical_evidence_commit"
+            printf 'historical_evidence_parent=%s\n' "$historical_evidence_parent"
+            printf 'historical_evidence_run_id=%s\n' "$historical_evidence_run_id"
+            printf 'historical_evidence_run_attempt=%s\n' "$historical_evidence_run_attempt"
+            printf 'historical_artifact_id=%s\n' "$historical_artifact_id"
+            printf 'historical_artifact_digest=%s\n' "$historical_artifact_digest"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download the exact promotion manifest
@@ -366,7 +534,7 @@ jobs:
           PR_CI_ATTEMPT: ${{ steps.identity.outputs.pr_ci_attempt }}
           PUBLISHER_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISHER_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          RELEASECHECK: ${{ runner.temp }}/releasecheck
+          RELEASECHECK: ${{ runner.temp }}/releasecheck-source
         run: |
           set -euo pipefail
           fields='attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName'
@@ -385,8 +553,16 @@ jobs:
 
       - name: Assemble and replay durable release evidence offline
         env:
-          RELEASECHECK: ${{ runner.temp }}/releasecheck
-          EVIDENCE_FORMAT: ${{ steps.capabilities.outputs.format }}
+          RELEASECHECK: ${{ runner.temp }}/releasecheck-source
+          CONTROL_RELEASECHECK: ${{ runner.temp }}/releasecheck-control
+          EVIDENCE_FORMAT: ${{ steps.identity.outputs.format }}
+          CONTRACT_GENERATION: ${{ steps.identity.outputs.contract_generation }}
+          HISTORICAL_EVIDENCE_COMMIT: ${{ steps.identity.outputs.historical_evidence_commit }}
+          HISTORICAL_EVIDENCE_PARENT: ${{ steps.identity.outputs.historical_evidence_parent }}
+          HISTORICAL_EVIDENCE_RUN_ID: ${{ steps.identity.outputs.historical_evidence_run_id }}
+          HISTORICAL_EVIDENCE_RUN_ATTEMPT: ${{ steps.identity.outputs.historical_evidence_run_attempt }}
+          HISTORICAL_ARTIFACT_ID: ${{ steps.identity.outputs.historical_artifact_id }}
+          HISTORICAL_ARTIFACT_DIGEST: ${{ steps.identity.outputs.historical_artifact_digest }}
         run: |
           set -euo pipefail
           mapfile -t manifests < <(find promotion -type f -name promotion-manifest.json -print | LC_ALL=C sort)
@@ -401,11 +577,44 @@ jobs:
             --output final/release-evidence.json \
             --markdown-output final/index.md
           "$RELEASECHECK" evidence verify --input final/release-evidence.json
+          if [[ "$CONTRACT_GENERATION" == v1 && "$EVIDENCE_FORMAT" == v1 ]]; then
+            "$CONTROL_RELEASECHECK" evidence verify-historical \
+              --contract release-control-plane/release/history/contract.v1.json \
+              --registry release-control-plane/release/contract-history.v2.json \
+              --input final/release-evidence.json \
+              --evidence-commit "$HISTORICAL_EVIDENCE_COMMIT" \
+              --json
+          elif [[ "$CONTRACT_GENERATION" == v1 && "$EVIDENCE_FORMAT" == v2 ]]; then
+            : # The reviewed checker authorizes this tuple with the compact root below.
+          elif [[ "$CONTRACT_GENERATION" == v2 ]]; then
+            "$CONTROL_RELEASECHECK" evidence verify \
+              --contract release-control-plane/release/contract.v2.json \
+              --input final/release-evidence.json --json
+          else
+            echo "unsupported routed contract generation: $CONTRACT_GENERATION" >&2
+            exit 1
+          fi
           if [[ "$EVIDENCE_FORMAT" == v2 ]]; then
             "$RELEASECHECK" evidence bundle-create \
               --input final/release-evidence.json \
               --output-dir final/bundle
             "$RELEASECHECK" evidence bundle-verify --bundle-dir final/bundle --json
+            if [[ "$CONTRACT_GENERATION" == v1 ]]; then
+              "$CONTROL_RELEASECHECK" evidence bundle-verify \
+                --historical-contract release-control-plane/release/history/contract.v1.json \
+                --registry release-control-plane/release/contract-history.v2.json \
+                --historical-evidence-commit "$HISTORICAL_EVIDENCE_COMMIT" \
+                --historical-evidence-parent "$HISTORICAL_EVIDENCE_PARENT" \
+                --historical-evidence-run-id "$HISTORICAL_EVIDENCE_RUN_ID" \
+                --historical-evidence-run-attempt "$HISTORICAL_EVIDENCE_RUN_ATTEMPT" \
+                --historical-artifact-id "$HISTORICAL_ARTIFACT_ID" \
+                --historical-artifact-digest "$HISTORICAL_ARTIFACT_DIGEST" \
+                --bundle-dir final/bundle --json
+            else
+              "$CONTROL_RELEASECHECK" evidence bundle-verify \
+                --contract release-control-plane/release/contract.v2.json \
+                --bundle-dir final/bundle --json
+            fi
             "$RELEASECHECK" evidence bundle-parity \
               --legacy final/release-evidence.json \
               --bundle-dir final/bundle \
@@ -424,6 +633,9 @@ jobs:
               --input final/genesis.v1.json \
               --bundle-dir final/bundle \
               --json
+          elif [[ "$EVIDENCE_FORMAT" != v1 ]]; then
+            echo "unsupported routed evidence format: $EVIDENCE_FORMAT" >&2
+            exit 1
           fi
 
       - name: Upload immutable evidence candidate for the write-scoped job
@@ -456,13 +668,26 @@ jobs:
       - name: Check out the reviewed evidence publisher
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.workflow_sha }}
           path: evidence-tooling
           persist-credentials: "false"
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - name: Set up Go for the exact publisher source
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+
+      - name: Build the exact source checker
+        env:
+          SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source
+        run: |
+          set -euo pipefail
+          go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck
+
+      - name: Set up Go for the reviewed evidence publisher
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: evidence-tooling/go.mod
 
       - name: Build the reviewed checker and strict GitHub release transport once
         working-directory: evidence-tooling
@@ -470,7 +695,16 @@ jobs:
           set -euo pipefail
           go build -trimpath -o "$RUNNER_TEMP/releasecheck-reviewed" ./cmd/releasecheck
           go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
-          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/releasecheck-reviewed" --version \
+            --contract release/contract.v2.json --json > "$RUNNER_TEMP/releasecheck-reviewed-version.json"
+          "$RUNNER_TEMP/releasecheck-reviewed" contract operational \
+            --contract release/contract.v2.json --json > "$RUNNER_TEMP/release-contract-reviewed-operational.json"
+          {
+            printf 'RELEASE_TRANSPORT_BIN=%s\n' "$RUNNER_TEMP/releasetransport"
+            printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RUNNER_TEMP/releasecheck-reviewed"
+            printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "$RUNNER_TEMP/releasecheck-reviewed-version.json"
+            printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "$RUNNER_TEMP/release-contract-reviewed-operational.json"
+          } >> "$GITHUB_ENV"
 
       - name: Download the exact read-scoped evidence candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -483,11 +717,17 @@ jobs:
           SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source
           REVIEWED_RELEASECHECK: ${{ runner.temp }}/releasecheck-reviewed
           EVIDENCE_FORMAT: ${{ needs.assemble.outputs.format }}
+          CONTRACT_GENERATION: ${{ needs.assemble.outputs.contract_generation }}
+          HISTORICAL_EVIDENCE_COMMIT: ${{ needs.assemble.outputs.historical_evidence_commit }}
+          HISTORICAL_EVIDENCE_PARENT: ${{ needs.assemble.outputs.historical_evidence_parent }}
+          HISTORICAL_EVIDENCE_RUN_ID: ${{ needs.assemble.outputs.historical_evidence_run_id }}
+          HISTORICAL_EVIDENCE_RUN_ATTEMPT: ${{ needs.assemble.outputs.historical_evidence_run_attempt }}
+          HISTORICAL_ARTIFACT_ID: ${{ needs.assemble.outputs.historical_artifact_id }}
+          HISTORICAL_ARTIFACT_DIGEST: ${{ needs.assemble.outputs.historical_artifact_digest }}
           VERSION: ${{ needs.assemble.outputs.version }}
           SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
         run: |
           set -euo pipefail
-          go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck
           offline_path="$RUNNER_TEMP/no-network-commands"
           mkdir "$offline_path" replay
           offline_check() {
@@ -515,8 +755,11 @@ jobs:
           }
           offline_check "$SOURCE_RELEASECHECK" --version --json > "$RUNNER_TEMP/source-releasecheck-capabilities.json"
           offline_check "$SOURCE_RELEASECHECK" validate-contract --json
-          offline_check "$REVIEWED_RELEASECHECK" --version --json > "$RUNNER_TEMP/reviewed-releasecheck-capabilities.json"
-          offline_check "$REVIEWED_RELEASECHECK" validate-contract --json
+          offline_check "$REVIEWED_RELEASECHECK" --version \
+            --contract evidence-tooling/release/contract.v2.json --json \
+            > "$RUNNER_TEMP/reviewed-releasecheck-capabilities.json"
+          offline_check "$REVIEWED_RELEASECHECK" validate-contract \
+            --contract evidence-tooling/release/contract.v2.json --json
           source_format="$(classify_capabilities "$RUNNER_TEMP/source-releasecheck-capabilities.json")" || {
             echo "source checker evidence capabilities are partial or unsupported" >&2
             exit 1
@@ -534,26 +777,61 @@ jobs:
             exit 1
           }
           offline_check "$SOURCE_RELEASECHECK" evidence verify \
-            --input candidate/final/release-evidence.json
-          offline_check "$REVIEWED_RELEASECHECK" evidence verify \
             --input candidate/final/release-evidence.json \
             --markdown-output replay/index.md
+          if [[ "$CONTRACT_GENERATION" == v1 && "$EVIDENCE_FORMAT" == v1 ]]; then
+            offline_check "$REVIEWED_RELEASECHECK" evidence verify-historical \
+              --contract evidence-tooling/release/history/contract.v1.json \
+              --registry evidence-tooling/release/contract-history.v2.json \
+              --input candidate/final/release-evidence.json \
+              --evidence-commit "$HISTORICAL_EVIDENCE_COMMIT" --json
+          elif [[ "$CONTRACT_GENERATION" == v1 && "$EVIDENCE_FORMAT" == v2 ]]; then
+            : # The reviewed checker authorizes the reconstructed evidence below.
+          elif [[ "$CONTRACT_GENERATION" == v2 ]]; then
+            offline_check "$REVIEWED_RELEASECHECK" evidence verify \
+              --contract evidence-tooling/release/contract.v2.json \
+              --input candidate/final/release-evidence.json --json
+          else
+            echo "unsupported routed contract/evidence pair: $CONTRACT_GENERATION/$EVIDENCE_FORMAT" >&2
+            exit 1
+          fi
           cmp candidate/final/index.md replay/index.md
           if [[ "$EVIDENCE_FORMAT" == v2 ]]; then
             offline_check "$SOURCE_RELEASECHECK" evidence bundle-verify \
               --bundle-dir candidate/final/bundle --json
-            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-verify \
-              --bundle-dir candidate/final/bundle --json
-            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-create \
+            replay_checker="$REVIEWED_RELEASECHECK"
+            replay_contract_args=(--contract evidence-tooling/release/contract.v2.json)
+            if [[ "$CONTRACT_GENERATION" == v1 ]]; then
+              offline_check "$REVIEWED_RELEASECHECK" evidence bundle-verify \
+                --historical-contract evidence-tooling/release/history/contract.v1.json \
+                --registry evidence-tooling/release/contract-history.v2.json \
+                --historical-evidence-commit "$HISTORICAL_EVIDENCE_COMMIT" \
+                --historical-evidence-parent "$HISTORICAL_EVIDENCE_PARENT" \
+                --historical-evidence-run-id "$HISTORICAL_EVIDENCE_RUN_ID" \
+                --historical-evidence-run-attempt "$HISTORICAL_EVIDENCE_RUN_ATTEMPT" \
+                --historical-artifact-id "$HISTORICAL_ARTIFACT_ID" \
+                --historical-artifact-digest "$HISTORICAL_ARTIFACT_DIGEST" \
+                --bundle-dir candidate/final/bundle --json
+              replay_checker="$SOURCE_RELEASECHECK"
+              replay_contract_args=()
+            else
+              offline_check "$REVIEWED_RELEASECHECK" evidence bundle-verify \
+                --contract evidence-tooling/release/contract.v2.json \
+                --bundle-dir candidate/final/bundle --json
+            fi
+            offline_check "$replay_checker" evidence bundle-create \
+              "${replay_contract_args[@]}" \
               --input candidate/final/release-evidence.json \
               --output-dir replay/bundle
             diff -r candidate/final/bundle replay/bundle
-            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-parity \
+            offline_check "$replay_checker" evidence bundle-parity \
+              "${replay_contract_args[@]}" \
               --legacy candidate/final/release-evidence.json \
               --bundle-dir candidate/final/bundle \
               --output replay/parity.json
             cmp candidate/final/parity.json replay/parity.json
-            offline_check "$REVIEWED_RELEASECHECK" evidence bundle-measure \
+            offline_check "$replay_checker" evidence bundle-measure \
+              "${replay_contract_args[@]}" \
               --legacy candidate/final/release-evidence.json \
               --bundle-dir candidate/final/bundle \
               --index candidate/final/index.md \
@@ -561,16 +839,20 @@ jobs:
               --metrics-markdown candidate/final/metrics-comparison.md \
               --output replay/storage-metrics.json
             cmp candidate/final/storage-metrics.json replay/storage-metrics.json
-            offline_check "$REVIEWED_RELEASECHECK" evidence genesis-create \
+            offline_check "$replay_checker" evidence genesis-create \
+              "${replay_contract_args[@]}" \
               --bundle-dir candidate/final/bundle \
               --output replay/genesis.v1.json
             cmp candidate/final/genesis.v1.json replay/genesis.v1.json
             offline_check "$SOURCE_RELEASECHECK" evidence genesis-verify \
               --input candidate/final/genesis.v1.json \
               --bundle-dir candidate/final/bundle --json
-            offline_check "$REVIEWED_RELEASECHECK" evidence genesis-verify \
-              --input candidate/final/genesis.v1.json \
-              --bundle-dir candidate/final/bundle --json
+            if [[ "$CONTRACT_GENERATION" == v2 ]]; then
+              offline_check "$REVIEWED_RELEASECHECK" evidence genesis-verify \
+                --contract evidence-tooling/release/contract.v2.json \
+                --input candidate/final/genesis.v1.json \
+                --bundle-dir candidate/final/bundle --json
+            fi
           elif [[ "$EVIDENCE_FORMAT" != v1 ]]; then
             echo "unsupported routed evidence format: $EVIDENCE_FORMAT" >&2
             exit 1
@@ -593,12 +875,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVIDENCE_FORMAT: ${{ needs.assemble.outputs.format }}
           EVIDENCE_PUBLISHER_CHECK: ${{ runner.temp }}/releasecheck-reviewed
+          SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source
+          CONTRACT_GENERATION: ${{ needs.assemble.outputs.contract_generation }}
           VERSION: ${{ needs.assemble.outputs.version }}
           SOURCE_SHA: ${{ needs.assemble.outputs.source_sha }}
         run: |
           set -euo pipefail
+          publisher_check=$EVIDENCE_PUBLISHER_CHECK
+          if [[ "$CONTRACT_GENERATION" == v1 ]]; then
+            publisher_check=$SOURCE_RELEASECHECK
+          elif [[ "$CONTRACT_GENERATION" != v2 ]]; then
+            echo "unsupported publisher contract generation: $CONTRACT_GENERATION" >&2
+            exit 1
+          fi
           if [[ "$EVIDENCE_FORMAT" == v2 ]]; then
-            evidence-tooling/scripts/release/publish-release-evidence.sh --format v2 \
+            EVIDENCE_PUBLISHER_CHECK="$publisher_check" \
+              evidence-tooling/scripts/release/publish-release-evidence.sh --format v2 \
               "$VERSION" \
               "$SOURCE_SHA" \
               "$GITHUB_REPOSITORY" \
@@ -611,7 +903,8 @@ jobs:
               candidate/final/genesis.v1.json \
               >> "$GITHUB_OUTPUT"
           elif [[ "$EVIDENCE_FORMAT" == v1 ]]; then
-            evidence-tooling/scripts/release/publish-release-evidence.sh \
+            EVIDENCE_PUBLISHER_CHECK="$publisher_check" \
+              evidence-tooling/scripts/release/publish-release-evidence.sh \
               "$VERSION" \
               "$SOURCE_SHA" \
               "$GITHUB_REPOSITORY" \

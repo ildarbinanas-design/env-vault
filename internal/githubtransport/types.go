@@ -8,16 +8,17 @@ import (
 )
 
 const (
-	TransportVersion = "1.1.0"
+	TransportVersion = "1.2.0"
 	APIVersion       = "2022-11-28"
 	Host             = "github.com"
 
-	CapabilitiesSchemaID    = "env-vault.github-transport-capabilities.v1"
-	ErrorSchemaID           = "env-vault.github-transport-error.v1"
-	ActionsIdentitySchemaID = "env-vault.github-actions-identity.v1"
-	BlobIdentitySchemaID    = "env-vault.github-blob-identity.v1"
-	ObservationSchemaID     = "env-vault.github-rest-observation.v1"
-	MutationSchemaID        = "env-vault.github-mutation-outcome.v1"
+	CapabilitiesSchemaID      = "env-vault.github-transport-capabilities.v2"
+	CapabilitiesSchemaVersion = 2
+	ErrorSchemaID             = "env-vault.github-transport-error.v1"
+	ActionsIdentitySchemaID   = "env-vault.github-actions-identity.v1"
+	BlobIdentitySchemaID      = "env-vault.github-blob-identity.v1"
+	ObservationSchemaID       = "env-vault.github-rest-observation.v1"
+	MutationSchemaID          = "env-vault.github-mutation-outcome.v1"
 )
 
 const (
@@ -30,18 +31,21 @@ const (
 )
 
 type CapabilitiesDocument struct {
-	SchemaID              string   `json:"schema_id"`
-	SchemaVersion         int      `json:"schema_version"`
-	OK                    bool     `json:"ok"`
-	TransportVersion      string   `json:"transport_version"`
-	GitHubAPIVersion      string   `json:"github_api_version"`
-	Host                  string   `json:"host"`
-	GHVersion             string   `json:"gh_version"`
-	MaxAttemptsPerPage    int      `json:"max_attempts_per_page"`
-	MaxPages              int      `json:"max_pages"`
-	MaxTotalRequests      int      `json:"max_total_requests"`
-	MaxTotalRetryWaitSecs int      `json:"max_total_retry_wait_seconds"`
-	Capabilities          []string `json:"capabilities"`
+	SchemaID                  string   `json:"schema_id"`
+	SchemaVersion             int      `json:"schema_version"`
+	OK                        bool     `json:"ok"`
+	TransportVersion          string   `json:"transport_version"`
+	GitHubAPIVersion          string   `json:"github_api_version"`
+	Host                      string   `json:"host"`
+	GHVersion                 string   `json:"gh_version"`
+	MaxAttemptsPerPage        int      `json:"max_attempts_per_page"`
+	MaxPages                  int      `json:"max_pages"`
+	MaxTotalRequests          int      `json:"max_total_requests"`
+	MaxTotalRetryWaitSecs     int      `json:"max_total_retry_wait_seconds"`
+	MaxRequestSeconds         int      `json:"max_request_seconds"`
+	MaxOperationSeconds       int      `json:"max_operation_seconds"`
+	MaxAggregateResponseBytes int64    `json:"max_aggregate_response_bytes"`
+	Capabilities              []string `json:"capabilities"`
 }
 
 type ErrorDocument struct {

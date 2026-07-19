@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -11,10 +12,12 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 const (
-	releaseTestRepository = "example/env-vault"
+	releaseTestRepository = "ildarbinanas-design/env-vault"
 	releaseTestVersion    = "v1.2.3"
 	lightweightCommitSHA  = "1111111111111111111111111111111111111111"
 	annotatedCommitSHA    = "2222222222222222222222222222222222222222"
@@ -360,8 +363,8 @@ func TestArtifactAttestationStateIsIdempotentAndFailClosed(t *testing.T) {
 			}
 			if test.wantVerifies > 0 {
 				for _, snippet := range []string{
-					"--repo example/env-vault",
-					"--signer-workflow example/env-vault/.github/workflows/build-binaries.yml",
+					"--repo ildarbinanas-design/env-vault",
+					"--signer-workflow ildarbinanas-design/env-vault/.github/workflows/build-binaries.yml",
 					"--source-digest " + lightweightCommitSHA,
 				} {
 					if !strings.Contains(calls, snippet) {
@@ -946,19 +949,19 @@ case "$mode" in
 esac
 
 case "$mode:$endpoint" in
-  tag-lightweight:repos/example/env-vault/git/ref/tags/v1.2.3)
+  tag-lightweight:repos/ildarbinanas-design/env-vault/git/ref/tags/v1.2.3)
     emit 200 OK '{"object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}'
     ;;
-  tag-annotated:repos/example/env-vault/git/ref/tags/v1.2.3)
+  tag-annotated:repos/ildarbinanas-design/env-vault/git/ref/tags/v1.2.3)
     emit 200 OK '{"object":{"type":"tag","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
     ;;
-  tag-annotated:repos/example/env-vault/git/tags/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+  tag-annotated:repos/ildarbinanas-design/env-vault/git/tags/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
     emit 200 OK '{"object":{"type":"tag","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
     ;;
-  tag-annotated:repos/example/env-vault/git/tags/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+  tag-annotated:repos/ildarbinanas-design/env-vault/git/tags/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
     emit 200 OK '{"object":{"type":"commit","sha":"2222222222222222222222222222222222222222"}}'
     ;;
-  release-present:repos/example/env-vault/releases/tags/v1.2.3)
+  release-present:repos/ildarbinanas-design/env-vault/releases/tags/v1.2.3)
     emit 200 OK '{"tag_name":"v1.2.3","draft":false,"prerelease":false}'
     ;;
   *)
@@ -999,7 +1002,7 @@ done
 if [[ ${1:-} == api ]]; then
   printf 'HTTP/2 200 OK\r\nContent-Type: application/vnd.github+json\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
   endpoint=${!#}
-  if [[ $endpoint == repos/example/env-vault/git/ref/tags/v1.2.3 ]]; then
+  if [[ $endpoint == repos/ildarbinanas-design/env-vault/git/ref/tags/v1.2.3 ]]; then
     printf '{"object":{"type":"commit","sha":"%s"}}\n' "${FAKE_GH_TAG_SHA:-1111111111111111111111111111111111111111}"
     exit 0
   fi
@@ -1047,7 +1050,7 @@ case "$operation" in
     while (($#)); do
       case "$1" in
         --repo)
-          [[ ${2:-} == example/env-vault ]] || exit 96
+          [[ ${2:-} == ildarbinanas-design/env-vault ]] || exit 96
           shift 2
           ;;
         --dir)
@@ -1079,7 +1082,7 @@ case "$operation" in
     while (($#)); do
       case "$1" in
         --repo)
-          [[ ${2:-} == example/env-vault ]] || exit 100
+          [[ ${2:-} == ildarbinanas-design/env-vault ]] || exit 100
           shift 2
           ;;
         *)
@@ -1202,6 +1205,683 @@ func runReleaseScript(t *testing.T, script string, args []string, overrides map[
 		t.Fatalf("run %s: %v\n%s", script, err, output)
 	}
 	return string(output), exitError.ExitCode()
+}
+
+func TestGuardedReleaseMutationsRejectForeignRepositoriesBeforeGitHubAccess(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	makeDirectory(t, binDir)
+	callLog := filepath.Join(root, "gh-calls.log")
+	writeExecutable(t, filepath.Join(binDir, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_GH_CALL_LOG:?}"
+exit 97
+`)
+	dummy := filepath.Join(root, "dummy")
+	if err := os.WriteFile(dummy, []byte("fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.Repeat("a", 40)
+	tests := []struct {
+		name   string
+		script string
+		args   []string
+		env    map[string]string
+	}{
+		{"labels", "../scripts/release/ensure-release-labels.sh", nil, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
+		{"tag label", "../scripts/release/mark-release-pr-tagged.sh", []string{"42"}, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
+		{"authorization", "../scripts/release/authorize-and-merge-release-pr.sh", []string{releaseTestVersion, "42", sha}, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
+		{"assets", "../scripts/release/reconcile-release-assets.sh", []string{releaseTestVersion, root, filepath.Join(root, "verified"), "other/source"}, nil},
+		{"asset bootstrap", "../scripts/release/bootstrap-release-asset-pair.sh", []string{releaseTestVersion, sha, root, releaseTestArchives[0], "42", filepath.Join(root, "bootstrap.json"), "other/source"}, nil},
+		{"evidence v1", "../scripts/release/publish-release-evidence.sh", []string{releaseTestVersion, sha, "other/source", dummy, dummy, dummy, dummy}, nil},
+		{"evidence v2", "../scripts/release/publish-release-evidence-v2.sh", []string{releaseTestVersion, sha, "other/source", root, dummy, dummy, dummy, dummy, dummy, dummy}, nil},
+		{"Homebrew publish", "../scripts/release/publish-homebrew-pr.sh", []string{releaseTestVersion, dummy, "other/tap"}, nil},
+		{"Homebrew merge", "../scripts/release/merge-homebrew-pr.sh", []string{"other/tap", "42", sha}, nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			overrides := map[string]string{
+				"FAKE_GH_CALL_LOG": callLog,
+				"PATH":             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"TMPDIR":           root,
+			}
+			for key, value := range test.env {
+				overrides[key] = value
+			}
+			output, status := runReleaseScript(t, test.script, test.args, overrides)
+			if status == 0 || !strings.Contains(output, "repository differs from") {
+				t.Fatalf("status=%d output=%q, want foreign-repository rejection", status, output)
+			}
+		})
+	}
+	if calls := readOptionalFile(t, callLog); calls != "" {
+		t.Fatalf("foreign repository reached GitHub CLI:\n%s", calls)
+	}
+}
+
+func TestBootstrapReleaseAssetPairRequiresTypedProjectionBeforeGitHubAccess(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	makeDirectory(t, binDir)
+	callLog := filepath.Join(root, "gh-calls.log")
+	writeExecutable(t, filepath.Join(binDir, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_GH_CALL_LOG:?}"
+exit 97
+`)
+	output, status := runReleaseScript(t,
+		"../scripts/release/bootstrap-release-asset-pair.sh",
+		[]string{releaseTestVersion, strings.Repeat("a", 40), root, releaseTestArchives[0], "42", filepath.Join(root, "bootstrap.json"), releaseTestRepository},
+		map[string]string{
+			"FAKE_GH_CALL_LOG":                 callLog,
+			"PATH":                             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"RELEASE_CONTRACT_PROJECTION_FILE": "",
+			"RELEASE_CONTRACT_VERSION_FILE":    "",
+		},
+	)
+	if status == 0 || !strings.Contains(output, "mutation requires a typed operational release projection") {
+		t.Fatalf("status=%d output=%q, want typed-projection rejection", status, output)
+	}
+	if calls := readOptionalFile(t, callLog); calls != "" {
+		t.Fatalf("untyped bootstrap reached GitHub CLI:\n%s", calls)
+	}
+}
+
+func TestTypedReleaseProjectionRejectsStaleAndRawByteMismatchedPairsBeforeGitHubAccess(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	makeDirectory(t, binDir)
+	callLog := filepath.Join(root, "gh-calls.log")
+	writeExecutable(t, filepath.Join(binDir, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_GH_CALL_LOG:?}"
+exit 97
+`)
+
+	versionData, err := os.ReadFile(os.Getenv("RELEASE_CONTRACT_VERSION_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectionData, err := os.ReadFile(os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePair := func(t *testing.T, version, projection any) (string, string) {
+		t.Helper()
+		directory := t.TempDir()
+		versionPath := filepath.Join(directory, "version.json")
+		projectionPath := filepath.Join(directory, "projection.json")
+		for path, value := range map[string]any{versionPath: version, projectionPath: projection} {
+			data, marshalErr := json.Marshal(value)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if writeErr := os.WriteFile(path, data, 0o600); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+		}
+		return versionPath, projectionPath
+	}
+	writeRawPair := func(t *testing.T, version, projection []byte) (string, string) {
+		t.Helper()
+		directory := t.TempDir()
+		versionPath := filepath.Join(directory, "version.json")
+		projectionPath := filepath.Join(directory, "projection.json")
+		if err := os.WriteFile(versionPath, version, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(projectionPath, projection, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return versionPath, projectionPath
+	}
+	run := func(t *testing.T, versionPath, projectionPath string, checkerOverride ...string) string {
+		t.Helper()
+		cmd := exec.Command("bash", "-c", `source ../scripts/release/lib.sh; gh should-not-run`)
+		overrides := map[string]string{
+			"FAKE_GH_CALL_LOG":                 callLog,
+			"PATH":                             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"RELEASE_CONTRACT_VERSION_FILE":    versionPath,
+			"RELEASE_CONTRACT_PROJECTION_FILE": projectionPath,
+		}
+		if len(checkerOverride) > 1 {
+			t.Fatal("at most one checker override is allowed")
+		}
+		if len(checkerOverride) == 1 {
+			overrides["RELEASE_CONTRACT_CHECKER"] = checkerOverride[0]
+		}
+		cmd.Env = environmentWithOverrides(overrides)
+		output, runErr := cmd.CombinedOutput()
+		if runErr == nil {
+			t.Fatalf("mismatched pair unexpectedly reached the command: %s", output)
+		}
+		return string(output)
+	}
+
+	t.Run("stale valid contract", func(t *testing.T) {
+		contract := mustLoadReleaseContract(t)
+		contract.Workflows[0], contract.Workflows[1] = contract.Workflows[1], contract.Workflows[0]
+		contractBytes, err := json.Marshal(contract)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contractPath := filepath.Join(t.TempDir(), "contract.v2.json")
+		if err := os.WriteFile(contractPath, contractBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := releasecontract.LoadFile(contractPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projection, err := loaded.OperationalProjection()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var version map[string]any
+		if err := json.Unmarshal(versionData, &version); err != nil {
+			t.Fatal(err)
+		}
+		version["semantic_contract_sha256"] = projection.ContractSemanticSHA256
+		version["contract_file_sha256"] = projection.ContractFileSHA256
+		versionPath, projectionPath := writePair(t, version, projection)
+		if output := run(t, versionPath, projectionPath); !strings.Contains(output, "differs from the trusted local checker") {
+			t.Fatalf("unexpected stale-pair failure: %s", output)
+		}
+	})
+
+	t.Run("whitespace-only raw bytes", func(t *testing.T) {
+		canonical, err := os.ReadFile("../release/contract.v2.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(append(append([]byte(nil), canonical...), '\n'))
+		fileDigest := fmt.Sprintf("%x", digest)
+		var version, projection map[string]any
+		if err := json.Unmarshal(versionData, &version); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(projectionData, &projection); err != nil {
+			t.Fatal(err)
+		}
+		version["contract_file_sha256"] = fileDigest
+		projection["contract_file_sha256"] = fileDigest
+		versionPath, projectionPath := writePair(t, version, projection)
+		if output := run(t, versionPath, projectionPath); !strings.Contains(output, "differs from the trusted local checker") {
+			t.Fatalf("unexpected raw-byte mismatch failure: %s", output)
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{
+			name: "Homebrew repository routing",
+			mutate: func(projection map[string]any) {
+				repositories := projection["repositories"].(map[string]any)
+				homebrewTap := repositories["homebrew_tap"].(map[string]any)
+				homebrewTap["full_name"] = "attacker/redirected-tap"
+			},
+		},
+		{
+			name: "nested workflow job identity",
+			mutate: func(projection map[string]any) {
+				workflows := projection["workflows"].([]any)
+				workflow := workflows[0].(map[string]any)
+				jobs := workflow["jobs"].([]any)
+				jobs[0] = "redirected-job"
+			},
+		},
+		{
+			name: "release asset identity",
+			mutate: func(projection map[string]any) {
+				assets := projection["assets"].([]any)
+				assets[0] = "redirected-release-asset.tar.gz"
+			},
+		},
+		{
+			name: "unknown projection member",
+			mutate: func(projection map[string]any) {
+				projection["unexpected"] = "not in the local contract projection"
+			},
+		},
+	} {
+		t.Run("tampered "+test.name, func(t *testing.T) {
+			var projection map[string]any
+			if err := json.Unmarshal(projectionData, &projection); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(projection)
+			mutatedProjection, err := json.Marshal(projection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			versionPath, projectionPath := writeRawPair(t, versionData, mutatedProjection)
+			if output := run(t, versionPath, projectionPath); !strings.Contains(output, "differs from the trusted local contract") {
+				t.Fatalf("unexpected operational-content mismatch failure: %s", output)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{
+			name: "version document schema id",
+			mutate: func(version map[string]any) {
+				version["schema_id"] = "env-vault.releasecheck-version.v1"
+			},
+		},
+		{
+			name: "version document schema version",
+			mutate: func(version map[string]any) {
+				version["schema_version"] = float64(1)
+			},
+		},
+		{
+			name: "version document unsuccessful",
+			mutate: func(version map[string]any) {
+				version["ok"] = false
+			},
+		},
+		{
+			name: "version document omits operational schema v2",
+			mutate: func(version map[string]any) {
+				supported := version["supported_schema_versions"].(map[string]any)
+				supported["release_contract_operational"] = []any{float64(1)}
+			},
+		},
+		{
+			name: "version document unknown member",
+			mutate: func(version map[string]any) {
+				version["unexpected"] = "extra"
+			},
+		},
+		{
+			name: "version document omits checker version",
+			mutate: func(version map[string]any) {
+				delete(version, "checker_version")
+			},
+		},
+		{
+			name: "version document omits unrelated capability",
+			mutate: func(version map[string]any) {
+				supported := version["supported_schema_versions"].(map[string]any)
+				delete(supported, "release_evidence_bundle")
+			},
+		},
+		{
+			name: "version document checker version wrong type",
+			mutate: func(version map[string]any) {
+				version["checker_version"] = []any{"2.0.0"}
+			},
+		},
+		{
+			name: "version document malformed source revision",
+			mutate: func(version map[string]any) {
+				version["source_revision"] = "not-a-revision"
+			},
+		},
+		{
+			name: "version document malformed source modified",
+			mutate: func(version map[string]any) {
+				version["source_modified"] = "false"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var version map[string]any
+			if err := json.Unmarshal(versionData, &version); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(version)
+			mutatedVersion, err := json.Marshal(version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			versionPath, projectionPath := writeRawPair(t, mutatedVersion, projectionData)
+			if output := run(t, versionPath, projectionPath); !strings.Contains(output, "differs from the trusted local checker") {
+				t.Fatalf("unexpected version-document identity failure: %s", output)
+			}
+		})
+	}
+
+	caseVariantProjection := bytes.Replace(projectionData,
+		[]byte(`"homebrew_tap":{"full_name":`),
+		[]byte(`"homebrew_tap":{"Full_Name":"ildarbinanas-design/homebrew-tap","full_name":`), 1)
+	if bytes.Equal(caseVariantProjection, projectionData) {
+		t.Fatal("case-variant projection fixture did not modify checker output")
+	}
+	caseVariantVersion := bytes.Replace(versionData,
+		[]byte(`"checker_version":`),
+		[]byte(`"Checker_Version":"1.4.0","checker_version":`), 1)
+	if bytes.Equal(caseVariantVersion, versionData) {
+		t.Fatal("case-variant version fixture did not modify checker output")
+	}
+	duplicateNestedVersion := bytes.Replace(versionData,
+		[]byte(`"release_contract_operational":[2]`),
+		[]byte(`"release_contract_operational":[2],"release_contract_operational":[2]`), 1)
+	if bytes.Equal(duplicateNestedVersion, versionData) {
+		t.Fatal("duplicate nested version fixture did not modify checker output")
+	}
+	for _, test := range []struct {
+		name       string
+		version    []byte
+		projection []byte
+		want       string
+	}{
+		{
+			name:       "projection valid plus extra invalid identity root",
+			version:    versionData,
+			projection: append(append([]byte(nil), projectionData...), []byte("\n{}\n")...),
+			want:       "differs from the trusted local contract",
+		},
+		{
+			name:       "projection valid plus extra valid identity root",
+			version:    versionData,
+			projection: append(append(append([]byte(nil), projectionData...), '\n'), projectionData...),
+			want:       "differs from the trusted local contract",
+		},
+		{
+			name:       "version valid plus extra invalid identity root",
+			version:    append(append([]byte(nil), versionData...), []byte("\n{}\n")...),
+			projection: projectionData,
+			want:       "differs from the trusted local checker",
+		},
+		{
+			name:       "version valid plus extra valid identity root",
+			version:    append(append(append([]byte(nil), versionData...), '\n'), versionData...),
+			projection: projectionData,
+			want:       "differs from the trusted local checker",
+		},
+		{
+			name:       "projection duplicate top-level member",
+			version:    versionData,
+			projection: append([]byte(`{"schema_id":"env-vault.release-contract-operational.v2",`), projectionData[1:]...),
+			want:       "differs from the trusted local contract",
+		},
+		{
+			name:       "projection case-variant nested member",
+			version:    versionData,
+			projection: caseVariantProjection,
+			want:       "differs from the trusted local contract",
+		},
+		{
+			name:       "version duplicate top-level member",
+			version:    append([]byte(`{"schema_id":"env-vault.releasecheck-version.v2",`), versionData[1:]...),
+			projection: projectionData,
+			want:       "differs from the trusted local checker",
+		},
+		{
+			name:       "version duplicate nested member",
+			version:    duplicateNestedVersion,
+			projection: projectionData,
+			want:       "differs from the trusted local checker",
+		},
+		{
+			name:       "version case-variant top-level member",
+			version:    caseVariantVersion,
+			projection: projectionData,
+			want:       "differs from the trusted local checker",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			versionPath, projectionPath := writeRawPair(t, test.version, test.projection)
+			if output := run(t, versionPath, projectionPath); !strings.Contains(output, test.want) {
+				t.Fatalf("unexpected multi-root identity failure: %s", output)
+			}
+		})
+	}
+
+	t.Run("missing dedicated checker", func(t *testing.T) {
+		if output := run(t, os.Getenv("RELEASE_CONTRACT_VERSION_FILE"), os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE"), ""); !strings.Contains(output, "requires a local release contract checker") {
+			t.Fatalf("unexpected missing-checker failure: %s", output)
+		}
+	})
+
+	t.Run("symlink dedicated checker", func(t *testing.T) {
+		checkerLink := filepath.Join(t.TempDir(), "releasecheck-link")
+		if err := os.Symlink(os.Getenv("RELEASE_CONTRACT_CHECKER"), checkerLink); err != nil {
+			t.Fatal(err)
+		}
+		if output := run(t, os.Getenv("RELEASE_CONTRACT_VERSION_FILE"), os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE"), checkerLink); !strings.Contains(output, "expected a regular file") {
+			t.Fatalf("unexpected symlink-checker failure: %s", output)
+		}
+	})
+
+	t.Run("non-executable dedicated checker", func(t *testing.T) {
+		checkerPath := filepath.Join(t.TempDir(), "releasecheck")
+		if err := os.WriteFile(checkerPath, []byte("not executable\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if output := run(t, os.Getenv("RELEASE_CONTRACT_VERSION_FILE"), os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE"), checkerPath); !strings.Contains(output, "local release contract checker is not executable") {
+			t.Fatalf("unexpected non-executable-checker failure: %s", output)
+		}
+	})
+
+	if calls := readOptionalFile(t, callLog); calls != "" {
+		t.Fatalf("mismatched contract pair reached GitHub CLI:\n%s", calls)
+	}
+}
+
+func TestTypedReleaseProjectionStrictlyValidatesExactLocalContractBeforeConsumerExecution(t *testing.T) {
+	canonical, err := os.ReadFile("../release/contract.v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checker := os.Getenv("RELEASE_CONTRACT_CHECKER")
+	versionPath := os.Getenv("RELEASE_CONTRACT_VERSION_FILE")
+	projectionPath := os.Getenv("RELEASE_CONTRACT_PROJECTION_FILE")
+	if checker == "" || versionPath == "" || projectionPath == "" {
+		t.Fatal("TestMain did not establish a genuine typed contract boundary")
+	}
+
+	replaceOnce := func(t *testing.T, old, replacement string) []byte {
+		t.Helper()
+		mutated := bytes.Replace(canonical, []byte(old), []byte(replacement), 1)
+		if bytes.Equal(mutated, canonical) {
+			t.Fatalf("local contract fixture did not replace %q", old)
+		}
+		return mutated
+	}
+	invalidContracts := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "unknown top-level member",
+			data: replaceOnce(t, "{\n", "{\n  \"unexpected\": true,\n"),
+		},
+		{
+			name: "unknown nested unprojected member",
+			data: replaceOnce(t, "  \"evolution\": {\n", "  \"evolution\": {\n    \"unexpected\": true,\n"),
+		},
+		{
+			name: "duplicate top-level member",
+			data: replaceOnce(t,
+				"  \"schema_id\": \"env-vault.release-contract.v2\",\n",
+				"  \"schema_id\": \"env-vault.release-contract.v2\",\n  \"schema_id\": \"env-vault.release-contract.v2\",\n"),
+		},
+		{
+			name: "duplicate nested member",
+			data: replaceOnce(t,
+				"    \"previous_schema_version\": 1,\n",
+				"    \"previous_schema_version\": 1,\n    \"previous_schema_version\": 1,\n"),
+		},
+		{
+			name: "case-variant top-level member",
+			data: replaceOnce(t, "{\n", "{\n  \"Schema_ID\": \"env-vault.release-contract.v2\",\n"),
+		},
+		{
+			name: "case-variant nested member",
+			data: replaceOnce(t,
+				"  \"evolution\": {\n",
+				"  \"evolution\": {\n    \"Previous_Schema_ID\": \"env-vault.release-contract.v1\",\n"),
+		},
+		{
+			name: "multiple JSON roots",
+			data: append(append([]byte(nil), canonical...), []byte("\n{}\n")...),
+		},
+	}
+
+	root := t.TempDir()
+	libraryDirectory := filepath.Join(root, "scripts", "release")
+	contractDirectory := filepath.Join(root, "release")
+	binDirectory := filepath.Join(root, "bin")
+	makeDirectory(t, libraryDirectory)
+	makeDirectory(t, contractDirectory)
+	makeDirectory(t, binDirectory)
+	libraryData, err := os.ReadFile("../scripts/release/lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	libraryPath := filepath.Join(libraryDirectory, "lib.sh")
+	if err := os.WriteFile(libraryPath, libraryData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	callLog := filepath.Join(root, "gh-calls.log")
+	writeExecutable(t, filepath.Join(binDirectory, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_GH_CALL_LOG:?}"
+exit 97
+`)
+	run := func(t *testing.T, contractData []byte, suppliedVersion, suppliedProjection string) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(contractDirectory, "contract.v2.json"), contractData, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", "-c", `source "$TEST_RELEASE_LIBRARY"; gh should-not-run`)
+		cmd.Env = environmentWithOverrides(map[string]string{
+			"FAKE_GH_CALL_LOG":                 callLog,
+			"PATH":                             binDirectory + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"RELEASE_CONTRACT_CHECKER":         checker,
+			"RELEASE_CONTRACT_PROJECTION_FILE": suppliedProjection,
+			"RELEASE_CONTRACT_VERSION_FILE":    suppliedVersion,
+			"TEST_RELEASE_LIBRARY":             libraryPath,
+		})
+		output, runErr := cmd.CombinedOutput()
+		if runErr == nil {
+			t.Fatalf("invalid local contract unexpectedly reached consumer execution: %s", output)
+		}
+		return string(output)
+	}
+
+	for _, test := range invalidContracts {
+		t.Run(test.name, func(t *testing.T) {
+			output := run(t, test.data, versionPath, projectionPath)
+			if !strings.Contains(output, "local release contract is invalid") ||
+				!strings.Contains(output, "trusted local release contract corroboration failed") {
+				t.Fatalf("unexpected strict local-contract rejection: %s", output)
+			}
+		})
+	}
+
+	t.Run("self-declared raw digest cannot authorize different operational content", func(t *testing.T) {
+		tampered := replaceOnce(t,
+			`      "full_name": "ildarbinanas-design/homebrew-tap",`,
+			`      "full_name": "attacker/redirected-tap",`)
+		digest := sha256.Sum256(tampered)
+		fileDigest := fmt.Sprintf("%x", digest)
+		var version, projection map[string]any
+		versionData, readErr := os.ReadFile(versionPath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		projectionData, readErr := os.ReadFile(projectionPath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if err := json.Unmarshal(versionData, &version); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(projectionData, &projection); err != nil {
+			t.Fatal(err)
+		}
+		version["contract_file_sha256"] = fileDigest
+		projection["contract_file_sha256"] = fileDigest
+		forgedVersion, forgedProjection := func() (string, string) {
+			directory := t.TempDir()
+			paths := []string{filepath.Join(directory, "version.json"), filepath.Join(directory, "projection.json")}
+			for index, value := range []any{version, projection} {
+				data, marshalErr := json.Marshal(value)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				if writeErr := os.WriteFile(paths[index], data, 0o600); writeErr != nil {
+					t.Fatal(writeErr)
+				}
+			}
+			return paths[0], paths[1]
+		}()
+		output := run(t, tampered, forgedVersion, forgedProjection)
+		if !strings.Contains(output, "release checker identity differs from the trusted local checker") ||
+			!strings.Contains(output, "trusted local release contract corroboration failed") {
+			t.Fatalf("self-declared digest unexpectedly authorized local tamper: %s", output)
+		}
+	})
+
+	if calls := readOptionalFile(t, callLog); calls != "" {
+		t.Fatalf("invalid local contract reached consumer execution:\n%s", calls)
+	}
+}
+
+func TestReleaseLibraryFallbackRejectsMultipleLocalContractRootsBeforeConsumerExecution(t *testing.T) {
+	root := t.TempDir()
+	libDirectory := filepath.Join(root, "scripts", "release")
+	contractDirectory := filepath.Join(root, "release")
+	makeDirectory(t, libDirectory)
+	makeDirectory(t, contractDirectory)
+
+	libraryData, err := os.ReadFile("../scripts/release/lib.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	libraryPath := filepath.Join(libDirectory, "lib.sh")
+	if err := os.WriteFile(libraryPath, libraryData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contractData, err := os.ReadFile("../release/contract.v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractData = append(append(contractData, '\n'), []byte("{}\n")...)
+	if err := os.WriteFile(filepath.Join(contractDirectory, "contract.v2.json"), contractData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	binDirectory := filepath.Join(root, "bin")
+	makeDirectory(t, binDirectory)
+	callLog := filepath.Join(root, "gh-calls.log")
+	writeExecutable(t, filepath.Join(binDirectory, "gh"), `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_GH_CALL_LOG:?}"
+exit 97
+`)
+	cmd := exec.Command("bash", "-c", `source "$TEST_RELEASE_LIBRARY"; gh should-not-run`)
+	cmd.Env = environmentWithOverrides(map[string]string{
+		"FAKE_GH_CALL_LOG":                 callLog,
+		"PATH":                             binDirectory + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"RELEASE_CONTRACT_PROJECTION_FILE": "",
+		"RELEASE_CONTRACT_VERSION_FILE":    "",
+		"TEST_RELEASE_LIBRARY":             libraryPath,
+	})
+	output, runErr := cmd.CombinedOutput()
+	if runErr == nil || !strings.Contains(string(output), "strict operational release projection fallback failed") {
+		t.Fatalf("status=%v output=%q, want strict local multi-root rejection", runErr, output)
+	}
+	if calls := readOptionalFile(t, callLog); calls != "" {
+		t.Fatalf("multi-root local contract reached consumer execution:\n%s", calls)
+	}
+}
+
+func mustLoadReleaseContract(t *testing.T) releasecontract.Contract {
+	t.Helper()
+	contract, err := releasecontract.LoadCanonical("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contract
 }
 
 func environmentWithOverrides(overrides map[string]string) []string {

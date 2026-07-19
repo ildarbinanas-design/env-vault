@@ -1,13 +1,54 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"github.com/ildarbinanas-design/env-vault/internal/releaseevidence"
 )
+
+func TestFrozenV0016CompactEvidenceReplaysOfflineWithCurrentChecker(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GH_TOKEN", "sentinel-gh-must-not-be-read")
+	t.Setenv("GITHUB_TOKEN", "sentinel-github-must-not-be-read")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "sentinel-cloud-must-not-be-read")
+
+	root := filepath.Join("..", "..")
+	args := []string{
+		"evidence", "bundle-verify",
+		"--bundle-dir", filepath.Join(root, "tests", "fixtures", "release", "v0.0.16-bundle"),
+		"--historical-contract", filepath.Join(root, releasecontract.LegacyArchivePath),
+		"--registry", filepath.Join(root, releasecontract.HistoricalRegistryPath),
+		"--historical-evidence-commit", "e697239298c4b5b1240fc53abe611131d45ac7c0",
+		"--historical-evidence-parent", "af521d52b898088cb49f6256964e377e33e95a5d",
+		"--historical-evidence-run-id", "29622650408",
+		"--historical-evidence-run-attempt", "1",
+		"--historical-artifact-id", "8422728320",
+		"--historical-artifact-digest", "sha256:8732f0365a4564c3d063b5a2ae1909c14996dca007a1321b0c66304190030eea",
+		"--json",
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(args, &stdout, &stderr); code != exitOK {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var document bundleVerificationDocument
+	if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if !document.OK || document.Repository != "ildarbinanas-design/env-vault" ||
+		document.ReleaseVersion != "v0.0.16" ||
+		document.SourceSHA != "ddfd38c3144ed3d0968d2c5e7e4b2acfef841478" ||
+		document.EvidenceSHA256 != "f0e8ab2a0e706192f7ddcffb3d5124bda51d85737f43535763e094b00b96a29f" ||
+		document.BundleSHA256 != "1cc44109f18d9f6cba0da60e3368afaa186cd5a47d03dcf6b06b7f94f311d003" ||
+		document.ReconstructedV1Byte != 1475935 || document.Decision != "pass" {
+		t.Fatalf("verification=%+v", document)
+	}
+}
 
 func TestReadBundleDirectoryRequiresExactCleanExportShape(t *testing.T) {
 	tests := map[string]func(*testing.T, string, string){

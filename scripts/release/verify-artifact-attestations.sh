@@ -13,7 +13,7 @@ usage() {
 [[ $# -le 5 ]] || usage
 asset_directory=${1:-${RELEASE_ASSET_DIR:-}}
 repository=${2:-${GITHUB_REPOSITORY:-}}
-signer_workflow=${3:-${SIGNER_WORKFLOW:-${repository:+$repository/.github/workflows/build-binaries.yml}}}
+signer_workflow=${3:-${SIGNER_WORKFLOW:-${repository:+$repository/$RELEASE_PUBLISHER_WORKFLOW_PATH}}}
 source_sha=${4:-${SOURCE_SHA:-}}
 mode=${5:-all}
 [[ -n "$asset_directory" && -n "$repository" && -n "$signer_workflow" && -n "$source_sha" ]] || usage

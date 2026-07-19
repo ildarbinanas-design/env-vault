@@ -63,19 +63,12 @@ output_parent="$(cd "$output_parent" && pwd -P)"
 output_path="$output_parent/$(basename "$output_path")"
 
 jq -e '
-  .include | type == "array" and length == 5 and
-  ([.[].id] | sort) == [
-    "darwin-amd64",
-    "darwin-arm64",
-    "linux-amd64",
-    "linux-arm64",
-    "windows-amd64"
-  ] and
-  ([.[].id] | unique | length) == 5 and
+  .include | type == "array" and length > 0 and length <= 32 and
+  ([.[].id] | unique | length) == length and
   all(.[];
-    (.id | type == "string") and
-    (.goos | type == "string") and
-    (.goarch | type == "string") and
+    (.id | type == "string" and test("^[a-z0-9]+-[a-z0-9]+$")) and
+    (.goos | type == "string" and test("^[a-z0-9]+$")) and
+    (.goarch | type == "string" and test("^[a-z0-9]+$")) and
     .id == (.goos + "-" + .goarch)
   )
 ' "$matrix_path" >/dev/null
@@ -142,7 +135,7 @@ runner_sum="$(
 mkdir "$output_path"
 built=0
 while IFS=$'\t' read -r platform_id goos goarch; do
-  [[ "$platform_id" =~ ^(linux-(amd64|arm64)|darwin-(amd64|arm64)|windows-amd64)$ ]] || {
+  [[ "$platform_id" =~ ^[a-z0-9]+-[a-z0-9]+$ && "$goos" =~ ^[a-z0-9]+$ && "$goarch" =~ ^[a-z0-9]+$ && "$platform_id" == "$goos-$goarch" ]] || {
     echo "unsupported reporter platform: $platform_id" >&2
     exit 1
   }

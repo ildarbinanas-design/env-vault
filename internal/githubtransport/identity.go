@@ -64,6 +64,8 @@ type ActionsIdentityOptions struct {
 }
 
 func (c *Client) ResolveActionsIdentity(ctx context.Context, options ActionsIdentityOptions) (ActionsIdentityDocument, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	normalized, err := normalizeActionsOptions(options)
 	if err != nil {
 		return ActionsIdentityDocument{}, &TransportError{Code: "INPUT_INVALID", Message: err.Error()}
@@ -266,6 +268,8 @@ func parseJobIdentity(data []byte, options ActionsIdentityOptions) (JobIdentity,
 }
 
 func (c *Client) VerifyBlob(ctx context.Context, repository, sha, expectedFile string) (BlobIdentityDocument, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	if !validRepository(repository) || !shaPattern.MatchString(sha) || expectedFile == "" {
 		return BlobIdentityDocument{}, &TransportError{Code: "INPUT_INVALID", Message: "repository, blob SHA, and expected file are required"}
 	}
@@ -305,6 +309,8 @@ func (c *Client) VerifyBlob(ctx context.Context, repository, sha, expectedFile s
 // transport. It is used for large evidence objects that the Contents API does
 // not guarantee to inline.
 func (c *Client) ReadBlob(ctx context.Context, repository, sha string) ([]byte, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	if !validRepository(repository) || !shaPattern.MatchString(sha) {
 		return nil, &TransportError{Code: "INPUT_INVALID", Message: "repository and blob SHA are required"}
 	}
@@ -349,6 +355,8 @@ func (c *Client) ReadBlob(ctx context.Context, repository, sha string) ([]byte, 
 }
 
 func (c *Client) ReadContents(ctx context.Context, repository, path, ref string) ([]byte, *TransportError) {
+	ctx, cancel := c.operationContext(ctx)
+	defer cancel()
 	if !validRepository(repository) || !shaPattern.MatchString(ref) || !validRelativePath(path) {
 		return nil, &TransportError{Code: "INPUT_INVALID", Message: "repository, safe relative content path, and exact ref SHA are required"}
 	}

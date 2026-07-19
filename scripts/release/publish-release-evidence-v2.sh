@@ -9,6 +9,7 @@ unset GH_DEBUG GIT_TRACE GIT_TRACE_CURL GIT_CURL_VERBOSE
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 # shellcheck source=scripts/release/evidence-ledger-common.sh
 source "$SCRIPT_DIR/evidence-ledger-common.sh"
 
@@ -746,6 +747,7 @@ genesis_json=${10}
 release_require_version "$version"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || release_die "source SHA must be exactly 40 lowercase hexadecimal characters"
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || release_die "repository differs from the release contract source"
 release_require_command gh
 release_require_command jq
 release_require_command git

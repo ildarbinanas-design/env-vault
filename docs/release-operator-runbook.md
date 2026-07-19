@@ -108,7 +108,7 @@ flowchart TD
 | Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents/Attestations writes | 13 |
 | Provenance, SBOM and attestations | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | two verified predicate types for each of five archives | automated OIDC/Attestations write; operator read-only | 14 |
 | Homebrew PR-head and post-merge gates | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | exact formula, PR/head/merge/tap SHAs and two successful run identities | tap App only: Actions read, Contents and Pull requests write | 14 |
-| Health and durable evidence | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | health, observation, and evidence v1 schemas | health read-only; append-only evidence Contents write | 15 |
+| Health and durable evidence | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | health, observation, and routed evidence v1/v2 schemas | health read-only; append-only evidence Contents write | 15 |
 | Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 16 |
 | Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 17 |
 | Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap/evidence JSON and metrics schemas | read-only except already-automated evidence publication | 15 |
@@ -128,11 +128,16 @@ mkdir -p "$SNAPSHOT_DIR"
 go build -trimpath -o "$SNAPSHOT_DIR/releasecheck" ./cmd/releasecheck
 ```
 
-The canonical schemas are declared by `release/contract.v1.json`. The key
-operator-facing schemas are:
+Current operational schemas are declared by `release/contract.v2.json`.
+Historical v1 routing is authorized only by the exact archive and tuples in
+`release/history/contract.v1.json` and `release/contract-history.v2.json`; the
+live v1 file is not an operational fallback. The key operator-facing schemas
+are:
 
 - `env-vault.releasecheck-version.v1` and
   `env-vault.contract-validation.v1`;
+- `env-vault.release-contract-operational.v2` and
+  `env-vault.release-contract-source-route.v2`;
 - `env-vault.release-please-recovery-check.v1`;
 - `env-vault.attempt-classification.v1`;
 - `env-vault.promotion-manifest.v1` and
@@ -142,7 +147,8 @@ operator-facing schemas are:
 - `env-vault.release-health-proof.v1` and
   `env-vault.release-observation.v1`;
 - `env-vault.attestation-verification-bundle.v1`;
-- `env-vault.release-evidence.v1` and `env-vault.release-metrics.v1`.
+- `env-vault.release-evidence.v1`, `env-vault.release-evidence-bundle.v2`, and
+  `env-vault.release-metrics.v1`.
 
 `releasecheck` has stable exits: `0` success; `2` CLI usage; `3` invalid or
 unsupported contract; `4` a valid classification that requires waiting,
@@ -235,7 +241,7 @@ scripts/release/gh-api-read.sh \
 "$SNAPSHOT_DIR/releasecheck" validate-contract --json \
   > "$SNAPSHOT_DIR/contract-validation.json"
 "$SNAPSHOT_DIR/releasecheck" recovery validate-config \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --config release-please-config.json \
   --manifest .release-please-manifest.json \
   --json > "$SNAPSHOT_DIR/recovery-check.json"
@@ -390,7 +396,7 @@ git diff --check "$MAIN_SHA"
 "$SNAPSHOT_DIR/releasecheck" --version --json
 "$SNAPSHOT_DIR/releasecheck" validate-contract --json
 "$SNAPSHOT_DIR/releasecheck" recovery validate-config \
-  --contract release/contract.v1.json \
+  --contract release/contract.v2.json \
   --config release-please-config.json \
   --manifest .release-please-manifest.json --json
 
@@ -651,6 +657,7 @@ confirmation.
 
 ```sh
 GITHUB_REPOSITORY="$REPOSITORY" \
+  scripts/release/with-typed-contract.sh \
   scripts/release/authorize-and-merge-release-pr.sh \
   "$VERSION" "$RELEASE_PR_NUMBER" "$RELEASE_PR_HEAD_SHA" \
   > "$SNAPSHOT_DIR/release-merge-sha.txt"
@@ -973,13 +980,14 @@ then run the exact read-only Homebrew verifier:
 ```sh
 scripts/release/download-release-assets.sh \
   "$VERSION" "$SNAPSHOT_DIR/release-assets" "$REPOSITORY"
-scripts/release/verify-artifact-attestations.sh \
-  "$SNAPSHOT_DIR/release-assets" "$REPOSITORY" \
-  "$REPOSITORY/.github/workflows/build-binaries.yml" "$SOURCE_SHA" all
+SOURCE_SHA="$SOURCE_SHA" scripts/release/with-typed-contract.sh \
+  scripts/release/verify-artifact-attestations.sh \
+  "$SNAPSHOT_DIR/release-assets" "$REPOSITORY"
 
 scripts/release/generate-homebrew-formula.sh \
   "$VERSION" "$SNAPSHOT_DIR/release-assets" "$SNAPSHOT_DIR/env-vault.rb"
-SOURCE_SHA="$SOURCE_SHA" scripts/release/publish-homebrew-pr.sh \
+SOURCE_SHA="$SOURCE_SHA" scripts/release/with-typed-contract.sh \
+  scripts/release/publish-homebrew-pr.sh \
   --verify-published-pr "$VERSION" "$SNAPSHOT_DIR/env-vault.rb" \
   "$TAP_REPOSITORY" "$SNAPSHOT_DIR/tap" \
   > "$SNAPSHOT_DIR/homebrew-exact-state.env"
@@ -1262,7 +1270,8 @@ jq -e '
   .rerun_failed_jobs_allowed == false and
   (.prohibited_actions | index("rerun_failed_jobs") != null)
 ' "$SNAPSHOT_DIR/attempt-classification.json" >/dev/null
-scripts/release/rerun-classified-attempt.sh \
+scripts/release/with-typed-contract.sh \
+  scripts/release/rerun-classified-attempt.sh \
   "$SNAPSHOT_DIR/attempt-classification.json" "$REPOSITORY"
 ```
 
@@ -1345,13 +1354,13 @@ same capability contract, pin `github.com` and API `2022-11-28`, and reject
 unsupported media types or duplicate/case-variant JSON members.
 
 The enforced read caps are five attempts per page, 100 pages, 500 REST
-requests, 120 seconds cumulative retry wait, and 64 MiB stdout / 256 KiB stderr
-per `gh` process. Every next-page URL must retain the exact initial query scope
+requests, 120 seconds cumulative retry wait, 60 seconds per request process,
+300 seconds for the complete public operation, a 256 MiB aggregate response
+budget, and 64 MiB stdout / 256 KiB stderr per `gh` process. Every attempt is
+charged before classification, including malformed/incomplete and retryable
+responses. Every next-page URL must retain the exact initial query scope
 (endpoint query plus fields); `per_page` stays invariant and `page` advances by
-exactly one. Those caps do not provide an internal request or end-to-end
-deadline, and paginated aggregation has no separate total-byte cap; until the
-Stage 4 targets are implemented, rely on the enclosing workflow timeout and do
-not describe this transport as end-to-end time- or memory-bounded.
+exactly one.
 
 Direct REST reads are prohibited outside this boundary. The eight baseline
 direct mutations, one registered typed v2 mutation adapter, and one GraphQL
@@ -1421,9 +1430,9 @@ credentials, semantic authorization, or release truth.
 | 18. GitHub Actions UI appeared to show duplicate jobs for Release Please PR #39 | `pr-title` runs `29562392487` (`synchronize`, cancelled before steps) and `29562393511` (`edited`, success), both for head `40d12c48fe87a7a4ef7fbb735d7b2759d88c53a9`; CI and Dependency Review used the release PR title, while CodeQL appeared as the separate `PR #39` row | Release Please force-pushed the proposal and then edited PR body; different workflows still describe the same PR/head, while `pr-title` intentionally listens to both events and uses one PR-scoped concurrency group | Keep both triggers and `cancel-in-progress: true`; treat the later successful run as canonical; defer optional event-aware `run-name` observability | Group runs by workflow, event, head SHA, and time; distinguish a cancelled zero-step replacement from a rerun or duplicated workflow | `gh run list`/`gh run view` on both IDs and `gh pr checks 39 --required`; inspect `.github/workflows/pr-title.yml` | Read-only Actions/PR metadata; no workflow mutation required for release | Cancelled run has no executed steps, successor succeeds, and all required checks remain green; same pattern is limited to near-simultaneous Release Please `synchronize`/`edited` events | Expected steady-state cancellation noise; optional observability item is backlog only |
 | 19. Identity repair assembled valid evidence, but append-only publish rejected the first real Git blob | publisher health repair `29566697259` succeeded; evidence run `29566800374`; `assemble` job `87841128421` succeeded; `publish` job `87841199069`, step “Publish durable no-clobber evidence branch state” failed; candidate artifact `8401417490` | Git Blobs API returned 1,475,773 bytes as 2,000,495 characters with 32,795 LF separators (32,796 lines); the fake returned one unwrapped line, and `jq '.content \| @base64d'` rejects wrapped input. The immutable `v0.0.14` checkout also freezes the defective helper, so changing only `main` would not affect a later repair | Stream `.content` through CR/LF removal, fail-closed decode, and an exact canonical-base64 round trip before retaining declared-size and exact-byte checks; make the realistic fake wrap at 60 characters and reject malformed/trailing/extra/missing-padding variants; keep assembly/replay on publisher source but execute the mutation helper from a separate checkout pinned to protected listener `github.sha` | Stop after the first failure; verify the evidence ref is still HTTP 404 and classify the created blob as unreachable; fix through a new reviewed PR rather than rerunning the old workflow | Query the exact orphan blob only for metadata/shape; run publisher-script create/no-op/append/race/malformed tests and workflow graph tests; after merge use one new health repair because rerun preserves the old listener/tooling | Read-only diagnosis plus normal reviewed PR; one exact tag-scoped health dispatch after green main; no tag/release/asset/tap mutation | Real wrapped-blob fixture passes; malformed and non-canonical base64 fail before tree/commit/ref; exact-head CI/main CI pass; health repair `29569706872` and evidence run `29569819553` attempt 1 proved candidate replay, then exposed the separate ref-bootstrap defect in row 20 | One-time deterministic transport-fixture and historical-tooling defect; wrapped decode and dual-source trust boundary are steady-state |
 | 20. Valid replay could not create the first protected evidence ref | health repair `29569706872` succeeded; evidence run `29569819553` attempt 1; `assemble` `87850701462` succeeded; `publish` `87850792886` failed with `Resource not accessible by integration (HTTP 403)` at `POST git/refs`; candidate replay digest `124a7706b4129c053fd3b76588b2591296bdda26c31235e98589ba898eabcb0c` | The absent-branch path inherited the release source tree and parent, making ten `.github/workflows/*` files reachable through the new ref. GitHub therefore required `Workflows: write`; the deliberately narrow workflow token had only `Contents: write`. The ruleset allowed creation and fast-forward and was not the cause | Treat `release-evidence` as one-time repository infrastructure: bootstrap it without force at the exact first release source; enforce that source with exact operator pre/post checks; fail before Git-object writes when absent; keep subsequent writes as `force:false` fast-forwards. Track an automated evidence-only root ledger as refactor backlog rather than granting a broad token | Preserve the 403 and branch 404, audit token permissions/ruleset, bootstrap only exact `c42a92144a82c19edea41c76328ec7fd1e408ceb`, then rerun the whole evidence workflow so attempt-qualified artifacts are rebuilt | Run the exact absence/ruleset checks, `git push origin "${SOURCE_SHA}:refs/heads/release-evidence"`, verify the ref, then `gh run rerun 29569819553`; never use `--failed`, `--force`, current `main`, or a different SHA | One authenticated one-time branch creation; steady-state workflow remains `actions: read`, `contents: write`; no App permission, bypass, tag, Release, asset, or tap change | Attempt 2: `assemble` `87853060534` and `publish` `87853170330` succeeded; evidence commit `68547bd880a4d49f44389476b77046aac2ab1675` fast-forwarded from the source; replay artifact `8402901139`; exact tuple verifies offline | Historical one-time bootstrap resolution only. Fresh-ledger automation was later implemented by ADR 0003; the production legacy root remains unchanged |
-| 21. Valid new `v0.0.16` Release with `assets: []` was reported as malformed | publisher `29610907056` attempt 1; `release` job `87985286552`; “No-clobber reconcile all ten release assets”; source `ddfd38c3144ed3d0968d2c5e7e4b2acfef841478`; Release `355905998` | The combined jq program selected a valid shape and immediately iterated `.assets[].name`; an empty array emitted no value, so `jq -e` exited `4` and the shell treated valid empty state as malformed. The Release had no partial assets and downstream supply-chain/Homebrew/health jobs were skipped | Validate response shape separately, allow zero extracted names only in reconciliation, retain exact-ten enforcement in the downloader, and reconcile every upload response by a fresh inventory. Because the fix cannot alter the tag-frozen script, use the ADR-0004 protected-main bootstrap to upload only one source-bound pair, then resume the frozen tag-scoped `release-assets` path | Preserve the exact run/job/Release/bundle tuple, merge the reviewed fix, dispatch card 13a once, inspect its versioned result, then dispatch the standard tag repair | Card 13a with source CI `29610157051/1`, failed publisher `29610907056/1`, failed job `87985286552`, bundle artifact `8418684412` and its recorded digest; values are incident inputs, never defaults | Bootstrap uses `actions: read`, `contents: write`, shared release concurrency, and protected `release` environment; standard repair keeps existing scoped permissions | Brand-new empty fixture uploads/re-downloads all ten exact bytes; malformed/null/wrong-type/bad/duplicate/unexpected/concurrent/ambiguous cases fail closed; real bootstrap and subsequent publisher/evidence must be observed before this row can claim completion | One-time immutable-tag bridge; separated parsing and ambiguity-safe reconciliation are steady-state |
-| 22. First protected-main empty-Release bootstrap was rejected before mutation | bootstrap `29615817787` attempt 1; job `88000569653`; control SHA `6989b737c0e0a7407b5b7949840b0e139f406f16`; “Validate protected-main control plane, contracts, tag, and empty Release” | The first control-CI runs-list read passed `-f`/`-F` query fields without explicit `--method GET`; typed transport intentionally rejected the ambiguous method with exit `2`, `INPUT_INVALID`. Review found the same latent omission in the two later source-CI and publisher reads, which never executed | Add explicit GET to all three reads and enforce the rule over every workflow `gh-api-read.sh` logical command, including multiline continuations and all field aliases | Preserve the failed run; do not rerun it. Merge a reviewed fix, require green new `main`, re-observe the Release still has zero assets, then make one fresh dispatch from the new control SHA | Workflow parser regression plus typed transport tests; Release `355905998` zero-asset observation is external pre-dispatch evidence | Read-only failure before the bootstrap mutation step; no Release, asset, attestation, Homebrew, evidence, tag, or tap change | Exact-head and new `main` CI must pass; a later fresh bootstrap must emit the versioned two-asset result before tag-scoped repair | Safe pre-mutation wiring incident; explicit GET is a permanent workflow invariant |
-| 23. Exact attestations read returned a deprecation Link and blocked Homebrew before tap mutation | bootstrap `29617861201/1`, job `88006715813`, result artifact `8421133392`; release-assets repair publisher `29617982467/1`; metadata `88007079781`, promotion `88007175909`, preflight `88007175949`, release `88007263020`, supply-chain `88007373760` succeeded; Homebrew `88007538165` failed; health `88007598538` skipped | Public Attestations REST returned HTTP 200 plus an informational `Link` with `rel="deprecation"`, `Deprecation`, and `Sunset`. Frozen transport ran pagination parsing for every read and rejected the non-pagination relation as `PAGINATION_INVALID`. Formula/App/PR/tap steps were skipped; their execution was not observed | Non-paginated reads do not interpret Link. Paginated reads parse RFC link-values, ignore informational/anchored contexts, and follow only one trusted invariant-preserving next. Because the immutable tag cannot consume that fix, use card 13b's exact-input protected-main Homebrew-only bridge, then one tag-scoped health repair | Preserve the failed repair and exact ten assets/attestations; merge the reviewed bridge; re-read every input/artifact digest; dispatch once; verify typed result; dispatch health once | Exact observed header fixtures; relative/quoted-comma/coexisting/anchored/duplicate/unsafe next tests; bridge workflow/contract/scripts tests; live inputs remain dispatch data | Bridge source token is read-only; only the one-repository release App has Actions read, Contents write, PR write. No tag/Release/asset/attestation/evidence mutation | Exact-head and main CI green; bridge result binds PR/head/merge/both tap CI/final tap; health and durable evidence then succeed. Until live completion, do not mark this row resolved | One-time immutable-tag Homebrew bridge; correct informational-Link separation is steady-state |
+| 21. Valid new `v0.0.16` Release with `assets: []` was reported as malformed | publisher `29610907056` attempt 1; `release` job `87985286552`; “No-clobber reconcile all ten release assets”; source `ddfd38c3144ed3d0968d2c5e7e4b2acfef841478`; Release `355905998` | The combined jq program selected a valid shape and immediately iterated `.assets[].name`; an empty array emitted no value, so `jq -e` exited `4` and the shell treated valid empty state as malformed. The Release had no partial assets and downstream supply-chain/Homebrew/health jobs were skipped | Validate response shape separately, allow zero extracted names only in reconciliation, retain exact-ten enforcement in the downloader, and reconcile every upload response by a fresh inventory. Because the fix cannot alter the tag-frozen script, use the ADR-0004 protected-main bootstrap to upload only one source-bound pair, then resume the frozen tag-scoped `release-assets` path | Preserve the exact run/job/Release/bundle tuple, merge the reviewed fix, dispatch card 13a once, inspect its versioned result, then dispatch the standard tag repair | Card 13a with source CI `29610157051/1`, failed publisher `29610907056/1`, failed job `87985286552`, bundle artifact `8418684412` and its recorded digest; values are incident inputs, never defaults | Bootstrap uses `actions: read`, `contents: write`, shared release concurrency, and protected `release` environment; standard repair keeps existing scoped permissions | Adversarial empty/malformed/concurrent fixtures passed; bootstrap `29617861201/1`, job `88006715813`, emitted typed result artifact `8421133392`; tag-scoped repair `29617982467/1` reconciled all ten assets and completed supply chain before the separately tracked row-23 Homebrew transport stop | Resolved one-time immutable-tag bridge. All run/artifact coordinates are historical evidence only, never dispatch defaults; separated parsing and ambiguity-safe reconciliation are steady-state |
+| 22. First protected-main empty-Release bootstrap was rejected before mutation | bootstrap `29615817787` attempt 1; job `88000569653`; control SHA `6989b737c0e0a7407b5b7949840b0e139f406f16`; “Validate protected-main control plane, contracts, tag, and empty Release” | The first control-CI runs-list read passed `-f`/`-F` query fields without explicit `--method GET`; typed transport intentionally rejected the ambiguous method with exit `2`, `INPUT_INVALID`. Review found the same latent omission in the two later source-CI and publisher reads, which never executed | Add explicit GET to all three reads and enforce the rule over every workflow `gh-api-read.sh` logical command, including multiline continuations and all field aliases | Preserve the failed run; do not rerun it. Merge a reviewed fix, require green new `main`, re-observe the Release still has zero assets, then make one fresh dispatch from the new control SHA | Workflow parser regression plus typed transport tests; Release `355905998` zero-asset observation is external pre-dispatch evidence | Read-only failure before the bootstrap mutation step; no Release, asset, attestation, Homebrew, evidence, tag, or tap change | Exact-head and new-main gates passed; the fresh bootstrap `29617861201/1` succeeded at job `88006715813` and emitted versioned result artifact `8421133392` before the tag-scoped repair | Resolved safe pre-mutation wiring incident. Failed run `29615817787/1` was not rerun; completion coordinates are evidence only; explicit GET remains a permanent workflow invariant |
+| 23. Exact attestations read returned a deprecation Link and blocked Homebrew before tap mutation | bootstrap `29617861201/1`, job `88006715813`, result artifact `8421133392`; release-assets repair publisher `29617982467/1`; metadata `88007079781`, promotion `88007175909`, preflight `88007175949`, release `88007263020`, supply-chain `88007373760` succeeded; Homebrew `88007538165` failed; health `88007598538` skipped | Public Attestations REST returned HTTP 200 plus an informational `Link` with `rel="deprecation"`, `Deprecation`, and `Sunset`. Frozen transport ran pagination parsing for every read and rejected the non-pagination relation as `PAGINATION_INVALID`. Formula/App/PR/tap steps were skipped; their execution was not observed | Non-paginated reads do not interpret Link. Paginated reads parse RFC link-values, ignore informational/anchored contexts, and follow only one trusted invariant-preserving next. Because the immutable tag cannot consume that fix, use card 13b's exact-input protected-main Homebrew-only bridge, then one tag-scoped health repair | Preserve the failed repair and exact ten assets/attestations; merge the reviewed bridge; re-read every input/artifact digest; dispatch once; verify typed result; dispatch health once | Exact observed header fixtures; relative/quoted-comma/coexisting/anchored/duplicate/unsafe next tests; bridge workflow/contract/scripts tests; live inputs remain dispatch data | Bridge source token is read-only; only the one-repository release App has Actions read, Contents write, PR write. No tag/Release/asset/attestation/evidence mutation | Bridge `29622303701/1` at control `ce1ba7186a4d3133fb04075f275f06e6042c0ccb`, job `88019597858`, artifact `8422669170` (`sha256:773757223242a4dfc3ee189952a3527d3ae3d84492de868e03285d751c6caefd`) bound tap PR #9 head `365363826aa722ac5c2df1cc1e5278dc2c69cfcb`, PR CI `29622381037/1`, merge/tap `8a20bec7e62c854af9bb9a3f94375ccab580cf4c`, and post-merge CI `29622449331/1`; health publisher `29622574820/1` and evidence `29622650408/1` succeeded; evidence commit `e697239298c4b5b1240fc53abe611131d45ac7c0` (parent `af521d52b898088cb49f6256964e377e33e95a5d`) and compact artifact `8422728320` (`sha256:8732f0365a4564c3d063b5a2ae1909c14996dca007a1321b0c66304190030eea`) verify offline | Resolved one-time immutable-tag Homebrew bridge. These exact coordinates are historical evidence, never operational defaults: do not redispatch the bridge or a `v0.0.16` repair. Correct informational-Link separation is steady-state |
 
 ## Honest `v0.0.12` and `v0.0.13` record
 

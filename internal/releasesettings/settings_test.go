@@ -169,11 +169,11 @@ func TestGraphQLRulesetInventoryFailsClosed(t *testing.T) {
 			return raw
 		},
 		"foreign source": func(raw RawInputs) RawInputs {
-			raw.MergeSettings = replaceMerge(raw.MergeSettings, `"nameWithOwner":"example/env-vault"`, `"nameWithOwner":"other/env-vault"`)
+			raw.MergeSettings = replaceMerge(raw.MergeSettings, `"nameWithOwner":"ildarbinanas-design/env-vault"`, `"nameWithOwner":"other/env-vault"`)
 			return raw
 		},
 		"null source": func(raw RawInputs) RawInputs {
-			raw.MergeSettings = replaceMerge(raw.MergeSettings, `"source":{"__typename":"Repository","nameWithOwner":"example/env-vault"}`, `"source":null`)
+			raw.MergeSettings = replaceMerge(raw.MergeSettings, `"source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"}`, `"source":null`)
 			return raw
 		},
 		"bypass actor": func(raw RawInputs) RawInputs {
@@ -261,7 +261,7 @@ func TestSealRejectsDuplicateCanonicalRulesetAndUnsafeMergePolicy(t *testing.T) 
 
 func validTuple() Tuple {
 	return Tuple{
-		Repository:         "example/env-vault",
+		Repository:         "ildarbinanas-design/env-vault",
 		SourceSHA:          strings.Repeat("a", 40),
 		ReleaseVersion:     "v0.0.9",
 		PlanningRunID:      29475939348,
@@ -283,17 +283,17 @@ func validRawInputs() RawInputs {
 	return RawInputs{
 		MergeSettings:   []byte(`{"data":{"repository":{"defaultBranchRef":{"name":"main"},"mergeCommitAllowed":false,"rebaseMergeAllowed":false,"squashMergeAllowed":true,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY","rulesets":` + validGraphQLRulesets() + `}}}`),
 		RulesetPages:    []byte(`[[{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","enforcement":"active"},{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","enforcement":"active"},{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","enforcement":"active"}]]`),
-		MainRuleset:     []byte(`{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"include":["refs/heads/main"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,"allowed_merge_methods":["squash"],"required_reviewers":[]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":15368},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}`),
-		TagRuleset:      []byte(`{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"include":["refs/tags/v*"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"update"}]}`),
-		EvidenceRuleset: []byte(`{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"include":["refs/heads/release-evidence"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"}]}`),
+		MainRuleset:     []byte(`{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"ildarbinanas-design/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"include":["refs/heads/main"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_review_thread_resolution":true,"allowed_merge_methods":["squash"],"required_reviewers":[]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":15368},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}`),
+		TagRuleset:      []byte(`{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"ildarbinanas-design/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"include":["refs/tags/v*"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"update"}]}`),
+		EvidenceRuleset: []byte(`{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"ildarbinanas-design/env-vault","enforcement":"active","bypass_actors":[],"current_user_can_bypass":"never","conditions":{"ref_name":{"include":["refs/heads/release-evidence"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"}]}`),
 	}
 }
 
 func validGraphQLRulesets() string {
 	return `{"totalCount":3,"nodes":[` +
-		`{"databaseId":7,"name":"Protect env-vault main","target":"BRANCH","enforcement":"ACTIVE","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}},` +
-		`{"databaseId":8,"name":"Protect env-vault release tags","target":"TAG","enforcement":"ACTIVE","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}},` +
-		`{"databaseId":9,"name":"Protect env-vault release evidence","target":"BRANCH","enforcement":"ACTIVE","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}}],` +
+		`{"databaseId":7,"name":"Protect env-vault main","target":"BRANCH","enforcement":"ACTIVE","source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"},"bypassActors":{"totalCount":0}},` +
+		`{"databaseId":8,"name":"Protect env-vault release tags","target":"TAG","enforcement":"ACTIVE","source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"},"bypassActors":{"totalCount":0}},` +
+		`{"databaseId":9,"name":"Protect env-vault release evidence","target":"BRANCH","enforcement":"ACTIVE","source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"},"bypassActors":{"totalCount":0}}],` +
 		`"pageInfo":{"hasNextPage":false}}`
 }
 

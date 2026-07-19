@@ -19,7 +19,7 @@ cleanup() {
 [[ $# -le 3 ]] || usage
 version=${1:-${VERSION:-}}
 asset_dir=${2:-${RELEASE_ASSET_DIR:-dist}}
-formula=${3:-${HOMEBREW_FORMULA:-Formula/env-vault.rb}}
+formula=${3:-${HOMEBREW_FORMULA:-$RELEASE_HOMEBREW_FORMULA_PATH}}
 [[ -n "$version" && -n "$asset_dir" && -n "$formula" ]] || usage
 
 release_require_version "$version"
@@ -27,7 +27,7 @@ release_require_regular_file "$formula"
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-formula-verify.XXXXXX")
 trap cleanup EXIT
-expected="$work_dir/env-vault.rb"
+expected="$work_dir/$RELEASE_HOMEBREW_FORMULA_NAME.rb"
 "$SCRIPT_DIR/generate-homebrew-formula.sh" "$version" "$asset_dir" "$expected" >/dev/null
 
 cmp -s "$expected" "$formula" ||

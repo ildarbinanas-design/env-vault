@@ -5,6 +5,7 @@ export LC_ALL=C
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 
 usage() {
   printf 'usage: %s OWNER/REPO PR_NUMBER EXPECTED_HEAD_SHA\n' "$(basename "$0")" >&2
@@ -47,8 +48,8 @@ load_pull_request() {
     release_die "GitHub returned a malformed pull request head SHA"
   [[ "$pr_head_sha" == "$expected_head_sha" ]] ||
     release_die "pull request head SHA changed"
-  [[ "$pr_base" == "main" ]] ||
-    release_die "pull request base branch is not main"
+  [[ "$pr_base" == "$RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH" ]] ||
+    release_die "pull request base branch differs from the release contract"
   [[ "$pr_is_draft" == "false" ]] ||
     release_die "pull request is a draft"
 }
@@ -59,6 +60,7 @@ pr_number=$2
 expected_head_sha=$3
 
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_HOMEBREW_TAP_REPOSITORY" ]] || release_die "repository differs from the release contract Homebrew tap"
 [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || release_die "pull request number must be a positive integer"
 [[ "$expected_head_sha" =~ ^[0-9a-f]{40}$ ]] ||
   release_die "expected head SHA must contain exactly 40 lowercase hexadecimal characters"

@@ -7,6 +7,7 @@ unset GH_DEBUG GIT_TRACE GIT_TRACE_CURL GIT_CURL_VERBOSE GIT_TRACE_PACKET
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/lib.sh
 source "$SCRIPT_DIR/lib.sh"
+release_require_typed_contract_projection
 
 usage() {
   printf 'usage: %s vMAJOR.MINOR.PATCH PR_NUMBER EXACT_HEAD_SHA\n' "$(basename "$0")" >&2
@@ -44,14 +45,18 @@ require_open_exact_pull_request() {
     --arg repository "$repository" \
     --arg branch "$release_branch" \
     --arg author "${release_app_slug}[bot]" \
-    --arg title "chore(main): release env-vault $version" \
+    --arg title "$RELEASE_PR_TITLE_PREFIX$version" \
+    --arg base "$RELEASE_PLEASE_TARGET_BRANCH" \
+    --arg header "$RELEASE_PR_HEADER" \
+    --arg pending "$RELEASE_PENDING_LABEL" \
+    --arg tagged "$RELEASE_TAGGED_LABEL" \
     --arg head "$expected_head_sha" \
     --argjson number "$pr_number" '
       .number == $number and
       .state == "open" and
       .merged == false and
       .draft == false and
-      .base.ref == "main" and
+      .base.ref == $base and
       .base.repo.full_name == $repository and
       (.base.sha | type == "string" and test("^[0-9a-f]{40}$")) and
       .head.ref == $branch and
@@ -59,10 +64,10 @@ require_open_exact_pull_request() {
       .head.sha == $head and
       .user.login == $author and
       .title == $title and
-      ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
+      ((.body // "") | contains($header)) and
       ((.body // "") | contains("This PR was generated with Release Please.")) and
-      ([.labels[].name] | index("autorelease: pending") != null) and
-      ([.labels[].name] | index("autorelease: tagged") == null)
+      ([.labels[].name] | index($pending) != null) and
+      ([.labels[].name] | index($tagged) == null)
     ' "$input" >/dev/null || release_die "generated release pull request tuple or provenance changed"
 }
 
@@ -72,15 +77,19 @@ require_exact_merged_pull_request() {
     --arg repository "$repository" \
     --arg branch "$release_branch" \
     --arg author "${release_app_slug}[bot]" \
-    --arg title "chore(main): release env-vault $version" \
+    --arg title "$RELEASE_PR_TITLE_PREFIX$version" \
     --arg head "$expected_head_sha" \
     --arg base "$initial_base_sha" \
+    --arg base_branch "$RELEASE_PLEASE_TARGET_BRANCH" \
+    --arg header "$RELEASE_PR_HEADER" \
+    --arg pending "$RELEASE_PENDING_LABEL" \
+    --arg tagged "$RELEASE_TAGGED_LABEL" \
     --argjson number "$pr_number" '
       .number == $number and
       .state == "closed" and
       .merged == true and
       .draft == false and
-      .base.ref == "main" and
+      .base.ref == $base_branch and
       .base.repo.full_name == $repository and
       .base.sha == $base and
       .head.ref == $branch and
@@ -88,11 +97,11 @@ require_exact_merged_pull_request() {
       .head.sha == $head and
       .user.login == $author and
       .title == $title and
-      ((.body // "") | contains("Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI.")) and
+      ((.body // "") | contains($header)) and
       ((.body // "") | contains("This PR was generated with Release Please.")) and
       ([.labels[].name] as $labels |
-        [($labels | index("autorelease: pending") != null),
-         ($labels | index("autorelease: tagged") != null)] |
+        [($labels | index($pending) != null),
+         ($labels | index($tagged) != null)] |
         map(select(. == true)) | length == 1
       ) and
       (.merge_commit_sha | type == "string" and test("^[0-9a-f]{40}$")) and
@@ -104,9 +113,12 @@ require_validated_base_contract() {
   local remote_contract="$probe_dir/base-release-contract.json"
   local validation="$probe_dir/release-contract-validation.json"
   local checker=${RELEASECHECK:-}
+  local expected_semantic_sha256
+  expected_semantic_sha256=$(jq -er '.contract_semantic_sha256 | select(test("^[0-9a-f]{64}$"))' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
+    release_die "typed operational release projection semantic digest is malformed"
 
   "$SCRIPT_DIR/releasetransport.sh" contents read --output "$remote_contract" --repository "$repository" \
-    --path release/contract.v1.json --ref "$initial_base_sha" ||
+    --path release/contract.v2.json --ref "$initial_base_sha" ||
     release_die "cannot load the release contract from the exact pull request base"
   cmp "$RELEASE_CONTRACT_PATH" "$remote_contract" >/dev/null ||
     release_die "local release contract differs from the exact pull request base"
@@ -121,12 +133,12 @@ require_validated_base_contract() {
     release_die "offline release contract checker is not an executable regular file"
   env -i "$checker" validate-contract --contract "$RELEASE_CONTRACT_PATH" --json > "$validation" ||
     release_die "offline release contract validation failed"
-  jq -e '
+  jq -e --arg expected_semantic_sha256 "$expected_semantic_sha256" '
     .schema_id == "env-vault.contract-validation.v1" and
     .schema_version == 1 and
     .ok == true and
-    .release_contract_schema == "env-vault.release-contract.v1" and
-    (.semantic_contract_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    .release_contract_schema == "env-vault.release-contract.v2" and
+    .semantic_contract_sha256 == $expected_semantic_sha256 and
     .platform_count == 5 and
     .asset_count == 10
   ' "$validation" >/dev/null || release_die "offline release contract validation result is malformed"
@@ -142,7 +154,7 @@ require_current_base() {
     release_die "generated release pull request base SHA is malformed"
   [[ "$observed_base" == "$initial_base_sha" ]] ||
     release_die "generated release pull request base SHA changed"
-  read_gh_api "$main_ref" "repos/$repository/git/ref/heads/main" ||
+  read_gh_api "$main_ref" "repos/$repository/git/ref/heads/$RELEASE_SOURCE_DEFAULT_BRANCH" ||
     release_die "cannot inspect current main SHA"
   main_sha=$(jq -er '.object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$main_ref") ||
     release_die "current main SHA is malformed"
@@ -238,8 +250,10 @@ load_green_checks() {
   ' "$raw" > "$output" ||
     release_die "generated release pull request required checks are incomplete or malformed"
 
-  quality_link=$(jq -er '
-    [.[] | select(.name == "quality-gate" and .workflow == "ci" and .event == "pull_request")] |
+  quality_link=$(jq -er \
+    --arg quality_check_name "$quality_check_name" \
+    --arg workflow "$RELEASE_CI_WORKFLOW_NAME" '
+    [.[] | select(.name == $quality_check_name and .workflow == $workflow and .event == "pull_request")] |
     select(length == 1) | .[0].link
   ' "$output") || release_die "generated release pull request has no unique quality-gate check"
   run_tail=${quality_link#"https://github.com/$repository/actions/runs/"}
@@ -252,7 +266,8 @@ load_green_checks() {
   read_gh_api "$output.quality-run.json" "repos/$repository/actions/runs/$run_id" ||
     release_die "cannot inspect generated release pull request quality-gate run"
   run_attempt=$(jq -er --arg head "$expected_head_sha" --arg branch "$release_branch" \
-    --arg repository "$repository" --argjson run_id "$run_id" '
+    --arg repository "$repository" --arg workflow_path "$RELEASE_CI_WORKFLOW_PATH" \
+    --argjson run_id "$run_id" '
       select(
         .id == $run_id and
         .repository.full_name == $repository and
@@ -260,7 +275,7 @@ load_green_checks() {
         .head_sha == $head and
         .head_branch == $branch and
         .event == "pull_request" and
-        .path == ".github/workflows/ci.yml" and
+        .path == $workflow_path and
         .status == "completed" and
         .conclusion == "success" and
         (.run_attempt | type == "number" and . > 0 and floor == .)
@@ -271,12 +286,12 @@ load_green_checks() {
     --repository "$repository" \
     --run-id "$run_id" \
     --run-attempt "$run_attempt" \
-    --workflow-path .github/workflows/ci.yml \
+    --workflow-path "$RELEASE_CI_WORKFLOW_PATH" \
     --event pull_request \
     --head-sha "$expected_head_sha" \
     --head-ref "$release_branch" \
     --job-id "$job_id" \
-    --job-name quality-gate \
+    --job-name "$quality_check_name" \
     --job-url "$quality_link" || release_die "generated release pull request quality-gate typed identity mismatch"
 }
 
@@ -381,7 +396,7 @@ require_merge_in_main() {
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
     main_ref="$probe_dir/main-after-merge-$attempt.json"
     main_comparison="$probe_dir/main-after-merge-comparison-$attempt.json"
-    if ! read_gh_api "$main_ref" "repos/$repository/git/ref/heads/main"; then
+    if ! read_gh_api "$main_ref" "repos/$repository/git/ref/heads/$RELEASE_SOURCE_DEFAULT_BRANCH"; then
       sleep 2
       continue
     fi
@@ -427,12 +442,10 @@ if [[ -z "$repository" ]]; then
     release_die "cannot resolve the current GitHub repository"
 fi
 release_require_repository "$repository"
+[[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] ||
+  release_die "repository differs from the typed operational release projection"
 
-release_app_slug=$(jq -er --arg repository "$repository" '
-  [.apps[] | select(.id == "release_planning" and .repository == $repository)] |
-  select(length == 1) | .[0].slug |
-  select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
-' "$RELEASE_CONTRACT_PATH") || release_die "release planning App identity is missing from the contract"
+release_app_slug=$RELEASE_PLANNING_APP_SLUG
 main_required_checks=$(jq -cer '
   .main_required_checks |
   select(type == "array" and length > 0) |
@@ -445,8 +458,13 @@ main_required_checks=$(jq -cer '
   )) |
   select((map([.name, .workflow, .event]) | unique | length) == length) |
   sort_by([.name, .workflow, .event])
-' "$RELEASE_CONTRACT_PATH") || release_die "main required checks are missing or malformed in the contract"
-release_branch=release-please--branches--main--components--env-vault
+' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") || release_die "main required checks are missing or malformed in the contract"
+quality_check_name=$(jq -er --arg workflow "$RELEASE_CI_WORKFLOW_NAME" '
+  [.[] | select(.workflow == $workflow and .event == "pull_request")] |
+  select(length == 1) | .[0].name |
+  select(type == "string" and length > 0)
+' <<< "$main_required_checks") || release_die "CI quality-gate required check is missing or ambiguous in the contract"
+release_branch=$RELEASE_PLEASE_BRANCH
 canonical_body="ПОДТВЕРЖДАЮ RELEASE $version PR #$pr_number SHA $expected_head_sha"
 
 probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/env-vault-release-authorize-merge.XXXXXX")

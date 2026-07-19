@@ -159,7 +159,7 @@ func TestVerifyReleaseAuthorization(t *testing.T) {
 	const releasePRHeadSHA = "ffffffffffffffffffffffffffffffffffffffff"
 	commandDir := installFakeReleaseGH(t)
 	baseEnv := []string{
-		"GITHUB_REPOSITORY=example/env-vault",
+		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
 		"RELEASE_APP_SLUG=env-vault-release-planning",
 		"FAKE_SOURCE_SHA=" + sourceSHA,
 		"FAKE_MAIN_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -218,11 +218,11 @@ func TestVerifyReleaseAuthorization(t *testing.T) {
 	}
 	canonicalBody := "ПОДТВЕРЖДАЮ RELEASE v0.0.8 PR #42 SHA " + releasePRHeadSHA
 	bodyDigest := sha256.Sum256([]byte(canonicalBody))
-	if checkpoint.Repository != "example/env-vault" || checkpoint.ReleaseVersion != "v0.0.8" ||
+	if checkpoint.Repository != "ildarbinanas-design/env-vault" || checkpoint.ReleaseVersion != "v0.0.8" ||
 		checkpoint.ReleaseSourceSHA != sourceSHA || checkpoint.GeneratedReleasePR.Number != 42 ||
 		checkpoint.GeneratedReleasePR.HeadSHA != releasePRHeadSHA || checkpoint.GeneratedReleasePR.MergeSHA != sourceSHA ||
 		checkpoint.GeneratedReleasePR.MergedAt != "2026-07-16T00:00:00Z" || checkpoint.Confirmation.CommentID != 9001 ||
-		checkpoint.Confirmation.URL != "https://github.com/example/env-vault/pull/42#issuecomment-9001" ||
+		checkpoint.Confirmation.URL != "https://github.com/ildarbinanas-design/env-vault/pull/42#issuecomment-9001" ||
 		checkpoint.Confirmation.Actor != "ildarbinanas-design" || checkpoint.Confirmation.ActorAssociation != "OWNER" ||
 		checkpoint.Confirmation.CreatedAt != "2026-07-15T23:59:00Z" || checkpoint.Confirmation.UpdatedAt != "2026-07-15T23:59:00Z" ||
 		checkpoint.Confirmation.BodySHA256 != hex.EncodeToString(bodyDigest[:]) || checkpoint.Result != "pass" {
@@ -290,7 +290,7 @@ func TestVerifyReleaseProposal(t *testing.T) {
 	)
 	commandDir := installFakeReleaseGH(t)
 	baseEnv := []string{
-		"GITHUB_REPOSITORY=example/env-vault",
+		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
 		"RELEASE_APP_SLUG=env-vault-release-planning",
 		"FAKE_PROPOSAL_HEAD_SHA=" + headSHA,
 		"FAKE_PROPOSAL_PARENT_SHA=" + parentSHA,
@@ -334,7 +334,7 @@ func TestMarkReleasePullRequestTagged(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := []string{
-		"GITHUB_REPOSITORY=example/env-vault",
+		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
 		"FAKE_LABEL_STATE=" + state,
 		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
@@ -359,7 +359,7 @@ func TestVerifyRepositoryReleaseSettings(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
 	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
 	baseEnv := []string{
-		"GITHUB_REPOSITORY=example/env-vault",
+		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
 		"RELEASECHECK=" + releasecheck,
 		"GH_TOKEN=must-not-reach-offline-checker",
 		"GITHUB_TOKEN=must-not-reach-offline-checker",
@@ -459,7 +459,7 @@ func TestVerifyRepositoryReleaseSettingsSealsExactOfflineProof(t *testing.T) {
 	const sourceSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	proofPath := filepath.Join(tempDir, "repository-release-settings-proof.json")
 	env := []string{
-		"GITHUB_REPOSITORY=example/env-vault",
+		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
 		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"RELEASECHECK=" + releasecheck,
 		"GH_TOKEN=must-not-reach-offline-checker",
@@ -485,7 +485,7 @@ func TestVerifyRepositoryReleaseSettingsSealsExactOfflineProof(t *testing.T) {
 		t.Fatalf("strictly parse settings proof: %v", err)
 	}
 	want := releasesettings.Tuple{
-		Repository: "example/env-vault", SourceSHA: sourceSHA,
+		Repository: "ildarbinanas-design/env-vault", SourceSHA: sourceSHA,
 		ReleaseVersion: "v0.0.9", PlanningRunID: 29475939348,
 		PlanningRunAttempt: 2, CheckedAt: proof.Tuple.CheckedAt,
 	}
@@ -502,7 +502,7 @@ func TestEnsureReleaseLifecycleLabels(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
 	logPath := filepath.Join(t.TempDir(), "labels.log")
 	env := []string{
-		"GITHUB_REPOSITORY=example/env-vault",
+		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
 		"FAKE_LABEL_CALL_LOG=" + logPath,
 		"PATH=" + commandDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
@@ -729,7 +729,7 @@ fi
 case "$args" in
   *"api graphql"*)
     for required in \
-      '-f owner=example' \
+      '-f owner=ildarbinanas-design' \
       '-f name=env-vault' \
       'defaultBranchRef' \
       'mergeCommitAllowed' \
@@ -768,9 +768,9 @@ case "$args" in
     else
       main_bypass='{"totalCount":0}'
     fi
-    printf '{"data":{"repository":{"defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":%s,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY","rulesets":{"totalCount":3,"pageInfo":{"hasNextPage":%s},"nodes":[{"databaseId":7,"name":"Protect env-vault main","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":%s},{"databaseId":8,"name":"Protect env-vault release tags","enforcement":"ACTIVE","target":"TAG","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}},{"databaseId":9,"name":"Protect env-vault release evidence","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"example/env-vault"},"bypassActors":{"totalCount":0}}]}}}%s}\n' "${FAKE_ALLOW_REBASE:-false}" "${FAKE_GRAPHQL_RULESETS_PAGINATED:-false}" "$main_bypass" "$errors"
+    printf '{"data":{"repository":{"defaultBranchRef":{"name":"main"},"squashMergeAllowed":true,"mergeCommitAllowed":false,"rebaseMergeAllowed":%s,"squashMergeCommitTitle":"PR_TITLE","squashMergeCommitMessage":"PR_BODY","rulesets":{"totalCount":3,"pageInfo":{"hasNextPage":%s},"nodes":[{"databaseId":7,"name":"Protect env-vault main","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"},"bypassActors":%s},{"databaseId":8,"name":"Protect env-vault release tags","enforcement":"ACTIVE","target":"TAG","source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"},"bypassActors":{"totalCount":0}},{"databaseId":9,"name":"Protect env-vault release evidence","enforcement":"ACTIVE","target":"BRANCH","source":{"__typename":"Repository","nameWithOwner":"ildarbinanas-design/env-vault"},"bypassActors":{"totalCount":0}}]}}}%s}\n' "${FAKE_ALLOW_REBASE:-false}" "${FAKE_GRAPHQL_RULESETS_PAGINATED:-false}" "$main_bypass" "$errors"
     ;;
-  *"repos/example/env-vault")
+  *"repos/ildarbinanas-design/env-vault")
     printf '{"default_branch":"main","allow_squash_merge":true,"allow_merge_commit":false,"allow_rebase_merge":%s,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n' "${FAKE_ALLOW_REBASE:-false}"
     ;;
   *"rulesets?per_page=100"*)
@@ -799,7 +799,7 @@ case "$args" in
     else
       pr_title_integration_id=15368
     fi
-    printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active"%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":false,"required_reviewers":[],"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":%s},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods" "$pr_title_integration_id"
+    printf '{"id":7,"name":"Protect env-vault main","target":"branch","source_type":"Repository","source":"ildarbinanas-design/env-vault","enforcement":"active"%s,"current_user_can_bypass":"%s","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/main"]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_approving_review_count":0,"dismiss_stale_reviews_on_push":false,"required_reviewers":[],"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":true,"allowed_merge_methods":%s}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"do_not_enforce_on_create":false,"required_status_checks":[{"context":"quality-gate","integration_id":15368},{"context":"pr-title","integration_id":%s},{"context":"Dependency review","integration_id":15368},{"context":"Analyze (go)","integration_id":15368},{"context":"Analyze (actions)","integration_id":15368}]}}]}\n' "$bypass" "$can_bypass" "$merge_methods" "$pr_title_integration_id"
     ;;
   *"rulesets/8"*)
     if [[ "${FAKE_TAG_RULESET_ALLOW_UPDATE:-false}" == "true" ]]; then
@@ -807,7 +807,7 @@ case "$args" in
     else
       tag_rules='[{"type":"deletion"},{"type":"update"}]'
     fi
-    printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"example/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_rules"
+    printf '{"id":8,"name":"Protect env-vault release tags","target":"tag","source_type":"Repository","source":"ildarbinanas-design/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v*"]}},"rules":%s}\n' "$tag_rules"
     ;;
   *"rulesets/9"*)
     if [[ "${FAKE_EVIDENCE_RULESET_ALLOW_FORCE:-false}" == "true" ]]; then
@@ -815,10 +815,10 @@ case "$args" in
     else
       evidence_rules='[{"type":"deletion"},{"type":"non_fast_forward"}]'
     fi
-    printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"example/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
+    printf '{"id":9,"name":"Protect env-vault release evidence","target":"branch","source_type":"Repository","source":"ildarbinanas-design/env-vault","enforcement":"active","current_user_can_bypass":"never","conditions":{"ref_name":{"exclude":[],"include":["refs/heads/release-evidence"]}},"rules":%s}\n' "$evidence_rules"
     ;;
-  *"repos/example/env-vault/pulls"*)
-    printf '[{"id":4300,"number":43,"base":{"ref":"main","sha":"%s","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]\n' \
+  *"repos/ildarbinanas-design/env-vault/pulls"*)
+    printf '[{"id":4300,"number":43,"base":{"ref":"main","sha":"%s","repo":{"full_name":"ildarbinanas-design/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"ildarbinanas-design/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]\n' \
       "${FAKE_PROPOSAL_PARENT_SHA:?}" "${FAKE_PROPOSAL_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *"git/commits/"*)
@@ -854,11 +854,11 @@ case "$args" in
     printf '%s\n' '# Changelog' '' '## [0.0.8](https://example.invalid/release) (2026-07-16)' '' '- Release.'
     ;;
   *"actions/runs/7001/attempts/1"*)
-    printf '{"id":7001,"run_attempt":1,"repository":{"full_name":"example/env-vault"},"head_repository":{"full_name":"example/env-vault"},"head_sha":"%s","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"%s","html_url":"https://github.com/example/env-vault/actions/runs/7001","name":"custom diagnostic title"}\n' \
+    printf '{"id":7001,"run_attempt":1,"repository":{"full_name":"ildarbinanas-design/env-vault"},"head_repository":{"full_name":"ildarbinanas-design/env-vault"},"head_sha":"%s","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"%s","html_url":"https://github.com/ildarbinanas-design/env-vault/actions/runs/7001","name":"custom diagnostic title"}\n' \
       "${FAKE_CI_HEAD_SHA:-${FAKE_SOURCE_SHA:?}}" "${FAKE_CI_CONCLUSION:?}"
     ;;
   *"actions/workflows/ci.yml/runs"*)
-    printf '{"total_count":1,"workflow_runs":[{"id":7001,"run_attempt":1,"repository":{"full_name":"example/env-vault"},"head_repository":{"full_name":"example/env-vault"},"head_sha":"%s","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"%s","html_url":"https://github.com/example/env-vault/actions/runs/7001","name":"custom diagnostic title"}]}\n' \
+    printf '{"total_count":1,"workflow_runs":[{"id":7001,"run_attempt":1,"repository":{"full_name":"ildarbinanas-design/env-vault"},"head_repository":{"full_name":"ildarbinanas-design/env-vault"},"head_sha":"%s","head_branch":"main","event":"push","path":".github/workflows/ci.yml","status":"completed","conclusion":"%s","html_url":"https://github.com/ildarbinanas-design/env-vault/actions/runs/7001","name":"custom diagnostic title"}]}\n' \
       "${FAKE_CI_HEAD_SHA:-${FAKE_SOURCE_SHA:?}}" "${FAKE_CI_CONCLUSION:?}"
     ;;
   *"issues/42/comments?per_page=100"*)
@@ -875,7 +875,7 @@ case "$args" in
       --arg user_type "${FAKE_CONFIRMATION_USER_TYPE:?}" \
       --arg created_at "${FAKE_CONFIRMATION_CREATED_AT:?}" \
       --arg updated_at "${FAKE_CONFIRMATION_UPDATED_AT:?}" \
-      '{id:9001,html_url:"https://github.com/example/env-vault/pull/42#issuecomment-9001",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
+      '{id:9001,html_url:"https://github.com/ildarbinanas-design/env-vault/pull/42#issuecomment-9001",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
     if [[ "${FAKE_CONFIRMATION_DUPLICATE:-false}" == "true" ]]; then
       duplicate=$(jq -cn \
         --arg body "$body" \
@@ -884,14 +884,14 @@ case "$args" in
         --arg user_type "${FAKE_CONFIRMATION_USER_TYPE:?}" \
         --arg created_at "${FAKE_CONFIRMATION_CREATED_AT:?}" \
         --arg updated_at "${FAKE_CONFIRMATION_UPDATED_AT:?}" \
-        '{id:9002,html_url:"https://github.com/example/env-vault/pull/42#issuecomment-9002",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
+        '{id:9002,html_url:"https://github.com/ildarbinanas-design/env-vault/pull/42#issuecomment-9002",body:$body,user:{login:$actor,type:$user_type},author_association:$association,created_at:$created_at,updated_at:$updated_at}')
       printf '[%s,%s]\n' "$comment" "$duplicate"
     else
       printf '[%s]\n' "$comment"
     fi
     ;;
   *"commits/"*"/pulls"*)
-    printf '[{"id":4200,"number":42,"state":"closed","merged_at":"%s","merge_commit_sha":"%s","base":{"ref":"main","repo":{"full_name":"example/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"example/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]\n' \
+    printf '[{"id":4200,"number":42,"state":"closed","merged_at":"%s","merge_commit_sha":"%s","base":{"ref":"main","repo":{"full_name":"ildarbinanas-design/env-vault"}},"head":{"ref":"release-please--branches--main--components--env-vault","sha":"%s","repo":{"full_name":"ildarbinanas-design/env-vault"}},"user":{"login":"%s"},"title":"chore(main): release env-vault v0.0.8","body":"Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes main CI. This PR was generated with Release Please.","labels":[{"name":"%s"}]}]\n' \
       "${FAKE_PR_MERGED_AT:?}" "${FAKE_SOURCE_SHA:?}" "${FAKE_PR_HEAD_SHA:?}" "${FAKE_PR_AUTHOR:?}" "${FAKE_PR_LABEL:?}"
     ;;
   *)

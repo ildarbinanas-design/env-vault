@@ -16,7 +16,7 @@ version=$1
 changelog=$2
 release_require_version "$version"
 release_require_regular_file "$changelog"
-target=${version#v}
+target=${version#"$RELEASE_TAG_PREFIX"}
 
 awk -v target="$target" '
   function is_target_heading(line) {

@@ -19,12 +19,29 @@ import (
 )
 
 const (
-	SchemaID       = "env-vault.release-contract.v1"
-	SchemaVersion  = 1
-	CanonicalPath  = "release/contract.v1.json"
+	SchemaID       = "env-vault.release-contract.v2"
+	SchemaVersion  = 2
+	CanonicalPath  = "release/contract.v2.json"
 	MatrixSchemaID = "env-vault.release-contract-matrix.v1"
 
-	VersionSchemaID                    = "env-vault.releasecheck-version.v1"
+	LegacySchemaID               = "env-vault.release-contract.v1"
+	LegacySchemaVersion          = 1
+	LegacyCanonicalPath          = "release/contract.v1.json"
+	LegacyArchivePath            = "release/history/contract.v1.json"
+	LegacySemanticSHA256         = "6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5"
+	LegacyCanonicalFileSHA256    = "69be8d6ccf4480cbdbff3c722d8080d62b31051cef0101fadb47a30cdc0e2715"
+	HistoricalRegistrySchemaID   = "env-vault.release-contract-history.v2"
+	HistoricalRegistryVersion    = 2
+	HistoricalRegistryPath       = "release/contract-history.v2.json"
+	OperationalProjectionSchema  = "env-vault.release-contract-operational.v2"
+	OperationalProjectionVersion = 2
+	HistoricalSourceSchemaID     = "env-vault.release-contract-historical-source.v1"
+	SourceRouteSchemaID          = "env-vault.release-contract-source-route.v2"
+	SourceRouteSchemaVersion     = 2
+
+	VersionSchemaID                    = "env-vault.releasecheck-version.v2"
+	VersionSchemaVersion               = 2
+	LegacyVersionSchemaID              = "env-vault.releasecheck-version.v1"
 	ErrorSchemaID                      = "env-vault.releasecheck-error.v1"
 	ValidationSchemaID                 = "env-vault.contract-validation.v1"
 	ClassificationSchemaID             = "env-vault.attempt-classification.v1"
@@ -57,20 +74,28 @@ var (
 	schemaPattern     = regexp.MustCompile(`^env-vault\.[a-z0-9-]+\.v[1-9][0-9]*$`)
 	versionRegexp     = regexp.MustCompile(versionPattern)
 	shaPattern        = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	sha256Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	attemptPattern    = regexp.MustCompile(`^[1-9][0-9]*$`)
+	artifactTemplate  = regexp.MustCompile(`^[a-z0-9{}._-]+$`)
+	artifactName      = regexp.MustCompile(`^[a-z0-9._-]+$`)
+	labelPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9 :._-]{0,49}$`)
 )
 
-// Contract is the single declarative source for release identities and
-// invariants. The v1 decoder rejects unknown and duplicate fields.
+// Contract is the single declarative source for operational release identities
+// and invariants. The v2 decoder rejects unknown and duplicate fields.
 type Contract struct {
 	SchemaID             string            `json:"schema_id"`
 	SchemaVersion        int               `json:"schema_version"`
+	Evolution            Evolution         `json:"evolution"`
+	Repositories         Repositories      `json:"repositories"`
 	VersionPolicy        VersionPolicy     `json:"version_policy"`
 	Naming               Naming            `json:"naming"`
 	Platforms            []Platform        `json:"platforms"`
 	Assets               []string          `json:"assets"`
+	Homebrew             Homebrew          `json:"homebrew"`
 	Workflows            []Workflow        `json:"workflows"`
 	MainRequiredChecks   []RequiredCheck   `json:"main_required_checks"`
+	Concurrency          Concurrency       `json:"concurrency"`
 	Apps                 []App             `json:"apps"`
 	ReleaseStages        []ReleaseStage    `json:"release_stages"`
 	AllowedRepairActions []RepairAction    `json:"allowed_repair_actions"`
@@ -78,13 +103,45 @@ type Contract struct {
 	ReasonCodes          []string          `json:"reason_codes"`
 	ErrorCodes           []string          `json:"error_codes"`
 	Schemas              map[string]string `json:"schemas"`
+	historicalIdentity   *HistoricalIdentity
+	fileSHA256           string
+}
+
+type Evolution struct {
+	PreviousSchemaID       string `json:"previous_schema_id"`
+	PreviousSchemaVersion  int    `json:"previous_schema_version"`
+	PreviousSemanticSHA256 string `json:"previous_semantic_sha256"`
+}
+
+type Repositories struct {
+	Source      Repository `json:"source"`
+	HomebrewTap Repository `json:"homebrew_tap"`
+}
+
+type Repository struct {
+	FullName      string `json:"full_name"`
+	DefaultBranch string `json:"default_branch"`
 }
 
 type VersionPolicy struct {
 	Pattern               string                      `json:"pattern"`
+	TagPrefix             string                      `json:"tag_prefix"`
+	ReleasePlease         ReleasePleasePolicy         `json:"release_please"`
 	ReleasePleaseRecovery ReleasePleaseRecoveryPolicy `json:"release_please_recovery"`
 	BlockedVersions       []BlockedVersion            `json:"blocked_versions"`
 	LegacyRebuild         LegacyRebuildPolicy         `json:"legacy_rebuild"`
+}
+
+type ReleasePleasePolicy struct {
+	Component      string `json:"component"`
+	TargetBranch   string `json:"target_branch"`
+	Branch         string `json:"branch"`
+	ManifestKey    string `json:"manifest_key"`
+	ConfigPath     string `json:"config_path"`
+	ManifestPath   string `json:"manifest_path"`
+	PendingLabel   string `json:"pending_label"`
+	TaggedLabel    string `json:"tagged_label"`
+	AbandonedLabel string `json:"abandoned_label"`
 }
 
 // ReleasePleaseRecoveryPolicy records the one-time, fail-closed recovery from
@@ -149,9 +206,35 @@ type Platform struct {
 }
 
 type Workflow struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	File string `json:"file"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	File   string   `json:"file"`
+	Events []string `json:"events"`
+	Jobs   []string `json:"jobs"`
+}
+
+type Homebrew struct {
+	FormulaName                string   `json:"formula_name"`
+	FormulaPath                string   `json:"formula_path"`
+	HomepageURLTemplate        string   `json:"homepage_url_template"`
+	ReleaseDownloadURLTemplate string   `json:"release_download_url_template"`
+	Platforms                  []string `json:"platforms"`
+}
+
+type Concurrency struct {
+	Release ReleaseConcurrency `json:"release"`
+	CI      CIConcurrency      `json:"ci"`
+}
+
+type ReleaseConcurrency struct {
+	Group            string   `json:"group"`
+	CancelInProgress bool     `json:"cancel_in_progress"`
+	Queue            string   `json:"queue"`
+	Workflows        []string `json:"workflows"`
+}
+
+type CIConcurrency struct {
+	CancelInProgress bool `json:"cancel_in_progress"`
 }
 
 type RequiredCheck struct {
@@ -163,7 +246,7 @@ type RequiredCheck struct {
 type App struct {
 	ID             string `json:"id"`
 	Slug           string `json:"slug"`
-	Repository     string `json:"repository"`
+	RepositoryID   string `json:"repository_id"`
 	Environment    string `json:"environment"`
 	AuditWorkflow  string `json:"audit_workflow"`
 	CIWorkflowFile string `json:"ci_workflow_file,omitempty"`
@@ -189,7 +272,9 @@ type Matrix struct {
 	Include []Platform `json:"include"`
 }
 
-// LoadFile loads at most one MiB and validates the complete v1 contract.
+// LoadFile loads at most one MiB and validates only the operational v2
+// contract. Historical v1 replay requires LoadHistoricalContract and its
+// closed compatibility registry; there is no operational downgrade fallback.
 func LoadFile(filename string) (Contract, error) {
 	data, err := readLimitedFile(filename, maxContractBytes)
 	if err != nil {
@@ -199,12 +284,17 @@ func LoadFile(filename string) (Contract, error) {
 	if err := decodeJSON(data, &contract, true); err != nil {
 		return Contract{}, fmt.Errorf("decode release contract: %w", err)
 	}
+	if contract.SchemaID != SchemaID || contract.SchemaVersion != SchemaVersion {
+		return Contract{}, fmt.Errorf("operational release contract must be %s version %d", SchemaID, SchemaVersion)
+	}
 	if err := validateReleasePleaseRecoveryEncoding(data, contract.VersionPolicy.ReleasePleaseRecovery); err != nil {
 		return Contract{}, fmt.Errorf("decode release contract: %w", err)
 	}
 	if err := contract.Validate(); err != nil {
 		return Contract{}, err
 	}
+	digest := sha256.Sum256(data)
+	contract.fileSHA256 = hex.EncodeToString(digest[:])
 	return contract, nil
 }
 
@@ -215,6 +305,11 @@ func LoadCanonical(repositoryRoot string) (Contract, error) {
 func (c Contract) Matrix() Matrix {
 	return Matrix{Include: append([]Platform(nil), c.Platforms...)}
 }
+
+// FileSHA256 is the exact-byte digest of the contract file accepted by the
+// strict loader. It complements SemanticSHA256 so a typed projection cannot
+// be replayed against different local bytes with equivalent semantics.
+func (c Contract) FileSHA256() string { return c.fileSHA256 }
 
 func (c Contract) LegacyVersion(version string) (LegacyRebuildVersion, bool) {
 	for _, candidate := range c.VersionPolicy.LegacyRebuild.Versions {
@@ -241,6 +336,25 @@ func (c Contract) WorkflowByID(id string) (Workflow, bool) {
 		}
 	}
 	return Workflow{}, false
+}
+
+func (c Contract) RepositoryByID(id string) (Repository, bool) {
+	if c.SchemaID == LegacySchemaID && c.SchemaVersion == LegacySchemaVersion && c.historicalIdentity != nil {
+		switch id {
+		case "source":
+			return Repository{FullName: "ildarbinanas-design/env-vault", DefaultBranch: "main"}, true
+		case "homebrew_tap":
+			return Repository{FullName: "ildarbinanas-design/homebrew-tap", DefaultBranch: "main"}, true
+		}
+	}
+	switch id {
+	case "source":
+		return c.Repositories.Source, c.Repositories.Source.FullName != ""
+	case "homebrew_tap":
+		return c.Repositories.HomebrewTap, c.Repositories.HomebrewTap.FullName != ""
+	default:
+		return Repository{}, false
+	}
 }
 
 func (c Contract) PlatformByID(id string) (Platform, bool) {
@@ -275,7 +389,7 @@ func (c Contract) RenderName(template string, values map[string]string) (string,
 // RenderName expands only the known release placeholders and rejects missing,
 // unused, non-canonical, or path-producing values.
 func RenderName(template string, values map[string]string) (string, error) {
-	if template == "" || filepath.Base(template) != template || len(template) > 256 {
+	if template == "" || !artifactTemplate.MatchString(template) || filepath.Base(template) != template || len(template) > 256 {
 		return "", errors.New("template must be a safe basename")
 	}
 	allowed := map[string]func(string) bool{
@@ -312,7 +426,7 @@ func RenderName(template string, values map[string]string) (string, error) {
 			return "", fmt.Errorf("value for unused placeholder %q", key)
 		}
 	}
-	if rendered == "" || filepath.Base(rendered) != rendered || len(rendered) > 256 {
+	if rendered == "" || !artifactName.MatchString(rendered) || filepath.Base(rendered) != rendered || len(rendered) > 256 {
 		return "", errors.New("rendered name is not a safe basename")
 	}
 	return rendered, nil
@@ -327,7 +441,11 @@ func SemanticSHA256(c Contract) (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
-	canonical, err := json.Marshal(c)
+	var semantic any = c
+	if c.SchemaID == LegacySchemaID && c.SchemaVersion == LegacySchemaVersion {
+		semantic = projectLegacyContract(c)
+	}
+	canonical, err := json.Marshal(semantic)
 	if err != nil {
 		return "", fmt.Errorf("marshal semantic release contract: %w", err)
 	}
@@ -340,8 +458,24 @@ func (c Contract) Validate() error {
 	add := func(format string, values ...any) {
 		problems = append(problems, fmt.Sprintf(format, values...))
 	}
-	if c.SchemaID != SchemaID || c.SchemaVersion != SchemaVersion {
-		add("schema must be %s version %d", SchemaID, SchemaVersion)
+	legacy := c.SchemaID == LegacySchemaID && c.SchemaVersion == LegacySchemaVersion
+	operational := c.SchemaID == SchemaID && c.SchemaVersion == SchemaVersion
+	if !legacy && !operational {
+		add("schema must be %s version %d or the explicitly loaded archival %s version %d", SchemaID, SchemaVersion, LegacySchemaID, LegacySchemaVersion)
+	}
+	if operational {
+		if err := validateOperationalOwnership(c); err != nil {
+			add("operational ownership: %v", err)
+		}
+	} else if legacy {
+		if c.historicalIdentity == nil {
+			add("archival v1 contract requires a closed historical compatibility binding")
+		}
+		if !reflect.DeepEqual(c.Evolution, Evolution{}) || !reflect.DeepEqual(c.Repositories, Repositories{}) ||
+			!reflect.DeepEqual(c.Homebrew, Homebrew{}) || !reflect.DeepEqual(c.Concurrency, Concurrency{}) ||
+			c.VersionPolicy.TagPrefix != "" || !reflect.DeepEqual(c.VersionPolicy.ReleasePlease, ReleasePleasePolicy{}) {
+			add("archival v1 contract must not contain v2 operational fields")
+		}
 	}
 	if c.VersionPolicy.Pattern != versionPattern {
 		add("version policy pattern is not the canonical strict SemVer expression")
@@ -370,28 +504,15 @@ func (c Contract) Validate() error {
 		assets[asset] = true
 	}
 
-	wantPlatforms := map[string]struct {
-		runner string
-		cgo    string
-	}{
-		"linux-amd64":   {runner: "ubuntu-latest", cgo: "0"},
-		"linux-arm64":   {runner: "ubuntu-24.04-arm", cgo: "0"},
-		"darwin-amd64":  {runner: "macos-15-intel", cgo: "1"},
-		"darwin-arm64":  {runner: "macos-15", cgo: "1"},
-		"windows-amd64": {runner: "windows-latest", cgo: "0"},
-	}
 	platformIDs := make(map[string]bool)
 	derivedAssets := make(map[string]bool)
-	if len(c.Platforms) != len(wantPlatforms) {
-		add("platform count=%d, want %d", len(c.Platforms), len(wantPlatforms))
+	if len(c.Platforms) != 5 {
+		add("platform count=%d, want 5", len(c.Platforms))
 	}
+	wantAssets := make([]string, 0, len(c.Platforms)*2)
 	for index, platform := range c.Platforms {
-		want, required := wantPlatforms[platform.ID]
 		if err := validatePlatform(platform, c.Naming); err != nil {
 			add("platform %d: %v", index, err)
-		}
-		if !required || platform.Runner != want.runner || platform.CGO != want.cgo {
-			add("platform %q is not one of the canonical native targets", platform.ID)
 		}
 		if platformIDs[platform.ID] {
 			add("platform ID %q is duplicated", platform.ID)
@@ -399,39 +520,75 @@ func (c Contract) Validate() error {
 		platformIDs[platform.ID] = true
 		derivedAssets[platform.Archive] = true
 		derivedAssets[platform.Checksum] = true
+		wantAssets = append(wantAssets, platform.Archive, platform.Checksum)
 	}
 	if !sameSet(assets, derivedAssets) {
 		add("assets must equal the five platform archive/checksum pairs")
+	}
+	if !reflect.DeepEqual(c.Assets, wantAssets) {
+		add("assets must preserve canonical platform archive/checksum order")
 	}
 
 	workflowIDs := make(map[string]bool)
 	workflowNames := make(map[string]bool)
 	workflowFiles := make(map[string]bool)
+	wantWorkflowIDs := []string{"ci", "quality", "planning", "publisher", "release_evidence", "legacy_rebuild", "planning_app_audit", "tap_app_audit", "dependency_review", "pr_title"}
+	if operational {
+		wantWorkflowIDs = append(wantWorkflowIDs, "release_assets_bootstrap", "homebrew_bridge")
+	}
+	if len(c.Workflows) != len(wantWorkflowIDs) {
+		add("workflow count=%d, want %d", len(c.Workflows), len(wantWorkflowIDs))
+	}
 	for index, workflow := range c.Workflows {
-		if !idPattern.MatchString(workflow.ID) || strings.TrimSpace(workflow.Name) == "" || !workflowFile.MatchString(workflow.File) {
+		if !idPattern.MatchString(workflow.ID) || !safeDisplayText(workflow.Name) || !workflowFile.MatchString(workflow.File) {
 			add("workflow %d has invalid ID, name, or filename", index)
 		}
 		if workflowIDs[workflow.ID] || workflowNames[workflow.Name] || workflowFiles[workflow.File] {
 			add("workflow %q duplicates an ID, name, or filename", workflow.ID)
 		}
+		eventIDs, jobIDs := map[string]bool{}, map[string]bool{}
+		if operational && (len(workflow.Events) == 0 || len(workflow.Jobs) == 0) {
+			add("workflow %q must declare non-empty event and job inventories", workflow.ID)
+		}
+		for _, event := range workflow.Events {
+			if !idPattern.MatchString(event) || eventIDs[event] {
+				add("workflow %q has an invalid or duplicate event %q", workflow.ID, event)
+			}
+			eventIDs[event] = true
+		}
+		for _, job := range workflow.Jobs {
+			if !idPattern.MatchString(job) || jobIDs[job] {
+				add("workflow %q has an invalid or duplicate job %q", workflow.ID, job)
+			}
+			jobIDs[job] = true
+		}
+		if legacy && (workflow.Events != nil || workflow.Jobs != nil) {
+			add("archival workflow %q must not contain v2 event/job inventories", workflow.ID)
+		}
 		workflowIDs[workflow.ID], workflowNames[workflow.Name], workflowFiles[workflow.File] = true, true, true
 	}
-	for _, required := range []string{"ci", "quality", "planning", "publisher", "release_evidence", "legacy_rebuild", "planning_app_audit", "tap_app_audit"} {
-		if !workflowIDs[required] {
-			add("required workflow %q is missing", required)
-		}
+	wantWorkflowSet := make(map[string]bool, len(wantWorkflowIDs))
+	for _, id := range wantWorkflowIDs {
+		wantWorkflowSet[id] = true
+	}
+	if !sameSet(workflowIDs, wantWorkflowSet) {
+		add("workflow inventory is not the canonical generation-specific set")
 	}
 	if err := validateMainRequiredChecks(c.MainRequiredChecks); err != nil {
 		add("main required checks: %v", err)
 	}
 
 	appIDs, appSlugs := map[string]bool{}, map[string]bool{}
+	if len(c.Apps) != 2 {
+		add("app count=%d, want 2", len(c.Apps))
+	}
 	for index, app := range c.Apps {
-		if !idPattern.MatchString(app.ID) || !slugPattern.MatchString(app.Slug) || !validRepository(app.Repository) || strings.TrimSpace(app.Environment) == "" || !workflowIDs[app.AuditWorkflow] {
-			add("app %d has invalid ID, slug, repository, environment, or audit workflow", index)
+		_, repositoryOK := c.RepositoryByID(app.RepositoryID)
+		if !idPattern.MatchString(app.ID) || !slugPattern.MatchString(app.Slug) || !repositoryOK || !idPattern.MatchString(app.Environment) || !workflowIDs[app.AuditWorkflow] {
+			add("app %d has invalid ID, slug, repository ID, environment, or audit workflow", index)
 		}
 		if app.ID == "homebrew_tap" {
-			if !workflowFile.MatchString(app.CIWorkflowFile) || strings.TrimSpace(app.CIWorkflowName) == "" {
+			if !workflowFile.MatchString(app.CIWorkflowFile) || !idPattern.MatchString(app.CIWorkflowName) {
 				add("homebrew_tap app must define its exact CI workflow identity")
 			}
 		} else if app.CIWorkflowFile != "" || app.CIWorkflowName != "" {
@@ -441,6 +598,15 @@ func (c Contract) Validate() error {
 			add("app %q duplicates an ID or slug", app.ID)
 		}
 		appIDs[app.ID], appSlugs[app.Slug] = true, true
+	}
+	for appID, repositoryID := range map[string]string{
+		"release_planning": "source",
+		"homebrew_tap":     "homebrew_tap",
+	} {
+		app, ok := c.AppByID(appID)
+		if !ok || app.RepositoryID != repositoryID {
+			add("app %q must bind to repository %q", appID, repositoryID)
+		}
 	}
 	for _, required := range []string{"release_planning", "homebrew_tap"} {
 		if !appIDs[required] {
@@ -507,10 +673,14 @@ func (c Contract) Validate() error {
 		add("repair actions: %v", err)
 	}
 
+	contractSchema := SchemaID
+	if legacy {
+		contractSchema = LegacySchemaID
+	}
 	requiredSchemas := map[string]string{
-		"release_contract":                  SchemaID,
+		"release_contract":                  contractSchema,
 		"release_contract_matrix":           MatrixSchemaID,
-		"releasecheck_version":              VersionSchemaID,
+		"releasecheck_version":              LegacyVersionSchemaID,
 		"releasecheck_error":                ErrorSchemaID,
 		"contract_validation":               ValidationSchemaID,
 		"attempt_classification":            ClassificationSchemaID,
@@ -537,6 +707,13 @@ func (c Contract) Validate() error {
 		"release_metrics_baseline":          "env-vault.release-metrics-baseline.v1",
 		"release_metrics_comparison":        "env-vault.release-metrics-comparison.v1",
 	}
+	if operational {
+		requiredSchemas["releasecheck_version"] = VersionSchemaID
+		requiredSchemas["release_contract_history"] = HistoricalRegistrySchemaID
+		requiredSchemas["release_contract_operational"] = OperationalProjectionSchema
+		requiredSchemas["release_contract_historical_source"] = HistoricalSourceSchemaID
+		requiredSchemas["release_contract_source_route"] = SourceRouteSchemaID
+	}
 	for name, expected := range requiredSchemas {
 		if c.Schemas[name] != expected {
 			add("required schema %q must be %q", name, expected)
@@ -554,40 +731,131 @@ func (c Contract) Validate() error {
 	return nil
 }
 
-func validateNaming(n Naming) error {
-	if n.Product != "env-vault" || n.ArchivePrefix != n.Product+"-" || n.ChecksumSuffix != ".sha256" {
-		return errors.New("product, archive prefix, or checksum suffix is not canonical")
+func validateOperationalOwnership(c Contract) error {
+	if c.Evolution.PreviousSchemaID != LegacySchemaID || c.Evolution.PreviousSchemaVersion != LegacySchemaVersion ||
+		c.Evolution.PreviousSemanticSHA256 != LegacySemanticSHA256 {
+		return errors.New("evolution predecessor must pin the immutable v1 semantic identity")
 	}
-	if n.PlatformArtifactTemplate != "env-vault-release-{platform}-attempt-{attempt}" ||
-		n.PlatformEvidenceTemplate != "env-vault-promotion-platform-{platform}-attempt-{attempt}" ||
-		n.PromotionManifestTemplate != "env-vault-promotion-{source_sha}-attempt-{attempt}" {
-		return errors.New("attempt-scoped artifact templates are not canonical")
+	if !validRepository(c.Repositories.Source.FullName) || !validRepository(c.Repositories.HomebrewTap.FullName) ||
+		c.Repositories.Source.FullName == c.Repositories.HomebrewTap.FullName ||
+		!idPattern.MatchString(c.Repositories.Source.DefaultBranch) || !idPattern.MatchString(c.Repositories.HomebrewTap.DefaultBranch) {
+		return errors.New("source and Homebrew tap repositories must be distinct valid identities with safe default branches")
+	}
+	policy := c.VersionPolicy
+	wantReleasePleaseBranch := fmt.Sprintf("release-please--branches--%s--components--%s", policy.ReleasePlease.TargetBranch, policy.ReleasePlease.Component)
+	if policy.TagPrefix != "v" || policy.ReleasePlease.Component != c.Naming.Product ||
+		policy.ReleasePlease.TargetBranch != c.Repositories.Source.DefaultBranch ||
+		policy.ReleasePlease.Branch != wantReleasePleaseBranch || policy.ReleasePlease.ManifestKey != "." ||
+		!safeRepositoryPath(policy.ReleasePlease.ConfigPath) || !safeRepositoryPath(policy.ReleasePlease.ManifestPath) ||
+		!labelPattern.MatchString(policy.ReleasePlease.PendingLabel) || !labelPattern.MatchString(policy.ReleasePlease.TaggedLabel) ||
+		!labelPattern.MatchString(policy.ReleasePlease.AbandonedLabel) ||
+		policy.ReleasePlease.PendingLabel == policy.ReleasePlease.TaggedLabel ||
+		policy.ReleasePlease.PendingLabel == policy.ReleasePlease.AbandonedLabel ||
+		policy.ReleasePlease.TaggedLabel == policy.ReleasePlease.AbandonedLabel {
+		return errors.New("tag and Release Please identities must be safe and repository-derived")
+	}
+	if c.Homebrew.FormulaName != c.Naming.Product || c.Homebrew.FormulaPath != "Formula/"+c.Homebrew.FormulaName+".rb" ||
+		c.Homebrew.HomepageURLTemplate != "https://github.com/{repository}" ||
+		c.Homebrew.ReleaseDownloadURLTemplate != "https://github.com/{repository}/releases/download/{version}/{asset}" {
+		return errors.New("Homebrew formula or URL templates must be safe and product-derived")
+	}
+	wantHomebrewPlatforms := map[string]bool{}
+	for _, platform := range c.Platforms {
+		if platform.GOOS != "windows" {
+			wantHomebrewPlatforms[platform.ID] = true
+		}
+	}
+	gotHomebrewPlatforms := map[string]bool{}
+	for _, id := range c.Homebrew.Platforms {
+		if gotHomebrewPlatforms[id] {
+			return errors.New("Homebrew platform inventory contains a duplicate")
+		}
+		gotHomebrewPlatforms[id] = true
+	}
+	if !sameSet(gotHomebrewPlatforms, wantHomebrewPlatforms) {
+		return errors.New("Homebrew platforms must equal all non-Windows release targets")
+	}
+	releaseWorkflows := map[string]bool{}
+	for _, stage := range c.ReleaseStages {
+		if stage.StateMutating {
+			releaseWorkflows[stage.Workflow] = true
+		}
+	}
+	configuredWorkflows := map[string]bool{}
+	for _, id := range c.Concurrency.Release.Workflows {
+		if configuredWorkflows[id] {
+			return errors.New("release serialization contains a duplicate workflow")
+		}
+		configuredWorkflows[id] = true
+	}
+	wantSerializedWorkflows := map[string]bool{
+		"planning": true, "publisher": true, "release_assets_bootstrap": true,
+		"homebrew_bridge": true, "release_evidence": true,
+	}
+	for id := range releaseWorkflows {
+		if !configuredWorkflows[id] {
+			return errors.New("release serialization does not cover every mutating stage workflow")
+		}
+	}
+	if c.Concurrency.Release.Group != "env-vault-release" || c.Concurrency.Release.CancelInProgress ||
+		c.Concurrency.Release.Queue != "max" || !sameSet(configuredWorkflows, wantSerializedWorkflows) || !c.Concurrency.CI.CancelInProgress {
+		return errors.New("release serialization must be the canonical five-workflow global queue and CI cancellation must remain enabled")
+	}
+	return nil
+}
+
+func safeRepositoryPath(value string) bool {
+	if value == "" || len(value) > 256 || strings.ContainsAny(value, "\\:\r\n") || strings.HasPrefix(value, "/") ||
+		filepath.Clean(value) != value || strings.HasPrefix(value, "../") || value == ".." || value == "." {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." || !regexp.MustCompile(`^[A-Za-z0-9._-]+$`).MatchString(segment) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateNaming(n Naming) error {
+	if !slugPattern.MatchString(n.Product) || n.ArchivePrefix != n.Product+"-" ||
+		n.ChecksumSuffix == "" || strings.ContainsAny(n.ChecksumSuffix, "/\\") {
+		return errors.New("product, archive prefix, or checksum suffix is unsafe or not derived")
+	}
+	if !strings.HasPrefix(n.PlatformArtifactTemplate, n.Product+"-") ||
+		strings.Count(n.PlatformArtifactTemplate, "{platform}") != 1 || strings.Count(n.PlatformArtifactTemplate, "{attempt}") != 1 ||
+		!strings.HasPrefix(n.PlatformEvidenceTemplate, n.Product+"-") ||
+		strings.Count(n.PlatformEvidenceTemplate, "{platform}") != 1 || strings.Count(n.PlatformEvidenceTemplate, "{attempt}") != 1 ||
+		!strings.HasPrefix(n.PromotionManifestTemplate, n.Product+"-") ||
+		strings.Count(n.PromotionManifestTemplate, "{source_sha}") != 1 || strings.Count(n.PromotionManifestTemplate, "{attempt}") != 1 {
+		return errors.New("attempt-scoped artifact templates are unsafe or omit required identities")
+	}
+	for _, example := range []struct {
+		template string
+		values   map[string]string
+	}{
+		{n.PlatformArtifactTemplate, map[string]string{"platform": "linux-amd64", "attempt": "1"}},
+		{n.PlatformEvidenceTemplate, map[string]string{"platform": "linux-amd64", "attempt": "1"}},
+		{n.PromotionManifestTemplate, map[string]string{"source_sha": strings.Repeat("a", 40), "attempt": "1"}},
+	} {
+		if _, err := RenderName(example.template, example.values); err != nil {
+			return fmt.Errorf("attempt-scoped artifact template is not safely renderable: %w", err)
+		}
 	}
 	return nil
 }
 
 func validateMainRequiredChecks(checks []RequiredCheck) error {
-	want := []RequiredCheck{
-		{Name: "Analyze (actions)", Workflow: "CodeQL", Event: "dynamic"},
-		{Name: "Analyze (go)", Workflow: "CodeQL", Event: "dynamic"},
-		{Name: "Dependency review", Workflow: "Dependency review", Event: "pull_request"},
-		{Name: "pr-title", Workflow: "pr-title", Event: "pull_request"},
-		{Name: "quality-gate", Workflow: "ci", Event: "pull_request"},
-	}
-	if len(checks) != len(want) {
-		return fmt.Errorf("entry count=%d, want %d", len(checks), len(want))
+	if len(checks) != 5 {
+		return fmt.Errorf("entry count=%d, want 5", len(checks))
 	}
 	seenNames := make(map[string]bool, len(checks))
 	for index, check := range checks {
-		if strings.TrimSpace(check.Name) != check.Name || check.Name == "" ||
-			strings.TrimSpace(check.Workflow) != check.Workflow || check.Workflow == "" ||
+		if !safeDisplayText(check.Name) || !safeDisplayText(check.Workflow) ||
 			(check.Event != "dynamic" && check.Event != "pull_request") || seenNames[check.Name] {
 			return fmt.Errorf("entry %d is empty, malformed, or duplicates a check name", index)
 		}
 		seenNames[check.Name] = true
-		if check != want[index] {
-			return fmt.Errorf("entry %d does not match the canonical name/workflow/event identity", index)
-		}
 	}
 	return nil
 }
@@ -702,7 +970,7 @@ func validateLegacyRebuild(policy LegacyRebuildPolicy) error {
 }
 
 func validatePlatform(platform Platform, naming Naming) error {
-	if !idPattern.MatchString(platform.ID) || platform.ID != platform.GOOS+"-"+platform.GOARCH || strings.TrimSpace(platform.Runner) == "" {
+	if !idPattern.MatchString(platform.ID) || platform.ID != platform.GOOS+"-"+platform.GOARCH || !idPattern.MatchString(platform.Runner) {
 		return errors.New("invalid ID, target, or runner")
 	}
 	if platform.CGO != "0" && platform.CGO != "1" {
@@ -720,6 +988,9 @@ func validatePlatform(platform Platform, naming Naming) error {
 }
 
 func validateRepairActions(actions []RepairAction, stageIDs map[string]bool, actionCodes []string) error {
+	// Repair semantics are an independent fail-closed safety policy, not a
+	// configurable operational identity. In particular, post-build repairs
+	// never rebuild binaries and the diagnostic legacy path never publishes.
 	want := map[string]struct {
 		code      string
 		stage     string
@@ -738,7 +1009,9 @@ func validateRepairActions(actions []RepairAction, stageIDs map[string]bool, act
 	seen := make(map[string]bool)
 	for _, action := range actions {
 		expected, ok := want[action.ID]
-		if !ok || seen[action.ID] || !stageIDs[action.ResumeStage] || !contains(actionCodes, action.ActionCode) || action.ActionCode != expected.code || action.ResumeStage != expected.stage || action.Rebuilds != expected.rebuilds || action.PublicationEligible != expected.publishes {
+		if !ok || !idPattern.MatchString(action.ID) || seen[action.ID] || !stageIDs[action.ResumeStage] ||
+			!contains(actionCodes, action.ActionCode) || action.ActionCode != expected.code || action.ResumeStage != expected.stage ||
+			action.Rebuilds != expected.rebuilds || action.PublicationEligible != expected.publishes {
 			return fmt.Errorf("action %q is invalid, duplicated, or weakens its guarantee", action.ID)
 		}
 		seen[action.ID] = true
@@ -763,6 +1036,18 @@ func validateCodes(values []string, pattern *regexp.Regexp, kind string) error {
 func validRepository(value string) bool {
 	parts := strings.Split(value, "/")
 	return len(parts) == 2 && idPattern.MatchString(parts[0]) && idPattern.MatchString(parts[1])
+}
+
+func safeDisplayText(value string) bool {
+	if value == "" || len(value) > 128 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func sameSet(left, right map[string]bool) bool {
@@ -862,6 +1147,9 @@ func validateExactJSONFields(value any, destination reflect.Type, path string, r
 	if destination == reflect.TypeOf(json.RawMessage{}) {
 		return nil
 	}
+	if value == nil {
+		return fmt.Errorf("%s must not be null", path)
+	}
 	switch destination.Kind() {
 	case reflect.Struct:
 		object, ok := value.(map[string]any)
@@ -879,6 +1167,27 @@ func validateExactJSONFields(value any, destination reflect.Type, path string, r
 			}
 			if err := validateExactJSONFields(child, field, path+"."+key, rejectUnknown); err != nil {
 				return err
+			}
+		}
+		for index := 0; index < destination.NumField(); index++ {
+			field := destination.Field(index)
+			if field.PkgPath != "" {
+				continue
+			}
+			tag := field.Tag.Get("json")
+			parts := strings.Split(tag, ",")
+			name := parts[0]
+			if name == "" {
+				name = field.Name
+			}
+			optional := false
+			for _, option := range parts[1:] {
+				optional = optional || option == "omitempty"
+			}
+			if name != "-" && !optional {
+				if _, present := object[name]; !present {
+					return fmt.Errorf("missing required field %s.%s", path, name)
+				}
 			}
 		}
 	case reflect.Slice, reflect.Array:
@@ -955,6 +1264,9 @@ func jsonStructFields(destination reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type)
 	for index := 0; index < destination.NumField(); index++ {
 		field := destination.Field(index)
+		if field.PkgPath != "" {
+			continue
+		}
 		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		if name == "" {
 			name = field.Name

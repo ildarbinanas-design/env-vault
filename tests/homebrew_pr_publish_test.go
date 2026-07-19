@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	homebrewTapRepository = "example/homebrew-tap"
+	homebrewTapRepository = "ildarbinanas-design/homebrew-tap"
 	homebrewSourceSHA     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
 
@@ -44,7 +44,7 @@ func TestPublishHomebrewPRCreatesDeterministicBranchAndPR(t *testing.T) {
 		"base_sha":                 mainBefore,
 		"source_sha":               homebrewSourceSHA,
 		"pr_number":                "42",
-		"pr_url":                   "https://github.com/example/homebrew-tap/pull/42",
+		"pr_url":                   "https://github.com/ildarbinanas-design/homebrew-tap/pull/42",
 		"head_sha":                 head,
 		"merge_sha":                "",
 		"tap_sha":                  "",
@@ -349,7 +349,7 @@ func TestPublishHomebrewPRVerifyPublishedPRIsStrictlyReadOnly(t *testing.T) {
 		"base_sha":                 merge,
 		"source_sha":               homebrewSourceSHA,
 		"pr_number":                "23",
-		"pr_url":                   "https://github.com/example/homebrew-tap/pull/23",
+		"pr_url":                   "https://github.com/ildarbinanas-design/homebrew-tap/pull/23",
 		"head_sha":                 head,
 		"merge_sha":                merge,
 		"tap_sha":                  merge,
@@ -820,9 +820,9 @@ fi
 if [[ ${1:-} == pr && ${2:-} == list ]]; then
   if [[ -f $FAKE_CREATED_PR ]]; then
     head_sha=$(git --git-dir="$FAKE_ORIGIN" rev-parse "refs/heads/release/env-vault-$FAKE_VERSION")
-    printf '42\thttps://github.com/example/homebrew-tap/pull/42\tOPEN\trelease/env-vault-%s\t%s\t-\tmain\tenv-vault %s\tfalse\tfalse\n' "$FAKE_VERSION" "$head_sha" "$FAKE_VERSION"
+    printf '42\thttps://github.com/ildarbinanas-design/homebrew-tap/pull/42\tOPEN\trelease/env-vault-%s\t%s\t-\tmain\tenv-vault %s\tfalse\tfalse\n' "$FAKE_VERSION" "$head_sha" "$FAKE_VERSION"
   elif [[ ${FAKE_PR_STATE:-none} != none ]]; then
-    pr_url=${FAKE_PR_URL:-https://github.com/example/homebrew-tap/pull/$FAKE_PR_NUMBER}
+    pr_url=${FAKE_PR_URL:-https://github.com/ildarbinanas-design/homebrew-tap/pull/$FAKE_PR_NUMBER}
     head_ref=${FAKE_PR_HEAD_REF:-release/env-vault-$FAKE_VERSION}
     base_ref=${FAKE_PR_BASE_REF:-main}
     title=${FAKE_PR_TITLE:-env-vault $FAKE_VERSION}
@@ -872,7 +872,7 @@ if [[ ${1:-} == pr && ${2:-} == create ]]; then
   touch "$FAKE_CREATED_PR"
   head_sha=$(git --git-dir="$FAKE_ORIGIN" rev-parse "refs/heads/release/env-vault-$FAKE_VERSION")
   git --git-dir="$FAKE_ORIGIN" update-ref refs/pull/42/head "$head_sha"
-  printf 'https://github.com/example/homebrew-tap/pull/42\n'
+  printf 'https://github.com/ildarbinanas-design/homebrew-tap/pull/42\n'
   exit 0
 fi
 
