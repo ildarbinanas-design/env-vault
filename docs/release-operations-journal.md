@@ -499,3 +499,36 @@ copying raw logs.
   exercised by this decision record.
 - **Interaction:** Instruction arrived directly in the user task; browser,
   email, GitHub login, and OTP access were not used.
+
+## OP-0017 — Exact authorization comment and head-guarded v0.0.17 merge
+
+- **UTC:** `2026-07-19T10:14:26Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`;
+  [Release Please PR #50](https://github.com/ildarbinanas-design/env-vault/pull/50).
+- **Action and reason:** Ran the checked-in typed-contract wrapper and
+  fail-closed release authorization/merge helper. The operation first created
+  exactly one owner-authored exact-tuple comment, revalidated the unchanged PR
+  state, and then head-guarded the squash merge to that same authorized head.
+- **Authorization/gate:** OP-0015 exact authorization for `v0.0.17`, PR #50,
+  head `f60b39333f1b18e53cdc499a095ec29fcad6c54b`. OP-0016 required no duplicate
+  prompt but did not broaden that tuple.
+- **Safe identity:** At `2026-07-19T10:13:59Z`, the helper created exact
+  authorization comment ID `5015329932`,
+  [permanent URL](https://github.com/ildarbinanas-design/env-vault/pull/50#issuecomment-5015329932),
+  authored by the repository `OWNER` user with the exact OP-0015 tuple body.
+  At `2026-07-19T10:14:26Z`, it squash-merged PR #50 from base
+  `0d874277aad3bbfa21b12296d61df8a7f770d622` and authorized head
+  `f60b39333f1b18e53cdc499a095ec29fcad6c54b` to merge/source/main
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`. The merge commit has the exact
+  base as its sole parent; the comment precedes the merge by 27 seconds.
+- **Result and verification:** Exactly one authorization comment and one
+  head-guarded squash merge were observed. The PR merge is complete. This
+  record does not yet claim source CI, tag, Release, publisher, asset,
+  attestation, Homebrew, health, or evidence completion.
+- **Minimum permission surface:** Issues/pull-request write for the single
+  authorization comment; pull-request/Contents write for the exact squash
+  merge. No bypass, Administration, settings, ruleset, Actions-write, or
+  permission change.
+- **Interaction:** Checked-in local helper plus GitHub CLI/API. No rerun,
+  workflow dispatch, authentication flow, browser, email, or OTP access was
+  used.
