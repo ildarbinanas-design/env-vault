@@ -759,3 +759,55 @@ copying raw logs.
   expansion.
 - **Interaction:** GitHub CLI/API plus local proof verification; browser,
   email, authentication flow, and OTP access were not used.
+
+## OP-0024 — v0.0.17 durable evidence fast-forward and offline verification
+
+- **UTC:** `2026-07-19T10:46:10Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; automatic compact
+  evidence listener, append-only production ledger, and independent offline
+  replay for the successful OP-0022 publisher.
+- **Action and reason:** The workflow_run listener assembled the exact
+  publisher candidate, verified it before mutation, fast-forwarded only the
+  protected evidence ref, retained the compact bundle, and then independently
+  downloaded and replayed that bundle with an empty environment and command
+  path.
+- **Authorization/gate:** Automatic evidence transition from successful
+  publisher `29683468172/1`; no manual evidence, repair, bootstrap, or rerun
+  authorization was used.
+- **Safe identity — workflow and candidate:** Automatic
+  [run `29683728742/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29683728742),
+  title `env-vault-release-evidence publisher-run=29683468172 attempt=1`, event
+  `workflow_run`, exact source
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`, completed `success`; assemble
+  job `88184341930` and publish job `88184614337` both succeeded. Candidate
+  artifact `8441424668` was 232,525 bytes with digest
+  `sha256:c0d98e85ab11433956c043780439ceff8c0c285482df599e73c090b22a42582a`.
+- **Safe identity — ledger:** Between `2026-07-19T10:45:40Z` and
+  `10:46:04Z`, `refs/heads/release-evidence` fast-forwarded from
+  `e697239298c4b5b1240fc53abe611131d45ac7c0` to
+  [`b0592ee7e9013d750704733d8e030a69056ef319`](https://github.com/ildarbinanas-design/env-vault/commit/b0592ee7e9013d750704733d8e030a69056ef319).
+  The new commit has the old tip as its sole parent and adds only v0.0.17 paths
+  plus three content-addressed objects. All v0.0.14, v0.0.15, and v0.0.16 tree
+  entries remained byte- and object-identical.
+- **Safe identity — compact replay:** Artifact `8441452672`, name
+  `env-vault-release-evidence-v2-v0.0.17-b0592ee7e9013d750704733d8e030a69056ef319-publisher-29683468172-attempt-1-evidence-29683728742-1`,
+  size 56,073 bytes, digest
+  `sha256:8c882e2c37a651d0461af79acb6c1b3089e02f48c49ebef1b65d60e0ea06e81a`.
+  Independent `env -i` empty-`PATH` bundle verification passed with evidence
+  SHA-256 `949636f066591e44c3dadd39352b548bc1513a4fe17e5d111105b09964b01830`,
+  bundle SHA-256
+  `7ef2713bae2efb6fed4dc80aad3e199997c7a7dcd207f7b10b41fb50b1fca5fd`,
+  1,476,724 reconstructed v1 bytes, `decision=pass`, empty error, and
+  `reconstructed_byte_exact=true`.
+- **Result and verification:** Evidence workflow and post-write observation
+  succeeded. The bundle used three objects; compact metadata was 10,926 bytes
+  versus 1,483,702 legacy bytes. Logical reduction was 871 permille and
+  deterministic-export reduction was 747 permille; `targets_met=true`. Durable
+  evidence for v0.0.17 is complete and fully replayable offline.
+- **Minimum permission surface:** Only the isolated publisher job used
+  `Contents: write` for one non-forced evidence-ref fast-forward. No Workflows
+  write, App/PAT replacement, ruleset bypass, manual bootstrap, or historical
+  rewrite. Artifact download and post-write verification were read-only.
+- **Interaction:** Automated GitHub Actions plus read-only download and local
+  credential-isolated offline verification; browser, email, authentication
+  flow, and OTP access were not used.
