@@ -560,3 +560,40 @@ copying raw logs.
   observations. No GitHub write permission, settings change, or ruleset bypass.
 - **Interaction:** GitHub CLI/API and Actions; browser, email, authentication
   flow, and OTP access were not used.
+
+## OP-0019 — Automated v0.0.17 planning and exact tag creation
+
+- **UTC:** `2026-07-19T10:30:46Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; release-planning
+  transition from exact green source to immutable `refs/tags/v0.0.17`.
+- **Action and reason:** The `release-please` workflow_run listener rechecked
+  repository settings, the exact authorization/merge tuple, the successful
+  source CI attempt, and the offline promotion before the planning App created
+  the lightweight tag and closed the proposal lifecycle.
+- **Authorization/gate:** OP-0015 exact release authorization, OP-0017 exact
+  comment/merge, and OP-0018 green source gate. The automatic transition was
+  the contract-defined next action and required no additional manual tag step.
+- **Safe identity:** Planning
+  [run `29683428751/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29683428751),
+  event `workflow_run`, exact source
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`, conclusion `success`; inspect
+  job `88183528476`, plan job `88183560284`, and correctly skipped whole-attempt
+  rerun job `88183560516`. Settings proof ran from
+  `2026-07-19T10:30:31Z` to `10:30:32Z`; exact release authorization was
+  reverified from `10:30:35Z` to `10:30:38Z`; source CI attempt was rechecked
+  from `10:30:38Z` to `10:30:39Z`. The App created
+  `refs/tags/v0.0.17` at the exact source from `10:30:39Z` to `10:30:46Z`.
+- **Result and verification:** The run succeeded. Offline attempt
+  classification passed for five native targets and ten promoted envelopes;
+  promotion-manifest SHA-256 was
+  `1d18021b7a8310790fa0f59150950e447f75c99df5b76b56d1d4bb42b81bdfca`.
+  The pre-state had neither tag nor Release. The resulting tag resolves exactly
+  to the authorized source, and PR #50 transitioned to the sole
+  `autorelease: tagged` lifecycle label. No public Release or publisher result
+  is claimed by this record.
+- **Minimum permission surface:** The planning App remained repository-scoped
+  with Contents, Issues, and pull-request write plus settings/Administration
+  read; no ruleset bypass or permission change. No manual tag, rerun, repair,
+  workflow dispatch, or settings mutation occurred.
+- **Interaction:** Automated GitHub Actions and repository-scoped App API;
+  browser, email, authentication flow, and OTP access were not used.
