@@ -731,3 +731,31 @@ copying raw logs.
   No settings change, bypass, or permission expansion.
 - **Interaction:** Automated GitHub Actions; browser, email, authentication
   flow, and OTP access were not used.
+
+## OP-0023 — Typed v0.0.17 health proof verification
+
+- **UTC:** `2026-07-19T10:41:48Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; retained publisher
+  observation and health proof for the OP-0022 successful attempt.
+- **Action and reason:** Downloaded the retained observation artifact through
+  read-only Actions access and verified its typed health document and digest
+  before relying on health as an input to durable evidence.
+- **Authorization/gate:** Read-only verification of the OP-0022 normal
+  publisher result; no new release, repair, or evidence authorization.
+- **Safe identity:** Artifact ID `8441392159`, name
+  `env-vault-release-observation-v0.0.17-attempt-1`, digest
+  `sha256:0af38c95d7fb81c6a4a2018ae95ea1aa631df4bcf7f124105c52851c69c660b6`.
+  Health schema `env-vault.release-health-proof.v1` was checked at
+  `2026-07-19T10:39:39Z` for publisher `29683468172/1`, tag `v0.0.17`, and
+  source `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`; proof SHA-256
+  `8d76b73fc71ec7d7cc8b8c92ab135382e748651ed428365f09b17c14b10ae297`.
+- **Result and verification:** Typed result `pass`. Exact tag/source, published
+  Release, ten assets, attestations, Homebrew state, both tap CI gates,
+  blocked-tag policy, and abandoned `v0.0.12` policy were all true. The settings
+  proof bound three `ACTIVE` rulesets with zero bypass actors. Durable evidence
+  was still pending and is not claimed by this record.
+- **Minimum permission surface:** Read-only Actions artifact download and local
+  proof verification. No GitHub mutation, settings change, bypass, or permission
+  expansion.
+- **Interaction:** GitHub CLI/API plus local proof verification; browser,
+  email, authentication flow, and OTP access were not used.
