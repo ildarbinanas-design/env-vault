@@ -532,3 +532,31 @@ copying raw logs.
 - **Interaction:** Checked-in local helper plus GitHub CLI/API. No rerun,
   workflow dispatch, authentication flow, browser, email, or OTP access was
   used.
+
+## OP-0018 — v0.0.17 exact-source protected-main gate
+
+- **UTC:** `2026-07-19T10:29:30Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; exact release source
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c` after OP-0017.
+- **Action and reason:** Waited for and read-only verified the repository-owned
+  protected-main CI and CodeQL attempts before allowing the automatic planning
+  workflow to classify or create the release tag.
+- **Authorization/gate:** OP-0015 exact release authorization and the exact
+  OP-0017 merge/source tuple. This observation introduced no new authorization.
+- **Safe identity:** Push/main
+  [CI `29682997343/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682997343),
+  created `2026-07-19T10:14:28Z`, completed
+  `2026-07-19T10:29:30Z`; quality-gate job `88183518472`, E2E gate
+  `88183478967`, source job `88182361433`, and five native platform jobs
+  `88182391784`, `88182391790`, `88182391792`, `88182391796`, and
+  `88182392237`. Exact-source
+  [CodeQL `29682997053/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682997053)
+  also succeeded.
+- **Result and verification:** All 12 CI jobs succeeded. Immediately before
+  planning, the typed `v0.0.17` tag/Release observation returned documented
+  absence status `4`; no tag or Release pre-existed. No rerun, repair, or
+  workflow dispatch occurred in this checkpoint.
+- **Minimum permission surface:** Read-only Actions, commit/ref, and Release
+  observations. No GitHub write permission, settings change, or ruleset bypass.
+- **Interaction:** GitHub CLI/API and Actions; browser, email, authentication
+  flow, and OTP access were not used.
