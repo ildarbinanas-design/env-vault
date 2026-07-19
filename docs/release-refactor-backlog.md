@@ -546,24 +546,111 @@ the measurement-first latency investigation without a speedup claim.
   needs its source-tree path; never remove or rewrite the archived v1 bytes or
   tuple registry.
 
+## 13. Post-release Actions artifact lifecycle and storage recovery
+
+- **Problem and evidence:** the pre-release account snapshot observed 2,027
+  active Actions artifacts totaling 2,818,282,469 bytes while repository
+  retention was 90 days. Billing had accrued 177.8 GB-hours against an included
+  0.5 GB-month allowance, and the Actions budget was a zero-dollar blocking
+  budget. The current workflow graph already has 23 `upload-artifact` steps and
+  every one declares `retention-days`, using the explicit tiers 7, 14, 30, or
+  90 days. These values are a dated capacity observation, not operational
+  constants. Standard hosted-runner minutes for the public repositories remain
+  discounted; artifact storage accrual is a separate release-availability risk.
+- **Affected files/workflows and external state:** the 23 actual upload sites
+  are in `legacy-rebuild.yml`, `release-please.yml`,
+  `bootstrap-release-assets.yml`, `reusable-quality.yml`,
+  `release-evidence.yml`, `publish-homebrew-bridge.yml`, and
+  `build-binaries.yml`. `ci.yml`, downstream consumers, repair paths, and audit
+  workflows are dependency/audit scope only; they are not additional upload
+  locations. External scope includes repository Actions retention settings,
+  the Actions artifacts API, this backlog, the operator runbook, and the
+  append-only operations journal. Artifact deletion must not delete workflow
+  runs or alter their check conclusions and logs.
+- **Guarantee preserved:** start cleanup only after the current patch has a
+  successful exact-source publisher, Homebrew PR-head and post-merge CI, health,
+  durable evidence append, and fully offline replay. Preserve every tag, GitHub
+  Release asset, provenance attestation, SPDX SBOM, and evidence Git history.
+  Also preserve the explicit current-release keep set: exact-head and
+  protected-main artifacts, the publication-eligible promotion manifest and
+  five platform envelopes, publisher/health observations, durable compact
+  evidence, and every artifact still needed by an admissible repair. Delete
+  only superseded ephemeral Actions artifacts whose identity is outside that
+  keep set.
+- **Proposed lifecycle:** inventory and standardize the 23 already-explicit
+  upload policies, starting from the current 7/14/30/90-day tiers. Measure each
+  artifact class and its last required consumer before shortening an existing
+  tier; for example, a 30-day diagnostic may move to 14 or 7 days only when its
+  queued-workflow and repair windows are proved shorter. Keep 90 days for the
+  compact durable evidence artifact and any other independently justified
+  durable handoff. Exact current-release identities override age tiers and
+  remain kept until release closure and repairability are independently proved.
+  Apply any tier changes in a reviewed workflow PR; execute deletion later as a
+  separately audited external operation from a complete paginated inventory.
+- **Expected reduction:** the first cleanup should reclaim
+  `2,818,282,469 bytes - explicit_keep_set_bytes`, then bound steady-state
+  storage through the audited per-class tier and periodic superseded-artifact
+  sweep. Future reduction from retention changes may be claimed only for an
+  existing 7/14/30/90-day tier that measured dependency windows permit
+  shortening. Record exact before/kept/deleted/after counts and bytes. No build,
+  queue, wall-time, runner-time, or retention reduction is claimed in advance;
+  the objective is storage headroom and avoidance of budget-blocked uploads.
+- **Risk:** a broad age/name filter, stale inventory, pagination loss, or a race
+  with an active workflow could remove the only promotion or diagnostic input
+  for a no-rebuild repair. Billing data may lag deletion, while a short tier can
+  expire a valid artifact before a queued publisher consumes it.
+- **Required tests and dry run:** workflow tests must inventory exactly 23
+  upload sites in the seven named workflows, require one explicit supported
+  `retention-days` tier at each site, preserve attempt-qualified names, and map
+  uploaders to all downstream, queued-workflow, repair, and audit consumers.
+  A count or location change must fail until that inventory and retention
+  rationale are reviewed. Before deletion, save a no-secret, fully paginated
+  dry-run inventory with repository, artifact ID/name, run ID/attempt, head SHA
+  when available, size, creation/expiry state, classification reason, and
+  keep/delete decision. Reject duplicate IDs, incomplete pagination,
+  active/in-progress runs, unknown identities, negative totals, keep/delete
+  overlap, or a computed byte sum that does not reconcile with the observed
+  inventory.
+- **Dependencies and order:** first close and independently verify the current
+  release; freeze its exact keep set and repair boundary; audit all existing
+  tiers and land any justified shortening/standardization through an exact-head
+  green implementation PR; review the dry-run inventory; then delete in bounded
+  batches with a fresh pre-delete identity check. Never clean artifacts as a
+  prerequisite for the current release or while its shared release concurrency
+  group is active.
+- **Acceptance criteria:** (1) the dry run names an explicit immutable keep set
+  and computes exact candidate counts/bytes; (2) every deletion has artifact
+  ID, source run/attempt, size, classification reason, timestamp, and result in
+  the committed operations journal without raw logs or credentials; (3) no
+  workflow run, tag, Release asset, attestation, SBOM, evidence commit, current
+  promotion input, health proof, or repair input is deleted; (4) a post-delete
+  complete inventory proves the intended ID set absent and every keep ID
+  present; (5) Billing/Usage is re-observed after its documented update lag and
+  reports recovered storage headroom without changing or bypassing the blocking
+  budget; and (6) the retention PR's exact-head and protected-main CI remain
+  green, with unchanged five-target, promotion, publisher, evidence, and
+  required-check identities.
+
 ## Suggested implementation order
 
-1. Complete the measurement-first latency investigation in item 6 using the
+1. After the current patch is completely published and verified, execute item
+   13's retention and audited-cleanup sequence before beginning another release.
+2. Complete the measurement-first latency investigation in item 6 using the
    captured first-v2-release comparator; retain the immutable v1 and
    pre-refactor comparators.
-2. Design the evidence checkpoint/Merkle transition before the bounded history
+3. Design the evidence checkpoint/Merkle transition before the bounded history
    window becomes operationally tight; keep legacy history immutable.
-3. Consolidate App audits and promotion inventory only through typed-proof
+4. Consolidate App audits and promotion inventory only through typed-proof
    parity dual-runs.
-4. Make the remaining test-tool bootstrap hermetic.
-5. Reduce the CI/publisher graph only from successful-run measurements while
+5. Make the remaining test-tool bootstrap hermetic.
+6. Reduce the CI/publisher graph only from successful-run measurements while
    retaining five native jobs and both named gates.
-6. Add event-aware run names and measure title-check event fan-out without
+7. Add event-aware run names and measure title-check event fan-out without
    changing triggers.
-7. Add the diagnostic evidence collector.
-8. Generalize recovery transitions only after the completed `v0.0.12` incident
+8. Add the diagnostic evidence collector.
+9. Generalize recovery transitions only after the completed `v0.0.12` incident
    has remained stable through at least one fully green later release.
-9. Implement dual-source historical verification last, as a read-only tool with
+10. Implement dual-source historical verification last, as a read-only tool with
    no operator plane.
 
 Each step requires its own before/after successful-run metrics and a product-path
