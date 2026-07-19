@@ -1,0 +1,44 @@
+{
+  "schema_id": "env-vault.release-evidence-bundle.v2",
+  "schema_version": 2,
+  "repository": "ildarbinanas-design/env-vault",
+  "release_version": "v0.0.18",
+  "source_sha": "2346d2aab4bb1081eb6eb819bd8561a69732979e",
+  "publisher_repair_mode": "none",
+  "publisher_run_id": 29703664391,
+  "publisher_run_attempt": 1,
+  "evidence_schema_id": "env-vault.release-evidence.v1",
+  "evidence_schema_version": 1,
+  "legacy_evidence_sha256": "9cecd06de836c1e57c2d5767e8c87ba780af35f5a410bb8d570ca5b4f2362110",
+  "legacy_canonical_json_sha256": "0e1c7276775fc141a7bcf5d0baf4ce04485f21573205b71a37ef2556be007935",
+  "legacy_canonical_json_size": 1475890,
+  "evidence_core_object_sha256": "08c7cf19b4eb1bbada9c2af38a5105012339a3486f0aa6802c8968e683eecbc3",
+  "objects": [
+    {
+      "sha256": "08c7cf19b4eb1bbada9c2af38a5105012339a3486f0aa6802c8968e683eecbc3",
+      "media_type": "application/vnd.env-vault.release-evidence-core.v2+json",
+      "encoding": "gzip",
+      "uncompressed_size": 89040,
+      "compressed_size": 89068,
+      "compressed_sha256": "90b556a78ccba800a0d24dba8d83e244e5d210e1afee348a6c67b8aa2da52d17"
+    },
+    {
+      "sha256": "3d5ca82a673a59a5ef3d25d8fbd7f37ab413d88938a299f009ff49586465a746",
+      "media_type": "application/json",
+      "encoding": "gzip",
+      "uncompressed_size": 253348,
+      "compressed_size": 253386,
+      "compressed_sha256": "6f469777a3937fc9c47fdd599c38521148eb61015b0eff9308291bc75ddcf553"
+    },
+    {
+      "sha256": "983c373c3aa26da4c9646e94195a5467e2468b41ed2deefb67a4acd09be63e7b",
+      "media_type": "application/json",
+      "encoding": "gzip",
+      "uncompressed_size": 15426,
+      "compressed_size": 15449,
+      "compressed_sha256": "3541c549b050bf1940b2d5f1b181f8bd7f51c07a171f4504032da552a9e9bf36"
+    }
+  ],
+  "result": "pass",
+  "bundle_sha256": "1dc8a1d2885695c5a17d1fed9fc3043390083390cafb1072c5a877f7c117bfff"
+}
