@@ -835,3 +835,65 @@ copying raw logs.
   audit; only the ordinary journal branch documentation checkpoint is written.
 - **Interaction:** Local repository inspection and Git journal update; browser,
   email, GitHub authentication flow, and OTP access were not used.
+
+## OP-0026 — Final Stage 6 invariant and metrics audit
+
+- **UTC:** `2026-07-19T10:51:50Z`
+- **Repository/scope:** Read-only final audit of env-vault v0.0.17,
+  homebrew-tap, historical releases, durable evidence, and refactor metrics.
+- **Action and reason:** Independently recomputed the exact hosted-run metrics,
+  compared their bytes with both retained and durable copies, then re-observed
+  release/tap refs, typed run sets, historical absence/publication invariants,
+  evidence ancestry/object preservation, and untouched user checkouts.
+- **Authorization/gate:** Final read-only verification under the confirmed
+  release task. It adds no release or mutation authority.
+- **Safe identity — metrics:** `metrics-comparison.json` from compact artifact
+  `8441452672` was byte-identical to the independent recomputation and both
+  durable paths at evidence commit
+  `b0592ee7e9013d750704733d8e030a69056ef319`. The root
+  [metrics document](https://github.com/ildarbinanas-design/env-vault/blob/release-evidence/evidence/releases/v0.0.17/metrics-comparison.json)
+  and publisher-attempt mirror both resolve to 2,145-byte Git blob
+  `3994f1934fdcbb05db21e325ff8cff607385867d`.
+- **Result and verification — exact before/current metrics:** Negative savings
+  denote a measured regression rather than an optimization claim.
+
+  | Scope | Jobs | Wall time | Aggregate runner time |
+  | --- | --- | --- | --- |
+  | Main CI | `25 -> 12` (`-13`, 52% fewer) | `387 -> 902 s` (`+515`; savings `-133.07%`) | `1,253 -> 1,619 s` (`+366`; savings `-29.21%`) |
+  | Release-PR CI | `25 -> 12` (`-13`, 52% fewer) | `359 -> 797 s` (`+438`) | `1,205 -> 1,437 s` (`+232`) |
+  | Publisher | `30 -> 7` (`-23`, 76.67% fewer) | `417 -> 537 s` (`+120`) | `1,280 -> 520 s` (`-760`, 59.38% saved) |
+  | Total | `80 -> 31` (`-49`, 61.25% fewer) | `1,163 -> 2,236 s` (`+1,073`) | `3,738 -> 3,576 s` (`-162`, 4.33% saved) |
+
+- **Result and verification — current invariants:** Env-vault protected `main`,
+  latest stable release, and tag `v0.0.17` all resolve to
+  `53d256eaa07a2c25f49ae373f26aa3f2946ae82c`; tap `main` resolves to
+  `fd42c1af83fac106ee29709047b57641efb8b499`. The exact-source typed run set
+  contained five successful runs and zero `workflow_dispatch`/repair runs.
+  The typed tap waiter passed for PR CI `29683590059/1` and main CI
+  `29683642229/1`.
+- **Result and verification — history:** The immutable release audit observed:
+  - abandoned `v0.0.12` source
+    `a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b` with no tag, Release, or assets;
+  - `v0.0.13` source `6206b472cda81f7a87656055d8eb6627c26a0fef`,
+    Release ID `355485596`, ten assets;
+  - `v0.0.14` source `c42a92144a82c19edea41c76328ec7fd1e408ceb`,
+    Release ID `355533361`, ten assets;
+  - `v0.0.15` source `c7dd1fd6176ac2abbea22f226795a0787e774c1b`,
+    Release ID `355634853`, ten assets; and
+  - `v0.0.16` source `ddfd38c3144ed3d0968d2c5e7e4b2acfef841478`,
+    Release ID `355905998`, ten assets.
+- **Result and verification — evidence and workspace:** Old evidence tip
+  `e697239298c4b5b1240fc53abe611131d45ac7c0` is the sole parent and ancestor
+  of `b0592ee7e9013d750704733d8e030a69056ef319`. Every prior v0.0.14–v0.0.16
+  tree entry and all three prior content objects remained unchanged; exactly
+  three new content objects were added. The original user checkouts remained
+  clean and at their untouched baseline heads.
+- **Risk and disposition:** Wall latency regressed even though jobs fell 61.25%
+  overall and aggregate runner time fell 4.33%. This remains a measured
+  performance-backlog item, not a release-integrity blocker; no speedup claim
+  is made.
+- **Minimum permission surface:** Read-only Actions, refs, Releases, assets,
+  tap, evidence-tree/blob, and local-worktree observations. No rerun, dispatch,
+  write, settings change, permission change, or bypass.
+- **Interaction:** GitHub CLI/API and local independent recomputation; browser,
+  email, authentication flow, and OTP access were not used.
