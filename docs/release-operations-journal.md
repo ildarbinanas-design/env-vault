@@ -450,3 +450,27 @@ copying raw logs.
   was changed.
 - **Interaction:** GitHub CLI/API and local proposal verification; browser,
   email, and interactive login were not used.
+
+## OP-0015 — Exact v0.0.17 release authorization received
+
+- **UTC:** `2026-07-19T10:11:54Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; exact generated
+  Release Please proposal verified in OP-0014.
+- **Action and reason:** Received the user's exact release authorization after
+  the unchanged tuple had passed the OP-0014 exact-head precheck.
+- **Authorization/gate:** Exact user message:
+  `ПОДТВЕРЖДАЮ RELEASE v0.0.17 PR #50 SHA f60b39333f1b18e53cdc499a095ec29fcad6c54b`.
+  This permits the contract-defined authorization-comment and merge operation
+  only for `v0.0.17`, PR #50, and that full unchanged head SHA. It does not
+  authorize a changed head, PR, version, ref, or unrelated mutation.
+- **Safe identity:** Version `v0.0.17`; PR #50; exact head
+  `f60b39333f1b18e53cdc499a095ec29fcad6c54b`; green pre-authorization evidence
+  is OP-0014.
+- **Result and verification:** The exact authorization fact is recorded. At
+  this boundary no PR comment, merge, tag, Release, asset, attestation,
+  Homebrew, health, or evidence operation is claimed as completed.
+- **Minimum permission surface:** No GitHub write permission was exercised by
+  this journal record. The later contract helper may act only on the unchanged
+  authorized tuple and must revalidate it before each mutation.
+- **Interaction:** Authorization arrived directly in the user task; browser,
+  email, GitHub login, and OTP access were not used.
