@@ -409,3 +409,44 @@ copying raw logs.
   tag, Release, asset, tap, evidence, permission, or ruleset mutation.
 - **Interaction:** GitHub CLI/API; browser, email, and interactive login were
   not used.
+
+## OP-0014 — v0.0.17 Release Please exact-head pre-authorization verification
+
+- **UTC:** `2026-07-19T10:07:59Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; generated
+  [Release Please PR #50](https://github.com/ildarbinanas-design/env-vault/pull/50)
+  proposing `v0.0.17`.
+- **Action and reason:** Re-resolved the proposal after Stage 4 planning,
+  verified its exact base/head, generated-only patch, mergeability, proposal
+  contract, and all required exact-head checks before presenting a release
+  authorization tuple to the user.
+- **Authorization/gate:** This was a read-only pre-merge verification under the
+  task's release-planning authorization. **Release authorization is absent.**
+  The user's earlier general statement of willingness to confirm a release is
+  not the exact tuple and is not recorded as release authorization. No exact
+  owner/member authorization comment existed on the PR at verification time.
+- **Safe identity:** Version `v0.0.17`; PR #50 open, non-draft,
+  `MERGEABLE/CLEAN`; base
+  `0d874277aad3bbfa21b12296d61df8a7f770d622`; head
+  `f60b39333f1b18e53cdc499a095ec29fcad6c54b`; exact-head
+  [CI `29682351617/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682351617),
+  quality-gate job `88181708040`;
+  [CodeQL `29682350994/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682350994),
+  actions job `88180634393`, Go job `88180634398`;
+  [dependency review `29682351551/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682351551),
+  job `88180634535`; and
+  [PR-title `29682351575/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682351575),
+  job `88180635754`. Required base dependencies were protected-main
+  [CI `29681884441/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29681884441)
+  and [planning `29682330721/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29682330721).
+- **Result and verification:** All required exact-head checks and the complete
+  CI graph succeeded. The proposal verifier passed. The head was one
+  bot-authored commit with the exact base as sole parent and changed only
+  `.release-please-manifest.json`, `CHANGELOG.md`, and `README.md`. The tuple is
+  eligible to be shown to the user, but no merge, tag, Release, asset,
+  attestation, tap, health, or evidence action is authorized by this record.
+- **Minimum permission surface:** Read-only PR, commit, check-run, and comment
+  observations. No write permission was exercised and no setting or ruleset
+  was changed.
+- **Interaction:** GitHub CLI/API and local proposal verification; browser,
+  email, and interactive login were not used.
