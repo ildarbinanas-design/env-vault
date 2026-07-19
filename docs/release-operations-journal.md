@@ -897,3 +897,182 @@ copying raw logs.
   write, settings change, permission change, or bypass.
 - **Interaction:** GitHub CLI/API and local independent recomputation; browser,
   email, authentication flow, and OTP access were not used.
+
+## OP-0027 — Read-only billing, artifact, and authentication snapshot
+
+- **UTC:** `2026-07-19T20:41:24Z`
+- **Repository/scope:** GitHub Free account `ildarbinanas-design`, public
+  `env-vault` Actions usage, artifact storage, and the existing GitHub session.
+- **Action and reason:** Inspected Billing/Usage, the blocking Actions budget,
+  repository retention, and the complete active-artifact summary before the
+  next release. Rechecked that the expected account already had sufficient
+  access; no authentication recovery was needed.
+- **Authorization/gate:** Read-only capacity and authentication audit under the
+  release task. It did not authorize artifact deletion or a settings change.
+- **Safe identity:** Standard hosted-runner usage for the public repositories
+  was fully discounted in the current month. The snapshot contained 2,027
+  active `env-vault` artifacts totaling 2,818,282,469 bytes, 90-day repository
+  retention, 177.8 GB-hours accrued against the included 0.5 GB-month, and an
+  Actions budget of `$0` with stop-usage enabled.
+- **Result and verification:** No billing, payment, budget, retention, App,
+  permission, ruleset, or repository setting changed. Backlog item 13 schedules
+  a fully inventoried, bounded cleanup only after this release is closed and
+  its repair keep set is frozen.
+- **Minimum permission surface:** Read-only Billing, Actions artifact, settings,
+  and account-identity observations. Existing authentication remained
+  sufficient; there was no login, refresh, OTP, account switch, or permission
+  expansion.
+- **Interaction:** The browser preserved all seven pre-existing tabs and closed
+  only the tab opened for this inspection. Browser authentication and email
+  were not used; no mailbox state was read or changed.
+
+## OP-0028 — Exact v0.0.18 authorization comment and release merge
+
+- **UTC:** `2026-07-19T20:46:56Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`;
+  [Release Please PR #55](https://github.com/ildarbinanas-design/env-vault/pull/55).
+- **Action and reason:** Ran the checked-in typed-contract
+  `authorize-and-merge-release-pr` path for the unchanged generated proposal.
+  It recorded one exact authorization comment, observed a later server second,
+  revalidated the tuple, and completed the head-guarded squash merge.
+- **Authorization/gate:** Exact line
+  `ПОДТВЕРЖДАЮ RELEASE v0.0.18 PR #55 SHA 4a799c1e675b06995da975b7a43e5c6acffe2842`.
+  It authorized only this version, PR, unchanged head, resulting source, tag,
+  and fail-closed publisher.
+- **Safe identity:** PR head
+  `4a799c1e675b06995da975b7a43e5c6acffe2842`; OWNER-authored comment ID
+  [`5017317173`](https://github.com/ildarbinanas-design/env-vault/pull/55#issuecomment-5017317173),
+  created and last updated `2026-07-19T20:46:27Z`; merge/source
+  `2346d2aab4bb1081eb6eb819bd8561a69732979e`, merged
+  `2026-07-19T20:46:56Z`.
+- **Result and verification:** The canonical comment preceded the merge by 29
+  seconds and the exact PR head was unchanged. No manual comment/merge split,
+  tag creation, Release write, asset upload, rerun, or repair occurred in this
+  operation.
+- **Minimum permission surface:** One issue-comment write and one exact
+  head-guarded pull-request merge through the reviewed helper. No bypass,
+  settings, ruleset, App, environment, or permission mutation.
+- **Interaction:** Checked-in helper and GitHub CLI/API; existing authentication
+  was sufficient. Browser, email, login flow, refresh, and OTP were not used.
+
+## OP-0029 — v0.0.18 exact-source main gates and tag planning
+
+- **UTC:** `2026-07-19T21:03:30Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; protected `main`,
+  exact release source, and immutable `v0.0.18` tag transition.
+- **Action and reason:** Waited for the exact merge source to pass protected
+  main CI and CodeQL. The automatic planning listener then revalidated the
+  release tuple and created the tag from the same source.
+- **Authorization/gate:** OP-0028 exact authorization and merge. The automatic
+  planning transition required no additional manual tag action.
+- **Safe identity:** Source, protected main, and tag
+  `2346d2aab4bb1081eb6eb819bd8561a69732979e`; successful main
+  [CI `29703155093/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29703155093),
+  [CodeQL `29703154899/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29703154899),
+  and [planning `29703620511/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29703620511).
+- **Result and verification:** All three exact-source runs succeeded and the
+  tag resolved to the release source. No blind rerun, workflow dispatch, tag
+  move, or repair was performed.
+- **Minimum permission surface:** Main/CodeQL observation was read-only. Only
+  the normal scoped planning App performed the contract-defined tag mutation;
+  no setting, ruleset, bypass, or App permission changed.
+- **Interaction:** Automated Actions and GitHub CLI/API observations; no
+  browser, email, authentication flow, refresh, or OTP access.
+
+## OP-0030 — v0.0.18 Homebrew PR, merge, and both CI gates
+
+- **UTC:** `2026-07-19T21:11:34Z`
+- **Repository/scope:** `ildarbinanas-design/homebrew-tap`; deterministic
+  `v0.0.18` formula publication from the normal publisher.
+- **Action and reason:** The scoped tap App created the deterministic formula
+  PR, waited for exact-head CI, merged that unchanged head, and waited for tap
+  protected-main CI.
+- **Authorization/gate:** OP-0028 exact release authorization and the normal
+  contract-defined Homebrew stage; no manual tap mutation or separate release
+  authorization was used.
+- **Safe identity:** [Tap PR #11](https://github.com/ildarbinanas-design/homebrew-tap/pull/11)
+  head `429cbf68197e5c834f555bc5e38f0e9bb389c5d8`; successful
+  [PR CI `29703804051/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29703804051);
+  exact merge and tap main
+  `8f7fc2691d5237bec3ae4cbfd6c05740fa550051`; successful post-merge
+  [CI `29703857251/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29703857251).
+- **Result and verification:** Arm64 and x86_64 both passed formula style,
+  audit, install, and test before and after merge. Independent formula URL and
+  SHA parity verification passed.
+- **Minimum permission surface:** The tap App retained only its documented
+  single-repository Actions read, Contents write, and pull-request write scope.
+  No bypass, force-push, settings, ruleset, permission, or manual formula edit.
+- **Interaction:** Automated Actions and scoped App API; browser, email, login,
+  refresh, and OTP were not used.
+
+## OP-0031 — First v0.0.18 publisher completed without repair
+
+- **UTC:** `2026-07-19T21:13:12Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; exact promotion,
+  stable Release, supply chain, Homebrew binding, and sealed health.
+- **Action and reason:** The first tag-triggered publisher promoted the exact
+  source-CI bytes, published the stable Release without clobber, generated and
+  verified supply-chain attestations, completed OP-0030 Homebrew publication,
+  and sealed the final health proof.
+- **Authorization/gate:** OP-0028 exact release authorization and the normal
+  tag-triggered path with `repair=none`.
+- **Safe identity:** Successful publisher
+  [run `29703664391/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29703664391),
+  source/tag `2346d2aab4bb1081eb6eb819bd8561a69732979e`.
+  All seven jobs succeeded: metadata `88236907171`, promotion `88236947232`,
+  preflight `88236947240`, release `88237000322`, supply-chain `88237056867`,
+  Homebrew `88237158291`, and health `88237545813`.
+- **Safe identity — release and supply chain:** Stable
+  [v0.0.18 Release](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.0.18),
+  ID `356433323`, contains exactly ten contract assets for `darwin-amd64`,
+  `darwin-arm64`, `linux-amd64`, `linux-arm64`, and `windows-amd64`.
+  Independent verification passed every archive checksum and found exactly one
+  SLSA provenance v1 plus one SPDX 2.3 attestation for each archive, bound to
+  this exact source/tag and publisher attempt.
+- **Result and verification:** Publisher conclusion was `success` with
+  `repair=none`; Release, five archive/checksum pairs, provenance, SBOM,
+  Homebrew, and health were complete. No rerun, dispatch, tag move, asset
+  replacement, or repair was needed.
+- **Minimum permission surface:** The existing isolated release,
+  Attestations/OIDC, tap-App, and read-only health boundaries were used. No
+  setting, ruleset, permission, App, or environment mutation.
+- **Interaction:** Automated Actions and independent read-only verification;
+  browser, email, authentication flow, refresh, and OTP were not used.
+
+## OP-0032 — v0.0.18 durable evidence append and offline closure
+
+- **UTC:** `2026-07-19T21:20:25Z`
+- **Repository/scope:** `ildarbinanas-design/env-vault`; compact durable
+  evidence for the successful OP-0031 publisher and independent offline replay.
+- **Action and reason:** The automatic listener assembled and replayed the
+  exact publisher candidate, fast-forwarded the protected evidence ledger, and
+  retained the compact content-addressed bundle. A separate local replay then
+  verified the downloaded bundle with an empty environment and empty command
+  path.
+- **Authorization/gate:** Automatic evidence transition from successful
+  publisher `29703664391/1`; no manual evidence, bootstrap, repair, or dispatch
+  authorization was used.
+- **Safe identity:** Successful evidence
+  [run `29703960883/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29703960883),
+  assemble job `88237657232`, publish job `88237928814`; evidence tip
+  [`f7890191fe9883922141ca5e002c860860b36b07`](https://github.com/ildarbinanas-design/env-vault/commit/f7890191fe9883922141ca5e002c860860b36b07)
+  with sole parent `b0592ee7e9013d750704733d8e030a69056ef319`.
+  Compact artifact `8447364288` was 55,888 bytes with digest
+  `sha256:58d9543a81f86ba1b9a3c403ac03b4de60e3766581dd7279d9ba9f13280dcfcf`.
+- **Result and verification:** The workflow completed two no-network replays.
+  Independent `env -i` empty-`PATH` replay also passed with `ok=true`,
+  `decision=pass`, evidence digest
+  `9cecd06de836c1e57c2d5767e8c87ba780af35f5a410bb8d570ca5b4f2362110`,
+  bundle digest
+  `1dc8a1d2885695c5a17d1fed9fc3043390083390cafb1072c5a877f7c117bfff`,
+  and 1,475,890 reconstructed bytes.
+- **Result and verification — invariant closure:** No repair, rerun, workflow
+  dispatch, tag move, asset replacement, settings/ruleset/permission weakening,
+  manual Homebrew mutation, or evidence-history rewrite occurred. Historical
+  release and evidence identities remained immutable.
+- **Minimum permission surface:** Only the isolated evidence publisher used
+  Contents write for one non-forced fast-forward; assembly, artifact download,
+  and independent replay were read-only/offline. No Workflows write or bypass.
+- **Interaction:** Automated Actions plus local credential-isolated offline
+  replay. Existing authentication was sufficient; browser, email, login,
+  refresh, and OTP were not used.
