@@ -811,3 +811,27 @@ copying raw logs.
 - **Interaction:** Automated GitHub Actions plus read-only download and local
   credential-isolated offline verification; browser, email, authentication
   flow, and OTP access were not used.
+
+## OP-0025 — Correction of the OP-0004 historical publication range
+
+- **UTC:** `2026-07-19T10:49:52Z`
+- **Repository/scope:** This journal's immutable historical-release wording;
+  final invariant audit against `RELEASING.md`, `release/contract.v2.json`, and
+  the operator runbook.
+- **Action and reason:** The audit found that one OP-0004 result sentence called
+  `v0.0.12` published. This correction supersedes only the OP-0004 sentence
+  beginning `Published versions v0.0.12 through v0.0.15`; the original record
+  remains present under the append-only protocol.
+- **Authorization/gate:** Factual handoff correction required by the final
+  invariant audit. It is not release authorization or a recovery action.
+- **Safe identity:** The correct published immutable range in that sentence is
+  `v0.0.13` through `v0.0.15`. Version `v0.0.12` is permanently abandoned: its
+  exact tag and GitHub Release must remain HTTP 404, and its absence/recovery
+  history remains preserved. All other OP-0004 facts remain unchanged.
+- **Result and verification:** Journal wording is corrected without editing
+  the earlier record. No tag, Release, asset, evidence, repository setting, or
+  other external state changed.
+- **Minimum permission surface:** Read-only local durable-source invariant
+  audit; only the ordinary journal branch documentation checkpoint is written.
+- **Interaction:** Local repository inspection and Git journal update; browser,
+  email, GitHub authentication flow, and OTP access were not used.
