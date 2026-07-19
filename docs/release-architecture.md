@@ -1,6 +1,6 @@
 # Release architecture and refactor baseline
 
-Status: immutable pre-refactor baseline plus dated stage deltas, 2026-07-18.
+Status: immutable pre-refactor baseline plus dated stage deltas, 2026-07-19.
 The machine-readable baseline companion is
 [`release/refactor-baseline.v1.json`](../release/refactor-baseline.v1.json). It
 pins `env-vault` to
@@ -314,9 +314,36 @@ and exactly five shared non-cancelling concurrency participants.
 
 The product implementation diff over `cmd/env-vault`, `internal/config`,
 `internal/secretstore`, `internal/runner`, and `internal/output` is empty.
-No hosted Actions wall-time or runner-time improvement is claimed before an
-exact successful run of the new graph; the next release evidence must record
-that comparison against the immutable `v0.0.15` baseline.
+The source measurements above make no hosted Actions timing claim. The first
+exact successful hosted comparison is recorded separately below.
+
+### First successful v2-contract hosted metrics
+
+Release `v0.0.17` is the first successful release using the v2 operational
+contract. Its comparison is durable at evidence commit
+`b0592ee7e9013d750704733d8e030a69056ef319`, path
+[`evidence/releases/v0.0.17/metrics-comparison.json`](https://github.com/ildarbinanas-design/env-vault/blob/b0592ee7e9013d750704733d8e030a69056ef319/evidence/releases/v0.0.17/metrics-comparison.json),
+Git blob `3994f1934fdcbb05db21e325ff8cff607385867d`. The table compares the
+immutable pre-refactor baseline with exact successful attempt 1 of main CI
+`29682997343`, release-PR CI `29682351617`, and publisher `29683468172`.
+Delta is current minus baseline.
+
+| Scenario | Baseline: jobs / wall / runner-s | `v0.0.17`: jobs / wall / runner-s | Delta |
+| --- | --- | --- | --- |
+| Main CI | 25 / 387 / 1,253 | 12 / 902 / 1,619 | -13 / +515 / +366 |
+| Release-PR CI | 25 / 359 / 1,205 | 12 / 797 / 1,437 | -13 / +438 / +232 |
+| Publisher | 30 / 417 / 1,280 | 7 / 537 / 520 | -23 / +120 / -760 |
+| Total | 80 / 1,163 / 3,738 | 31 / 2,236 / 3,576 | -49 / +1,073 / -162 |
+
+The job count fell by 61.25% and aggregate runner time by 4.33%, but total wall
+time increased by 92.26%. Main and PR aggregate runner time also increased,
+and every measured scenario took longer wall-clock time. Baseline queue timing
+was not recorded, so this evidence cannot separate queue delay from job-active
+or critical-path work and does not establish a cause. No blanket speedup is
+claimed. The measurement-first latency investigation in the release backlog
+must preserve race detection, all five native targets, product E2E coverage,
+named gates, and fail-closed semantics before any later optimization is
+considered.
 
 ## Preserved invariants and risks
 
@@ -351,7 +378,7 @@ them.
 | --- | --- | --- |
 | 2: typed GitHub transport | strict workflow/run/job/attempt types, pagination, bounded read retry policy, realistic fixtures | no ad-hoc direct API reads outside the transport; mutation semantics remain explicit and no-clobber |
 | 3: durable evidence | versioned automatic evidence-only genesis, dual-write migration, content-addressed compact bundle | implemented with fresh-repository genesis without Workflows write, v1/v2 parity, full offline replay, a 1,887-byte root, and measured 87.1% logical / 74.8% deterministic-export reduction; checkpoint/Merkle and frozen-v1-fixture follow-ups remain tracked |
-| 4: release contract and graph | operational repositories, targets, assets, formula and workflow identities; strict historical routing | implemented with canonical v2, immutable v1 archive/registry, typed projections, static parity, twelve exact workflows and five serialized release workflows; source metrics are recorded above and hosted run metrics remain an exact-next-release measurement |
+| 4: release contract and graph | operational repositories, targets, assets, formula and workflow identities; strict historical routing | implemented with canonical v2, immutable v1 archive/registry, typed projections, static parity, twelve exact workflows and five serialized release workflows; source metrics and the first successful v2-contract hosted comparison are recorded above, with the measured latency regression tracked separately |
 | 5: Homebrew | release-derived URL/SHA, deterministic formula and tap transition | exact PR and merge tuple, both tap CI gates, formula merged, `brew install` and `brew test` green |
 | 6: patch release | Release Please-resolved version, authorization, tag, assets, attestations, SBOM, health, evidence and tap | exact confirmation before merge; published five-target patch; durable offline evidence; green main and tap; no temporary agent context |
 

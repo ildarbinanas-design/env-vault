@@ -13,6 +13,11 @@ runner-seconds, and a publication-eligible publisher is 30 jobs / 417 seconds
 wall / 1,280 runner-seconds. Reduction estimates are targets, not claims about
 work completed by the documentation release.
 
+The first successful v2-contract release comparison is now captured in durable
+`v0.0.17` evidence. It measures exact attempt 1 of main CI `29682997343`,
+release-PR CI `29682351617`, and publisher `29683468172`; the measurement and
+its latency follow-up are recorded in items 12 and 6 respectively.
+
 ## 1. Dual-source read-only verification for immutable historical tags
 
 - **Problem and evidence:** the current checker validates the current contract
@@ -259,31 +264,60 @@ or substituted for the immutable baseline JSON.
   stable codes; five builders stay independent; final metrics meet the target
   without weakening any inventory or attestation check.
 
-## 6. CI graph reduction with native-gate preservation
+## 6. Measurement-first CI latency investigation with native-gate preservation
 
-- **Problem and evidence:** main and PR CI each use 25 jobs and more than 1,200
-  aggregate runner-seconds. Some release-only validation/setup is repeated even
-  when inputs are identical, while five native jobs, `e2e-gate`, and the top
-  `quality-gate` must remain independently visible.
-- **Affected files/workflows:** `ci.yml`, `reusable-quality.yml`, test bootstrap
-  scripts, workflow tests, and metrics baselines.
-- **Guarantee preserved:** all five native jobs, exact platform semantics,
-  product E2E coverage, fail-closed aggregation, and required-check names.
-- **Proposed architecture:** materialize one source/test-plan artifact, share
-  hermetic test-only tooling, collapse only pure Linux release-contract shards,
-  and keep the five native jobs plus named gates intact.
-- **Expected reduction:** 3-6 jobs, 60-110 wall seconds, 250-450 runner-seconds,
-  and 80-150 workflow LOC for both PR and main CI.
-- **Risk:** hidden fan-in dependencies or runner-specific behavior can make a
-  green aggregate mask a skipped native check.
-- **Required tests:** workflow graph golden tests, every native job forced to
-  fail once, cancelled/skipped propagation, cache poisoning, artifact identity,
-  and unchanged required-check tuples.
-- **Dependencies and order:** add graph/metrics assertions; remove one duplicate
-  shard at a time; update the baseline only from successful main and PR runs.
-- **Acceptance criteria:** five native jobs, `e2e-gate`, and `quality-gate` are
-  present and green; no test count drops; measured successful runs improve both
-  wall and aggregate time by the stated target.
+- **Problem and evidence:** the first successful v2-contract release reduced
+  main and PR CI from 25 to 12 jobs each, but exact hosted measurements regressed.
+  Main changed from 387 wall / 1,253 runner-seconds to 902 / 1,619; release-PR
+  CI changed from 359 / 1,205 to 797 / 1,437. Publisher changed from 30 jobs and
+  417 / 1,280 seconds to seven jobs and 537 / 520 seconds. In total, job count
+  fell 80 to 31 and aggregate runner time fell 3,738 to 3,576 seconds, while
+  wall time increased 1,163 to 2,236 seconds. The durable source is evidence
+  commit `b0592ee7e9013d750704733d8e030a69056ef319`, path
+  `evidence/releases/v0.0.17/metrics-comparison.json`, blob
+  `3994f1934fdcbb05db21e325ff8cff607385867d`. Baseline queue timing is absent,
+  so no cause or speedup opportunity is established.
+- **Affected files/workflows:** metrics schema and collector, `ci.yml`,
+  `reusable-quality.yml`, `build-binaries.yml`, test bootstrap scripts,
+  workflow tests, and durable evidence documentation. The investigation is
+  read-only until a separately reviewed hypothesis has reproducible evidence.
+- **Guarantee preserved:** the race-enabled Go suite, all five native jobs and
+  exact platform semantics, product E2E coverage, `e2e-gate`, `quality-gate`,
+  publisher stage boundaries, required-check identities, release serialization,
+  and fail-closed cancelled/skipped propagation remain mandatory.
+- **Proposed measurement-first approach:** first extend versioned metrics to
+  distinguish workflow queue delay, per-job queue delay, job-active time, and
+  critical-path dependencies without changing the graph. Capture a bounded
+  cohort of exact successful PR, main, and publisher attempts with runner image,
+  cache outcome, source SHA, and attempt identity. Form one falsifiable latency
+  hypothesis at a time; test any implementation in a separate PR against an
+  unchanged comparator before considering graph or setup removal.
+- **Outcome discipline:** this investigation promises no speedup, job removal,
+  or runner-time reduction. It produces attributable measurements and a
+  keep/reject decision. Any later optimization needs its own measured target and
+  cannot trade correctness coverage or platform concurrency for timing.
+- **Risk:** a small or non-comparable sample can misattribute GitHub queue or
+  runner-image variance to repository code. Optimizing the aggregate can also
+  hide a skipped native job, weaken race/E2E coverage, poison caches, or lengthen
+  the true critical path despite reducing job count.
+- **Required tests:** metrics-schema golden and downgrade tests; missing and
+  negative timestamp rejection; queue/job interval consistency; workflow graph
+  golden tests; every native job forced to fail once; race and E2E test-count
+  parity; cancelled/skipped propagation; cold/warm cache separation; artifact
+  and source identity; unchanged required-check tuples; and a product-path diff
+  proving no change to release binary behavior.
+- **Dependencies and order:** land observation-only schema/collector changes;
+  collect the bounded cohort; publish the raw exact-run coordinates and summary
+  in durable evidence; review the critical-path analysis; only then propose one
+  separately reversible optimization. Never use a failed, rerun-only, mixed-
+  attempt, or manually shortened run as the comparator.
+- **Acceptance criteria:** the diagnostic phase is complete when every reported
+  duration is reproducible from exact run/job timestamps, queue-unavailable data
+  is explicit, samples are comparable, and at least one reviewed hypothesis is
+  accepted or rejected without changing gates. A later optimization is accepted
+  only if exact-head PR and protected-main cohorts preserve every guarantee and
+  test count and show a statistically defensible non-regression against the
+  preregistered measure; otherwise it is reverted or rejected.
 
 ## 7. Hermetic test-tool bootstrap for offline jobs
 
@@ -488,10 +522,21 @@ historical source routing), and exact repository literals fall 12 to 2 (both
 Go module linker paths). Product implementation paths are unchanged. These are source
 measurements, not a runtime speedup claim.
 
+**Hosted metric capture completed (2026-07-19).** The first successful
+v2-contract release, `v0.0.17`, records exact attempt 1 of main CI
+`29682997343`, release-PR CI `29682351617`, and publisher `29683468172` in
+durable evidence commit `b0592ee7e9013d750704733d8e030a69056ef319`, path
+`evidence/releases/v0.0.17/metrics-comparison.json`, blob
+`3994f1934fdcbb05db21e325ff8cff607385867d`. Baseline/current jobs, wall, and
+runner seconds are main 25/387/1,253 to 12/902/1,619; PR 25/359/1,205 to
+12/797/1,437; publisher 30/417/1,280 to 7/537/520; total 80/1,163/3,738 to
+31/2,236/3,576. This closes the capture task, not the regression: item 6 owns
+the measurement-first latency investigation without a speedup claim.
+
 **Genuine follow-ups only:**
 
-- record exact hosted main/PR/publisher wall and runner metrics from the first
-  successful v2-contract release and compare them with the immutable baseline;
+- investigate the measured hosted latency regression through item 6 before any
+  graph or setup optimization, preserving race/native/E2E and fail-closed gates;
 - keep the residual checkpoint/Merkle work in item 11 before the 64-commit
   evidence validation window is exhausted;
 - keep the failed legacy-tag export in item 1, generic recovery transitions in
@@ -503,8 +548,9 @@ measurements, not a runtime speedup claim.
 
 ## Suggested implementation order
 
-1. Record exact hosted metrics from the first successful v2-contract release;
-   retain the immutable v1 and pre-refactor comparators.
+1. Complete the measurement-first latency investigation in item 6 using the
+   captured first-v2-release comparator; retain the immutable v1 and
+   pre-refactor comparators.
 2. Design the evidence checkpoint/Merkle transition before the bounded history
    window becomes operationally tight; keep legacy history immutable.
 3. Consolidate App audits and promotion inventory only through typed-proof
