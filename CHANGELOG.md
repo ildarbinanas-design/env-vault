@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.18...v0.1.0) (2026-07-20)
+
+
+### Features
+
+* govern Actions artifact lifecycle ([#60](https://github.com/ildarbinanas-design/env-vault/issues/60)) ([7d36786](https://github.com/ildarbinanas-design/env-vault/commit/7d367862ce409777689083a0cfa56d292c0459e0))
+
+
+### Documentation
+
+* preserve Actions artifact cleanup manifest ([#61](https://github.com/ildarbinanas-design/env-vault/issues/61)) ([4c2ee80](https://github.com/ildarbinanas-design/env-vault/commit/4c2ee8070c69f3d66a4103505c4efb114c3a8931))
+* record Actions artifact cleanup ([#62](https://github.com/ildarbinanas-design/env-vault/issues/62)) ([b8bda39](https://github.com/ildarbinanas-design/env-vault/commit/b8bda393a634924f4b84a5d8c98a27051880310c))
+* **release:** record v0.0.18 and plan artifact cleanup ([#56](https://github.com/ildarbinanas-design/env-vault/issues/56)) ([398b084](https://github.com/ildarbinanas-design/env-vault/commit/398b084b2f227ef5323f34b6dda15db8cd5d1256))
+
 ## [0.0.18](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.17...v0.0.18) (2026-07-19)
 
 
