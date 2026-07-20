@@ -577,28 +577,25 @@ the measurement-first latency investigation without a speedup claim.
   evidence, and every artifact still needed by an admissible repair. Delete
   only superseded ephemeral Actions artifacts whose identity is outside that
   keep set.
-- **Proposed lifecycle:** inventory and standardize the 23 already-explicit
-  upload policies, starting from the current 7/14/30/90-day tiers. Measure each
-  artifact class and its last required consumer before shortening an existing
-  tier; for example, a 30-day diagnostic may move to 14 or 7 days only when its
-  queued-workflow and repair windows are proved shorter. Keep 90 days for the
-  compact durable evidence artifact and any other independently justified
-  durable handoff. Exact current-release identities override age tiers and
-  remain kept until release closure and repairability are independently proved.
-  Apply any tier changes in a reviewed workflow PR; execute deletion later as a
-  separately audited external operation from a complete paginated inventory.
-- **Expected reduction:** the first cleanup should reclaim
-  `2,818,282,469 bytes - explicit_keep_set_bytes`, then bound steady-state
-  storage through the audited per-class tier and periodic superseded-artifact
-  sweep. Future reduction from retention changes may be claimed only for an
-  existing 7/14/30/90-day tier that measured dependency windows permit
-  shortening. Record exact before/kept/deleted/after counts and bytes. No build,
-  queue, wall-time, runner-time, or retention reduction is claimed in advance;
-  the objective is storage headroom and avoidance of budget-blocked uploads.
+- **Implemented lifecycle decision:** the checked policy inventories exactly 23
+  upload sites in the seven named workflows. The measured retention
+  distribution remains `7:3`, `14:10`, `30:5`, `90:5`. The audit found no proof
+  that queued-workflow or repair windows permit shortening an existing tier, so
+  this implementation changes no `retention-days` value. Exact current-release,
+  protected-main, open-PR, repair, durable, and system-managed identities remain
+  immutable keep authority independently of age.
+- **Expected reduction:** no operational reduction is predicted from an old
+  observation. Only the fresh post-merge Stage-5 canonical manifest may state
+  exact before/keep/delete/expected-after counts and bytes. The dated Stage 1
+  and development aggregates are implementation evidence, not a formula or
+  deletion authority. No build, queue, wall-time, runner-time, or retention
+  reduction is claimed in advance; the objective is storage headroom and
+  avoidance of budget-blocked uploads.
 - **Risk:** a broad age/name filter, stale inventory, pagination loss, or a race
   with an active workflow could remove the only promotion or diagnostic input
-  for a no-rebuild repair. Billing data may lag deletion, while a short tier can
-  expire a valid artifact before a queued publisher consumes it.
+  for a no-rebuild repair. Billing/Usage can lag the artifact API by 6–12 hours,
+  while a short tier can expire a valid artifact before a queued publisher
+  consumes it.
 - **Required tests and dry run:** workflow tests must inventory exactly 23
   upload sites in the seven named workflows, require one explicit supported
   `retention-days` tier at each site, preserve attempt-qualified names, and map
@@ -610,22 +607,42 @@ the measurement-first latency investigation without a speedup claim.
   keep/delete decision. Reject duplicate IDs, incomplete pagination,
   active/in-progress runs, unknown identities, negative totals, keep/delete
   overlap, or a computed byte sum that does not reconcile with the observed
-  inventory.
+  inventory. The development manifest is never the canonical post-merge
+  Stage-5 authority. After independent offline replay, store only the
+  canonical manifest as
+  `evidence/actions-artifact-cleanups/objects/sha256/<raw-sha256>.json.gz` and
+  its digest/size/totals-bound summary at
+  `evidence/actions-artifact-cleanups/manifests/<semantic-sha256>.summary.json`
+  through a small reviewed PR. Keep temporary raw collections outside Git.
+  New Actions artifacts created by that PR are preserved and never
+  auto-enrolled; every later batch still replays fresh current state and proves
+  every authorized keep tuple present. The human must authorize that later
+  manifest with this
+  byte-exact line:
+  `ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS COUNT <count> BYTES <bytes> MANIFEST SHA256 <sha256>`.
 - **Dependencies and order:** first close and independently verify the current
   release; freeze its exact keep set and repair boundary; audit all existing
-  tiers and land any justified shortening/standardization through an exact-head
-  green implementation PR; review the dry-run inventory; then delete in bounded
-  batches with a fresh pre-delete identity check. Never clean artifacts as a
+  tiers and land the unchanged-retention implementation through an exact-head
+  green PR; review the dry-run inventory; then delete in
+  explicit batches of at most 500 unique IDs with fresh raw-live replay, exact
+  keep presence, cumulative prior-result validation, and a checked pre-delete
+  identity read. Never retry DELETE after ambiguity. Never clean artifacts as a
   prerequisite for the current release or while its shared release concurrency
   group is active.
-- **Acceptance criteria:** (1) the dry run names an explicit immutable keep set
-  and computes exact candidate counts/bytes; (2) every deletion has artifact
+- **Acceptance criteria:** (1) the post-merge dry run names an explicit
+  immutable keep set, computes exact candidate counts/bytes, and has a
+  deterministic no-clobber content-addressed manifest package whose canonical
+  object and summary reproduce offline; (2) every
+  deletion has artifact
   ID, source run/attempt, size, classification reason, timestamp, and result in
-  the committed operations journal without raw logs or credentials; (3) no
+  the committed append-only operations journal as a safe typed audit record,
+  without raw inventories, API bodies, logs, or credentials; (3) no
   workflow run, tag, Release asset, attestation, SBOM, evidence commit, current
   promotion input, health proof, or repair input is deleted; (4) a post-delete
   complete inventory proves the intended ID set absent and every keep ID
-  present; (5) Billing/Usage is re-observed after its documented update lag and
+  present; every non-success stops the batch after at most one checked
+  read-after and leaves remaining IDs untouched; (5) Billing/Usage is
+  re-observed after the documented 6–12-hour update lag and
   reports recovered storage headroom without changing or bypassing the blocking
   budget; and (6) the retention PR's exact-head and protected-main CI remain
   green, with unchanged five-target, promotion, publisher, evidence, and

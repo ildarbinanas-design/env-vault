@@ -107,8 +107,8 @@ func runRESTMutateOnce(ctx context.Context, args []string, stderr io.Writer) int
 	set.SetOutput(io.Discard)
 	output := set.String("output", "", "typed one-shot mutation outcome")
 	method := set.String("method", "", "reviewed HTTP mutation method")
-	endpoint := set.String("endpoint", "", "reviewed Git-data endpoint")
-	input := set.String("input", "", "strict JSON request body")
+	endpoint := set.String("endpoint", "", "reviewed mutation endpoint")
+	input := set.String("input", "", "strict JSON request body; omit for artifact DELETE")
 	expectedStatus := set.Int("expected-status", 0, "exact successful HTTP status")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 || *output == "" {
 		return writeUsageError(stderr, "rest mutate-once arguments are invalid")
@@ -353,5 +353,5 @@ func writeUsageError(writer io.Writer, message string) int {
 }
 
 func usage() string {
-	return "usage:\n  releasetransport preflight --output PATH|-\n  releasetransport read OUTPUT [--paginate --slurp] [--method GET] [-f key=value] ENDPOINT\n  releasetransport contents read --output PATH --repository OWNER/REPO --path PATH --ref SHA\n  releasetransport rest observe --output PATH --endpoint ENDPOINT\n  releasetransport rest mutate-once --output PATH --method POST|PATCH --endpoint ENDPOINT --input PATH --expected-status STATUS\n  releasetransport actions identity --output PATH --repository OWNER/REPO --run-id ID --run-attempt N --workflow-path PATH --event EVENT --head-sha SHA --head-ref REF [--job-id ID --job-name NAME --job-url URL]\n  releasetransport git-blob read --output PATH --repository OWNER/REPO --sha SHA\n  releasetransport git-blob verify --output PATH --repository OWNER/REPO --sha SHA --expected-file PATH\n"
+	return "usage:\n  releasetransport preflight --output PATH|-\n  releasetransport read OUTPUT [--paginate --slurp] [--method GET] [-f key=value] ENDPOINT\n  releasetransport contents read --output PATH --repository OWNER/REPO --path PATH --ref SHA\n  releasetransport rest observe --output PATH --endpoint ENDPOINT\n  releasetransport rest mutate-once --output PATH --method POST|PATCH|DELETE --endpoint ENDPOINT [--input PATH] --expected-status STATUS\n  releasetransport actions identity --output PATH --repository OWNER/REPO --run-id ID --run-attempt N --workflow-path PATH --event EVENT --head-sha SHA --head-ref REF [--job-id ID --job-name NAME --job-url URL]\n  releasetransport git-blob read --output PATH --repository OWNER/REPO --sha SHA\n  releasetransport git-blob verify --output PATH --repository OWNER/REPO --sha SHA --expected-file PATH\n"
 }

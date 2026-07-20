@@ -4,16 +4,15 @@ import (
 	"archive/tar"
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"path"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/ildarbinanas-design/env-vault/internal/canonicalgzip"
 	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
@@ -597,107 +596,18 @@ func sha256Text(data []byte) string {
 }
 
 func deterministicGZIP(data []byte) ([]byte, error) {
-	// A stored-block DEFLATE stream has one canonical byte representation and
-	// does not depend on the Go flate encoder or compression heuristics.
-	capacity, err := deterministicGZIPCapacity(len(data))
-	if err != nil {
-		return nil, err
-	}
-	output := make([]byte, 0, capacity)
-	output = append(output, 0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff)
-	remaining := data
-	for {
-		length := len(remaining)
-		if length > 65535 {
-			length = 65535
-		}
-		final := length == len(remaining)
-		if final {
-			output = append(output, 0x01)
-		} else {
-			output = append(output, 0x00)
-		}
-		value := uint16(length)
-		output = binary.LittleEndian.AppendUint16(output, value)
-		output = binary.LittleEndian.AppendUint16(output, ^value)
-		output = append(output, remaining[:length]...)
-		remaining = remaining[length:]
-		if final {
-			break
-		}
-	}
-	output = binary.LittleEndian.AppendUint32(output, crc32.ChecksumIEEE(data))
-	output = binary.LittleEndian.AppendUint32(output, uint32(len(data)))
-	return output, nil
+	return canonicalgzip.Encode(data)
 }
 
 func deterministicGZIPCapacity(dataLength int) (int, error) {
-	if dataLength < 0 {
-		return 0, errors.New("gzip input length is negative")
-	}
-	blocks := dataLength / 65535
-	if dataLength%65535 != 0 || blocks == 0 {
-		blocks++
-	}
-	const fixedOverhead = 10 + 8
-	maxInt := int(^uint(0) >> 1)
-	if dataLength > maxInt-fixedOverhead {
-		return 0, errors.New("gzip output capacity overflows int")
-	}
-	capacity := dataLength + fixedOverhead
-	if blocks > (maxInt-capacity)/5 {
-		return 0, errors.New("gzip output capacity overflows int")
-	}
-	capacity += blocks * 5
-	return capacity, nil
+	return canonicalgzip.Capacity(dataLength)
 }
 
 func strictGunzip(compressed []byte, declaredSize int64) ([]byte, error) {
 	if declaredSize <= 0 || declaredSize > MaxBundleObjectUncompressed || len(compressed) == 0 || len(compressed) > MaxBundleObjectCompressed {
 		return nil, errors.New("compressed or declared object size is outside the supported limit")
 	}
-	header := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff}
-	if len(compressed) < len(header)+5+8 || !bytes.Equal(compressed[:len(header)], header) {
-		return nil, errors.New("gzip header is not the canonical stored-block header")
-	}
-	position := len(header)
-	output := make([]byte, 0, declaredSize)
-	for {
-		if position+5 > len(compressed)-8 {
-			return nil, errors.New("gzip stored block is truncated")
-		}
-		blockHeader := compressed[position]
-		position++
-		if blockHeader != 0x00 && blockHeader != 0x01 {
-			return nil, errors.New("gzip stream is not canonical stored-block DEFLATE")
-		}
-		length := binary.LittleEndian.Uint16(compressed[position : position+2])
-		inverse := binary.LittleEndian.Uint16(compressed[position+2 : position+4])
-		position += 4
-		if inverse != ^length || position+int(length) > len(compressed)-8 {
-			return nil, errors.New("gzip stored block length is invalid")
-		}
-		output = append(output, compressed[position:position+int(length)]...)
-		position += int(length)
-		if int64(len(output)) > declaredSize {
-			return nil, errors.New("gzip decoded bytes exceed the declared size")
-		}
-		if blockHeader == 0x01 {
-			break
-		}
-		if length != 65535 {
-			return nil, errors.New("non-final canonical stored block is not maximal")
-		}
-	}
-	if position+8 != len(compressed) || int64(len(output)) != declaredSize {
-		return nil, errors.New("gzip decoded size or trailing bytes mismatch")
-	}
-	wantCRC := binary.LittleEndian.Uint32(compressed[position : position+4])
-	wantSize := binary.LittleEndian.Uint32(compressed[position+4 : position+8])
-	if wantCRC != crc32.ChecksumIEEE(output) || wantSize != uint32(len(output)) {
-		return nil, errors.New("gzip trailer checksum or size mismatch")
-	}
-	return output, nil
+	return canonicalgzip.Decode(compressed, declaredSize, MaxBundleObjectUncompressed, MaxBundleObjectCompressed)
 }
 
 func deterministicExportArchiveSize(files BundleFiles, auxiliary map[string][]byte) (int64, error) {

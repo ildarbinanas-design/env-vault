@@ -61,13 +61,14 @@ type mutationRefUpdateRequest struct {
 }
 
 var (
-	gitCreateEndpoint   = regexp.MustCompile(`^repos/([^/]+/[^/]+)/git/(blobs|trees|commits|refs)$`)
-	gitUpdateEndpoint   = regexp.MustCompile(`^repos/([^/]+/[^/]+)/git/refs/heads/release-evidence$`)
-	releaseVersionShape = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$`)
-	commitMessageShape  = regexp.MustCompile(`^chore\(evidence\): (create ledger at|publish) (v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)) from ([0-9a-f]{40})$`)
-	objectPathShape     = regexp.MustCompile(`^evidence/objects/sha256/[0-9a-f]{64}\.gz$`)
-	versionRootPath     = regexp.MustCompile(`^evidence/releases/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/([^/]+)$`)
-	attemptPathShape    = regexp.MustCompile(`^evidence/releases/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/publisher-runs/run-([1-9][0-9]*)/attempt-([1-9][0-9]*)/([^/]+)$`)
+	gitCreateEndpoint      = regexp.MustCompile(`^repos/([^/]+/[^/]+)/git/(blobs|trees|commits|refs)$`)
+	gitUpdateEndpoint      = regexp.MustCompile(`^repos/([^/]+/[^/]+)/git/refs/heads/release-evidence$`)
+	artifactDeleteEndpoint = regexp.MustCompile(`^repos/([^/]+/[^/]+)/actions/artifacts/([1-9][0-9]*)$`)
+	releaseVersionShape    = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$`)
+	commitMessageShape     = regexp.MustCompile(`^chore\(evidence\): (create ledger at|publish) (v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)) from ([0-9a-f]{40})$`)
+	objectPathShape        = regexp.MustCompile(`^evidence/objects/sha256/[0-9a-f]{64}\.gz$`)
+	versionRootPath        = regexp.MustCompile(`^evidence/releases/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/([^/]+)$`)
+	attemptPathShape       = regexp.MustCompile(`^evidence/releases/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))/publisher-runs/run-([1-9][0-9]*)/attempt-([1-9][0-9]*)/([^/]+)$`)
 )
 
 var v2EvidenceFilenames = map[string]bool{
@@ -95,18 +96,27 @@ func (c *Client) MutateOnce(ctx context.Context, request MutationRequest) (Mutat
 	c.capabilityMu.Lock()
 	mutationInput := c.mutationInput
 	c.capabilityMu.Unlock()
-	if !mutationInput {
+	bodyless := input == nil
+	if !bodyless && !mutationInput {
 		return MutationDocument{}, &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "gh api lacks bounded standard-input support required for mutation"}
 	}
 	runner, ok := c.Runner.(InputCommandRunner)
-	if !ok {
+	if !bodyless && !ok {
 		return MutationDocument{}, &TransportError{Code: "CLI_CAPABILITY_DRIFT", Message: "mutation runner lacks bounded standard-input support"}
 	}
 	args := []string{"api", "--include", "--hostname", Host, "--method", request.Method,
 		"--header", "Accept: application/vnd.github+json", "--header", "X-GitHub-Api-Version: " + APIVersion,
-		request.Endpoint, "--input", "-"}
+		request.Endpoint}
+	if !bodyless {
+		args = append(args, "--input", "-")
+	}
 	requestCtx, requestCancel := c.requestContext(ctx)
-	result := runner.RunInput(requestCtx, args, SanitizedEnvironment(), input)
+	var result CommandResult
+	if bodyless {
+		result = c.Runner.Run(requestCtx, args, SanitizedEnvironment())
+	} else {
+		result = runner.RunInput(requestCtx, args, SanitizedEnvironment(), input)
+	}
 	if requestCtx.Err() != nil && result.Err == nil {
 		result.Err = requestCtx.Err()
 	}
@@ -136,16 +146,18 @@ func (c *Client) MutateOnce(ctx context.Context, request MutationRequest) (Mutat
 		}
 		return document, nil
 	}
-	if reviewedErr := validateReviewedResponse(response, ReadRequest{}, 1); reviewedErr != nil {
+	if reviewedErr := validateMutationResponse(request, response); reviewedErr != nil {
 		document.ErrorCode = reviewedErr.Code
 		if response.Status >= 400 && response.Status < 500 {
 			document.Outcome = "http_error"
 		}
 		return document, nil
 	}
-	digest := sha256.Sum256(response.Body)
-	document.BodySHA256 = hex.EncodeToString(digest[:])
-	document.Body = append(document.Body[:0], response.Body...)
+	if !bodyless {
+		digest := sha256.Sum256(response.Body)
+		document.BodySHA256 = hex.EncodeToString(digest[:])
+		document.Body = append(document.Body[:0], response.Body...)
+	}
 	if result.Err == nil && response.Status == request.ExpectedStatus {
 		if !validMutationSuccessResponse(request, response.Body) {
 			document.Body, document.BodySHA256, document.ErrorCode = nil, "", "MALFORMED_RESPONSE"
@@ -168,6 +180,9 @@ func (c *Client) MutateOnce(ctx context.Context, request MutationRequest) (Mutat
 }
 
 func validMutationSuccessResponse(request MutationRequest, body []byte) bool {
+	if artifactDeleteEndpoint.MatchString(request.Endpoint) {
+		return request.Method == "DELETE" && request.ExpectedStatus == 204 && len(body) == 0
+	}
 	object, err := exactObject(body)
 	if err != nil {
 		return false
@@ -187,6 +202,16 @@ func validMutationSuccessResponse(request MutationRequest, body []byte) bool {
 	return err == nil && shaPattern.MatchString(sha)
 }
 
+func validateMutationResponse(request MutationRequest, response httpResponse) *TransportError {
+	if artifactDeleteEndpoint.MatchString(request.Endpoint) && response.Status >= 200 && response.Status < 300 {
+		if response.Status == 204 && len(response.Body) == 0 {
+			return nil
+		}
+		return &TransportError{Code: "MALFORMED_RESPONSE", Message: "GitHub artifact deletion did not return an exactly empty 204 response", HTTPStatus: response.Status, Attempts: 1}
+	}
+	return validateReviewedResponse(response, ReadRequest{}, 1)
+}
+
 func validateMutationRequest(request MutationRequest) ([]byte, error) {
 	operation := ""
 	repository := ""
@@ -194,11 +219,20 @@ func validateMutationRequest(request MutationRequest) ([]byte, error) {
 		repository, operation = match[1], match[2]
 	} else if match := gitUpdateEndpoint.FindStringSubmatch(request.Endpoint); match != nil && request.Method == "PATCH" && request.ExpectedStatus == 200 {
 		repository, operation = match[1], "ref-update"
+	} else if match := artifactDeleteEndpoint.FindStringSubmatch(request.Endpoint); match != nil && request.Method == "DELETE" && request.ExpectedStatus == 204 {
+		repository, operation = match[1], "artifact-delete"
+		artifactID, artifactErr := strconv.ParseInt(match[2], 10, 64)
+		if artifactErr != nil || artifactID < 1 || request.InputPath != "" {
+			return nil, errors.New("artifact deletion requires one canonical positive artifact ID and no request body")
+		}
 	} else {
-		return nil, errors.New("mutation method, endpoint, or expected status is outside the closed Git-data allowlist")
+		return nil, errors.New("mutation method, endpoint, or expected status is outside the closed allowlist")
 	}
 	if !validRepository(repository) {
 		return nil, errors.New("mutation repository is invalid")
+	}
+	if operation == "artifact-delete" {
+		return nil, nil
 	}
 	data, err := readStableMutationInput(request.InputPath)
 	if err != nil {

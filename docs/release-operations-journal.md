@@ -1076,3 +1076,46 @@ copying raw logs.
 - **Interaction:** Automated Actions plus local credential-isolated offline
   replay. Existing authentication was sufficient; browser, email, login,
   refresh, and OTP were not used.
+
+## OP-0033 — Actions artifact Stage 1 and typed development-only proof
+
+- **UTC:** `2026-07-20T09:42:59Z`
+- **Repository/scope:** Read-only Actions artifact capacity inventory and local
+  typed collector/live-fence/classifier development for the release repository
+  and tap. No cleanup execution.
+- **Action and reason:** Recorded dated aggregate evidence needed to review the
+  item-13 retention implementation without committing raw artifact ID lists or
+  treating a temporary live observation as an operational default.
+- **Stage 1 observation:** At `2026-07-20T06:50:21Z`, complete observed active
+  artifacts were `2,136 / 2,981,412,268 bytes` in the release repository and
+  `0 / 0 bytes` in the tap; observed active workflow runs were `0`. These values
+  are a dated capacity observation.
+- **Typed development replay:** Snapshot collection ran
+  `2026-07-20T09:20:46Z`–`2026-07-20T09:24:30Z`; the independent live fence ran
+  `2026-07-20T09:37:21Z`–`2026-07-20T09:42:59Z`. Snapshot semantic SHA-256 was
+  `fa0e6d3479398a70addd93cc1c1f387a4b3986328f52affb3eaafe6eec13f62a` and
+  development manifest semantic SHA-256 was
+  `d1fe688e7e15d5ca04dc60cc33147277a6ece6581c975d150524da7156c64931`.
+- **Aggregate result:** Before `2,136 / 2,981,412,268 bytes`; immutable keep
+  `112 / 139,516,493 bytes`; development candidate-delete
+  `2,024 / 2,841,895,775 bytes`; expected-after
+  `112 / 139,516,493 bytes`. No raw 112-ID keep list is stored in Git.
+- **Authorization/gate:** This is development evidence, not the durable
+  post-merge Stage-5 manifest and not deletion authority. The exact artifact
+  deletion confirmation was not requested or received.
+- **Authentication support:** An existing signed-in browser session was used to
+  create a seven-day fine-grained PAT limited to the release and tap
+  repositories with Actions read/write and Metadata read. It was stored through
+  the GitHub CLI keychain path and the clipboard was cleared. No token value or
+  prefix is recorded; email and OTP were not used, and authentication caused no
+  repository mutation.
+- **Result and verification:** The existing 7/14/30/90-day tiers were retained;
+  no artifact or workflow run was deleted. No tag, Release, asset, attestation,
+  SBOM, evidence history, retention setting, budget, permission, ruleset, or PR
+  state changed.
+- **Minimum permission surface:** The stored short-lived credential had the
+  exact scope above; live work used it only for checked reads. Assembly,
+  derivation, classification, and tests were offline.
+- **Interaction:** Local tools, the existing signed-in browser session, GitHub
+  CLI keychain storage, and authenticated read-only API transport. Email and
+  OTP were not used.

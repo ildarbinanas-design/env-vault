@@ -996,10 +996,10 @@ func TestPreflightAdvertisesOptionalOneShotMutationCapability(t *testing.T) {
 	var sleeps []time.Duration
 	document, transportErr := testClient(runner, &sleeps).Preflight(context.Background())
 	if transportErr != nil || !containsAll(strings.Join(document.Capabilities, " "),
-		"one_shot_git_data_mutation", "bounded_request_time", "bounded_operation_time", "bounded_aggregate_response_bytes") {
+		"one_shot_git_data_mutation", "one_shot_actions_artifact_delete", "bounded_request_time", "bounded_operation_time", "bounded_aggregate_response_bytes") {
 		t.Fatalf("preflight=%+v error=%v", document, transportErr)
 	}
-	if document.SchemaID != "env-vault.github-transport-capabilities.v2" || document.SchemaVersion != 2 || document.TransportVersion != "1.2.0" ||
+	if document.SchemaID != "env-vault.github-transport-capabilities.v2" || document.SchemaVersion != 2 || document.TransportVersion != "1.3.0" ||
 		document.MaxRequestSeconds != 60 || document.MaxOperationSeconds != 300 || document.MaxAggregateResponseBytes != 256<<20 {
 		t.Fatalf("preflight numerical bounds=%+v", document)
 	}

@@ -49,8 +49,39 @@ func TestEveryUsageFailureIsOneVersionedSafeErrorDocument(t *testing.T) {
 func TestHelpRemainsHumanReadableAndSuccessful(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	status := run([]string{"help"}, &stdout, &stderr)
-	if status != githubtransport.ExitOK || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "usage:\n") {
+	if status != githubtransport.ExitOK || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "usage:\n") || !strings.Contains(stdout.String(), "POST|PATCH|DELETE") {
 		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout.String(), stderr.String())
+	}
+}
+
+func TestArtifactDeleteCLIAllowsNoInputAndWritesExact204Outcome(t *testing.T) {
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	script := `#!/bin/sh
+if [ "$1" = --version ]; then printf 'gh version 2.96.0 (2026-07-02)\n'; exit 0; fi
+if [ "$1" = api ] && [ "$2" = --help ]; then printf '%s\n' '--include --hostname --method --header --raw-field --input'; exit 0; fi
+printf 'HTTP/2 204 No Content\r\nDate: Fri, 17 Jul 2026 12:00:00 GMT\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n\r\n'
+`
+	if err := os.WriteFile(gh, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	output := filepath.Join(t.TempDir(), "delete.json")
+	var stdout, stderr bytes.Buffer
+	status := run([]string{"rest", "mutate-once", "--output", output, "--method", "DELETE", "--endpoint", "repos/example/repo/actions/artifacts/42", "--expected-status", "204"}, &stdout, &stderr)
+	if status != githubtransport.ExitOK || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("status=%d stdout=%q stderr=%q", status, stdout.String(), stderr.String())
+	}
+	var document githubtransport.MutationDocument
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if !document.OK || document.Outcome != "success" || document.HTTPStatus != 204 || document.Method != "DELETE" || len(document.Body) != 0 || document.BodySHA256 != "" {
+		t.Fatalf("document=%+v", document)
 	}
 }
 
@@ -75,7 +106,7 @@ exit 1
 		t.Fatal(err)
 	}
 	if document.SchemaID != "env-vault.github-transport-capabilities.v2" || document.SchemaVersion != 2 ||
-		document.TransportVersion != "1.2.0" || document.MaxRequestSeconds != 60 || document.MaxOperationSeconds != 300 ||
+		document.TransportVersion != "1.3.0" || document.MaxRequestSeconds != 60 || document.MaxOperationSeconds != 300 ||
 		document.MaxAggregateResponseBytes != 268435456 {
 		t.Fatalf("capabilities=%+v", document)
 	}

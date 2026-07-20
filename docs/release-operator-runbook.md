@@ -19,8 +19,10 @@ with the numbered command cards below.
 - **`[LLM OPTIONAL]`** is operator transport, monitoring, or diagnosis that an
   LLM may perform. Its output is never accepted without the machine check named
   in the corresponding command card.
-- **`[HUMAN REQUIRED]`** is semantic review and the one exact release tuple
-  confirmation. These decisions cannot be delegated to an LLM.
+- **`[HUMAN REQUIRED]`** is semantic review and exact destructive
+  confirmation. The release flow has one release-tuple confirmation; a later
+  Actions artifact cleanup has its own separate manifest confirmation. These
+  decisions cannot be delegated to an LLM.
 - **`[HUMAN NO-LLM]`** is the exact manual equivalent of an
   `[LLM OPTIONAL]` operation. It is an alternative execution path, not an
   additional approval.
@@ -36,6 +38,14 @@ The version includes the leading `v`, and the SHA is the full 40-character PR
 head. Any change to version, PR number, or head SHA invalidates the
 confirmation. There is no other routine confirmation for the implementation
 PR, tag planning, publisher, Homebrew, health, or evidence.
+
+The release statement above does not authorize post-release artifact deletion.
+That separate, non-routine operation has its own `[HUMAN REQUIRED]` gate and
+never substitutes for or reuses a release confirmation:
+
+```text
+ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS COUNT <count> BYTES <bytes> MANIFEST SHA256 <sha256>
+```
 
 Never expose a token, private key, OAuth device code, OTP, verification-email
 contents, credential-store contents, or secret value in a command line, log,
@@ -112,6 +122,10 @@ flowchart TD
 | Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 16 |
 | Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 17 |
 | Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap/evidence JSON and metrics schemas | read-only except already-automated evidence publication | 15 |
+| Artifact post-merge collection, replay, and compact package | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | complete private replay plus content-addressed manifest object/summary | Actions read; local packaging, then a normal small reviewed PR | A1 |
+| Artifact manifest authorization | `[HUMAN REQUIRED]` | byte-exact count/bytes/semantic-SHA confirmation | authorizes only the reviewed manifest; no mutation by itself | A2 |
+| Bounded artifact deletion | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | exact-ID batch plus synced canonical result chain | Actions artifact delete only; maximum 500 IDs; no run delete or retry | A2 |
+| Artifact post-delete and Billing verification | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | complete API inventory, keep/terminal proof, later Billing/Usage observation | read-only | A3 |
 
 ## Common inputs, machine schemas, and exits
 
@@ -148,7 +162,16 @@ are:
   `env-vault.release-observation.v1`;
 - `env-vault.attestation-verification-bundle.v1`;
 - `env-vault.release-evidence.v1`, `env-vault.release-evidence-bundle.v2`, and
-  `env-vault.release-metrics.v1`.
+  `env-vault.release-metrics.v1`;
+- `env-vault.actions-artifact-snapshot.v1`,
+  `env-vault.actions-artifact-live-collection.v1`,
+  `env-vault.actions-artifact-live-observation.v1`,
+  `env-vault.actions-artifact-repair-proof.v1`,
+  `env-vault.actions-artifact-decision-scope.v1`, and
+  `env-vault.actions-artifact-decision-manifest.v1`;
+- `env-vault.actions-artifact-manifest-package-summary.v1`; and
+- `env-vault.actions-artifact-deletion-batch.v1` and
+  `env-vault.actions-artifact-deletion-result.v1`.
 
 `releasecheck` has stable exits: `0` success; `2` CLI usage; `3` invalid or
 unsupported contract; `4` a valid classification that requires waiting,
@@ -1400,6 +1423,133 @@ on lifecycle-unstable REST `.name`/`.pull_requests` fields for authorization,
 weaken a contract/check/ruleset/environment, move a tag, clobber an asset,
 force-push a tap branch, put secrets in diagnostics, or modify product behavior
 for a release-tooling defect.
+
+## Separate Actions artifact lifecycle cards
+
+These cards are not part of the routine release flow. Do not begin them until
+the retention implementation PR is merged and the preceding release is fully
+closed. The detailed invariant reference is
+[`actions-artifact-cleanup.md`](actions-artifact-cleanup.md) and ADR 0007.
+
+### Card A1 — `[LLM OPTIONAL]` / `[HUMAN NO-LLM]` post-merge collection and replay
+
+**Precondition.** The repository and tap are stable, no shared release
+concurrency operation is active, and all 7/14/30/90-day retention values remain
+unchanged. Create a new private directory; never reuse development evidence or
+a partial collection.
+
+**Operation.** Run the policy inventory, then the typed artifact collector for
+both repositories, assemble the snapshot, collect the independent raw live
+fence, derive the scope, and classify exactly as documented in
+`docs/actions-artifact-cleanup.md`. Use an age bound no greater than one hour.
+All network reads must pass through `scripts/release/gh-api-read.sh`.
+
+**Machine result.** Preserve the raw collection, snapshot, live collection,
+scope, observation, repair proof, and canonical manifest in the private
+reviewer workspace outside Git. Review every record and require an independent
+offline classifier replay to reproduce the exact canonical manifest. Then run:
+
+```sh
+go run ./cmd/releasecheck artifacts package-manifest \
+  --manifest "$MANIFEST" --repository-root .
+go run ./cmd/releasecheck artifacts verify-manifest-package \
+  --repository-root . --manifest-sha256 "$MANIFEST_SHA256" \
+  --compare-manifest "$MANIFEST" --json
+```
+
+Open a small reviewed Stage-5 PR containing only the new
+`evidence/actions-artifact-cleanups/objects/sha256/<raw-sha256>.json.gz` and
+`evidence/actions-artifact-cleanups/manifests/<semantic-sha256>.summary.json`.
+Do not commit raw API responses or the private replay workspace. The summary
+binds semantic/raw/gzip digests and bytes plus all totals. Development
+aggregates and historical live IDs are not authority, and merely packaging or
+merging this evidence is not the deletion confirmation. Any Actions artifacts
+created by this PR or its CI are new and remain preserved outside the old
+manifest's authority.
+
+**Stop conditions.** Stop on active/incomplete/new-between-collectors state,
+unknown lineage, missing pagination/attempts, stale time, keep/delete overlap,
+digest or total mismatch, or any failure to replay the supplied scope from raw
+live bytes.
+
+### Card A2 — `[HUMAN REQUIRED]` confirmation and bounded deletion
+
+**Human gate.** Read `<count>`, `<bytes>`, and `<sha256>` only from the reviewed
+canonical Stage-5 manifest and provide exactly:
+
+```text
+ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS COUNT <count> BYTES <bytes> MANIFEST SHA256 <sha256>
+```
+
+Any change to the canonical authorized manifest, its delete totals, semantic
+digest, or exact confirmation line requires a fresh manifest and confirmation.
+A later batch or fresh current-state proof under that unchanged authority does
+not. Current-state or batch drift stops that execution and requires fresh proof
+or a corrected batch; if resolving it needs a replacement authorized manifest,
+obtain a new confirmation. First reconstruct the checked-in package to a new
+private file; the semantic digest, not the raw-object or gzip digest, is
+`<sha256>`:
+
+```sh
+go run ./cmd/releasecheck artifacts verify-manifest-package \
+  --repository-root . --manifest-sha256 "$MANIFEST_SHA256" \
+  --manifest-output "$AUTHORIZED_MANIFEST" --json
+```
+
+Create a canonical batch file with 1–500 explicit unique IDs. For batch two and
+later, pass every accepted prior result in chronological order:
+
+```json
+{"schema_id":"env-vault.actions-artifact-deletion-batch.v1","schema_version":1,"artifact_ids":[<artifact-id>]}
+```
+
+```sh
+go run ./cmd/actionsartifactdelete \
+  --authorized-manifest "$AUTHORIZED_MANIFEST" \
+  --authorized-manifest-sha256 "$MANIFEST_SHA256" \
+  --delete-count "$DELETE_COUNT" --delete-bytes "$DELETE_BYTES" \
+  --confirmation "$DELETE_CONFIRMATION" \
+  --batch "$BATCH_FILE" \
+  --current-snapshot "$CURRENT_SNAPSHOT" \
+  --current-live-collection "$CURRENT_LIVE_COLLECTION" \
+  --current-scope "$CURRENT_SCOPE" \
+  --max-age 1h \
+  --result "$BATCH_RESULT"
+```
+
+Add `--prior-result "$PRIOR_RESULT"` once per prior result, in chronological
+order. The executor uses the actual wall clock; it has no operator-supplied
+validation time. For every batch, first collect a fresh current snapshot and
+raw live fence. The executor replays that current raw state, verifies every
+authorized KEEP physical and lineage tuple remains present,
+pre-reads every batch ID, writes a synced intent, and sends only one exact
+bodyless artifact DELETE. It never retries.
+
+On `http_error` or `ambiguous`, the tool performs at most one checked read of
+that exact ID, syncs the outcome, stops, and leaves remaining IDs untouched.
+Only exact empty-204 success or `ambiguous` followed by checked 404 absence is
+terminal for a later chain. Present, unknown, malformed, unmatched intent, or
+result-chain drift requires explicit reconciliation; do not rerun blindly.
+
+**Forbidden.** No workflow-run/log/conclusion delete; no glob/name/age filter;
+no tag, Release, asset, attestation, SBOM, evidence-history, retention-setting,
+budget, permission, ruleset, or unrelated repository mutation.
+
+### Card A3 — `[LLM OPTIONAL]` / `[HUMAN NO-LLM]` post-delete verification
+
+Immediately repeat complete pagination and live-fence replay into another new
+private directory. Prove every terminal result ID absent, every authorized keep
+physically and lineage-exact and present, new artifacts preserved, and all
+counts/bytes reconciled. Preserve the no-secret result chain. In the append-only
+operations journal, record the aggregate and one safe record for every external
+deletion: artifact ID, source run/attempt, size, classification reason, UTC
+timestamp, and terminal result. These typed audit records are not a raw
+inventory; never commit raw collection pages, API bodies, logs, or credentials.
+
+GitHub Billing/Usage may lag the artifact API by **6–12 hours**. The immediate
+API proof closes deletion identity; it does not predict the billing dashboard.
+After 6–12 hours, make a separate read-only Billing/Usage observation and
+record the measured headroom. Do not change or bypass the blocking budget.
 
 ## Incident and error matrix
 

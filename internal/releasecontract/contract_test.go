@@ -93,6 +93,47 @@ func TestCanonicalContract(t *testing.T) {
 	}
 }
 
+func TestLoadBytesMatchesStrictFileLoader(t *testing.T) {
+	filename := filepath.Join("..", "..", CanonicalPath)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromFile, err := LoadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromBytes, err := LoadBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSemantic, err := SemanticSHA256(fromFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytesSemantic, err := SemanticSHA256(fromBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromFile.FileSHA256() != fromBytes.FileSHA256() || fileSemantic != bytesSemantic {
+		t.Fatal("byte loader does not preserve exact-file and semantic contract bindings")
+	}
+	withWhitespace, err := LoadBytes(append(append([]byte(nil), data...), '\n'))
+	if err != nil {
+		t.Fatal(err)
+	}
+	whitespaceSemantic, err := SemanticSHA256(withWhitespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withWhitespace.FileSHA256() == fromBytes.FileSHA256() || whitespaceSemantic != bytesSemantic {
+		t.Fatal("byte loader did not separate exact-file and semantic bindings")
+	}
+	if _, err := LoadBytes(append(append([]byte(nil), data...), []byte(`{}`)...)); err == nil {
+		t.Fatal("strict byte loader accepted a second JSON value")
+	}
+}
+
 func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
 	contract := loadCanonicalForTest(t)
 	if contract.Repositories.Source.FullName != "ildarbinanas-design/env-vault" || contract.Repositories.Source.DefaultBranch != "main" ||
