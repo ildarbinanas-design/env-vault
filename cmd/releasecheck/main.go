@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	checkerVersion = "1.4.0"
+	checkerVersion = "1.7.0"
 
 	exitOK              = 0
 	exitUsage           = 2
@@ -115,6 +115,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runEvidence(args[1:], stdout, stderr)
 	case "settings":
 		return runSettings(args[1:], stdout, stderr)
+	case "artifacts":
+		return runArtifacts(args[1:], stdout, stderr)
 	case "recovery":
 		return runRecovery(args[1:], stdout, stderr)
 	default:
@@ -145,42 +147,55 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 		CheckerVersion:     checkerVersion,
 		ContractFileSHA256: contract.FileSHA256(),
 		SupportedSchemaVersions: map[string][]int{
-			"attempt_classification":                {1},
-			"contract_validation":                   {1},
-			"e2e_matrix_proof":                      {1},
-			"legacy_rebuild_query":                  {1},
-			"legacy_rebuild_diagnostic":             {1},
-			"release_contract":                      {releasecontract.SchemaVersion},
-			"release_contract_history":              {releasecontract.HistoricalRegistryVersion},
-			"release_contract_historical_source":    {1},
-			"release_contract_operational":          {releasecontract.OperationalProjectionVersion},
-			"release_contract_source_route":         {releasecontract.SourceRouteSchemaVersion},
-			"release_contract_matrix":               {1},
-			"releasecheck_error":                    {1},
-			"releasecheck_version":                  {releasecontract.VersionSchemaVersion},
-			"release_metrics":                       {1},
-			"release_metrics_baseline":              {1},
-			"release_metrics_comparison":            {1},
-			"source_quality_proof":                  {1},
-			"literal_version_results":               {1},
-			"promotion_platform":                    {1},
-			"promotion_manifest":                    {1},
-			"promotion_verification":                {1},
-			"release_observation":                   {1},
-			"release_health_proof":                  {1},
-			"release_authorization":                 {1},
-			"release_please_recovery":               {1},
-			"release_please_recovery_check":         {1},
-			"attestation_verification_bundle":       {1},
-			"release_evidence":                      {1},
-			"release_evidence_bundle":               {2},
-			"release_evidence_bundle_verification":  {1},
-			"release_evidence_parity":               {1},
-			"release_evidence_storage_metrics":      {1},
-			"release_evidence_genesis":              {1},
-			"release_evidence_genesis_verification": {1},
-			"repository_release_settings_check":     {1},
-			"repository_release_settings_proof":     {1},
+			"actions_artifact_deletion_batch":           {1},
+			"actions_artifact_deletion_result":          {1},
+			"actions_artifact_decision_manifest":        {1},
+			"actions_artifact_decision_scope":           {1},
+			"actions_artifact_live_collection":          {1},
+			"actions_artifact_live_observation":         {1},
+			"actions_artifact_manifest_package_summary": {1},
+			"actions_artifact_policy":                   {1},
+			"actions_artifact_policy_validation":        {1},
+			"actions_artifact_raw_collection":           {1},
+			"actions_artifact_repair_proof":             {1},
+			"actions_artifact_snapshot":                 {1},
+			"actions_artifact_snapshot_validation":      {1},
+			"attempt_classification":                    {1},
+			"contract_validation":                       {1},
+			"e2e_matrix_proof":                          {1},
+			"legacy_rebuild_query":                      {1},
+			"legacy_rebuild_diagnostic":                 {1},
+			"release_contract":                          {releasecontract.SchemaVersion},
+			"release_contract_history":                  {releasecontract.HistoricalRegistryVersion},
+			"release_contract_historical_source":        {1},
+			"release_contract_operational":              {releasecontract.OperationalProjectionVersion},
+			"release_contract_source_route":             {releasecontract.SourceRouteSchemaVersion},
+			"release_contract_matrix":                   {1},
+			"releasecheck_error":                        {1},
+			"releasecheck_version":                      {releasecontract.VersionSchemaVersion},
+			"release_metrics":                           {1},
+			"release_metrics_baseline":                  {1},
+			"release_metrics_comparison":                {1},
+			"source_quality_proof":                      {1},
+			"literal_version_results":                   {1},
+			"promotion_platform":                        {1},
+			"promotion_manifest":                        {1},
+			"promotion_verification":                    {1},
+			"release_observation":                       {1},
+			"release_health_proof":                      {1},
+			"release_authorization":                     {1},
+			"release_please_recovery":                   {1},
+			"release_please_recovery_check":             {1},
+			"attestation_verification_bundle":           {1},
+			"release_evidence":                          {1},
+			"release_evidence_bundle":                   {2},
+			"release_evidence_bundle_verification":      {1},
+			"release_evidence_parity":                   {1},
+			"release_evidence_storage_metrics":          {1},
+			"release_evidence_genesis":                  {1},
+			"release_evidence_genesis_verification":     {1},
+			"repository_release_settings_check":         {1},
+			"repository_release_settings_proof":         {1},
 		},
 		ReleaseContractSchema: contract.SchemaID, SemanticContractSHA256: digest,
 	}
@@ -636,6 +651,7 @@ Usage:
   releasecheck promotion <record-platform|seal-source-quality|assemble|verify> ...
   releasecheck evidence <seal-health|assemble|verify> ...
   releasecheck settings <check|seal|verify> ...
+  releasecheck artifacts <validate-policy|assemble-snapshot|validate-snapshot|derive-scope|classify|package-manifest|verify-manifest-package> ...
   releasecheck recovery validate-config --contract FILE --config FILE --manifest FILE [--json]
   releasecheck help
 

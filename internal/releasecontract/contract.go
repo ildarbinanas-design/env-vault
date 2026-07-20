@@ -280,6 +280,17 @@ func LoadFile(filename string) (Contract, error) {
 	if err != nil {
 		return Contract{}, fmt.Errorf("read release contract: %w", err)
 	}
+	return LoadBytes(data)
+}
+
+// LoadBytes applies the same strict operational-v2 validation and exact-byte
+// digest binding as LoadFile. It exists for offline consumers which replay a
+// contract captured through the checked GitHub transport without first
+// materializing a second, unbound copy on disk.
+func LoadBytes(data []byte) (Contract, error) {
+	if len(data) == 0 || len(data) > maxContractBytes {
+		return Contract{}, fmt.Errorf("read release contract: size %d is outside 1..%d", len(data), maxContractBytes)
+	}
 	var contract Contract
 	if err := decodeJSON(data, &contract, true); err != nil {
 		return Contract{}, fmt.Errorf("decode release contract: %w", err)

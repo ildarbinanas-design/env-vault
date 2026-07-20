@@ -94,6 +94,73 @@ func TestMutateOnceTimeoutRemainsOneShotAndAmbiguous(t *testing.T) {
 	}
 }
 
+func TestArtifactDeleteIsBodylessOneShotAndStrictlyTyped(t *testing.T) {
+	tests := map[string]struct {
+		response CommandResult
+		outcome  string
+		code     string
+		ok       bool
+		status   int
+	}{
+		"empty 204":        {rawMutationResponse(204, "Date: Fri, 17 Jul 2026 12:00:00 GMT\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n", "", nil), "success", "", true, 204},
+		"204 runner error": {rawMutationResponse(204, "Date: Fri, 17 Jul 2026 12:00:00 GMT\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n", "", errors.New("exit 1")), "ambiguous", "TRANSPORT_FAILED", false, 204},
+		"204 JSON body":    {rawMutationResponse(204, "Content-Type: application/vnd.github+json\r\nDate: Fri, 17 Jul 2026 12:00:00 GMT\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n", `{}`, nil), "ambiguous", "MALFORMED_RESPONSE", false, 204},
+		"204 newline body": {rawMutationResponse(204, "Date: Fri, 17 Jul 2026 12:00:00 GMT\r\nX-GitHub-Api-Version-Selected: 2022-11-28\r\n", "\n", nil), "ambiguous", "MALFORMED_RESPONSE", false, 204},
+		"404":              {mutationResponse(404, `{"message":"not found"}`, errors.New("exit 1")), "http_error", "REMOTE_NOT_FOUND", false, 404},
+		"500":              {mutationResponse(500, `{"message":"server unavailable"}`, errors.New("exit 1")), "ambiguous", "TRANSPORT_FAILED", false, 500},
+		"missing response": {CommandResult{Err: errors.New("timeout")}, "ambiguous", "TRANSPORT_FAILED", false, 0},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{responses: []CommandResult{test.response}}
+			var sleeps []time.Duration
+			document, transportErr := testClient(runner, &sleeps).MutateOnce(context.Background(), MutationRequest{
+				Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42", ExpectedStatus: 204,
+			})
+			if transportErr != nil || document.Outcome != test.outcome || document.ErrorCode != test.code || document.OK != test.ok || document.HTTPStatus != test.status {
+				t.Fatalf("document=%+v transportErr=%v", document, transportErr)
+			}
+			if len(runner.apiCalls) != 1 || len(runner.inputs) != 0 || len(sleeps) != 0 {
+				t.Fatalf("calls=%d inputs=%d sleeps=%v", len(runner.apiCalls), len(runner.inputs), sleeps)
+			}
+			call := strings.Join(runner.apiCalls[0], " ")
+			if !strings.Contains(call, "api --include --hostname github.com --method DELETE") || !strings.Contains(call, "repos/example/env-vault/actions/artifacts/42") || strings.Contains(call, "--input") {
+				t.Fatalf("unexpected DELETE call %q", call)
+			}
+			if document.Body != nil || document.BodySHA256 != "" {
+				t.Fatalf("bodyless deletion retained response bytes: %+v", document)
+			}
+		})
+	}
+}
+
+func TestArtifactDeleteAllowlistRejectsAdjacentOrMalformedShapesBeforeTransport(t *testing.T) {
+	requests := map[string]MutationRequest{
+		"wrong method":        {Method: "POST", Endpoint: "repos/example/env-vault/actions/artifacts/42", ExpectedStatus: 204},
+		"wrong status":        {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42", ExpectedStatus: 200},
+		"body path":           {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42", ExpectedStatus: 204, InputPath: "empty.json"},
+		"zero":                {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/0", ExpectedStatus: 204},
+		"leading zero":        {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/042", ExpectedStatus: 204},
+		"negative":            {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/-1", ExpectedStatus: 204},
+		"overflow":            {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/9223372036854775808", ExpectedStatus: 204},
+		"query":               {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42?x=1", ExpectedStatus: 204},
+		"trailing slash":      {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42/", ExpectedStatus: 204},
+		"workflow run":        {Method: "DELETE", Endpoint: "repos/example/env-vault/actions/runs/42", ExpectedStatus: 204},
+		"release asset":       {Method: "DELETE", Endpoint: "repos/example/env-vault/releases/assets/42", ExpectedStatus: 204},
+		"repository dot path": {Method: "DELETE", Endpoint: "repos/example/../actions/artifacts/42", ExpectedStatus: 204},
+	}
+	for name, request := range requests {
+		t.Run(name, func(t *testing.T) {
+			runner := &scriptedRunner{}
+			var sleeps []time.Duration
+			_, transportErr := testClient(runner, &sleeps).MutateOnce(context.Background(), request)
+			if transportErr == nil || transportErr.Code != "INPUT_INVALID" || len(runner.allCalls) != 0 {
+				t.Fatalf("error=%+v calls=%v", transportErr, runner.allCalls)
+			}
+		})
+	}
+}
+
 func TestMutateOnceRejectsUnreviewedShapeAndInputBeforeTransport(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "request.json")
@@ -262,6 +329,8 @@ func TestMutationSuccessResponsesAreOperationSpecific(t *testing.T) {
 		"ref update":         {MutationRequest{Endpoint: "repos/example/env-vault/git/refs/heads/release-evidence"}, refBody, true},
 		"ref missing object": {MutationRequest{Endpoint: "repos/example/env-vault/git/refs"}, []byte(fmt.Sprintf(`{"sha":"%s"}`, sha)), false},
 		"blob malformed sha": {MutationRequest{Endpoint: "repos/example/env-vault/git/blobs"}, []byte(`{"sha":"bad"}`), false},
+		"artifact delete":    {MutationRequest{Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42", ExpectedStatus: 204}, []byte{}, true},
+		"delete whitespace":  {MutationRequest{Method: "DELETE", Endpoint: "repos/example/env-vault/actions/artifacts/42", ExpectedStatus: 204}, []byte("\n"), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := validMutationSuccessResponse(test.request, test.body); got != test.valid {
@@ -373,6 +442,6 @@ func mutationResponseWithHeaders(status int, selectedHeader, body string, err er
 }
 
 func rawMutationResponse(status int, headers, body string, err error) CommandResult {
-	statusText := map[int]string{201: "Created", 202: "Accepted", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 422: "Unprocessable Entity", 429: "Too Many Requests", 500: "Server Error"}[status]
+	statusText := map[int]string{201: "Created", 202: "Accepted", 204: "No Content", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 422: "Unprocessable Entity", 429: "Too Many Requests", 500: "Server Error"}[status]
 	return CommandResult{Stdout: []byte(fmt.Sprintf("HTTP/2 %d %s\r\n%s\r\n%s", status, statusText, headers, body)), Err: err}
 }

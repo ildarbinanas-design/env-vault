@@ -1,0 +1,779 @@
+{
+  "schema_id": "env-vault.actions-artifact-policy.v1",
+  "schema_version": 1,
+  "upload_action": "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+  "supported_retention_days": [
+    7,
+    14,
+    30,
+    90
+  ],
+  "sites": [
+    {
+      "id": "release-assets-bootstrap",
+      "workflow": "bootstrap-release-assets.yml",
+      "job": "bootstrap",
+      "step": "Upload exact bootstrap result",
+      "class": "release-assets-bootstrap",
+      "pattern_id": "release-assets-bootstrap-current",
+      "artifact_name": "env-vault-release-assets-bootstrap-${{ inputs.version }}-${{ inputs.source_sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 30,
+      "consumers": [
+        "operator.repair-audit",
+        "publish-homebrew-bridge.homebrew-bridge"
+      ],
+      "retention_rationale": "Keeps the exact no-rebuild bootstrap handoff available to the queued Homebrew bridge and its bounded repair review."
+    },
+    {
+      "id": "release-observation",
+      "workflow": "build-binaries.yml",
+      "job": "health",
+      "step": "Upload typed release observation and sealed health proof",
+      "class": "release-observation",
+      "pattern_id": "release-observation-current",
+      "artifact_name": "env-vault-release-observation-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 90,
+      "consumers": [
+        "operator.release-audit",
+        "release-evidence.assemble"
+      ],
+      "retention_rationale": "Preserves the exact health observation consumed by the queued evidence workflow and later release audit."
+    },
+    {
+      "id": "operational-contract",
+      "workflow": "build-binaries.yml",
+      "job": "metadata",
+      "step": "Upload typed operational release projection",
+      "class": "operational-contract",
+      "pattern_id": "operational-contract-current",
+      "artifact_name": "env-vault-release-contract-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 7,
+      "consumers": [
+        "build-binaries.health",
+        "build-binaries.homebrew",
+        "build-binaries.promotion",
+        "build-binaries.release",
+        "build-binaries.supply-chain"
+      ],
+      "retention_rationale": "Retains the digest-bound operational projection consumed across promotion, release, supply-chain, Homebrew, and health jobs in the exact publisher attempt."
+    },
+    {
+      "id": "publisher-bundle",
+      "workflow": "build-binaries.yml",
+      "job": "promotion",
+      "step": "Upload publisher-local verified bundle",
+      "class": "publisher-bundle",
+      "pattern_id": "publisher-bundle-current",
+      "artifact_name": "env-vault-publisher-bundle-${{ needs.metadata.outputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "bootstrap-release-assets.bootstrap",
+        "build-binaries.release",
+        "operator.repair-audit"
+      ],
+      "retention_rationale": "Covers same-attempt publication and the admissible no-rebuild release-asset bootstrap repair window."
+    },
+    {
+      "id": "spdx-sbom",
+      "workflow": "build-binaries.yml",
+      "job": "supply_chain",
+      "step": "Upload SPDX SBOM workflow artifact",
+      "class": "spdx-sbom",
+      "pattern_id": "spdx-sbom-current",
+      "artifact_name": "env-vault-sbom-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "operator.supply-chain-audit"
+      ],
+      "retention_rationale": "Keeps the workflow copy available for supply-chain diagnosis after the immutable SPDX attestation is created."
+    },
+    {
+      "id": "legacy-diagnostic",
+      "workflow": "legacy-rebuild.yml",
+      "job": "diagnostic",
+      "step": "Upload diagnostic-only result",
+      "class": "legacy-diagnostic",
+      "pattern_id": "legacy-diagnostic-current",
+      "artifact_name": "env-vault-legacy-diagnostic-${{ inputs.version }}-${{ matrix.id }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 7,
+      "consumers": [
+        "operator.legacy-diagnostic-audit"
+      ],
+      "retention_rationale": "The observation-only legacy diagnostic is short-lived and is never publication or repair authority."
+    },
+    {
+      "id": "homebrew-bridge",
+      "workflow": "publish-homebrew-bridge.yml",
+      "job": "homebrew_bridge",
+      "step": "Upload exact Homebrew bridge result",
+      "class": "homebrew-bridge",
+      "pattern_id": "homebrew-bridge-current",
+      "artifact_name": "env-vault-homebrew-bridge-${{ inputs.version }}-${{ inputs.source_sha }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 30,
+      "consumers": [
+        "operator.homebrew-dispatch-audit",
+        "operator.repair-audit"
+      ],
+      "retention_rationale": "Preserves the exact Homebrew publication tuple for operator dispatch and bounded repair audit; health independently re-verifies live state."
+    },
+    {
+      "id": "evidence-candidate",
+      "workflow": "release-evidence.yml",
+      "job": "assemble",
+      "step": "Upload immutable evidence candidate for the write-scoped job",
+      "class": "evidence-candidate",
+      "pattern_id": "evidence-candidate-current",
+      "artifact_name": "env-vault-release-evidence-candidate-${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+      "retention_days": 7,
+      "consumers": [
+        "release-evidence.publish"
+      ],
+      "retention_rationale": "Bounds the same-attempt handoff from read-only assembly to the write-scoped evidence append job."
+    },
+    {
+      "id": "release-evidence-v2",
+      "workflow": "release-evidence.yml",
+      "job": "publish",
+      "step": "Upload compact replayable release evidence artifact",
+      "class": "release-evidence",
+      "pattern_id": "release-evidence-v2-durable",
+      "artifact_name": "env-vault-release-evidence-v2-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
+      "retention_days": 90,
+      "consumers": [
+        "offline-replay.audit"
+      ],
+      "retention_rationale": "Keeps the compact independently replayable evidence handoff while Git history remains the immutable authority."
+    },
+    {
+      "id": "release-evidence-v1",
+      "workflow": "release-evidence.yml",
+      "job": "publish",
+      "step": "Upload replayable release evidence artifact",
+      "class": "release-evidence",
+      "pattern_id": "release-evidence-v1-durable",
+      "artifact_name": "env-vault-release-evidence-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
+      "retention_days": 90,
+      "consumers": [
+        "offline-replay.audit"
+      ],
+      "retention_rationale": "Keeps the supported legacy-format replay handoff while Git history remains the immutable authority."
+    },
+    {
+      "id": "attempt-classification",
+      "workflow": "release-please.yml",
+      "job": "inspect",
+      "step": "Upload machine-readable attempt classification",
+      "class": "attempt-classification",
+      "pattern_id": "attempt-classification-current",
+      "artifact_name": "env-vault-attempt-classification-ci-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-planning-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 30,
+      "consumers": [
+        "operator.release-planning-audit",
+        "operator.rerun-audit"
+      ],
+      "retention_rationale": "Retains fail-closed release-planning diagnostics across the operator review and rerun decision window."
+    },
+    {
+      "id": "release-settings",
+      "workflow": "release-please.yml",
+      "job": "plan",
+      "step": "Upload exact pre-tag repository settings proof",
+      "class": "release-settings",
+      "pattern_id": "release-settings-current",
+      "artifact_name": "env-vault-release-settings-${{ steps.classify.outputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 90,
+      "consumers": [
+        "build-binaries.health",
+        "build-binaries.metadata",
+        "operator.release-audit",
+        "release-evidence.assemble"
+      ],
+      "retention_rationale": "Preserves the exact pre-tag repository-protection observation through publisher health and evidence append."
+    },
+    {
+      "id": "abandoned-release-policy",
+      "workflow": "release-please.yml",
+      "job": "plan",
+      "step": "Upload the exact pre-tag abandoned-release proof",
+      "class": "abandoned-release-policy",
+      "pattern_id": "abandoned-release-policy-current",
+      "artifact_name": "env-vault-abandoned-release-policy-${{ steps.classify.outputs.source_sha }}-planning-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 90,
+      "consumers": [
+        "operator.release-planning-audit"
+      ],
+      "retention_rationale": "Preserves the exact pre-tag exceptional-policy proof for release-planning audit; publisher health independently recomputes the policy state."
+    },
+    {
+      "id": "e2e-baseline",
+      "workflow": "reusable-quality.yml",
+      "job": "e2e-gate",
+      "step": "Upload durable baseline verification",
+      "class": "e2e-baseline",
+      "pattern_id": "e2e-baseline-verification-current",
+      "artifact_name": "env-vault-e2e-baseline-verification-attempt-${{ github.run_attempt }}",
+      "retention_days": 30,
+      "consumers": [
+        "operator.quality-audit"
+      ],
+      "retention_rationale": "Retains candidate-versus-baseline diagnostics across the release review window without serving as promotion authority."
+    },
+    {
+      "id": "promotion-manifest",
+      "workflow": "reusable-quality.yml",
+      "job": "e2e-gate",
+      "step": "Upload exact promotion manifest",
+      "class": "promotion-manifest",
+      "pattern_id": "promotion-manifest-current",
+      "artifact_name": "env-vault-promotion-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "bootstrap-release-assets.bootstrap",
+        "build-binaries.promotion",
+        "release-evidence.assemble",
+        "release-please.plan"
+      ],
+      "retention_rationale": "Covers publisher promotion and the admissible no-rebuild release-asset bootstrap repair boundary."
+    },
+    {
+      "id": "e2e-candidate",
+      "workflow": "reusable-quality.yml",
+      "job": "native",
+      "step": "Upload current-attempt E2E reports",
+      "class": "e2e-candidate",
+      "pattern_id": "e2e-candidate-current-history",
+      "artifact_name": "env-vault-e2e-candidate-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 30,
+      "consumers": [
+        "operator.quality-audit",
+        "reusable-quality.e2e-gate"
+      ],
+      "retention_rationale": "Retains all-platform E2E diagnostics across the release review window after the same-attempt gate consumes them."
+    },
+    {
+      "id": "promotion-platform",
+      "workflow": "reusable-quality.yml",
+      "job": "native",
+      "step": "Upload current-attempt native proof",
+      "class": "promotion-platform",
+      "pattern_id": "promotion-platform-current",
+      "artifact_name": "env-vault-promotion-platform-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "bootstrap-release-assets.bootstrap",
+        "build-binaries.promotion",
+        "release-evidence.assemble",
+        "release-please.inspect",
+        "release-please.plan",
+        "reusable-quality.e2e-gate"
+      ],
+      "retention_rationale": "Covers same-attempt manifest assembly, publisher promotion, and admissible no-rebuild repair verification."
+    },
+    {
+      "id": "native-release",
+      "workflow": "reusable-quality.yml",
+      "job": "native",
+      "step": "Upload current-attempt native release artifact",
+      "class": "native-release",
+      "pattern_id": "native-release-current",
+      "artifact_name": "env-vault-release-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "bootstrap-release-assets.bootstrap",
+        "build-binaries.promotion",
+        "release-evidence.assemble",
+        "release-please.inspect",
+        "release-please.plan"
+      ],
+      "retention_rationale": "Covers exact-source publisher consumption and the admissible no-rebuild release-asset bootstrap repair window."
+    },
+    {
+      "id": "e2e-reporter-darwin-amd64",
+      "workflow": "reusable-quality.yml",
+      "job": "resolve",
+      "step": "Upload darwin-amd64 current-attempt E2E reporter",
+      "class": "e2e-reporter",
+      "pattern_id": "e2e-reporter-current",
+      "artifact_name": "env-vault-tooling-gotestsum-darwin-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "reusable-quality.native"
+      ],
+      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
+    },
+    {
+      "id": "e2e-reporter-darwin-arm64",
+      "workflow": "reusable-quality.yml",
+      "job": "resolve",
+      "step": "Upload darwin-arm64 current-attempt E2E reporter",
+      "class": "e2e-reporter",
+      "pattern_id": "e2e-reporter-current",
+      "artifact_name": "env-vault-tooling-gotestsum-darwin-arm64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "reusable-quality.native"
+      ],
+      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
+    },
+    {
+      "id": "e2e-reporter-linux-amd64",
+      "workflow": "reusable-quality.yml",
+      "job": "resolve",
+      "step": "Upload linux-amd64 current-attempt E2E reporter",
+      "class": "e2e-reporter",
+      "pattern_id": "e2e-reporter-current",
+      "artifact_name": "env-vault-tooling-gotestsum-linux-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "reusable-quality.native"
+      ],
+      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
+    },
+    {
+      "id": "e2e-reporter-linux-arm64",
+      "workflow": "reusable-quality.yml",
+      "job": "resolve",
+      "step": "Upload linux-arm64 current-attempt E2E reporter",
+      "class": "e2e-reporter",
+      "pattern_id": "e2e-reporter-current",
+      "artifact_name": "env-vault-tooling-gotestsum-linux-arm64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "reusable-quality.native"
+      ],
+      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
+    },
+    {
+      "id": "e2e-reporter-windows-amd64",
+      "workflow": "reusable-quality.yml",
+      "job": "resolve",
+      "step": "Upload windows-amd64 current-attempt E2E reporter",
+      "class": "e2e-reporter",
+      "pattern_id": "e2e-reporter-current",
+      "artifact_name": "env-vault-tooling-gotestsum-windows-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
+      "retention_days": 14,
+      "consumers": [
+        "reusable-quality.native"
+      ],
+      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
+    }
+  ],
+  "patterns": [
+    {
+      "id": "abandoned-release-policy-current",
+      "class": "abandoned-release-policy",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/release-please.yml"
+      ],
+      "name_regex": "^env-vault-abandoned-release-policy-([0-9a-f]{40})-planning-[1-9][0-9]*-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 1,
+      "examples": [
+        "env-vault-abandoned-release-policy-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-planning-101-attempt-2"
+      ],
+      "dependency_repair_rationale": "Planning audit proof; current publisher health regenerates rather than downloads it."
+    },
+    {
+      "id": "attempt-classification-current",
+      "class": "attempt-classification",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/release-please.yml"
+      ],
+      "name_regex": "^env-vault-attempt-classification-ci-[1-9][0-9]*-attempt-[1-9][0-9]*-planning-[1-9][0-9]*-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 1,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-attempt-classification-ci-101-attempt-1-planning-202-attempt-2"
+      ],
+      "dependency_repair_rationale": "Machine diagnostic for operator planning, complete-rerun, and failure audit."
+    },
+    {
+      "id": "codeql-sarif-system",
+      "class": "codeql-sarif",
+      "lifecycle": "system-managed",
+      "workflow_paths": [
+        "dynamic/github-code-scanning/codeql"
+      ],
+      "name_regex": "^sarif-artifact-(actions|go)$",
+      "attempt_resolution": "attempt_interval",
+      "attempt_capture": 0,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "sarif-artifact-actions",
+        "sarif-artifact-go"
+      ],
+      "dependency_repair_rationale": "GitHub-managed code-scanning transport artifact; never eligible for operator cleanup."
+    },
+    {
+      "id": "e2e-baseline-platform-history",
+      "class": "e2e-baseline",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-e2e-baseline-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-e2e-baseline-linux-amd64-attempt-1",
+        "env-vault-e2e-baseline-windows-amd64-attempt-2"
+      ],
+      "dependency_repair_rationale": "Historical per-platform baseline diagnostic retained only while its exact source identity is protected."
+    },
+    {
+      "id": "e2e-baseline-verification-current",
+      "class": "e2e-baseline",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-e2e-baseline-verification-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 1,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-e2e-baseline-verification-attempt-1"
+      ],
+      "dependency_repair_rationale": "Quality audit diagnostic; it is not promotion or repair authority."
+    },
+    {
+      "id": "e2e-candidate-current-history",
+      "class": "e2e-candidate",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/build-binaries.yml",
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-e2e-candidate-(comparison|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|matrix|windows-amd64)-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-e2e-candidate-comparison-attempt-2",
+        "env-vault-e2e-candidate-linux-amd64-attempt-1",
+        "env-vault-e2e-candidate-matrix-attempt-3"
+      ],
+      "dependency_repair_rationale": "Same-attempt E2E gate input and diagnostic across current and historical caller paths."
+    },
+    {
+      "id": "e2e-reporter-current",
+      "class": "e2e-reporter",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-tooling-gotestsum-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)-([0-9a-f]{40})-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 2,
+      "examples": [
+        "env-vault-tooling-gotestsum-linux-amd64-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-1"
+      ],
+      "dependency_repair_rationale": "Exact same-platform reporter consumed by the queued native matrix in the same attempt."
+    },
+    {
+      "id": "evidence-candidate-current",
+      "class": "evidence-candidate",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/release-evidence.yml"
+      ],
+      "name_regex": "^env-vault-release-evidence-candidate-(v[0-9]+[.][0-9]+[.][0-9]+)-([0-9a-f]{40})-[1-9][0-9]*-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 2,
+      "examples": [
+        "env-vault-release-evidence-candidate-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-101-2"
+      ],
+      "dependency_repair_rationale": "Same-attempt handoff from read-scoped assembly to the write-scoped evidence append job."
+    },
+    {
+      "id": "homebrew-bridge-current",
+      "class": "homebrew-bridge",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/publish-homebrew-bridge.yml"
+      ],
+      "name_regex": "^env-vault-homebrew-bridge-(v[0-9]+[.][0-9]+[.][0-9]+)-([0-9a-f]{40})-[1-9][0-9]*-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 2,
+      "examples": [
+        "env-vault-homebrew-bridge-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-101-attempt-1"
+      ],
+      "dependency_repair_rationale": "Operator dispatch and repair-audit handoff; health re-verifies live state instead of downloading it."
+    },
+    {
+      "id": "legacy-diagnostic-current",
+      "class": "legacy-diagnostic",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/legacy-rebuild.yml"
+      ],
+      "name_regex": "^env-vault-legacy-diagnostic-(v[0-9]+[.][0-9]+[.][0-9]+)-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)-run-[1-9][0-9]*-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-legacy-diagnostic-v0.0.7-linux-amd64-run-101-attempt-1"
+      ],
+      "dependency_repair_rationale": "Observation-only diagnostic with no publication or repair authority."
+    },
+    {
+      "id": "legacy-diagnostic-history",
+      "class": "legacy-diagnostic",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/legacy-rebuild.yml"
+      ],
+      "name_regex": "^env-vault-legacy-diagnostic-(v[0-9]+[.][0-9]+[.][0-9]+)-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)-run-[1-9][0-9]*$",
+      "attempt_resolution": "attempt_interval",
+      "attempt_capture": 0,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-legacy-diagnostic-v0.0.7-linux-amd64-run-101"
+      ],
+      "dependency_repair_rationale": "Pre-standardization observation-only diagnostic resolved solely by one exact attempt interval."
+    },
+    {
+      "id": "native-plain-history",
+      "class": "native-release",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/build-binaries.yml",
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)$",
+      "attempt_resolution": "attempt_interval",
+      "attempt_capture": 0,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-darwin-amd64",
+        "env-vault-linux-amd64",
+        "env-vault-windows-amd64"
+      ],
+      "dependency_repair_rationale": "Historical native payload without an attempt token; cleanup eligibility requires a unique collected attempt interval."
+    },
+    {
+      "id": "native-release-current",
+      "class": "native-release",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-release-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-release-linux-amd64-attempt-1"
+      ],
+      "dependency_repair_rationale": "Exact-source planning, publisher, evidence, and admissible no-rebuild repair input."
+    },
+    {
+      "id": "operational-contract-current",
+      "class": "operational-contract",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/build-binaries.yml"
+      ],
+      "name_regex": "^env-vault-release-contract-([0-9a-f]{40})-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 1,
+      "examples": [
+        "env-vault-release-contract-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-1"
+      ],
+      "dependency_repair_rationale": "Digest-bound publisher contract consumed across all same-attempt publication and health jobs."
+    },
+    {
+      "id": "promotion-manifest-current",
+      "class": "promotion-manifest",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-promotion-([0-9a-f]{40})-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 1,
+      "examples": [
+        "env-vault-promotion-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-1"
+      ],
+      "dependency_repair_rationale": "Exact promotion authority consumed by planning, publisher, evidence, and no-rebuild repair."
+    },
+    {
+      "id": "promotion-platform-current",
+      "class": "promotion-platform",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "name_regex": "^env-vault-promotion-platform-(darwin-amd64|darwin-arm64|linux-amd64|linux-arm64|windows-amd64)-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-promotion-platform-linux-amd64-attempt-1"
+      ],
+      "dependency_repair_rationale": "Platform proof consumed by the gate and audited by planning, publisher, evidence, and bootstrap repair."
+    },
+    {
+      "id": "publisher-bundle-current",
+      "class": "publisher-bundle",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/build-binaries.yml"
+      ],
+      "name_regex": "^env-vault-publisher-bundle-([0-9a-f]{40})-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 1,
+      "examples": [
+        "env-vault-publisher-bundle-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-1"
+      ],
+      "dependency_repair_rationale": "Same-attempt release input and exact admissible no-rebuild bootstrap source."
+    },
+    {
+      "id": "release-assets-bootstrap-current",
+      "class": "release-assets-bootstrap",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/bootstrap-release-assets.yml"
+      ],
+      "name_regex": "^env-vault-release-assets-bootstrap-(v[0-9]+[.][0-9]+[.][0-9]+)-([0-9a-f]{40})-[1-9][0-9]*-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 2,
+      "examples": [
+        "env-vault-release-assets-bootstrap-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-101-attempt-1"
+      ],
+      "dependency_repair_rationale": "Exact no-rebuild bootstrap result consumed by the Homebrew bridge and operator repair audit."
+    },
+    {
+      "id": "release-evidence-v1-durable",
+      "class": "release-evidence",
+      "lifecycle": "durable",
+      "workflow_paths": [
+        ".github/workflows/release-evidence.yml"
+      ],
+      "name_regex": "^env-vault-release-evidence-(v[0-9]+[.][0-9]+[.][0-9]+)-([0-9a-f]{40})-publisher-[1-9][0-9]*-attempt-[1-9][0-9]*-evidence-[1-9][0-9]*-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-release-evidence-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-publisher-101-attempt-1-evidence-202-2"
+      ],
+      "dependency_repair_rationale": "Durable supported legacy-format offline replay artifact; never cleanup eligible."
+    },
+    {
+      "id": "release-evidence-v2-durable",
+      "class": "release-evidence",
+      "lifecycle": "durable",
+      "workflow_paths": [
+        ".github/workflows/release-evidence.yml"
+      ],
+      "name_regex": "^env-vault-release-evidence-v2-(v[0-9]+[.][0-9]+[.][0-9]+)-([0-9a-f]{40})-publisher-[1-9][0-9]*-attempt-[1-9][0-9]*-evidence-[1-9][0-9]*-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 3,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-release-evidence-v2-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-publisher-101-attempt-1-evidence-202-2"
+      ],
+      "dependency_repair_rationale": "Durable compact offline replay artifact; never cleanup eligible."
+    },
+    {
+      "id": "release-observation-current",
+      "class": "release-observation",
+      "lifecycle": "durable",
+      "workflow_paths": [
+        ".github/workflows/build-binaries.yml"
+      ],
+      "name_regex": "^env-vault-release-observation-(v[0-9]+[.][0-9]+[.][0-9]+)-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-release-observation-v1.2.3-attempt-1"
+      ],
+      "dependency_repair_rationale": "Durable publisher health observation consumed by queued evidence and release audit."
+    },
+    {
+      "id": "release-please-recovery-history",
+      "class": "release-please-recovery",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/release-please.yml"
+      ],
+      "name_regex": "^env-vault-release-please-recovery-planning-[1-9][0-9]*-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 1,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-release-please-recovery-planning-101-attempt-1"
+      ],
+      "dependency_repair_rationale": "Completed exceptional-recovery diagnostic retained only by exact protected source identity."
+    },
+    {
+      "id": "release-settings-current",
+      "class": "release-settings",
+      "lifecycle": "superseded-eligible",
+      "workflow_paths": [
+        ".github/workflows/release-please.yml"
+      ],
+      "name_regex": "^env-vault-release-settings-([0-9a-f]{40})-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 0,
+      "referenced_source_sha_capture": 1,
+      "examples": [
+        "env-vault-release-settings-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-1"
+      ],
+      "dependency_repair_rationale": "Exact pre-tag protection proof consumed by publisher metadata/health and transitively by evidence."
+    },
+    {
+      "id": "spdx-sbom-current",
+      "class": "spdx-sbom",
+      "lifecycle": "durable",
+      "workflow_paths": [
+        ".github/workflows/build-binaries.yml"
+      ],
+      "name_regex": "^env-vault-sbom-(v[0-9]+[.][0-9]+[.][0-9]+)-attempt-([1-9][0-9]*)$",
+      "attempt_resolution": "name_capture",
+      "attempt_capture": 2,
+      "referenced_version_capture": 1,
+      "referenced_source_sha_capture": 0,
+      "examples": [
+        "env-vault-sbom-v1.2.3-attempt-1"
+      ],
+      "dependency_repair_rationale": "SPDX workflow artifact is explicitly outside cleanup scope and retained for offline supply-chain audit."
+    }
+  ]
+}

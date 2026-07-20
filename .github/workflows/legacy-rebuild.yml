@@ -172,7 +172,7 @@ jobs:
       - name: Upload diagnostic-only result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: env-vault-legacy-diagnostic-${{ inputs.version }}-${{ matrix.id }}-run-${{ github.run_id }}
+          name: env-vault-legacy-diagnostic-${{ inputs.version }}-${{ matrix.id }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: diagnostic
           if-no-files-found: error
           retention-days: 7

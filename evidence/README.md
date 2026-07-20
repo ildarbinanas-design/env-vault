@@ -36,5 +36,14 @@ release-pipeline restart. It preserves the exact main, generated release PR,
 and failed immutable `v0.0.8` tuples without turning remote observation into a
 networked checker responsibility.
 
+Stage-5 Actions artifact cleanup uses a separate compact reviewed namespace:
+`actions-artifact-cleanups/objects/sha256/<raw-sha256>.json.gz` contains the
+exact canonical decision manifest in ADR-0003-compatible stored gzip, and
+`actions-artifact-cleanups/manifests/<semantic-sha256>.summary.json` binds its
+semantic/raw/gzip identities, sizes, and totals. A small reviewed PR may add
+only those no-secret files after independent offline replay. Raw API pages,
+snapshots, and live-fence workspaces remain outside Git, and the package alone
+does not authorize deletion.
+
 See [`RELEASING.md`](../RELEASING.md) for the promotion, metrics, repair, and
 post-release verification contracts.

@@ -170,7 +170,7 @@ func (c *Client) Preflight(ctx context.Context) (CapabilitiesDocument, *Transpor
 	ghVersion := c.capabilityVersion
 	mutationInput := c.mutationInput
 	c.capabilityMu.Unlock()
-	capabilities := []string{"strict_raw_rest_get", "complete_pagination", "actions_attempt_identity", "git_blob_exact_bytes", "atomic_no_clobber_output", "bounded_request_time", "bounded_operation_time", "bounded_aggregate_response_bytes"}
+	capabilities := []string{"strict_raw_rest_get", "complete_pagination", "actions_attempt_identity", "git_blob_exact_bytes", "one_shot_actions_artifact_delete", "atomic_no_clobber_output", "bounded_request_time", "bounded_operation_time", "bounded_aggregate_response_bytes"}
 	if mutationInput {
 		capabilities = append(capabilities, "one_shot_git_data_mutation")
 	}

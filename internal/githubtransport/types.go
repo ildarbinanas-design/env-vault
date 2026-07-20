@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	TransportVersion = "1.2.0"
+	TransportVersion = "1.3.0"
 	APIVersion       = "2022-11-28"
 	Host             = "github.com"
 

@@ -2,8 +2,8 @@
 
 - Status: accepted
 - Date: 2026-07-17
-- Scope: release-only GitHub reads, workflow/run/job/attempt identity, and the
-  typed v2 evidence Git-data mutation boundary
+- Scope: release-only GitHub reads, workflow/run/job/attempt identity, typed v2
+  evidence Git-data mutation, and bounded Actions artifact deletion transport
 
 ## Context
 
@@ -63,6 +63,15 @@ I/O. Success requires a strict operation-specific response body. Any observed
 reconciliation. Indeterminate blob or reference outcomes can proceed only
 through a fresh exact read reconciliation; ambiguous tree and commit creation
 fail closed.
+
+ADR 0007 adds one independent closed shape to the same one-shot adapter: exact
+`DELETE repos/OWNER/REPO/actions/artifacts/ID`, expected status `204`, with the
+request body omitted. Success is only an exactly empty 204. The adapter still
+pins host/API version, performs one request, never retries, and returns the same
+typed outcomes. Other Actions deletes—including workflow runs—and all adjacent
+DELETE endpoints remain outside the allowlist. Ambiguous or non-success
+artifact deletion is reconciled by at most one checked exact-ID read in the
+bounded caller, never by replaying DELETE.
 
 `scripts/release/releasetransport.sh` is the general launcher and
 `gh-api-read.sh` is its GET compatibility adapter. CI jobs build the binary once
