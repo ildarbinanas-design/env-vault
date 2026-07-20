@@ -65,7 +65,7 @@ jobs:
 
       - name: Set up Go for release-attempt inspection
         if: steps.classify.outputs.publish == 'true'
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -232,7 +232,7 @@ jobs:
           ref: ${{ needs.inspect.outputs.source_sha }}
           persist-credentials: "false"
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -397,7 +397,7 @@ jobs:
           printf '%s\n' "$classification" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go for release planning
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -409,7 +409,7 @@ jobs:
           echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
 
       - name: Set up Go for the reviewed listener control plane
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: release-control-plane/go.mod
 

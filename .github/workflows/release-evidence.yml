@@ -56,7 +56,7 @@ jobs:
           persist-credentials: "false"
 
       - name: Set up Go for the exact publisher source
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -73,7 +73,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Set up Go for the reviewed listener control plane
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: release-control-plane/go.mod
 
@@ -673,7 +673,7 @@ jobs:
           persist-credentials: "false"
 
       - name: Set up Go for the exact publisher source
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -685,7 +685,7 @@ jobs:
           go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck
 
       - name: Set up Go for the reviewed evidence publisher
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: evidence-tooling/go.mod
 
