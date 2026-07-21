@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.1.0...v0.1.1) (2026-07-21)
+
+
+### Documentation
+
+* record delayed Actions billing verification ([#63](https://github.com/ildarbinanas-design/env-vault/issues/63)) ([b48fe6a](https://github.com/ildarbinanas-design/env-vault/commit/b48fe6a16c4201190d55254c550d53fbef3adc7b))
+
 ## [0.1.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.18...v0.1.0) (2026-07-20)
 
 
