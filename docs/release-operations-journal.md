@@ -3399,3 +3399,101 @@ recorded mutation time. The common classification reason is
 | `8458762357` | `29736925215/1` | 61214 | `DELETE_SUPERSEDED` | `2026-07-20T18:38:37.102037Z` | `deleted (HTTP 204)` |
 | `8458771233` | `29736925215/1` | 65007 | `DELETE_SUPERSEDED` | `2026-07-20T18:38:37.852114Z` | `deleted (HTTP 204)` |
 | `8459066323` | `29736925215/1` | 7384 | `DELETE_SUPERSEDED` | `2026-07-20T18:38:38.672483Z` | `deleted (HTTP 204)` |
+
+## OP-0036 — Delayed Actions Billing/Usage observation and v0.1.0 closure
+
+- **UTC:** `2026-07-21T04:05:24Z`
+- **Repository/scope:** GitHub Free account `ildarbinanas-design`, public
+  `ildarbinanas-design/env-vault`; delayed read-only Billing/Usage checkpoint,
+  closure of the authorized Actions artifact cleanup and its one-time rerun,
+  and the completed `v0.1.0` release chain. No new operation was authorized by
+  this observation.
+- **Action and reason:** Observed account Billing/Usage and repository Actions
+  settings after the documented lag window, then independently collected the
+  current public artifact summary. The observation recorded already-completed
+  exact operations without changing external state.
+- **Billing/Usage observation:** The account overview displayed Actions
+  billable `$0`, `$112.46` consumed minus `$112.46` discounts, and `47 min`
+  used of `2,000 min` included. Its rounded storage widget displayed `0 GB
+  used / 0.5 GB included`, so the displayed headroom was `0.5 GB` only at that
+  UI precision. With the exact UI filter
+  `repo:ildarbinanas-design/env-vault`, current-month Actions storage was
+  `232.07 GB-hr` at `$0.000336` per unit, `$0.08` gross and `$0` billed; the
+  repository overview total was `$107.89` gross. GB-hours, rounded capacity,
+  and current artifact bytes are distinct measures, so no finer billing
+  headroom is inferred.
+- **Current artifact observation:** At `2026-07-21T04:03:55Z`, a complete
+  public Actions API collection returned 241 unique, unexpired artifacts
+  totaling 327,875,348 bytes. These include artifacts created after OP-0035 by
+  the journal and `v0.1.0` release chains; they were observed only. No artifact
+  or workflow run was deleted, expired, rerun, or otherwise changed.
+- **Budget/settings invariant:** The account Product Actions budget remained
+  `$0 spent / $0 budget` with `Stop usage: Yes`; included-usage alerts remained
+  enabled. Repository artifact/log retention remained 90 days. Actions
+  permissions remained `Allow all actions and reusable workflows`, pinning to
+  a full-length commit SHA remained disabled, fork approval remained required
+  for first-time contributors, the workflow token default remained read-only
+  for repository contents and packages, and workflow PR creation/approval
+  remained disabled. No Save or action control was used. No billing, payment,
+  budget, retention, App, permission, environment, ruleset, or repository
+  setting changed.
+- **Cleanup identity:** Authority manifest SHA-256
+  `2f499182cc39e61e8934efba4ac3a92761d053f8f5b94da4a1e0bf95f1c1f531`
+  authorized and deleted exactly 2,102 artifacts totaling 2,967,692,148 bytes.
+  Immediate API closure was 162 artifacts totaling 215,057,190 bytes: all
+  2,102 DELETE IDs absent, all 114 authority KEEP records totaling 139,570,892
+  bytes present, and all 48 outside-authority records totaling 75,486,298 bytes
+  preserved.
+- **PR #62 and rerun gate:** [PR #62](https://github.com/ildarbinanas-design/env-vault/pull/62)
+  head `9878c6014c3a48418530a24d5ae6198cac198d0c` was squash-merged as
+  `b8bda393a634924f4b84a5d8c98a27051880310c`. [CI
+  `29769859477/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29769859477)
+  attempt 1 had one classified Windows `CONFIG_LOCKED` transient. The exact
+  confirmation `ПОДТВЕРЖДАЮ ONE-TIME FULL RERUN ACTIONS RUN 29769859477 HEAD 9878c6014c3a48418530a24d5ae6198cac198d0c`
+  authorized only one full rerun of
+  that run/head; attempt 2 succeeded and all rerun authority was consumed.
+- **v0.1.0 authorization and merge:** The exact confirmation
+  `ПОДТВЕРЖДАЮ RELEASE v0.1.0 PR #57 SHA 3571e9472a7a2f7c529852365c93b46b30c8d158`
+  authorized only that unchanged
+  [PR #57](https://github.com/ildarbinanas-design/env-vault/pull/57) proposal.
+  The checked-in atomic wrapper created exactly one canonical authorization
+  comment and squash-merged it as source
+  `3db426262d230bee0aa135ea58e9ec0dbe3cb51c`; that release authority was
+  consumed.
+- **v0.1.0 terminal chain:** Exact-source [main CI
+  `29779532885/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29779532885),
+  [CodeQL `29779532151/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29779532151),
+  [planning `29780539919/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29780539919),
+  and [publisher `29780615215/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29780615215)
+  succeeded without rerun, repair, or manual dispatch. Lightweight tag
+  `v0.1.0` resolves exactly to the source. Stable Release ID `357005647`
+  contains exactly ten contract assets; all five archive/checksum pairs and
+  five SLSA plus five SPDX 2.3 attestations verified against the same source
+  and publisher.
+- **Tap and durable evidence:** Homebrew [PR #12](https://github.com/ildarbinanas-design/homebrew-tap/pull/12)
+  head `e6c23fcb19ffefd4db09a40df32005d60943ba67` passed [PR CI
+  `29780938186/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29780938186)
+  and was merged as tap main
+  `50c30f64ad03e817077b996540b77e56c49cac14`; [post-merge CI
+  `29781040954/1`](https://github.com/ildarbinanas-design/homebrew-tap/actions/runs/29781040954)
+  succeeded. [Evidence `29781285373/1`](https://github.com/ildarbinanas-design/env-vault/actions/runs/29781285373)
+  succeeded and fast-forwarded the append-only tip to
+  `3eb73b2fc53d32f34065be3bfb07872e5daecce1` from sole parent
+  `f7890191fe9883922141ca5e002c860860b36b07`; bundle SHA-256 is
+  `b5c25e1c98a3305721f366da195c9185eff0afd2c3f813faeed9a6a8b16864a9`.
+  Exact-source offline replay passed, and `v0.0.18` remained unchanged.
+- **Result and authorization boundary:** The authorized cleanup, consumed
+  one-time rerun, and authorized `v0.1.0` publication are closed. This record
+  supplies no new artifact-deletion, workflow-rerun, dispatch, repair,
+  release, tag, asset, attestation, SBOM, evidence, or tap authority. Any
+  future Release Please proposal requires a new exact tuple confirmation.
+- **Minimum permission surface:** Existing authenticated account-level
+  Billing read and repository Actions/settings read in the browser, plus
+  unauthenticated public repository metadata and Actions reads. No Actions or
+  Administration write, permission expansion, settings mutation, or bypass.
+- **Interaction:** Existing signed-in browser session for this read-only
+  Billing/settings checkpoint, plus public GitHub API and independent read-only
+  audits. Earlier browser and email OTP interaction was used only for GitHub
+  sudo verification that enabled the exact authorized PR #57 operation; this
+  checkpoint required no new login, email, or OTP access. No OTP, token or
+  prefix, mailbox content, cookie, or other credential material is recorded.
