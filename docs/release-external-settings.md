@@ -225,27 +225,29 @@ IFS= read -rs TOKEN            # paste the token; input stays hidden
 export GH_TOKEN="$TOKEN"
 ```
 
-Release-planning token — all five must hold:
+Release-planning token — all four must hold:
 
 ```bash
 gh api repos/ildarbinanas-design/env-vault --jq .full_name          # the repository is reachable
 gh api repos/ildarbinanas-design/env-vault/rulesets --jq length     # 3 — proves Administration: Read
 gh api repos/ildarbinanas-design/env-vault --jq .permissions.push   # true — proves Contents write
 gh api 'repos/ildarbinanas-design/env-vault/pulls?per_page=1' >/dev/null   # pull requests readable
-gh api repos/ildarbinanas-design/homebrew-tap --jq .permissions.push       # false — no write elsewhere
 ```
 
 The ruleset probe is the important one: it is the capability `GITHUB_TOKEN`
 cannot be granted at all, and `verify-repository-release-settings.sh` depends
 on it.
 
-The last probe checks *write* capability, not readability. Both repositories
-are public and a fine-grained token can always read a public repository
-regardless of its selected scope, so a successful read proves nothing about
-scope. `.permissions.push` is true only for a repository the token was actually
-granted, which makes it the real single-repository discriminator.
+Single-repository scope is **not** checkable this way. Both repositories are
+public, so a fine-grained token can always read the other one; and
+`.permissions.push` reports the caller's owner role rather than the token's
+grant, so it shows write access even for a correctly scoped token. Verify the
+selected repositories on the token's own settings page
+(<https://github.com/settings/personal-access-tokens>), which states them
+authoritatively — that page is the replacement for the retired
+installation-scope audit.
 
-Homebrew tap token — all five must hold:
+Homebrew tap token — all four must hold:
 
 ```bash
 gh api repos/ildarbinanas-design/homebrew-tap --jq .full_name
@@ -253,7 +255,6 @@ gh api repos/ildarbinanas-design/homebrew-tap/actions/workflows --jq '.workflows
                                                 # includes .github/workflows/test-formula.yml
 gh api repos/ildarbinanas-design/homebrew-tap --jq .permissions.push       # true
 gh api 'repos/ildarbinanas-design/homebrew-tap/pulls?per_page=1' >/dev/null
-gh api repos/ildarbinanas-design/env-vault --jq .permissions.push          # false
 ```
 
 The workflow probe doubles as a contract cross-check: the observed path must
