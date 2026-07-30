@@ -232,12 +232,18 @@ gh api repos/ildarbinanas-design/env-vault --jq .full_name          # the reposi
 gh api repos/ildarbinanas-design/env-vault/rulesets --jq length     # 3 — proves Administration: Read
 gh api repos/ildarbinanas-design/env-vault --jq .permissions.push   # true — proves Contents write
 gh api 'repos/ildarbinanas-design/env-vault/pulls?per_page=1' >/dev/null   # pull requests readable
-gh api repos/ildarbinanas-design/homebrew-tap                       # MUST fail — single-repository scope
+gh api repos/ildarbinanas-design/homebrew-tap --jq .permissions.push       # false — no write elsewhere
 ```
 
 The ruleset probe is the important one: it is the capability `GITHUB_TOKEN`
 cannot be granted at all, and `verify-repository-release-settings.sh` depends
 on it.
+
+The last probe checks *write* capability, not readability. Both repositories
+are public and a fine-grained token can always read a public repository
+regardless of its selected scope, so a successful read proves nothing about
+scope. `.permissions.push` is true only for a repository the token was actually
+granted, which makes it the real single-repository discriminator.
 
 Homebrew tap token — all five must hold:
 
@@ -247,7 +253,7 @@ gh api repos/ildarbinanas-design/homebrew-tap/actions/workflows --jq '.workflows
                                                 # includes .github/workflows/test-formula.yml
 gh api repos/ildarbinanas-design/homebrew-tap --jq .permissions.push       # true
 gh api 'repos/ildarbinanas-design/homebrew-tap/pulls?per_page=1' >/dev/null
-gh api repos/ildarbinanas-design/env-vault                                 # MUST fail
+gh api repos/ildarbinanas-design/env-vault --jq .permissions.push          # false
 ```
 
 The workflow probe doubles as a contract cross-check: the observed path must
