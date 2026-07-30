@@ -40,9 +40,28 @@ own trajectory, disconnected from that goal.
   "does this serve PersonalOS" check before being picked up — see backlog
   update in the same commit as this ADR.
 
+### Exceptions (added 2026-07-30, after `docs/refactor-decision-log.md` review)
+
+- **Structural necessity to keep an existing invariant alive is not "new
+  scope"** and does not require a PersonalOS consumer or security
+  justification. Concretely: `docs/release-refactor-backlog.md` item 11
+  (evidence-ledger checkpoint/Merkle design) is explicitly exempt from this
+  freeze — the bounded evidence-ledger validation window (64 commits, ~61
+  slots remaining as of this ADR) will hard-fail future releases on append
+  if exhausted before that design lands. This is maintenance of an already
+  -accepted guarantee (ADR 0003), not release-engineering ceremony, and may
+  proceed without further sign-off.
+- **"Security requirement" (used above and in `backlog.md` P1/P2 gating)
+  means:** a concrete, already-exploited or documented vulnerability or
+  credential/secret exposure (e.g. tracked in `SECURITY.md` or an incident
+  record) — not a general "this reduces attack surface" or "this is more
+  secure by design" argument. General hardening arguments do not, by
+  themselves, unfreeze a P1/P2 item or a `release-refactor-backlog.md` item.
+
 ## Consequences
 
 - No new release/CI/evidence-ledger PRs land here without either a security
-  fix or a concrete PersonalOS consumer driving the requirement.
+  fix (as narrowly defined above), a concrete PersonalOS consumer, or the
+  structural-necessity exception above.
 - If no PersonalOS component adopts `env-vault` within a reasonable window,
   the "keep" verdict should be revisited.
