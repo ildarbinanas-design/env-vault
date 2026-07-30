@@ -44,7 +44,6 @@ require_open_exact_pull_request() {
   jq -e \
     --arg repository "$repository" \
     --arg branch "$release_branch" \
-    --arg author "${release_app_slug}[bot]" \
     --arg title "$RELEASE_PR_TITLE_PREFIX$version" \
     --arg base "$RELEASE_PLEASE_TARGET_BRANCH" \
     --arg header "$RELEASE_PR_HEADER" \
@@ -62,7 +61,6 @@ require_open_exact_pull_request() {
       .head.ref == $branch and
       .head.repo.full_name == $repository and
       .head.sha == $head and
-      .user.login == $author and
       .title == $title and
       ((.body // "") | contains($header)) and
       ((.body // "") | contains("This PR was generated with Release Please.")) and
@@ -76,7 +74,6 @@ require_exact_merged_pull_request() {
   jq -e \
     --arg repository "$repository" \
     --arg branch "$release_branch" \
-    --arg author "${release_app_slug}[bot]" \
     --arg title "$RELEASE_PR_TITLE_PREFIX$version" \
     --arg head "$expected_head_sha" \
     --arg base "$initial_base_sha" \
@@ -95,7 +92,6 @@ require_exact_merged_pull_request() {
       .head.ref == $branch and
       .head.repo.full_name == $repository and
       .head.sha == $head and
-      .user.login == $author and
       .title == $title and
       ((.body // "") | contains($header)) and
       ((.body // "") | contains("This PR was generated with Release Please.")) and
@@ -167,7 +163,7 @@ require_verified_proposal() {
   local output proposal_sha proposal_base proposal_version attempt verified=false
 
   for attempt in 1 2 3; do
-    if output=$(GITHUB_REPOSITORY="$repository" RELEASE_APP_SLUG="$release_app_slug" \
+    if output=$(GITHUB_REPOSITORY="$repository" \
       "$SCRIPT_DIR/verify-release-proposal.sh" "$pr_number" "$expected_head_sha"); then
       verified=true
       break
@@ -445,7 +441,6 @@ release_require_repository "$repository"
 [[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] ||
   release_die "repository differs from the typed operational release projection"
 
-release_app_slug=$RELEASE_PLANNING_APP_SLUG
 main_required_checks=$(jq -cer '
   .main_required_checks |
   select(type == "array" and length > 0) |

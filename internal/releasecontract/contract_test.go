@@ -178,20 +178,17 @@ func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
 		{ID: "homebrew_bridge", Name: "publish-homebrew-bridge", File: "publish-homebrew-bridge.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"homebrew_bridge"}},
 		{ID: "release_evidence", Name: "release-evidence", File: "release-evidence.yml", Events: []string{"workflow_run"}, Jobs: []string{"assemble", "publish"}},
 		{ID: "legacy_rebuild", Name: "legacy-rebuild", File: "legacy-rebuild.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"resolve", "diagnostic"}},
-		{ID: "planning_app_audit", Name: "audit-release-planning-app", File: "audit-release-planning-app.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"scope"}},
-		{ID: "tap_app_audit", Name: "audit-release-app", File: "audit-release-app.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"scope"}},
 		{ID: "dependency_review", Name: "Dependency review", File: "dependency-review.yml", Events: []string{"pull_request"}, Jobs: []string{"dependency-review"}},
 		{ID: "pr_title", Name: "pr-title", File: "pr-title.yml", Events: []string{"pull_request"}, Jobs: []string{"pr-title"}},
 	}
 	if !reflect.DeepEqual(contract.Workflows, wantWorkflows) {
 		t.Fatalf("workflows=%+v", contract.Workflows)
 	}
-	wantApps := []App{
-		{ID: "release_planning", Slug: "env-vault-release-planning", RepositoryID: "source", Environment: "release-planning", AuditWorkflow: "planning_app_audit"},
-		{ID: "homebrew_tap", Slug: "env-vault-tap-release", RepositoryID: "homebrew_tap", Environment: "release", AuditWorkflow: "tap_app_audit", CIWorkflowFile: "test-formula.yml", CIWorkflowName: "test-formula"},
+	if len(contract.Apps) != 0 {
+		t.Fatalf("apps=%+v, want none: release automation no longer uses GitHub Apps", contract.Apps)
 	}
-	if !reflect.DeepEqual(contract.Apps, wantApps) {
-		t.Fatalf("apps=%+v", contract.Apps)
+	if contract.Homebrew.TapCIWorkflowFile != "test-formula.yml" || contract.Homebrew.TapCIWorkflowName != "test-formula" {
+		t.Fatalf("homebrew tap CI identity=%+v", contract.Homebrew)
 	}
 	wantRepairActions := []RepairAction{
 		{ID: "rerun-ci-attempt", ActionCode: "rerun_all_jobs", ResumeStage: "source_quality", Rebuilds: true, PublicationEligible: true},
@@ -422,8 +419,8 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"missing recovery action": func(c *Contract) {
 			c.ActionCodes = c.ActionCodes[:len(c.ActionCodes)-1]
 		},
-		"app slug underscore": func(c *Contract) { c.Apps[0].Slug = "env_vault_release_planning" },
-		"missing reason":      func(c *Contract) { c.ReasonCodes = c.ReasonCodes[1:] },
+		"tap CI workflow file underscore": func(c *Contract) { c.Homebrew.TapCIWorkflowFile = "test_formula.yml" },
+		"missing reason":                  func(c *Contract) { c.ReasonCodes = c.ReasonCodes[1:] },
 		"missing recovery reason": func(c *Contract) {
 			c.ReasonCodes = c.ReasonCodes[:len(c.ReasonCodes)-1]
 		},
@@ -448,9 +445,11 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"invalid source repository": func(c *Contract) {
 			c.Repositories.Source.FullName = "env-vault"
 		},
-		"source default branch":     func(c *Contract) { c.Repositories.Source.DefaultBranch = "trunk" },
-		"same tap repository":       func(c *Contract) { c.Repositories.HomebrewTap = c.Repositories.Source },
-		"app repository id":         func(c *Contract) { c.Apps[0].RepositoryID = "homebrew_tap" },
+		"source default branch": func(c *Contract) { c.Repositories.Source.DefaultBranch = "trunk" },
+		"same tap repository":   func(c *Contract) { c.Repositories.HomebrewTap = c.Repositories.Source },
+		"reintroduced github app": func(c *Contract) {
+			c.Apps = []App{{ID: "release_planning", Slug: "env-vault-release-planning", RepositoryID: "source", Environment: "release-planning", AuditWorkflow: "planning_app_audit"}}
+		},
 		"formula path":              func(c *Contract) { c.Homebrew.FormulaPath = "Formula/other.rb" },
 		"release please branch":     func(c *Contract) { c.VersionPolicy.ReleasePlease.Branch = "release/other" },
 		"tag prefix":                func(c *Contract) { c.VersionPolicy.TagPrefix = "release-" },

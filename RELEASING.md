@@ -25,7 +25,7 @@ equivalents, and the incident matrix, see
   operational release contract. It defines the repositories/default branches,
   version and tag policy, five native platforms, ten archive/checksum assets,
   Homebrew templates, twelve workflow identities, five shared-concurrency
-  participants, App identities/environments, required checks, repair actions,
+  participants, token environments, required checks, repair actions,
   schemas, and stable action/reason/error codes.
 - [`release/history/contract.v1.json`](release/history/contract.v1.json) and
   [`release/contract-history.v2.json`](release/contract-history.v2.json) are the
@@ -90,7 +90,7 @@ GITHUB_REPOSITORY=ildarbinanas-design/env-vault \
 The wrapper uses `gh` for transport and keeps no credential. Before the only
 comment write it binds the local contract byte-for-byte to the exact remote PR
 base, validates it with the offline checker, and verifies the generated
-proposal, exact base, planning App, and exact successful name/workflow/event
+proposal, exact base, planning token, and exact successful name/workflow/event
 identities declared by that contract. It then records or idempotently reuses
 one trusted canonical comment, observes a later GitHub server second, repeats
 the proposal/base/comment/check checks, requires the same check identities,
@@ -227,7 +227,7 @@ for the exact run and commit identities.
    Homebrew formula, PR head, both tap CI gates, and the protected failed-tag
    exception. It also downloads the unique attempt-qualified settings proof
    from the exact successful planning run and replays it offline; `health`
-   never receives the planning App credential or queries Administration APIs.
+   never receives the planning token or queries Administration APIs.
 10. `release-evidence` preserves versioned machine JSON, a generated Markdown
     index, and automatic timing/retry metrics.
 
@@ -418,7 +418,7 @@ malformed even when every value independently has a valid Release shape.
 
 If an immutable tag has already produced the exact stable ten-asset Release
 and complete provenance/SPDX attestations but its Homebrew job failed in
-source-frozen tooling before formula/App/tap mutation, do not rerun the same
+source-frozen tooling before formula/tap mutation, do not rerun the same
 deterministic path. Merge the reviewed transport/bridge fix with exact-head and
 main CI green, then dispatch `publish-homebrew-bridge.yml` from that exact
 protected `main` commit. Every control/source/bootstrap/publisher/job/Release
@@ -428,8 +428,8 @@ The bridge's source permissions remain read-only. It verifies contract and
 formula parity, exact bootstrap-result pair bytes, the seven-job failed
 publisher graph, all ten assets and attestations, and absence of a deterministic
 tap branch/PR in every state/base. It rechecks protected main and tap absence
-before minting the release-environment App token, then enforces the exact tap
-base again inside `publish-homebrew-pr.sh` before branch/PR mutation. The App
+before using the release-environment tap token, then enforces the exact tap
+base again inside `publish-homebrew-pr.sh` before branch/PR mutation. The token
 is still limited to one tap repository with Actions read, Contents write, and
 Pull requests write.
 
@@ -439,7 +439,7 @@ final tap snapshot all match. Its `next_action` must be exactly
 `dispatch_tag_scoped_health`. Then dispatch one normal `repair=health` at the
 immutable tag and require health plus durable evidence success. The bridge
 must never create/move tags, create/edit Releases, upload/replace assets, create
-attestations, write evidence refs, or broaden App permissions. See
+attestations, write evidence refs, or broaden token permissions. See
 [ADR 0005](docs/adr/0005-informational-link-and-homebrew-bridge.md).
 
 ## Legacy and blocked versions
@@ -565,8 +565,8 @@ and `evidence/genesis.v1.json`. It never inherits the release source tree and
 therefore needs no Workflows permission or manual bootstrap. Every genesis
 mutation is immediately preceded by a fresh exact-source observation. A race
 is accepted only after exact read-back reconciliation. Do not pre-create a new
-ledger, replace `GITHUB_TOKEN` with a workflows-capable App/PAT, broaden either
-release App, or add a ruleset bypass.
+ledger, replace `GITHUB_TOKEN` with a workflows-capable token, broaden either
+release token, or add a ruleset bypass.
 
 The already published production ledger remains `legacy-compatible` and is
 never migrated or rewritten. Both v1 and v2 listeners validate its bounded
@@ -595,11 +595,11 @@ artifact/cache transfer time. Outputs are no-clobber regular files.
 
 ## External configuration and incidents
 
-Before a release, the release-planning App, tap App, environments, branch/tag
-rulesets, and required checks must match
+Before a release, the release-planning token, tap token, environments,
+branch/tag rulesets, and required checks must match
 [`docs/release-external-settings.md`](docs/release-external-settings.md).
-Neither App may bypass a ruleset. Only the `homebrew` job receives the tap App
-credential; supply-chain OIDC and Release writes remain separate permission
+Neither token may bypass a ruleset. Only the `homebrew` job receives the tap
+token; supply-chain OIDC and Release writes remain separate permission
 boundaries.
 
 For a wrong SHA, checksum mismatch, unsafe binary, or inconsistent published

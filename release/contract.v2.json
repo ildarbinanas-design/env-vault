@@ -197,6 +197,8 @@
   "homebrew": {
     "formula_name": "env-vault",
     "formula_path": "Formula/env-vault.rb",
+    "tap_ci_workflow_file": "test-formula.yml",
+    "tap_ci_workflow_name": "test-formula",
     "homepage_url_template": "https://github.com/{repository}",
     "release_download_url_template": "https://github.com/{repository}/releases/download/{version}/{asset}",
     "platforms": [
@@ -314,28 +316,6 @@
       ]
     },
     {
-      "id": "planning_app_audit",
-      "name": "audit-release-planning-app",
-      "file": "audit-release-planning-app.yml",
-      "events": [
-        "workflow_dispatch"
-      ],
-      "jobs": [
-        "scope"
-      ]
-    },
-    {
-      "id": "tap_app_audit",
-      "name": "audit-release-app",
-      "file": "audit-release-app.yml",
-      "events": [
-        "workflow_dispatch"
-      ],
-      "jobs": [
-        "scope"
-      ]
-    },
-    {
       "id": "dependency_review",
       "name": "Dependency review",
       "file": "dependency-review.yml",
@@ -402,24 +382,6 @@
       "cancel_in_progress": true
     }
   },
-  "apps": [
-    {
-      "id": "release_planning",
-      "slug": "env-vault-release-planning",
-      "repository_id": "source",
-      "environment": "release-planning",
-      "audit_workflow": "planning_app_audit"
-    },
-    {
-      "id": "homebrew_tap",
-      "slug": "env-vault-tap-release",
-      "repository_id": "homebrew_tap",
-      "environment": "release",
-      "audit_workflow": "tap_app_audit",
-      "ci_workflow_file": "test-formula.yml",
-      "ci_workflow_name": "test-formula"
-    }
-  ],
   "release_stages": [
     {
       "id": "source_quality",

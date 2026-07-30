@@ -10,7 +10,8 @@
   an account-level fact (github.com/settings/tokens), not something visible
   in code or docs. Requires the owner to manually check for and revoke any
   classic/fine-grained PAT created during the 2026-07-05/06 bootstrap window
-  (see ADR 0000), independent of the App-based tokens now used for releases.
+  (see ADR 0000), independent of the scoped release tokens documented in
+  `docs/release-external-settings.md`.
 
 ## P1
 
@@ -46,9 +47,11 @@ Gated by ADR 0008 (2026-07-30) — same rule as P1.
 - Default-branch manual releases with explicit semantic versions and retained tag-driven releases.
 - Pinned automated license gate before release publication.
 - Verify public GitHub repository settings after first push. **Verified
-  2026-07-30:** `.github/workflows/audit-release-planning-app.yml` mints a
-  read-only (`permission-administration: read`) App token and proves
-  repository/ruleset settings on demand (`workflow_dispatch`).
+  2026-07-30:** release planning verifies repository/ruleset settings on every
+  publication run via `scripts/release/verify-repository-release-settings.sh`
+  and seals an attempt-qualified proof. The separate on-demand App audit
+  workflow that originally proved this was retired with GitHub App
+  authentication (`docs/trim-plan-2026-07-30.md`, Phase 1).
 - Confirm no secret values in logs with regression test. **Verified
   2026-07-30:** `docs/e2e.md` — every E2E scenario creates a random sentinel
   value and a fail-closed "runner leak gate" (P5, mandatory for all

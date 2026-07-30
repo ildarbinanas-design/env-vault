@@ -93,37 +93,22 @@ its latency follow-up are recorded in items 12 and 6 respectively.
   golden fixtures, not workflow conditionals; an undeclared edge returns stable
   `INPUT_INVALID`/exit 5; the `v0.0.12` canonical output is unchanged.
 
-## 3. Reusable GitHub App identity and installation-scope audit — `frozen`
+## 3. Reusable GitHub App identity and installation-scope audit — `resolved (moot)`
 
-- **Problem and evidence:** Homebrew App identity/scope checks are repeated in
-  `build-binaries.yml` and `audit-release-app.yml`; the standalone tap audit
-  currently proves the single-repository scope, while the publisher separately
-  proves the `env-vault-tap-release` slug. The release-planning audit has another
-  similar implementation.
-- **Affected files/workflows:** `audit-release-app.yml`,
-  `audit-release-planning-app.yml`, `build-binaries.yml`,
-  `release-please.yml`, `release/contract.v2.json`, and workflow tests.
-- **Guarantee preserved:** short-lived tokens, exact App slug, exactly one
-  allowed repository, least permissions, no token or private-key output, and
-  automatic token revocation.
-- **Proposed architecture:** a pinned reusable workflow accepts only a contract
-  App ID and a permission profile, mints the minimum token, and emits a small
-  non-secret JSON proof. Callers validate the proof's contract digest and exact
-  slug/repository tuple before any mutation.
-- **Expected reduction:** 100-180 workflow LOC, 2 duplicated setup/audit jobs,
-  and 10-25 runner-seconds per publisher if the preflight proof is safely reused
-  within the same attempt.
-- **Risk:** broad reusable-workflow inputs or proof reuse across attempts could
-  expand token authority or stale the scope observation.
-- **Required tests:** wrong slug, zero/two repositories, permission addition,
-  cross-attempt proof, malformed JSON, secret redaction, post-step revocation,
-  and contract digest mismatch.
-- **Dependencies and order:** define the proof schema first; migrate read-only
-  audit workflows; only then consume the same implementation in publisher and
-  planning mutations.
-- **Acceptance criteria:** both standalone audits and both mutating workflows
-  validate the same typed proof; changing slug, scope, or permissions fails
-  before repository mutation; logs contain no credential material.
+- **Resolution (2026-07-30):** removed rather than built. Phase 1 of
+  `docs/trim-plan-2026-07-30.md` retired both GitHub Apps in favour of two
+  fine-grained, single-repository tokens held in the existing
+  `release-planning` and `release` Actions environments. With no App
+  installation there is no installation scope to audit, no App slug to pin, and
+  no private key to rotate, so the duplicated identity/scope checks this item
+  proposed to deduplicate no longer exist. Both audit workflows
+  (`audit-release-app.yml`, `audit-release-planning-app.yml`) were deleted, and
+  a workflow test now asserts that no workflow reintroduces
+  `create-github-app-token`, an App client ID, or an App private key.
+- **Trade-off accepted by the owner:** a fine-grained PAT is longer-lived than a
+  minted installation token. It is mitigated by single-repository scope, storage
+  as an environment secret, an explicit expiry, and the scheduled rotation
+  procedure in `docs/release-external-settings.md` section 10.
 
 ## 4. Typed GitHub transport and CLI compatibility boundary — `already implemented`
 

@@ -96,7 +96,7 @@ type Contract struct {
 	Workflows            []Workflow        `json:"workflows"`
 	MainRequiredChecks   []RequiredCheck   `json:"main_required_checks"`
 	Concurrency          Concurrency       `json:"concurrency"`
-	Apps                 []App             `json:"apps"`
+	Apps                 []App             `json:"apps,omitempty"`
 	ReleaseStages        []ReleaseStage    `json:"release_stages"`
 	AllowedRepairActions []RepairAction    `json:"allowed_repair_actions"`
 	ActionCodes          []string          `json:"action_codes"`
@@ -216,6 +216,8 @@ type Workflow struct {
 type Homebrew struct {
 	FormulaName                string   `json:"formula_name"`
 	FormulaPath                string   `json:"formula_path"`
+	TapCIWorkflowFile          string   `json:"tap_ci_workflow_file"`
+	TapCIWorkflowName          string   `json:"tap_ci_workflow_name"`
 	HomepageURLTemplate        string   `json:"homepage_url_template"`
 	ReleaseDownloadURLTemplate string   `json:"release_download_url_template"`
 	Platforms                  []string `json:"platforms"`
@@ -543,9 +545,14 @@ func (c Contract) Validate() error {
 	workflowIDs := make(map[string]bool)
 	workflowNames := make(map[string]bool)
 	workflowFiles := make(map[string]bool)
-	wantWorkflowIDs := []string{"ci", "quality", "planning", "publisher", "release_evidence", "legacy_rebuild", "planning_app_audit", "tap_app_audit", "dependency_review", "pr_title"}
+	wantWorkflowIDs := []string{"ci", "quality", "planning", "publisher", "release_evidence", "legacy_rebuild", "dependency_review", "pr_title"}
 	if operational {
 		wantWorkflowIDs = append(wantWorkflowIDs, "release_assets_bootstrap", "homebrew_bridge")
+	}
+	if legacy {
+		// The archived v1 contract is frozen: it still records the retired
+		// GitHub App audit workflows that the live pipeline no longer has.
+		wantWorkflowIDs = append(wantWorkflowIDs, "planning_app_audit", "tap_app_audit")
 	}
 	if len(c.Workflows) != len(wantWorkflowIDs) {
 		add("workflow count=%d, want %d", len(c.Workflows), len(wantWorkflowIDs))
@@ -589,39 +596,35 @@ func (c Contract) Validate() error {
 		add("main required checks: %v", err)
 	}
 
-	appIDs, appSlugs := map[string]bool{}, map[string]bool{}
-	if len(c.Apps) != 2 {
-		add("app count=%d, want 2", len(c.Apps))
-	}
-	for index, app := range c.Apps {
-		_, repositoryOK := c.RepositoryByID(app.RepositoryID)
-		if !idPattern.MatchString(app.ID) || !slugPattern.MatchString(app.Slug) || !repositoryOK || !idPattern.MatchString(app.Environment) || !workflowIDs[app.AuditWorkflow] {
-			add("app %d has invalid ID, slug, repository ID, environment, or audit workflow", index)
+	if operational {
+		// Release automation authenticates with scoped tokens, not GitHub Apps.
+		if len(c.Apps) != 0 {
+			add("app count=%d, want 0: release automation no longer uses GitHub Apps", len(c.Apps))
 		}
-		if app.ID == "homebrew_tap" {
-			if !workflowFile.MatchString(app.CIWorkflowFile) || !idPattern.MatchString(app.CIWorkflowName) {
-				add("homebrew_tap app must define its exact CI workflow identity")
+		if !workflowFile.MatchString(c.Homebrew.TapCIWorkflowFile) || !idPattern.MatchString(c.Homebrew.TapCIWorkflowName) {
+			add("Homebrew section must define the exact tap CI workflow identity")
+		}
+	}
+	if legacy {
+		// The archived v1 contract is frozen with its retired App registry.
+		appIDs, appSlugs := map[string]bool{}, map[string]bool{}
+		if len(c.Apps) != 2 {
+			add("archival app count=%d, want 2", len(c.Apps))
+		}
+		for index, app := range c.Apps {
+			_, repositoryOK := c.RepositoryByID(app.RepositoryID)
+			if !idPattern.MatchString(app.ID) || !slugPattern.MatchString(app.Slug) || !repositoryOK || !idPattern.MatchString(app.Environment) || !workflowIDs[app.AuditWorkflow] {
+				add("archival app %d has invalid ID, slug, repository ID, environment, or audit workflow", index)
 			}
-		} else if app.CIWorkflowFile != "" || app.CIWorkflowName != "" {
-			add("app %q must not define Homebrew tap CI identity", app.ID)
+			if appIDs[app.ID] || appSlugs[app.Slug] {
+				add("archival app %q duplicates an ID or slug", app.ID)
+			}
+			appIDs[app.ID], appSlugs[app.Slug] = true, true
 		}
-		if appIDs[app.ID] || appSlugs[app.Slug] {
-			add("app %q duplicates an ID or slug", app.ID)
-		}
-		appIDs[app.ID], appSlugs[app.Slug] = true, true
-	}
-	for appID, repositoryID := range map[string]string{
-		"release_planning": "source",
-		"homebrew_tap":     "homebrew_tap",
-	} {
-		app, ok := c.AppByID(appID)
-		if !ok || app.RepositoryID != repositoryID {
-			add("app %q must bind to repository %q", appID, repositoryID)
-		}
-	}
-	for _, required := range []string{"release_planning", "homebrew_tap"} {
-		if !appIDs[required] {
-			add("required app %q is missing", required)
+		for _, required := range []string{"release_planning", "homebrew_tap"} {
+			if !appIDs[required] {
+				add("required archival app %q is missing", required)
+			}
 		}
 	}
 

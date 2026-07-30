@@ -246,5 +246,5 @@ or conclusions.
 GitHub Billing/Usage storage reporting can lag the artifact API by **6–12
 hours**. Save the immediate complete API verification, wait that documented
 window, then record a separate Billing/Usage observation. A delayed billing
-number is not permission to change a budget, retention setting, ruleset, App
+number is not permission to change a budget, retention setting, ruleset, token
 permission, tag, Release, asset, attestation, SBOM, or evidence history.

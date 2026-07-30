@@ -490,13 +490,6 @@ jobs:
             --manifest "$release_please_manifest_path" \
             --json > "${RUNNER_TEMP}/release-please-recovery-check.json"
 
-          release_app_slug="$(jq -er '.release_app_slug |
-            select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))
-          ' "${RUNNER_TEMP}/source-contract-route.json")"
-          release_repository_name="$(jq -er '.repository.full_name |
-            split("/") | select(length == 2) | .[1] |
-            select(type == "string" and test("^[A-Za-z0-9._-]+$"))
-          ' "${RUNNER_TEMP}/source-contract-route.json")"
           platform_artifact_template="$(jq -er '.naming.platform_artifact_template |
             select(type == "string" and test("^[a-z0-9{}._-]+$"))
           ' "${RUNNER_TEMP}/source-contract-route.json")"
@@ -516,8 +509,6 @@ jobs:
           ' "$source_contract")"
 
           {
-            printf 'release_app_slug=%s\n' "$release_app_slug"
-            printf 'release_repository_name=%s\n' "$release_repository_name"
             printf 'platform_artifact_template=%s\n' "$platform_artifact_template"
             printf 'promotion_manifest_template=%s\n' "$promotion_manifest_template"
             printf 'release_please_target_branch=%s\n' "$release_please_target_branch"
@@ -753,37 +744,10 @@ jobs:
               .result == "pass"
             ' "$SNAPSHOT_DIR/promotion-verification.json" >/dev/null
 
-      - id: release-token
-        name: Mint repository-scoped release planning token
-        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ steps.release-contract.outputs.release_repository_name }}
-          permission-administration: read
-          permission-contents: write
-          permission-issues: write
-          permission-pull-requests: write
-
-      - name: Require the exact release planning App identity
-        if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
-        env:
-          ACTUAL_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
-          EXPECTED_APP_SLUG: ${{ steps.release-contract.outputs.release_app_slug }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$ACTUAL_APP_SLUG" != "$EXPECTED_APP_SLUG" ]]; then
-            echo "unexpected release planning App identity" >&2
-            exit 1
-          fi
-
       - name: Verify repository release settings and bypass policy
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
         env:
-          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLANNING_TOKEN }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
           RELEASE_SETTINGS_PROOF_OUTPUT: ${{ steps.classify.outputs.publish == 'true' && format('{0}/repository-release-settings-proof.json', runner.temp) || '' }}
           RELEASE_SETTINGS_SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
@@ -805,7 +769,7 @@ jobs:
       - name: Ensure release lifecycle labels
         if: steps.classify.outputs.publish == 'true' || steps.current.outputs.current == 'true'
         env:
-          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLANNING_TOKEN }}
         shell: bash
         run: scripts/release/ensure-release-labels.sh
 
@@ -814,7 +778,6 @@ jobs:
         if: steps.classify.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
           SOURCE_SHA: ${{ steps.classify.outputs.source_sha }}
           VERSION: ${{ steps.classify.outputs.version }}
         shell: bash
@@ -828,7 +791,7 @@ jobs:
         if: steps.classify.outputs.publish != 'true' && steps.current.outputs.current == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ steps.release-token.outputs.token }}
+          token: ${{ secrets.RELEASE_PLANNING_TOKEN }}
           target-branch: ${{ steps.release-contract.outputs.release_please_target_branch }}
           config-file: ${{ steps.release-contract.outputs.release_please_config_path }}
           manifest-file: ${{ steps.release-contract.outputs.release_please_manifest_path }}
@@ -838,7 +801,6 @@ jobs:
         if: steps.classify.outputs.publish != 'true' && steps.current.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_APP_SLUG: ${{ steps.release-token.outputs.app-slug }}
         shell: bash
         run: scripts/release/verify-release-proposal.sh
 
@@ -926,7 +888,7 @@ jobs:
       - name: Create or verify the exact release tag
         if: steps.classify.outputs.publish == 'true'
         env:
-          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLANNING_TOKEN }}
           PR_NUMBER: ${{ steps.authorize.outputs.pr_number }}
           RELEASECHECK: ${{ runner.temp }}/releasecheck
           SNAPSHOT_DIR: ${{ runner.temp }}/pretag

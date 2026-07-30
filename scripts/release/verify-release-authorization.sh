@@ -22,14 +22,12 @@ version=$1
 source_sha=$2
 label_state=$3
 repository=${GITHUB_REPOSITORY:-}
-expected_app_slug=${RELEASE_APP_SLUG:-}
 authorization_output=${RELEASE_AUTHORIZATION_OUTPUT:-}
 
 release_require_version "$version"
 release_require_repository "$repository"
 [[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || release_die "repository differs from the release contract"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || release_die "source commit SHA is malformed"
-[[ "$expected_app_slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || release_die "release App slug is missing or malformed"
 case "$label_state" in
   prepublish|tagged) ;;
   *) release_die "release pull request label state is unsupported" ;;
@@ -125,14 +123,12 @@ pulls="$probe_dir/pulls.json"
 
 expected_title="$RELEASE_PR_TITLE_PREFIX$version"
 expected_branch="$RELEASE_PLEASE_BRANCH"
-expected_author="${expected_app_slug}[bot]"
 release_pr="$probe_dir/release-pr.json"
 jq -e \
   --arg sha "$source_sha" \
   --arg repository "$repository" \
   --arg branch "$default_branch" \
   --arg head "$expected_branch" \
-  --arg author "$expected_author" \
   --arg title "$expected_title" \
   --arg header "$RELEASE_PR_HEADER" \
   --arg pending "$RELEASE_PENDING_LABEL" \
@@ -148,7 +144,6 @@ jq -e \
         .head.ref == $head and
         (.head.sha | type == "string" and test("^[0-9a-f]{40}$")) and
         .head.repo.full_name == $repository and
-        .user.login == $author and
         .title == $title and
         ((.body // "") | contains($header)) and
         ((.body // "") | contains("This PR was generated with Release Please.")) and

@@ -22,7 +22,7 @@ func TestRouteSourceContractUsesSeparateSourceAndControlRoots(t *testing.T) {
 			t.Fatal(err)
 		}
 		if route.ContractGeneration != "v2" || route.EvidenceFormat != "v2" || route.Operational == nil || route.Historical != nil ||
-			route.SchemaID != SourceRouteSchemaID || route.ReleaseAppSlug != "env-vault-release-planning" ||
+			route.SchemaID != SourceRouteSchemaID ||
 			route.ContractSemanticSHA256 != route.Operational.ContractSemanticSHA256 {
 			t.Fatalf("v2 route=%+v", route)
 		}

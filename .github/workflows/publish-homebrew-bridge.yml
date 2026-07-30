@@ -213,27 +213,19 @@ jobs:
               ([$source.workflows[] | select(.id == "ci" or .id == "publisher") | {id,name,file}] | sort_by(.id)) and
             ([$current.workflows[] | select(.id == "homebrew_bridge") | {id,name,file}] ==
               [{id:"homebrew_bridge",name:"publish-homebrew-bridge",file:"publish-homebrew-bridge.yml"}]) and
-            ([$current.apps[] | select(.id == "homebrew_tap")] | length) == 1 and
             ([$source.apps[] | select(.id == "homebrew_tap")] | length) == 1 and
-            ([$current.apps[] | select(.id == "homebrew_tap")][0]) as $current_app |
             ([$source.apps[] | select(.id == "homebrew_tap")][0]) as $source_app |
-            $current_app.repository_id == "homebrew_tap" and
             $current.repositories.homebrew_tap.full_name == $source_app.repository and
-            ({id:$current_app.id,slug:$current_app.slug,environment:$current_app.environment,
-              audit_workflow:$current_app.audit_workflow,ci_workflow_file:$current_app.ci_workflow_file,
-              ci_workflow_name:$current_app.ci_workflow_name} ==
-             {id:$source_app.id,slug:$source_app.slug,environment:$source_app.environment,
-              audit_workflow:$source_app.audit_workflow,ci_workflow_file:$source_app.ci_workflow_file,
-              ci_workflow_name:$source_app.ci_workflow_name})
+            $current.homebrew.tap_ci_workflow_file == $source_app.ci_workflow_file and
+            $current.homebrew.tap_ci_workflow_name == $source_app.ci_workflow_name
           ' release/contract.v2.json "$RUNNER_TEMP/source-contract.v1.json" >/dev/null || {
             echo "reviewed control and immutable source disagree on release/formula/tap identities" >&2
             exit 1
           }
-          tap_app=$RELEASE_HOMEBREW_APP
           tap_repository=$RELEASE_HOMEBREW_TAP_REPOSITORY
           tap_owner=${tap_repository%%/*}
           tap_name=${tap_repository#*/}
-          tap_ci_workflow=$(jq -er '.ci_workflow_file | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_.-]*\\.yml$"))' <<< "$tap_app")
+          tap_ci_workflow=$RELEASE_HOMEBREW_TAP_CI_WORKFLOW_FILE
           {
             printf 'TAP_REPOSITORY=%s\n' "$tap_repository"
             printf 'TAP_REPOSITORY_OWNER=%s\n' "$tap_owner"
@@ -580,41 +572,9 @@ jobs:
           ' <<< "$pre_token_state")
           printf 'TAP_BEFORE_SHA=%s\n' "$tap_before_sha" >> "$GITHUB_ENV"
 
-      - id: tap-token
-        name: Mint scoped Homebrew App token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: ${{ env.TAP_REPOSITORY_OWNER }}
-          repositories: ${{ env.TAP_REPOSITORY_NAME }}
-          permission-actions: read
-          permission-contents: write
-          permission-pull-requests: write
-
-      - name: Require exact Homebrew App identity and repository scope
+      - name: Recheck exact tap base with the scoped tap token before publication
         env:
-          ACTUAL_APP_SLUG: ${{ steps.tap-token.outputs.app-slug }}
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          source scripts/release/lib.sh
-          release_require_typed_contract_projection
-          app=$RELEASE_HOMEBREW_APP
-          expected_slug=$(jq -er '.slug | select(type == "string" and length > 0)' <<< "$app")
-          expected_repository=$RELEASE_HOMEBREW_TAP_REPOSITORY
-          [[ "$ACTUAL_APP_SLUG" == "$expected_slug" ]] || { echo "unexpected Homebrew App identity" >&2; exit 1; }
-          scripts/release/gh-api-read.sh "$RUNNER_TEMP/installation-repositories.json" \
-            --paginate --slurp installation/repositories
-          mapfile -t repositories < <(jq -r '.[]?.repositories[]?.full_name' "$RUNNER_TEMP/installation-repositories.json")
-          [[ "${#repositories[@]}" == "1" && "${repositories[0]:-}" == "$expected_repository" ]] || {
-            echo "Homebrew App installation scope differs from the release contract" >&2
-            exit 1
-          }
-
-      - name: Recheck exact tap base with scoped App before publication
-        env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: |
@@ -639,7 +599,7 @@ jobs:
         name: Create or reuse deterministic Homebrew pull request
         env:
           EXPECTED_TAP_BASE_SHA: ${{ env.TAP_BEFORE_SHA }}
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: >-
@@ -652,7 +612,7 @@ jobs:
       - id: tap-pr-ci
         name: Require exact Homebrew pull-request head CI
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
           TAP_CI_IDENTITY_OUTPUT: ${{ runner.temp }}/tap-pr-ci-identity.json
         run: |
@@ -665,7 +625,7 @@ jobs:
         name: Merge exact Homebrew pull-request head
         if: steps.publish-tap-pr.outputs.state == 'OPEN'
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
           PR_NUMBER: ${{ steps.publish-tap-pr.outputs.pr_number }}
         run: |
@@ -717,7 +677,7 @@ jobs:
       - id: tap-push-ci
         name: Require exact Homebrew post-merge CI
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           MERGE_SHA: ${{ steps.tap-result.outputs.merge_sha }}
           TAP_CI_IDENTITY_OUTPUT: ${{ runner.temp }}/tap-push-ci-identity.json
         run: |
@@ -732,7 +692,7 @@ jobs:
           EXPECTED_HEAD_SHA: ${{ steps.tap-result.outputs.pr_head_sha }}
           EXPECTED_MERGE_SHA: ${{ steps.tap-result.outputs.merge_sha }}
           EXPECTED_PR_NUMBER: ${{ steps.tap-result.outputs.pr_number }}
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           VERSION: ${{ inputs.version }}
         run: |

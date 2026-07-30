@@ -433,60 +433,25 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 		}
 	}
 
-	apps := make(map[string]contractApp, len(contract.Apps))
-	for _, app := range contract.Apps {
-		apps[app.ID] = app
-		auditIdentity, audit := requireWorkflow(app.AuditWorkflow)
-		if audit.Jobs["scope"].Environment != app.Environment {
-			t.Fatalf("App %s audit workflow %s environment=%q, contract=%q", app.ID, auditIdentity.File, audit.Jobs["scope"].Environment, app.Environment)
-		}
-		var checkoutRefs []string
-		for _, step := range audit.Jobs["scope"].Steps {
-			if step.Uses == checkoutAction {
-				checkoutRefs = append(checkoutRefs, step.With["ref"])
-			}
-		}
-		if !slices.Equal(checkoutRefs, []string{contract.Repositories.Source.DefaultBranch}) {
-			t.Fatalf("App %s audit checkout refs=%v, contract default=%q", app.ID, checkoutRefs, contract.Repositories.Source.DefaultBranch)
-		}
-		auditRaw := readFile(t, filepath.Join("..", ".github", "workflows", auditIdentity.File))
-		if strings.Contains(auditRaw, contract.Repositories.Source.FullName) || strings.Contains(auditRaw, contract.Repositories.HomebrewTap.FullName) {
-			t.Fatalf("App %s audit workflow retains a repository literal instead of the typed projection", app.ID)
-		}
-		repositoryVariable := map[string]string{
-			"source":       "RELEASE_SOURCE_REPOSITORY",
-			"homebrew_tap": "RELEASE_HOMEBREW_TAP_REPOSITORY",
-		}[app.RepositoryID]
-		if repositoryVariable == "" || !strings.Contains(auditRaw, repositoryVariable) || !strings.Contains(auditRaw, "release_require_typed_contract_projection") {
-			t.Fatalf("App %s audit workflow does not consume its typed repository/environment identity", app.ID)
-		}
+	// Release automation authenticates with environment-scoped tokens. No
+	// workflow may reintroduce a GitHub App install/rotation lifecycle.
+	if len(contract.Apps) != 0 {
+		t.Fatalf("contract declares %d GitHub Apps, want none", len(contract.Apps))
 	}
-	appForClientID := map[string]string{
-		"${{ vars.RELEASE_APP_CLIENT_ID }}": "release_planning",
-		"${{ vars.TAP_APP_CLIENT_ID }}":     "homebrew_tap",
-	}
-	mintCounts := map[string]int{}
 	for _, identity := range contract.Workflows {
-		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
-		for jobID, job := range wf.Jobs {
-			for _, step := range job.Steps {
-				if step.Uses != createAppTokenAction {
-					continue
-				}
-				appID, ok := appForClientID[step.With["client-id"]]
-				if !ok {
-					t.Fatalf("%s/%s mints an uncontracted App client ID %q", identity.File, jobID, step.With["client-id"])
-				}
-				app, ok := apps[appID]
-				if !ok || job.Environment != app.Environment {
-					t.Fatalf("%s/%s App %s environment=%q, contract=%q", identity.File, jobID, appID, job.Environment, app.Environment)
-				}
-				mintCounts[appID]++
+		raw := readFile(t, filepath.Join("..", ".github", "workflows", identity.File))
+		for _, marker := range []string{
+			"create-github-app-token", "APP_PRIVATE_KEY", "APP_CLIENT_ID", "app-slug",
+		} {
+			if strings.Contains(raw, marker) {
+				t.Fatalf("%s reintroduces GitHub App authentication via %q", identity.File, marker)
 			}
 		}
 	}
-	if !reflect.DeepEqual(mintCounts, map[string]int{"release_planning": 2, "homebrew_tap": 3}) {
-		t.Fatalf("App minting jobs changed without contract parity review: %v", mintCounts)
+	for _, retired := range []string{"audit-release-app.yml", "audit-release-planning-app.yml"} {
+		if _, err := os.Stat(filepath.Join("..", ".github", "workflows", retired)); !os.IsNotExist(err) {
+			t.Fatalf("retired App audit workflow %s is present again", retired)
+		}
 	}
 
 	wantSubjects := make([]string, 0, len(contract.Platforms))
@@ -939,8 +904,10 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 			}
 		}
 	}
-	if directPairSteps != 10 {
-		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 10", directPairSteps)
+	// 8 since the two retired App audit workflows, which each established a
+	// typed pair, were removed with GitHub App authentication.
+	if directPairSteps != 8 {
+		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 8", directPairSteps)
 	}
 	if activationCalls != 5 {
 		t.Fatalf("typed-contract activation calls=%d, want one for each of five native jobs", activationCalls)
@@ -1125,16 +1092,6 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 			t.Fatalf("Homebrew job missing exact-state output %q", output)
 		}
 	}
-	appToken := namedStep(t, homebrew, "Mint scoped Homebrew App token")
-	assertPermissions(t, "Homebrew App token", appToken.With, map[string]string{
-		"client-id":                "${{ vars.TAP_APP_CLIENT_ID }}",
-		"private-key":              "${{ secrets.TAP_APP_PRIVATE_KEY }}",
-		"owner":                    "${{ needs.metadata.outputs.tap_repository_owner }}",
-		"repositories":             "${{ needs.metadata.outputs.tap_repository_name }}",
-		"permission-actions":       "read",
-		"permission-contents":      "write",
-		"permission-pull-requests": "write",
-	})
 	prCI := namedStep(t, homebrew, "Require exact Homebrew pull-request head CI")
 	postMergeCI := namedStep(t, homebrew, "Require exact Homebrew post-merge CI")
 	if !containsAll(prCI.Run, "wait-tap-ci.sh", `"$HEAD_SHA" pull_request`) || !containsAll(postMergeCI.Run, "wait-tap-ci.sh", `"$MERGE_SHA" push`) {
@@ -1440,7 +1397,7 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		"event=workflow_dispatch version=${VERSION} repair=release-assets", "([.[].total_count] | unique) == [7]",
 		`{id:$homebrew,name:"homebrew",conclusion:"failure"}`,
 		"Require exact-source attestations before tap mutation", "Generate exact Homebrew formula", "skipped",
-		"Mint scoped Homebrew App token", "Create or reuse deterministic Homebrew pull request") {
+		"Create or reuse deterministic Homebrew pull request") {
 		t.Fatalf("Homebrew bridge bootstrap/publisher incident guard is incomplete: %s", incident.Run)
 	}
 
@@ -1468,30 +1425,14 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		`.state == "UNPUBLISHED"`, `printf 'TAP_BEFORE_SHA=%s`) {
 		t.Fatalf("Homebrew bridge lacks immediate control/tap recheck: %s", preToken.Run)
 	}
-	token := namedStep(t, job, "Mint scoped Homebrew App token")
-	if token.Uses != createAppTokenAction || !reflect.DeepEqual(token.With, map[string]string{
-		"client-id":                "${{ vars.TAP_APP_CLIENT_ID }}",
-		"private-key":              "${{ secrets.TAP_APP_PRIVATE_KEY }}",
-		"owner":                    "${{ env.TAP_REPOSITORY_OWNER }}",
-		"repositories":             "${{ env.TAP_REPOSITORY_NAME }}",
-		"permission-actions":       "read",
-		"permission-contents":      "write",
-		"permission-pull-requests": "write",
-	}) {
-		t.Fatalf("Homebrew bridge App token is not exactly scoped: uses=%s with=%v", token.Uses, token.With)
-	}
-	appScope := namedStep(t, job, "Require exact Homebrew App identity and repository scope")
-	if !containsAll(appScope.Run, "ACTUAL_APP_SLUG", "installation/repositories", `"${#repositories[@]}" == "1"`, "$expected_repository") {
-		t.Fatalf("Homebrew bridge App identity/scope check is incomplete: %s", appScope.Run)
-	}
-	appRecheck := namedStep(t, job, "Recheck exact tap base with scoped App before publication")
-	if appRecheck.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" || !containsAll(appRecheck.Run,
+	appRecheck := namedStep(t, job, "Recheck exact tap base with the scoped tap token before publication")
+	if appRecheck.Env["GH_TOKEN"] != "${{ secrets.HOMEBREW_TAP_TOKEN }}" || !containsAll(appRecheck.Run,
 		"--require-unpublished", `.base_sha == $base`, `.state == "UNPUBLISHED"`, "$TAP_BEFORE_SHA") {
 		t.Fatalf("Homebrew bridge does not close the pre-publication tap race: env=%v run=%s", appRecheck.Env, appRecheck.Run)
 	}
 	publish := namedStep(t, job, "Create or reuse deterministic Homebrew pull request")
 	if publish.Env["EXPECTED_TAP_BASE_SHA"] != "${{ env.TAP_BEFORE_SHA }}" ||
-		publish.Env["GH_TOKEN"] != "${{ steps.tap-token.outputs.token }}" {
+		publish.Env["GH_TOKEN"] != "${{ secrets.HOMEBREW_TAP_TOKEN }}" {
 		t.Fatalf("Homebrew bridge publication does not enforce the exact pre-token tap base: %v", publish.Env)
 	}
 
@@ -1530,9 +1471,7 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		"Download exact bootstrap result",
 		"Verify bootstrap result and complete release state before tap access",
 		"Recheck protected main and unpublished tap immediately before token",
-		"Mint scoped Homebrew App token",
-		"Require exact Homebrew App identity and repository scope",
-		"Recheck exact tap base with scoped App before publication",
+		"Recheck exact tap base with the scoped tap token before publication",
 		"Create or reuse deterministic Homebrew pull request",
 		"Require exact Homebrew pull-request head CI",
 		"Merge exact Homebrew pull-request head",
@@ -1870,58 +1809,6 @@ func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
 			t.Fatalf("legacy diagnostic workflow contains publication marker %q", forbidden)
 		}
 	}
-}
-
-func TestReleaseAppAuditWorkflowsKeepNarrowTokenScopes(t *testing.T) {
-	tapAudit := readWorkflow(t, "../.github/workflows/audit-release-app.yml")
-	assertPermissions(t, "tap App audit", tapAudit.Permissions, map[string]string{"contents": "read"})
-	assertJobIDs(t, tapAudit, "scope")
-	tapScope := tapAudit.Jobs["scope"]
-	if tapScope.Environment != "release" || tapScope.TimeoutMinutes != 5 {
-		t.Fatalf("tap App audit boundary environment=%q timeout=%d", tapScope.Environment, tapScope.TimeoutMinutes)
-	}
-	assertPermissions(t, "tap audit token", namedStep(t, tapScope, "Mint metadata-only installation token").With, map[string]string{
-		"client-id":           "${{ vars.TAP_APP_CLIENT_ID }}",
-		"private-key":         "${{ secrets.TAP_APP_PRIVATE_KEY }}",
-		"owner":               "${{ github.repository_owner }}",
-		"permission-metadata": "read",
-	})
-
-	planningAudit := readWorkflow(t, "../.github/workflows/audit-release-planning-app.yml")
-	assertPermissions(t, "planning App audit", planningAudit.Permissions, map[string]string{"contents": "read"})
-	assertJobIDs(t, planningAudit, "scope")
-	planningScope := planningAudit.Jobs["scope"]
-	if planningScope.Environment != "release-planning" || planningScope.TimeoutMinutes != 5 {
-		t.Fatalf("planning App audit boundary environment=%q timeout=%d", planningScope.Environment, planningScope.TimeoutMinutes)
-	}
-	assertPermissions(t, "planning audit token", namedStep(t, planningScope, "Mint read-only installation audit token").With, map[string]string{
-		"client-id":                 "${{ vars.RELEASE_APP_CLIENT_ID }}",
-		"private-key":               "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
-		"owner":                     "${{ github.repository_owner }}",
-		"permission-administration": "read",
-		"permission-metadata":       "read",
-	})
-	buildSettingsChecker := namedStep(t, planningScope, "Build the offline checker and strict GitHub release transport once")
-	if !containsAll(buildSettingsChecker.Run, "go build", "./cmd/releasecheck", "$RUNNER_TEMP/releasecheck", "./cmd/releasetransport", "RELEASE_TRANSPORT_BIN") {
-		t.Fatalf("planning App audit does not build the offline settings checker: %q", buildSettingsChecker.Run)
-	}
-	verifySettings := namedStep(t, planningScope, "Verify repository release settings and bypass policy")
-	if verifySettings.Env["RELEASECHECK"] != "${{ runner.temp }}/releasecheck" || verifySettings.Run != "scripts/release/verify-repository-release-settings.sh" {
-		t.Fatalf("planning App audit settings verifier is not offline-checker backed: env=%v run=%q", verifySettings.Env, verifySettings.Run)
-	}
-
-	planningWorkflow := readWorkflow(t, "../.github/workflows/release-please.yml")
-	planningToken := namedStep(t, planningWorkflow.Jobs["plan"], "Mint repository-scoped release planning token")
-	assertPermissions(t, "operational planning token", planningToken.With, map[string]string{
-		"client-id":                 "${{ vars.RELEASE_APP_CLIENT_ID }}",
-		"private-key":               "${{ secrets.RELEASE_APP_PRIVATE_KEY }}",
-		"owner":                     "${{ github.repository_owner }}",
-		"repositories":              "${{ steps.release-contract.outputs.release_repository_name }}",
-		"permission-administration": "read",
-		"permission-contents":       "write",
-		"permission-issues":         "write",
-		"permission-pull-requests":  "write",
-	})
 }
 
 func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T) {

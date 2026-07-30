@@ -284,7 +284,7 @@ _release_load_contract() {
           contract_semantic_sha256:"", contract_file_sha256:$file_sha256,
           repositories,
           version:{pattern:.version_policy.pattern,tag_prefix:.version_policy.tag_prefix,release_please:.version_policy.release_please},
-          naming,platforms,assets,homebrew,workflows,concurrency,apps,main_required_checks
+          naming,platforms,assets,homebrew,workflows,concurrency,main_required_checks
         }
       | select(
           (.repositories.source.full_name | type == "string") and
@@ -293,8 +293,8 @@ _release_load_contract() {
           (.version.pattern | type == "string") and
           (.platforms | type == "array" and length == 5) and
           (.assets | type == "array" and length == 10) and
-          (.apps | type == "array" and length == 2) and
-          (.workflows | type == "array" and length == 12) and
+          (.homebrew.tap_ci_workflow_file | type == "string" and length > 0) and
+          (.workflows | type == "array" and length == 10) and
           (.main_required_checks | type == "array" and length == 5)
         )
     ' "$RELEASE_CONTRACT_PATH") || release_die "strict operational release projection fallback failed"
@@ -377,10 +377,10 @@ _release_load_contract() {
     release_die "Homebrew homepage template is invalid"
   RELEASE_HOMEBREW_DOWNLOAD_TEMPLATE=$(jq -er '.homebrew.release_download_url_template' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
     release_die "Homebrew download URL template is invalid"
-  RELEASE_PLANNING_APP_SLUG=$(jq -er '[.apps[] | select(.id == "release_planning")] | select(length == 1) | .[0].slug' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
-    release_die "release-planning App identity is invalid"
-  RELEASE_HOMEBREW_APP=$(jq -cer '[.apps[] | select(.id == "homebrew_tap")] | select(length == 1) | .[0]' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
-    release_die "Homebrew App identity is invalid"
+  RELEASE_HOMEBREW_TAP_CI_WORKFLOW_FILE=$(jq -er '.homebrew.tap_ci_workflow_file' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
+    release_die "Homebrew tap CI workflow file is invalid"
+  RELEASE_HOMEBREW_TAP_CI_WORKFLOW_NAME=$(jq -er '.homebrew.tap_ci_workflow_name' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
+    release_die "Homebrew tap CI workflow name is invalid"
   RELEASE_ARCHIVES=()
   while IFS= read -r archive; do
     RELEASE_ARCHIVES+=("$archive")
@@ -406,7 +406,7 @@ _release_load_contract() {
   readonly RELEASE_HOMEBREW_BRIDGE_WORKFLOW_FILE RELEASE_HOMEBREW_BRIDGE_WORKFLOW_NAME RELEASE_HOMEBREW_BRIDGE_WORKFLOW_PATH
   readonly RELEASE_EVIDENCE_WORKFLOW_FILE RELEASE_EVIDENCE_WORKFLOW_NAME RELEASE_EVIDENCE_WORKFLOW_PATH
   readonly RELEASE_PR_TITLE_PREFIX RELEASE_PR_HEADER
-  readonly RELEASE_PLANNING_APP_SLUG RELEASE_HOMEBREW_APP
+  readonly RELEASE_HOMEBREW_TAP_CI_WORKFLOW_FILE RELEASE_HOMEBREW_TAP_CI_WORKFLOW_NAME
   readonly -a RELEASE_ARCHIVES RELEASE_ASSETS
 }
 
