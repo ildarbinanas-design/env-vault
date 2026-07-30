@@ -52,7 +52,7 @@ jobs:
       tap_ci_workflow: ${{ steps.resolve.outputs.tap_ci_workflow }}
       release_contract_artifact_id: ${{ steps.release-contract-artifact.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
           fetch-tags: true
@@ -338,7 +338,7 @@ jobs:
     needs: [metadata]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: "false"
 
@@ -379,7 +379,7 @@ jobs:
     outputs:
       manifest_sha256: ${{ steps.verify.outputs.manifest_sha256 }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
@@ -544,7 +544,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
@@ -661,7 +661,7 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
@@ -752,7 +752,7 @@ jobs:
 
       - name: Attest build provenance
         if: steps.attestation-state.outputs.create_provenance == 'true'
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: |
             release-dist/env-vault-linux-amd64.tar.gz
@@ -763,7 +763,7 @@ jobs:
 
       - name: Attest SPDX SBOM
         if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: |
             release-dist/env-vault-linux-amd64.tar.gz
@@ -826,7 +826,7 @@ jobs:
       pr_ci_url: ${{ steps.tap-pr-ci.outputs.run_url }}
       tap_ci_url: ${{ steps.tap-push-ci.outputs.run_url }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
@@ -1027,7 +1027,7 @@ jobs:
       attestations: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.metadata.outputs.source_sha }}
           persist-credentials: "false"
