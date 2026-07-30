@@ -18,7 +18,6 @@ type OperationalProjection struct {
 	Homebrew               Homebrew           `json:"homebrew"`
 	Workflows              []Workflow         `json:"workflows"`
 	Concurrency            Concurrency        `json:"concurrency"`
-	Apps                   []App              `json:"apps"`
 	MainRequiredChecks     []RequiredCheck    `json:"main_required_checks"`
 }
 
@@ -57,7 +56,7 @@ func (c Contract) OperationalProjection() (OperationalProjection, error) {
 		Version:            OperationalVersion{Pattern: c.VersionPolicy.Pattern, TagPrefix: c.VersionPolicy.TagPrefix, ReleasePlease: c.VersionPolicy.ReleasePlease},
 		Naming:             c.Naming, Platforms: append([]Platform(nil), c.Platforms...), Assets: append([]string(nil), c.Assets...),
 		Homebrew: homebrew, Workflows: workflows, Concurrency: concurrency,
-		Apps: append([]App(nil), c.Apps...), MainRequiredChecks: append([]RequiredCheck(nil), c.MainRequiredChecks...),
+		MainRequiredChecks: append([]RequiredCheck(nil), c.MainRequiredChecks...),
 	}, nil
 }
 

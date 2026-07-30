@@ -23,10 +23,8 @@ case $# in
 esac
 
 repository=${GITHUB_REPOSITORY:-}
-expected_app_slug=${RELEASE_APP_SLUG:-}
 release_require_repository "$repository"
 [[ "$repository" == "$RELEASE_SOURCE_REPOSITORY" ]] || release_die "repository differs from the release contract"
-[[ "$expected_app_slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || release_die "release App slug is missing or malformed"
 release_require_command gh
 release_require_command jq
 
@@ -44,7 +42,6 @@ if [[ -n "$exact_pr_number" ]]; then
   jq -e \
     --arg repository "$repository" \
     --arg branch "$branch" \
-    --arg author "${expected_app_slug}[bot]" \
     --arg head "$exact_head_sha" \
     --arg base "$RELEASE_PLEASE_TARGET_BRANCH" \
     --arg header "$RELEASE_PR_HEADER" \
@@ -58,7 +55,6 @@ if [[ -n "$exact_pr_number" ]]; then
       .head.ref == $branch and
       .head.repo.full_name == $repository and
       .head.sha == $head and
-      .user.login == $author and
       ((.body // "") | contains($header)) and
       ((.body // "") | contains("This PR was generated with Release Please.")) and
       if .state == "open" then
@@ -94,14 +90,13 @@ else
   fi
   [[ "$pull_count" == "1" ]] || release_die "exactly one open Release Please pull request is required"
 
-  jq -e --arg repository "$repository" --arg branch "$branch" --arg author "${expected_app_slug}[bot]" --arg base "$RELEASE_PLEASE_TARGET_BRANCH" --arg header "$RELEASE_PR_HEADER" --arg pending "$RELEASE_PENDING_LABEL" --arg tagged "$RELEASE_TAGGED_LABEL" '
+  jq -e --arg repository "$repository" --arg branch "$branch" --arg base "$RELEASE_PLEASE_TARGET_BRANCH" --arg header "$RELEASE_PR_HEADER" --arg pending "$RELEASE_PENDING_LABEL" --arg tagged "$RELEASE_TAGGED_LABEL" '
     [.[][]][0] |
     select(
       .base.ref == $base and
       .base.repo.full_name == $repository and
       .head.ref == $branch and
       .head.repo.full_name == $repository and
-      .user.login == $author and
       ((.body // "") | contains($header)) and
       ((.body // "") | contains("This PR was generated with Release Please.")) and
       ([.labels[].name] | index($pending) != null) and

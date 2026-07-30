@@ -49,8 +49,6 @@ jobs:
       run_release: ${{ steps.resolve.outputs.run_release }}
       run_homebrew: ${{ steps.resolve.outputs.run_homebrew }}
       tap_repository: ${{ steps.resolve.outputs.tap_repository }}
-      tap_repository_owner: ${{ steps.resolve.outputs.tap_repository_owner }}
-      tap_repository_name: ${{ steps.resolve.outputs.tap_repository_name }}
       tap_ci_workflow: ${{ steps.resolve.outputs.tap_ci_workflow }}
       release_contract_artifact_id: ${{ steps.release-contract-artifact.outputs.artifact-id }}
     steps:
@@ -119,14 +117,9 @@ jobs:
           }
           DEFAULT_BRANCH="$RELEASE_SOURCE_DEFAULT_BRANCH"
 
-          release_app_slug="$RELEASE_PLANNING_APP_SLUG"
-          export RELEASE_APP_SLUG="$release_app_slug"
-          tap_app="$RELEASE_HOMEBREW_APP"
           tap_repository="$RELEASE_HOMEBREW_TAP_REPOSITORY"
-          tap_ci_workflow="$(jq -er '.ci_workflow_file | select(type == "string" and test("^[A-Za-z0-9._-]+\\.ya?ml$"))' <<< "$tap_app")"
+          tap_ci_workflow="$RELEASE_HOMEBREW_TAP_CI_WORKFLOW_FILE"
           release_require_repository "$tap_repository"
-          tap_repository_owner="${tap_repository%%/*}"
-          tap_repository_name="${tap_repository#*/}"
 
           if [[ "$EVENT_NAME" == "push" ]]; then
             version="$REF_NAME"
@@ -331,8 +324,6 @@ jobs:
             printf 'run_release=%s\n' "$run_release"
             printf 'run_homebrew=%s\n' "$run_homebrew"
             printf 'tap_repository=%s\n' "$tap_repository"
-            printf 'tap_repository_owner=%s\n' "$tap_repository_owner"
-            printf 'tap_repository_name=%s\n' "$tap_repository_name"
             printf 'tap_ci_workflow=%s\n' "$tap_ci_workflow"
           } >> "$GITHUB_OUTPUT"
 
@@ -892,42 +883,10 @@ jobs:
           mkdir tap-out
           scripts/release/generate-homebrew-formula.sh "$VERSION" release-dist tap-out/formula.rb
 
-      - id: tap-token
-        name: Mint scoped Homebrew App token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: ${{ needs.metadata.outputs.tap_repository_owner }}
-          repositories: ${{ needs.metadata.outputs.tap_repository_name }}
-          permission-actions: read
-          permission-contents: write
-          permission-pull-requests: write
-
-      - name: Require exact Homebrew App identity and repository scope
-        env:
-          ACTUAL_APP_SLUG: ${{ steps.tap-token.outputs.app-slug }}
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          source scripts/release/lib.sh
-          release_require_typed_contract_projection
-          app=$RELEASE_HOMEBREW_APP
-          expected_slug="$(jq -er '.slug | select(type == "string" and length > 0)' <<< "$app")"
-          expected_repository=$RELEASE_HOMEBREW_TAP_REPOSITORY
-          [[ "$ACTUAL_APP_SLUG" == "$expected_slug" ]] || { echo "unexpected Homebrew App identity" >&2; exit 1; }
-          scripts/release/gh-api-read.sh installation-repositories.json \
-            --paginate --slurp installation/repositories
-          mapfile -t repositories < <(jq -r '.[]?.repositories[]?.full_name' installation-repositories.json)
-          [[ "${#repositories[@]}" == "1" && "${repositories[0]:-}" == "$expected_repository" ]] || {
-            echo "Homebrew App installation scope differs from the release contract" >&2
-            exit 1
-          }
-
       - id: publish-tap-pr
         name: Create or reuse deterministic Homebrew pull request
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -939,7 +898,7 @@ jobs:
       - id: tap-pr-ci
         name: Require exact Homebrew pull-request head CI
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
           TAP_CI_WORKFLOW: ${{ needs.metadata.outputs.tap_ci_workflow }}
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
@@ -954,7 +913,7 @@ jobs:
         name: Merge exact Homebrew pull-request head
         if: steps.publish-tap-pr.outputs.state == 'OPEN'
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           HEAD_SHA: ${{ steps.publish-tap-pr.outputs.head_sha }}
           PR_NUMBER: ${{ steps.publish-tap-pr.outputs.pr_number }}
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
@@ -1007,7 +966,7 @@ jobs:
       - id: tap-push-ci
         name: Require exact Homebrew post-merge CI
         env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           MERGE_SHA: ${{ steps.tap-result.outputs.merge_sha }}
           TAP_CI_WORKFLOW: ${{ needs.metadata.outputs.tap_ci_workflow }}
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}

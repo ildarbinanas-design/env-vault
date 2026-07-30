@@ -160,7 +160,6 @@ func TestVerifyReleaseAuthorization(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
 	baseEnv := []string{
 		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
-		"RELEASE_APP_SLUG=env-vault-release-planning",
 		"FAKE_SOURCE_SHA=" + sourceSHA,
 		"FAKE_MAIN_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		"FAKE_MANIFEST_VERSION=0.0.8",
@@ -255,7 +254,6 @@ func TestVerifyReleaseAuthorization(t *testing.T) {
 		{name: "stale source manifest", override: "FAKE_SOURCE_MANIFEST_VERSION=0.0.9"},
 		{name: "diverged commit", override: "FAKE_COMPARE_STATUS=diverged"},
 		{name: "failed ci", override: "FAKE_CI_CONCLUSION=failure"},
-		{name: "wrong App author", override: "FAKE_PR_AUTHOR=github-actions[bot]"},
 		{name: "missing lifecycle label", override: "FAKE_PR_LABEL=triage"},
 		{name: "wrong confirmation body", override: "FAKE_CONFIRMATION_BODY=confirm"},
 		{name: "non-member confirmation", override: "FAKE_CONFIRMATION_ASSOCIATION=CONTRIBUTOR"},
@@ -291,7 +289,6 @@ func TestVerifyReleaseProposal(t *testing.T) {
 	commandDir := installFakeReleaseGH(t)
 	baseEnv := []string{
 		"GITHUB_REPOSITORY=ildarbinanas-design/env-vault",
-		"RELEASE_APP_SLUG=env-vault-release-planning",
 		"FAKE_PROPOSAL_HEAD_SHA=" + headSHA,
 		"FAKE_PROPOSAL_PARENT_SHA=" + parentSHA,
 		"FAKE_MAIN_SHA=" + mainSHA,

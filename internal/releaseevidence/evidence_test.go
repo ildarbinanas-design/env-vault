@@ -172,9 +172,6 @@ func TestEvidenceFailsClosedOnIncompleteOrInconsistentState(t *testing.T) {
 		"abandoned release wrong title": func(f *evidenceFixture) {
 			f.observation.AbandonedRelease.PullRequestTitle = "chore(main): release env-vault v0.0.13"
 		},
-		"abandoned release wrong author": func(f *evidenceFixture) {
-			f.observation.AbandonedRelease.PullRequestAuthor = "github-actions[bot]"
-		},
 		"abandoned release future observation": func(f *evidenceFixture) {
 			f.observation.AbandonedRelease.ObservedAt = "2026-07-16T09:21:00Z"
 		},
@@ -904,8 +901,8 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 		provenance.PredicateType, sbom.PredicateType = ProvenancePredicate, SBOMPredicate
 		attestations = append(attestations, ArchiveAttestation{AssetName: platform.Archive, AssetSHA256: assetByName[platform.Archive].SHA256, Provenance: provenance, SBOM: sbom})
 	}
-	app, _ := contract.AppByID("homebrew_tap")
-	tapRepository, _ := contract.RepositoryByID(app.RepositoryID)
+	tapCIWorkflow := contract.Homebrew.TapCIWorkflowFile
+	tapRepository, _ := contract.RepositoryByID("homebrew_tap")
 	prHead := strings.Repeat("b", 40)
 	mergeSHA := strings.Repeat("c", 40)
 	tapSHA := strings.Repeat("e", 40)
@@ -913,8 +910,8 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 		Repository: tapRepository.FullName, FormulaPath: "Formula/env-vault.rb", FormulaSHA256: strings.Repeat("d", 64),
 		Version: testVersion, VersionMonotonic: true, PRNumber: 42,
 		PRURL: "https://github.com/" + tapRepository.FullName + "/pull/42", PRHeadSHA: prHead, PRMergeSHA: mergeSHA, TapSHA: tapSHA, MergeIsAncestorOfTap: true,
-		PRHeadCI:    ExternalWorkflowRun{RunID: 626262, RunAttempt: 1, Workflow: app.CIWorkflowFile, Event: "pull_request", HeadSHA: prHead, Conclusion: "success", URL: "https://github.com/" + tapRepository.FullName + "/actions/runs/626262"},
-		PostMergeCI: ExternalWorkflowRun{RunID: 727272, RunAttempt: 2, Workflow: app.CIWorkflowFile, Event: "push", HeadSHA: mergeSHA, Conclusion: "success", URL: "https://github.com/" + tapRepository.FullName + "/actions/runs/727272"},
+		PRHeadCI:    ExternalWorkflowRun{RunID: 626262, RunAttempt: 1, Workflow: tapCIWorkflow, Event: "pull_request", HeadSHA: prHead, Conclusion: "success", URL: "https://github.com/" + tapRepository.FullName + "/actions/runs/626262"},
+		PostMergeCI: ExternalWorkflowRun{RunID: 727272, RunAttempt: 2, Workflow: tapCIWorkflow, Event: "push", HeadSHA: mergeSHA, Conclusion: "success", URL: "https://github.com/" + tapRepository.FullName + "/actions/runs/727272"},
 	}
 	health := HealthProof{
 		SchemaID: HealthProofSchemaID, SchemaVersion: ObservationSchemaVersion,
@@ -932,7 +929,6 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 		blocked = append(blocked, BlockedVersionObservation{Version: policy.Version, TagSHA: policy.TagSHA, TagExists: policy.TagMustRemain, ReleaseExists: false})
 	}
 	recovery := contract.VersionPolicy.ReleasePleaseRecovery
-	planningApp, _ := contract.AppByID("release_planning")
 	semanticContractSHA256, err := releasecontract.SemanticSHA256(contract)
 	if err != nil {
 		t.Fatal(err)
@@ -945,7 +941,7 @@ func makeObservation(t *testing.T, contract releasecontract.Contract, manifest r
 		},
 		PullRequestState: "closed", PullRequestMerged: true,
 		PullRequestTitle:  "chore(main): release " + contract.Naming.Product + " " + recovery.AbandonedVersion,
-		PullRequestAuthor: planningApp.Slug + "[bot]", BaseRef: "main", BaseRepository: testRepository,
+		PullRequestAuthor: "env-vault-release-planning[bot]", BaseRef: "main", BaseRepository: testRepository,
 		Labels: []string{recovery.AbandonedLabel}, BoundaryIsAncestorOfRelease: true,
 		TagExists: false, GitHubReleaseExists: false, ReasonCode: recovery.ReasonCode,
 		ObservedAt: "2026-07-16T09:16:00Z", SemanticContractSHA256: semanticContractSHA256,

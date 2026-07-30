@@ -205,7 +205,6 @@ jobs:
           historical_evidence_run_attempt="$(jq -r '.historical.evidence_run_attempt // ""' "$RUNNER_TEMP/source-contract-route.json")"
           historical_artifact_id="$(jq -r '.historical.compact_artifact_id // ""' "$RUNNER_TEMP/source-contract-route.json")"
           historical_artifact_digest="$(jq -r '.historical.compact_artifact_digest // ""' "$RUNNER_TEMP/source-contract-route.json")"
-          release_app_slug="$(jq -er '.release_app_slug | select(type == "string" and test("^[a-z0-9][a-z0-9-]*$"))' "$RUNNER_TEMP/source-contract-route.json")"
           default_branch="$(jq -er '.repository.default_branch' "$RUNNER_TEMP/source-contract-route.json")"
           product="$(jq -er '.naming.product' "$RUNNER_TEMP/source-contract-route.json")"
           ci_workflow_file="$(jq -er --arg generation "$contract_generation" '
@@ -343,7 +342,6 @@ jobs:
             .matrix_complete == true and .action_code == "none" and .reason_code == "ATTEMPT_MATRIX_COMPLETE"
           ' snapshots/ci-classification.json >/dev/null
 
-          export RELEASE_APP_SLUG="$release_app_slug"
           export RELEASE_AUTHORIZATION_OUTPUT="snapshots/release-authorization-checkpoint.json"
           release_pr_number="$(scripts/release/verify-release-authorization.sh "$version" "$source_sha" tagged)"
           scripts/release/gh-api-read.sh snapshots/release-pr.json \

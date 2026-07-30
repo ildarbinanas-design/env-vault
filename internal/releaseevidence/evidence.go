@@ -468,13 +468,20 @@ func validateAttestations(contract releasecontract.Contract, manifest releasepro
 }
 
 func validateHomebrew(contract releasecontract.Contract, manifest releasepromotion.Manifest, homebrew HomebrewObservation) error {
-	app, ok := contract.AppByID("homebrew_tap")
-	if !ok {
-		return fail(CodeInputIncomplete, "release contract has no Homebrew app", nil)
-	}
-	repository, repositoryOK := contract.RepositoryByID(app.RepositoryID)
+	repository, repositoryOK := contract.RepositoryByID("homebrew_tap")
 	if !repositoryOK {
 		return fail(CodeInputIncomplete, "release contract has no Homebrew repository", nil)
+	}
+	tapCIWorkflow := contract.Homebrew.TapCIWorkflowFile
+	if tapCIWorkflow == "" {
+		// Archived v1 contracts still carry the tap CI identity on their
+		// retired App entry; historical replay must keep working.
+		if app, ok := contract.AppByID("homebrew_tap"); ok {
+			tapCIWorkflow = app.CIWorkflowFile
+		}
+	}
+	if tapCIWorkflow == "" {
+		return fail(CodeInputIncomplete, "release contract has no Homebrew tap CI workflow", nil)
 	}
 	wantFormula := contract.Homebrew.FormulaPath
 	if wantFormula == "" {
@@ -484,18 +491,18 @@ func validateHomebrew(contract releasecontract.Contract, manifest releasepromoti
 	if homebrew.Repository != repository.FullName || homebrew.FormulaPath != wantFormula || !digestPattern.MatchString(homebrew.FormulaSHA256) || homebrew.Version != manifest.ReleaseVersion || !homebrew.VersionMonotonic || homebrew.PRNumber <= 0 || homebrew.PRURL != wantPRURL || !shaPattern.MatchString(homebrew.PRHeadSHA) || !shaPattern.MatchString(homebrew.PRMergeSHA) || !shaPattern.MatchString(homebrew.TapSHA) || !homebrew.MergeIsAncestorOfTap {
 		return fail(CodeHomebrewStateInvalid, "Homebrew formula or exact PR state is invalid", nil)
 	}
-	if err := validateExternalRun(homebrew.PRHeadCI, app, repository.FullName, "pull_request", homebrew.PRHeadSHA); err != nil {
+	if err := validateExternalRun(homebrew.PRHeadCI, tapCIWorkflow, repository.FullName, "pull_request", homebrew.PRHeadSHA); err != nil {
 		return fail(CodeHomebrewStateInvalid, "Homebrew PR-head CI is invalid", err)
 	}
-	if err := validateExternalRun(homebrew.PostMergeCI, app, repository.FullName, "push", homebrew.PRMergeSHA); err != nil {
+	if err := validateExternalRun(homebrew.PostMergeCI, tapCIWorkflow, repository.FullName, "push", homebrew.PRMergeSHA); err != nil {
 		return fail(CodeHomebrewStateInvalid, "Homebrew post-merge CI is invalid", err)
 	}
 	return nil
 }
 
-func validateExternalRun(run ExternalWorkflowRun, app releasecontract.App, repository, event, headSHA string) error {
+func validateExternalRun(run ExternalWorkflowRun, ciWorkflowFile, repository, event, headSHA string) error {
 	wantURL := "https://github.com/" + repository + "/actions/runs/" + strconv.FormatInt(run.RunID, 10)
-	if run.RunID <= 0 || run.RunAttempt <= 0 || run.Workflow != app.CIWorkflowFile || run.Event != event || run.HeadSHA != headSHA || run.Conclusion != "success" || run.URL != wantURL {
+	if run.RunID <= 0 || run.RunAttempt <= 0 || run.Workflow != ciWorkflowFile || run.Event != event || run.HeadSHA != headSHA || run.Conclusion != "success" || run.URL != wantURL {
 		return errors.New("external workflow run does not match the exact head/event/workflow tuple")
 	}
 	return nil
@@ -517,12 +524,7 @@ func validateBlockedVersions(contract releasecontract.Contract, observed []Block
 
 func validateAbandonedRelease(contract releasecontract.Contract, manifest releasepromotion.Manifest, observed AbandonedReleaseObservation, observedAt time.Time) error {
 	policy := contract.VersionPolicy.ReleasePleaseRecovery
-	planningApp, ok := contract.AppByID("release_planning")
-	if !ok {
-		return fail(CodeInputIncomplete, "release contract has no release-planning app", nil)
-	}
 	wantTitle := "chore(main): release " + contract.Naming.Product + " " + policy.AbandonedVersion
-	wantAuthor := planningApp.Slug + "[bot]"
 	semanticContractSHA256, err := releasecontract.SemanticSHA256(contract)
 	if err != nil {
 		return fail(CodeDigestMismatch, "hash abandoned-release contract", err)
@@ -536,7 +538,7 @@ func validateAbandonedRelease(contract releasecontract.Contract, manifest releas
 	}
 	if observed.State != "abandoned" || observed.Version != policy.AbandonedVersion || observed.SourceSHA != policy.AbandonedSourceSHA ||
 		pr.Number != int64(policy.GeneratedReleasePRNumber) || pr.HeadSHA != policy.GeneratedReleasePRHeadSHA || pr.MergeSHA != policy.AbandonedSourceSHA ||
-		observed.PullRequestState != "closed" || !observed.PullRequestMerged || observed.PullRequestTitle != wantTitle || observed.PullRequestAuthor != wantAuthor ||
+		observed.PullRequestState != "closed" || !observed.PullRequestMerged || observed.PullRequestTitle != wantTitle ||
 		observed.BaseRef != "main" || observed.BaseRepository != manifest.Repository || !observed.BoundaryIsAncestorOfRelease ||
 		(policy.TagMustNotExist && observed.TagExists) || (policy.GitHubReleaseMustNotExist && observed.GitHubReleaseExists) || observed.ReasonCode != policy.ReasonCode ||
 		observed.SemanticContractSHA256 != semanticContractSHA256 || !digestPattern.MatchString(observed.SemanticContractSHA256) {

@@ -15,84 +15,90 @@ the post-merge default-branch check for exact commit SHAs.
 
 Repository settings must match this document before a release pull request is
 merged. Planning credentials are stored only in `release-planning`; tap
-credentials are stored only in `release`. The tap audit requests metadata read;
-the planning audit additionally requests Administration read so it can verify
-merge settings, ruleset structure, and that the planning App itself has no
-bypass. The operational pre-tag check is authoritative for the complete global
-bypass lists: the read-only App queries each canonical ruleset's GraphQL
-`bypassActors.totalCount`, requires all three counts to be zero, and seals that
-response together with the exact REST rule details for offline health/evidence
-replay. Missing GraphQL data, partial errors, pagination, or a nonzero count
-fails closed.
+credentials are stored only in `release`. The planning token holds
+Administration read so the pre-tag check can verify merge settings, ruleset
+structure, and that the release path itself has no bypass.
 
-The planning audit reads repository merge settings and actor-independent
-ruleset bypass counts through GitHub GraphQL `Repository` fields. GitHub's REST
-responses omit parts of that policy for this deliberately permission-bounded
-token, while GraphQL exposes the required read-only state without granting
-Administration write. Missing GraphQL data or an API error fails the audit
-closed.
+The operational pre-tag check is authoritative for the complete global bypass
+lists: it reads each canonical ruleset's GraphQL `bypassActors.totalCount`,
+requires all three counts to be zero, and seals that response together with the
+exact REST rule details for offline health/evidence replay. Missing GraphQL
+data, partial errors, pagination, or a nonzero count fails closed.
+
+That check reads repository merge settings and actor-independent ruleset bypass
+counts through GitHub GraphQL `Repository` fields. GitHub's REST responses omit
+parts of that policy for this deliberately permission-bounded token, while
+GraphQL exposes the required read-only state without granting Administration
+write. Missing GraphQL data or an API error fails the check closed.
 
 ## Trust boundary
 
-Two dedicated GitHub Apps separate planning from cross-repository publication:
+Two dedicated fine-grained personal access tokens separate planning from
+cross-repository publication. Each lives only in the Actions environment of the
+job that needs it:
 
-- `env-vault-release-planning` is installed only on `env-vault`. Its token may
-  create and update the Release Please pull request and perform the classified
-  exact-tag handoff after green CI. The Release Please action is configured
-  PR-only and cannot create a tag or GitHub Release itself.
-- `env-vault-tap-release` is installed only on `homebrew-tap`. Its token may
-  create, verify, and merge the deterministic Homebrew formula pull request.
+- `RELEASE_PLANNING_TOKEN` is scoped to `env-vault` only. It may create and
+  update the Release Please pull request and perform the classified exact-tag
+  handoff after green CI. The Release Please action is configured PR-only and
+  cannot create a tag or GitHub Release itself.
+- `HOMEBREW_TAP_TOKEN` is scoped to `homebrew-tap` only. It may create, verify,
+  and merge the deterministic Homebrew formula pull request.
 
 The repository-scoped `GITHUB_TOKEN` is not used to author the Release Please
 pull request because events created by that token do not trigger the protected
-pull-request workflows. It is not used for cross-repository writes. The
-workflow uses it only for read-only Contents, Pull requests, Issues, and
-Actions authorization checks. It mints each short-lived installation token
-only inside the job that needs it, and the token action revokes it when that
-job finishes.
+pull-request workflows — the generated release PR would never collect its
+required checks and could never be merged. It is not used for cross-repository
+writes either. The workflow uses it only for read-only Contents, Pull requests,
+Issues, and Actions authorization checks.
 
-The steady-state release path has no personal access token, SSH deploy key, or
-other long-lived cross-repository writer. In particular, neither repository
-contains an active `TAP_DEPLOY_KEY` after the App-based cutover has succeeded.
+Release automation deliberately no longer uses GitHub Apps. The two retired
+Apps (`env-vault-release-planning`, `env-vault-tap-release`) added an
+installation and key-rotation lifecycle, plus two audit workflows, without
+providing a capability a repository-scoped token cannot. The trade-off is
+explicit: a fine-grained PAT is longer-lived than an installation token, so it
+is scoped to a single repository, kept in an environment secret, and given an
+expiry that the operator rotates on schedule (section 10).
 
-## 1. Release-planning App and environment
+There is no SSH deploy key or other long-lived cross-repository writer. In
+particular, neither repository contains an active `TAP_DEPLOY_KEY`.
 
-Create a dedicated App named `env-vault-release-planning` with this exact
-scope:
+## 1. Release-planning token and environment
 
-- Webhooks: disabled.
-- Installation: **Only select repositories**, with only `env-vault` selected.
+Create a fine-grained personal access token with this exact scope:
+
+- Resource owner: the account that owns both repositories.
+- Repository access: **Only select repositories**, with only `env-vault`
+  selected.
 - Repository permissions:
   - **Contents: Read and write** — create and update the release-planning
-    branch and commit;
+    branch and commit, and create the exact authorized tag;
   - **Pull requests: Read and write** — create, update, inspect, and label the
     generated release pull request;
   - **Issues: Read and write** — maintain Release Please pull-request labels;
   - **Administration: Read** — verify repository merge settings, ruleset
-    structure, and that this App itself cannot bypass any release ruleset;
+    structure, and that the release path cannot bypass any release ruleset;
   - **Metadata: Read** — GitHub grants this automatically.
-- Organization/account permissions: none.
-- Ruleset bypass: none. The generated release pull request must satisfy the
-  same checks and merge policy as every other change.
+- Account permissions: none.
+- Expiry: set an explicit expiry and rotate per section 10.
 
 Do not grant Actions, Administration write, Environments, Secrets, Workflows,
-Packages, Checks, or Deployments permissions. The planning App's contents
-permission is used by the workflow only for the exact tag authorized by a
-deterministic release pull-request merge and its successful `ci` run. GitHub
-does not offer separate tag-write and Release-write permissions: `Contents:
-write` technically covers both. Therefore action SHA pins, exact-path tests,
-the tag/ruleset gates, and code review enforce that this workflow never moves
-or deletes a tag, calls the GitHub Release or asset APIs, approves or merges its
-own pull request, or bypasses branch protection. The exact tag push, rather
-than an App workflow dispatch, starts `build-binaries`.
+Packages, Checks, or Deployments permissions. The token's contents permission is
+used by the workflow only for the exact tag authorized by a deterministic
+release pull-request merge and its successful `ci` run. GitHub does not offer
+separate tag-write and Release-write permissions: `Contents: write` technically
+covers both. Therefore action SHA pins, exact-path tests, the tag/ruleset gates,
+and code review enforce that this workflow never moves or deletes a tag, calls
+the GitHub Release or asset APIs, approves or merges its own pull request, or
+bypasses branch protection. The exact tag push starts `build-binaries`.
 
-Create an Actions environment named `release-planning` with exactly these
-values:
+The token must not be granted any ruleset bypass. The generated release pull
+request must satisfy the same checks and merge policy as every other change.
+
+Create an Actions environment named `release-planning` with exactly this value:
 
 | Kind | Name | Value |
 | --- | --- | --- |
-| Variable | `RELEASE_APP_CLIENT_ID` | Client ID of `env-vault-release-planning` |
-| Secret | `RELEASE_APP_PRIVATE_KEY` | Complete PEM private key for that App |
+| Secret | `RELEASE_PLANNING_TOKEN` | Fine-grained PAT scoped to `env-vault` |
 
 Allow only the protected default branch `main`. Do not allow tags. A wait timer
 or required environment reviewer is not needed because the exact owner/member
@@ -108,36 +114,25 @@ the manifest and generated `CHANGELOG.md` section. The checked-in title and
 footer produce the exact branch, title, and body evidence used by the
 authorization gate. The body header explicitly warns that merging authorizes
 publication after green `main` CI; the lifecycle labels remain
-`autorelease: pending` and `autorelease: tagged`. Before opening the first proposal, the planning workflow
-idempotently creates or normalizes those repository labels and verifies their
-exact names, colors, and descriptions. The planning job is the only operational
-job that declares `environment: release-planning`; the separately dispatched
-read-only scope/settings audit is the documented exception. Its repository
-workflow token remains read-only and performs authorization reads. The App token
-performs the configured pull-request writes, exact-tag handoff, and lifecycle
-label reconciliation. The workflow contains no public Release or asset API
-call, even though the coarse GitHub contents permission cannot exclude that
-capability from the credential itself.
+`autorelease: pending` and `autorelease: tagged`. Before opening the first
+proposal, the planning workflow idempotently creates or normalizes those
+repository labels and verifies their exact names, colors, and descriptions. The
+planning job is the only operational job that declares
+`environment: release-planning`. Its repository workflow token remains
+read-only and performs authorization reads. The environment token performs the
+configured pull-request writes, exact-tag handoff, and lifecycle label
+reconciliation. The workflow contains no public Release or asset API call, even
+though the coarse GitHub contents permission cannot exclude that capability
+from the credential itself.
 
-Verify the App installation with
-`.github/workflows/audit-release-planning-app.yml`. That manual workflow mints
-a metadata-plus-Administration-read token, succeeds only when the installation
-contains exactly `ildarbinanas-design/env-vault` and the App cannot bypass the
-main, immutable-tag, or append-only-evidence rulesets, all three global bypass
-actor counts are zero, and relies on post-step revocation. It verifies
-squash-only merge policy and bypass counts through GraphQL so the audit token
-does not need ruleset-write capability. A
-failed audit blocks release planning.
+## 2. Homebrew tap token
 
-## 2. Homebrew tap GitHub App
-
-Use a dedicated App such as `env-vault-tap-release`, owned by the account or
+Create a second fine-grained personal access token, owned by the account or
 organization that owns the two repositories.
 
 Required configuration:
 
-- Webhooks: disabled; the workflow polls GitHub Actions and pull-request state.
-- Installation: **Only select repositories**, with only `homebrew-tap`
+- Repository access: **Only select repositories**, with only `homebrew-tap`
   selected.
 - Repository permissions:
   - **Actions: Read** — query `test-formula.yml` runs by event and head SHA.
@@ -146,45 +141,30 @@ Required configuration:
   - **Pull requests: Read and write** — create, inspect, and squash-merge the
     formula pull request.
   - **Metadata: Read** — GitHub grants this automatically.
-- Organization/account permissions: none.
-- Ruleset bypass: none. The App must satisfy the same tap checks as any other
-  pull-request author.
+- Account permissions: none.
+- Expiry: set an explicit expiry and rotate per section 10.
 
 Do not grant Administration, Environments, Secrets, Workflows, Issues,
 Packages, Checks, or Actions write access. The implementation reads workflow
 runs through the Actions API and does not rerun them, so neither Checks access
 nor Actions write access is needed.
 
-Record the App **client ID**, not its numeric App ID, and generate one private
-key. Never print the PEM, an installation token, or a derived credential. Key
-rotation is described below.
+The token must not be granted any ruleset bypass: it must satisfy the same tap
+checks as any other pull-request author.
 
-The `homebrew` job uses the current v3 interface pinned to the verified
-`v3.2.0` commit SHA:
+Never print the token or a derived credential. The `homebrew` job consumes it
+straight from the `release` environment:
 
 ```yaml
-- id: tap-token
-  uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-  with:
-    client-id: ${{ vars.TAP_APP_CLIENT_ID }}
-    private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-    owner: ${{ github.repository_owner }}
-    repositories: homebrew-tap
-    permission-actions: read
-    permission-contents: write
-    permission-pull-requests: write
+- name: Create or reuse deterministic Homebrew pull request
+  env:
+    GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```
 
-Keep the exact privileged-action SHA and its inputs covered by workflow
-regression tests. Verify the upstream tag and commit signature, then review
-release notes before changing the pin.
-
-Verify the installation itself with `.github/workflows/audit-release-app.yml`.
-That manual workflow intentionally omits `repositories` while requesting only
-`permission-metadata: read`, lists the installation repositories without
-logging them, and succeeds only when the list is exactly
-`ildarbinanas-design/homebrew-tap`. The action revokes the audit token in its
-post-step. A failed audit blocks release preparation.
+Because the token is a repository-scoped secret rather than a minted
+installation token, there is no token-minting action to pin and no audit
+workflow to dispatch. Workflow regression tests assert that no workflow
+reintroduces `create-github-app-token`, an App client ID, or an App private key.
 
 ## 3. `env-vault` release environment
 
@@ -193,17 +173,16 @@ release values:
 
 | Kind | Name | Value |
 | --- | --- | --- |
-| Variable | `TAP_APP_CLIENT_ID` | Client ID of the dedicated App |
-| Secret | `TAP_APP_PRIVATE_KEY` | Complete PEM private key for that App |
+| Secret | `HOMEBREW_TAP_TOKEN` | Fine-grained PAT scoped to `homebrew-tap` |
 
-The client ID is an identifier and belongs in an environment variable. The PEM
-is a credential and belongs in an environment secret. Neither value belongs in
-the repository, a branch, a workflow artifact, release evidence, or a job
-summary.
+The token is a credential and belongs in an environment secret. It does not
+belong in the repository, a branch, a workflow artifact, release evidence, or a
+job summary.
 
 Environment branch and tag policy:
 
-- allow the current default branch, `main`, for the manual read-only App audit;
+- allow the current default branch, `main`, for the protected-main Homebrew
+  publication bridge;
 - allow tags matching `v*` for automatic publication and exact-tag repairs; and
 - rely on the workflow's strict `vMAJOR.MINOR.PATCH` validation rather than
   treating the environment glob as version validation.
@@ -212,7 +191,7 @@ The automated tap-publication path requires no wait timer and no required
 environment reviewer. Adding either protection intentionally adds a second
 approval gate after the release pull request has already authorized
 publication, and every release or `homebrew` repair will wait at the `homebrew`
-job before the App key becomes available.
+job before the environment token becomes available.
 
 Within `build-binaries.yml`, only this job declares the environment:
 
@@ -225,9 +204,60 @@ The `metadata`, `preflight`, `promotion`, `release`, `supply_chain`, and
 `health` jobs must not declare it. The publisher has no build-only mode and no
 product build job. `repair=health` skips `homebrew`; the read-only health job
 uses `contents: read`, `attestations: read`, public tap state, and the repository
-workflow token. The independent `audit-release-app.yml` workflow also declares
+workflow token. The environment-backed publication job also declares
 `release`, but it is manual-only and mints metadata-read rather than
 write-capable permissions.
+
+## 3b. Verify both tokens before the first release
+
+The retired App audit workflows proved single-repository installation scope on
+demand. Fine-grained tokens carry their scope in the token itself, so the
+equivalent proof is a one-time local check made when the token is created or
+rotated. Every probe below is a read; none mutates anything.
+
+Never pass a token as a command-line argument — it would land in shell history
+and in the process table. Read it into a variable with a hidden prompt and pass
+it to `gh` through the environment, with shell tracing off:
+
+```bash
+set +x
+IFS= read -rs TOKEN            # paste the token; input stays hidden
+export GH_TOKEN="$TOKEN"
+```
+
+Release-planning token — all five must hold:
+
+```bash
+gh api repos/ildarbinanas-design/env-vault --jq .full_name          # the repository is reachable
+gh api repos/ildarbinanas-design/env-vault/rulesets --jq length     # 3 — proves Administration: Read
+gh api repos/ildarbinanas-design/env-vault --jq .permissions.push   # true — proves Contents write
+gh api 'repos/ildarbinanas-design/env-vault/pulls?per_page=1' >/dev/null   # pull requests readable
+gh api repos/ildarbinanas-design/homebrew-tap                       # MUST fail — single-repository scope
+```
+
+The ruleset probe is the important one: it is the capability `GITHUB_TOKEN`
+cannot be granted at all, and `verify-repository-release-settings.sh` depends
+on it.
+
+Homebrew tap token — all five must hold:
+
+```bash
+gh api repos/ildarbinanas-design/homebrew-tap --jq .full_name
+gh api repos/ildarbinanas-design/homebrew-tap/actions/workflows --jq '.workflows[].path'
+                                                # includes .github/workflows/test-formula.yml
+gh api repos/ildarbinanas-design/homebrew-tap --jq .permissions.push       # true
+gh api 'repos/ildarbinanas-design/homebrew-tap/pulls?per_page=1' >/dev/null
+gh api repos/ildarbinanas-design/env-vault                                 # MUST fail
+```
+
+The workflow probe doubles as a contract cross-check: the observed path must
+match `homebrew.tap_ci_workflow_file` in `release/contract.v2.json`.
+
+Then clear the variable: `unset GH_TOKEN TOKEN`.
+
+Pull-requests and Issues *write* cannot be proven without mutating something.
+They are first exercised by the next real planning or tap publication run, so
+keep the previous credential in place until that run is green.
 
 ## 4. `env-vault` branch and merge policy
 
@@ -246,12 +276,12 @@ Apply an active ruleset to `refs/heads/main` with these rules:
 - conversations must be resolved;
 - only squash merge is allowed;
 - force pushes and branch deletion are blocked; and
-- neither release App nor any workflow identity has a bypass.
+- no release token nor any workflow identity has a bypass.
 
 Apply a second active tag ruleset named `Protect env-vault release tags` to
 `refs/tags/v*`. It must restrict both tag updates and tag deletion, have no
 bypass actor, and leave creation of a new version tag allowed. This lets the
-planning App create one new exact tag but prevents any actor from moving or
+planning token create one new exact tag but prevents any actor from moving or
 deleting a published version through the normal repository path.
 
 Apply a third active branch ruleset named
@@ -266,7 +296,7 @@ publisher treats only an exact typed HTTP 404 as absence, freshly revalidates
 the release source before each Git mutation, and creates a parentless commit
 whose tree contains only the strict `evidence/` namespace and versioned genesis
 anchor. It then creates `refs/heads/release-evidence` without force. This path
-needs `Contents: write`, but no Workflows write, App/PAT replacement, ruleset
+needs `Contents: write`, but no Workflows write, credential replacement, ruleset
 bypass, or operator bootstrap. Authentication, authorization, rate-limit, and
 transport failures must never be classified as absence.
 
@@ -311,31 +341,30 @@ repeats the authorization and promotion checks before acting as the sole
 public GitHub Release and asset publisher. It must promote the CI-verified
 artifacts rather than rebuild them; its preflight and monotonicity gates must
 pass before the Release is created. Configure no ruleset bypass for the
-release-planning App. Its coarse PR/contents permissions could technically
+release-planning token. Its coarse PR/contents permissions could technically
 merge a green PR, so the pinned workflow and its contract tests enforce that
-the App never calls a merge endpoint; only the maintainer squash merge is an
+the workflow never calls a merge endpoint; only the maintainer squash merge is an
 accepted publication authorization.
 
-The planning workflow and the manual planning-App audit use Administration-read
+The planning workflow uses Administration-read
 access to verify repository merge settings and the exact active
 main/tag/evidence rulesets. GitHub deliberately omits REST `bypass_actors` from
 a caller that cannot edit rulesets, so the same read-only token obtains the
 complete actor-independent zero-bypass decision from GraphQL
 `RepositoryRuleset.bypassActors`. REST still supplies the exact rule structure
-and must report that the planning App itself can never bypass; an unexpectedly
+and must report that the planning token itself can never bypass; an unexpectedly
 present REST bypass list is accepted only when it is empty. The offline checker
 preserves the exact raw GraphQL and REST responses and digests, then seals them
 to the source/version/planning-run tuple. The publisher's read-only health job
 downloads that attempt-qualified proof and replays it offline instead of
-querying Administration APIs. The separately dispatched read-only App audit
-cannot replace the sealed pre-tag proof. Repository merge settings and global
-bypass counts are queried through GraphQL, preserving the manual audit's
-read-only permission boundary. Correct the
-repository if the automated check
-reports rebase merging, `COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`, a non-squash
-ruleset merge method, a missing strict check, weakened branch protection, or a
-missing immutable `v*` tag ruleset, or a mutable/deletable evidence branch. The workflow does not weaken the contract
-to accommodate unsafe settings.
+querying Administration APIs. No out-of-band read can replace the sealed
+pre-tag proof. Repository merge settings and global bypass counts are queried
+through GraphQL, preserving the read-only permission boundary. Correct the
+repository if the automated check reports rebase merging,
+`COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`, a non-squash ruleset merge method, a
+missing strict check, weakened branch protection, a missing immutable `v*` tag
+ruleset, or a mutable/deletable evidence branch. The workflow does not weaken
+the contract to accommodate unsafe settings.
 
 ## 5. `homebrew-tap` branch and merge policy
 
@@ -352,11 +381,11 @@ Apply an active ruleset to `refs/heads/main` with these rules:
 - force pushes and branch deletion are blocked;
 - zero required approvals, because the release-environment boundary and exact
   generated-content validation are the authorization controls; and
-- no bypass entry for the release App.
+- no bypass entry for the release token.
 
 Select the observed `test` check context from a real tap pull request rather
-than typing a similar display name. Do not add an App signed-commit requirement
-without separately designing and testing App commit signing.
+than typing a similar display name. Do not add a signed-commit requirement
+without separately designing and testing commit signing for the release path.
 
 Keep the required-status-check policy loose rather than requiring the PR branch
 to contain the latest `main`. The release workflow verifies the exact PR head,
@@ -424,9 +453,9 @@ The final job summary contains links to:
 
 ## 7. Repair behavior
 
-The release modes use the App and environment as follows:
+The release modes use the tap token and environment as follows:
 
-| Mode | App credential | Tap behavior | Health behavior |
+| Mode | Tap credential | Tap behavior | Health behavior |
 | --- | --- | --- | --- |
 | `release-assets` | `homebrew` only | create/reuse PR or exact no-op after asset reconciliation; wait exact PR and push CI | verify all release and tap evidence |
 | `homebrew` | `homebrew` only | resume/reuse PR or exact no-op; wait exact CI | verify all release and tap evidence |
@@ -442,29 +471,27 @@ formula byte, marker, PR head, and merge relationship remains consistent.
 `repair=health` is strictly read-only and is appropriate after publication is
 already complete but the final evidence step failed.
 
-## 8. Homebrew App cutover and legacy credential removal
+## 8. Tap credential cutover and legacy credential removal
 
-Use this order when establishing or rotating the release path:
+Use this order when establishing or rotating the tap write path:
 
-1. Install the dedicated App only on `homebrew-tap` with the permissions above.
-2. Add `TAP_APP_CLIENT_ID` and `TAP_APP_PRIVATE_KEY` to the `release`
-   environment without exposing their values.
-3. Run `audit-release-app.yml` and require its single-repository scope check to
-   pass.
-4. Apply the tap ruleset and merge settings.
-5. Run the reviewed App-based path and prove token minting, deterministic PR
-   creation/reuse, exact PR CI, guarded merge, exact push CI, and the final
-   health summary.
-6. After that cutover succeeds, remove the old SSH deploy key from
-   `homebrew-tap` and delete the corresponding `TAP_DEPLOY_KEY` secret from
-   `env-vault`.
-7. Confirm that no workflow, repository variable, environment, or runbook still
-   references `TAP_DEPLOY_KEY` and that only the App installation can perform
-   automated tap writes.
+1. Create the fine-grained tap PAT scoped only to `homebrew-tap` with the
+   permissions above.
+2. Add `HOMEBREW_TAP_TOKEN` to the `release` environment without exposing its
+   value.
+3. Apply the tap ruleset and merge settings.
+4. Run the reviewed path and prove deterministic PR creation/reuse, exact PR CI,
+   guarded merge, exact push CI, and the final health summary.
+5. After that cutover succeeds, remove any older write path from `homebrew-tap`
+   — the retired `env-vault-tap-release` App installation and, if still present,
+   the SSH deploy key and its `TAP_DEPLOY_KEY` secret in `env-vault`.
+6. Confirm that no workflow, repository variable, environment, or runbook still
+   references `TAP_DEPLOY_KEY`, `TAP_APP_CLIENT_ID`, or `TAP_APP_PRIVATE_KEY`,
+   and that only `HOMEBREW_TAP_TOKEN` can perform automated tap writes.
 
-Do not retain both write paths after the successful cutover. Do not remove the
-legacy key before the first App-based proof, because that converts a controlled
-migration into a release outage.
+Do not retain two write paths after a successful cutover. Do not remove the
+previous credential before the first proof on the new one, because that converts
+a controlled migration into a release outage.
 
 ## 9. Dependency review settings
 
@@ -479,33 +506,37 @@ permission only if a documented dependency-review feature requires it.
 
 ## 10. Credential rotation and rollback
 
-Rotate the planning App private key without preparing or publishing a release:
+Both release tokens have an explicit expiry. Rotate each on schedule, and
+immediately if it may be compromised. Rotation does not require preparing or
+publishing a release.
 
-1. Generate a second key for `env-vault-release-planning`.
-2. Replace `RELEASE_APP_PRIVATE_KEY` in `release-planning` without printing
-   either key.
-3. Dispatch `audit-release-planning-app.yml` and require its read-only
-   single-`env-vault` scope, repository-setting, and App-no-bypass audit to
-   pass. The next tag handoff remains blocked until the operational pre-tag
-   checker observes and seals empty global bypass lists for all three rulesets.
-4. Delete the old planning App key immediately after the new key succeeds.
+Rotate the release-planning token:
 
-Rotate the tap App private key without running a release:
+1. Create a replacement fine-grained PAT with the identical `env-vault`-only
+   scope from section 1.
+2. Replace `RELEASE_PLANNING_TOKEN` in the `release-planning` environment
+   without printing either value.
+3. Verify the next planning run reaches its authorization reads and repository
+   release-settings verification. The next tag handoff remains blocked until the
+   operational pre-tag checker observes and seals empty global bypass lists for
+   all three rulesets.
+4. Delete the old token immediately after the new one succeeds.
 
-1. Generate a second key for `env-vault-tap-release`.
-2. Replace `TAP_APP_PRIVATE_KEY` in the `release` environment without printing
-   either key.
-3. Dispatch `audit-release-app.yml` and require its metadata-only
-   single-`homebrew-tap` scope audit to pass.
-4. Delete the old tap App key immediately after the new key succeeds.
+Rotate the tap token:
 
-If the App key may be compromised, revoke it first, pause releases, install a
-new key in the environment, and audit App installation and repository events
-before resuming.
+1. Create a replacement fine-grained PAT with the identical `homebrew-tap`-only
+   scope from section 2.
+2. Replace `HOMEBREW_TAP_TOKEN` in the `release` environment without printing
+   either value.
+3. Delete the old token immediately after the new one succeeds.
+
+If a token may be compromised, revoke it first, pause releases, install the
+replacement in the environment, and audit repository and Actions events before
+resuming.
 
 Rollback is operational, not destructive:
 
-- Before a release pull request is merged, preserve it, fix the planning App,
+- Before a release pull request is merged, preserve it, fix the planning token,
   workflow, Conventional title, version documentation, or CI failure, and let
   Release Please update the same proposal. Do not publish it manually merely
   to bypass the planning failure.
@@ -517,10 +548,10 @@ Rollback is operational, not destructive:
 - After merge but before a successful push check, fix or rerun tap CI for that
   exact merged SHA, then use `repair=homebrew` or the read-only
   `repair=health`.
-- If App authentication or permissions fail, pause publication and correct the
-  App installation, environment values, or permissions. A maintainer-authored
+- If token authentication or permissions fail, pause publication and correct the
+  token scope or environment value. A maintainer-authored
   formula PR that satisfies the same ruleset can restore distribution while
-  the App is repaired; finish with `repair=health`.
+  the token is repaired; finish with `repair=health`.
 - Revert a faulty workflow change through the normal `env-vault` pull-request
   process. Do not move a tag, overwrite Release assets, lower the Homebrew
   version, bypass the tap ruleset, or weaken checks to make a run green.
@@ -528,5 +559,5 @@ Rollback is operational, not destructive:
 Reintroducing a deploy key is not the normal rollback. If an exceptional
 incident requires a temporary legacy credential, record its owner and expiry,
 scope it to `homebrew-tap`, route changes through a reviewed pull request, and
-remove it as soon as the App path is restored. Never keep both automated write
+remove it as soon as the token path is restored. Never keep both automated write
 credentials active as a steady state.

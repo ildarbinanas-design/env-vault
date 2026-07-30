@@ -4,7 +4,7 @@ This is the end-to-end operator procedure for an `env-vault` release. It is a
 companion to [`RELEASING.md`](../RELEASING.md), which defines the release
 contract and repair policy, and
 [`release-external-settings.md`](release-external-settings.md), which defines
-the GitHub App, environment, and ruleset configuration.
+the release token, environment, and ruleset configuration.
 
 The LLM is never a source of release truth. An LLM may run the same commands as
 an operator and summarize machine output, but every gate is based on exact Git
@@ -58,29 +58,29 @@ debug logging disabled around authentication and release operations.
 flowchart TD
     A["[LLM OPTIONAL] Auth preflight and remote snapshot<br/>cards 1-2"]
     A0["[HUMAN NO-LLM] Run cards 1-2 unchanged"]
-    B["[LLM OPTIONAL] App audits, clean worktree, local checks<br/>cards 3-5"]
-    B0["[HUMAN NO-LLM] Run cards 3-5 unchanged"]
-    C["[LLM OPTIONAL] Implementation PR, exact-head CI, merge<br/>cards 6-8"]
-    C0["[HUMAN NO-LLM] Run cards 6-8 unchanged"]
+    B["[LLM OPTIONAL] Clean worktree, local checks<br/>cards 3-4"]
+    B0["[HUMAN NO-LLM] Run cards 3-4 unchanged"]
+    C["[LLM OPTIONAL] Implementation PR, exact-head CI, merge<br/>cards 5-7"]
+    C0["[HUMAN NO-LLM] Run cards 5-7 unchanged"]
     D["[AUTOMATED] main CI and Release Please proposal"]
-    E["[LLM OPTIONAL] Observe proposal tuple<br/>card 9"]
-    E0["[HUMAN NO-LLM] Run card 9 unchanged"]
+    E["[LLM OPTIONAL] Observe proposal tuple<br/>card 8"]
+    E0["[HUMAN NO-LLM] Run card 8 unchanged"]
     F["[HUMAN REQUIRED] Semantic review"]
     G["[HUMAN REQUIRED] Exact tuple confirmation"]
-    H["[LLM OPTIONAL] Checked-in authorization and merge wrapper<br/>card 11"]
-    H0["[HUMAN NO-LLM] Run card 11 unchanged"]
+    H["[LLM OPTIONAL] Checked-in authorization and merge wrapper<br/>card 10"]
+    H0["[HUMAN NO-LLM] Run card 10 unchanged"]
     I["[AUTOMATED] Release-source main CI: five native targets<br/>promotion manifest for one attempt"]
     J["[AUTOMATED] Pre-tag inventory, settings proof, authorization,<br/>abandoned-release policy, exact immutable tag"]
-    K["[LLM OPTIONAL] Observe planning and publisher<br/>cards 12-13"]
-    K0["[HUMAN NO-LLM] Run cards 12-13 unchanged"]
+    K["[LLM OPTIONAL] Observe planning and publisher<br/>cards 11-12"]
+    K0["[HUMAN NO-LLM] Run cards 11-12 unchanged"]
     L["[AUTOMATED] Promote bytes, GitHub Release, 10 assets,<br/>provenance and SPDX SBOM attestations"]
     M["[AUTOMATED] Homebrew PR, exact PR-head CI,<br/>head-guarded merge, exact post-merge CI"]
     N["[AUTOMATED] Health proof and durable release evidence"]
-    O["[LLM OPTIONAL] Post-release verification and metrics<br/>cards 14-15"]
-    O0["[HUMAN NO-LLM] Run cards 14-15 unchanged"]
+    O["[LLM OPTIONAL] Post-release verification and metrics<br/>cards 13-14"]
+    O0["[HUMAN NO-LLM] Run cards 13-14 unchanged"]
     X["[AUTOMATED] Incomplete-attempt classifier"]
-    Y["[LLM OPTIONAL] Full rerun or failure diagnosis/fix PR<br/>cards 16-17"]
-    Y0["[HUMAN NO-LLM] Run cards 16-17 unchanged"]
+    Y["[LLM OPTIONAL] Full rerun or failure diagnosis/fix PR<br/>cards 15-16"]
+    Y0["[HUMAN NO-LLM] Run cards 15-16 unchanged"]
 
     A --> B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L --> M --> N --> O
     A -. alternative .-> A0
@@ -103,25 +103,24 @@ flowchart TD
 | --- | --- | --- | --- | ---: |
 | `gh` authentication preflight | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | non-JSON `gh auth status` exit plus `GET /user` JSON | read-only; local credential store and GitHub metadata read | 1 |
 | Remote-state snapshot | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | atomic REST JSON files and offline checker JSON | read-only remote; local snapshot files | 2 |
-| Planning/tap App audit | `[LLM OPTIONAL]` dispatch; `[AUTOMATED]` audit | exact workflow identity and successful conclusion | dispatch mutation needs Actions write; audit tokens are scoped as documented | 3 |
-| Worktree and branch | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact saved `main` SHA and clean `git status` | local Git/filesystem mutation only | 4 |
-| Local tests, vet, race, contract and product-diff gate | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | process exits and checker schemas | read-only source evaluation; local build outputs | 5 |
-| Implementation PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | PR REST/`gh --json` object bound to exact head | push and PR mutation; repository Contents and Pull requests write | 6 |
-| Exact-head PR CI | `[LLM OPTIONAL]` observation; `[AUTOMATED]` CI | exact run/head/event/workflow and green jobs | read-only; Actions and Checks read | 7 |
-| Implementation PR merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | unchanged head plus required checks; merged PR JSON | squash-merge mutation with `--match-head-commit`; no admin bypass | 8 |
-| Main CI and Release Please | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact `main` SHA, workflow run, generated PR identity and files | automation uses release-planning App; operator reads | 9 |
-| Semantic release review | `[HUMAN REQUIRED]` | human interpretation of exact generated diff/changelog | no mutation | 10 |
-| Exact tuple confirmation | `[HUMAN REQUIRED]` | byte-exact confirmation line for unchanged tuple | authorizes only that tuple; no mutation by itself | 10 |
-| Generated release PR authorization and merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | checked-in wrapper, exact PR/base/check/comment tuple | one comment and one head-guarded merge; repository PR/Contents write | 11 |
-| Five-target inventory and promotion manifest | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | `env-vault.attempt-classification.v1` and `env-vault.promotion-verification.v1` | read-only verification of one CI attempt | 12 |
-| Tag planning | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | authorization evidence, settings proof, exact source/tag SHA | only planning App has scoped Contents write; operator does not create a tag | 13 |
-| Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents/Attestations writes | 13 |
-| Provenance, SBOM and attestations | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | two verified predicate types for each of five archives | automated OIDC/Attestations write; operator read-only | 14 |
-| Homebrew PR-head and post-merge gates | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | exact formula, PR/head/merge/tap SHAs and two successful run identities | tap App only: Actions read, Contents and Pull requests write | 14 |
-| Health and durable evidence | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | health, observation, and routed evidence v1/v2 schemas | health read-only; append-only evidence Contents write | 15 |
-| Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 16 |
-| Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 17 |
-| Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap/evidence JSON and metrics schemas | read-only except already-automated evidence publication | 15 |
+| Worktree and branch | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact saved `main` SHA and clean `git status` | local Git/filesystem mutation only | 3 |
+| Local tests, vet, race, contract and product-diff gate | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | process exits and checker schemas | read-only source evaluation; local build outputs | 4 |
+| Implementation PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | PR REST/`gh --json` object bound to exact head | push and PR mutation; repository Contents and Pull requests write | 5 |
+| Exact-head PR CI | `[LLM OPTIONAL]` observation; `[AUTOMATED]` CI | exact run/head/event/workflow and green jobs | read-only; Actions and Checks read | 6 |
+| Implementation PR merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | unchanged head plus required checks; merged PR JSON | squash-merge mutation with `--match-head-commit`; no admin bypass | 7 |
+| Main CI and Release Please | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact `main` SHA, workflow run, generated PR identity and files | automation uses the release-planning token; operator reads | 8 |
+| Semantic release review | `[HUMAN REQUIRED]` | human interpretation of exact generated diff/changelog | no mutation | 9 |
+| Exact tuple confirmation | `[HUMAN REQUIRED]` | byte-exact confirmation line for unchanged tuple | authorizes only that tuple; no mutation by itself | 9 |
+| Generated release PR authorization and merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | checked-in wrapper, exact PR/base/check/comment tuple | one comment and one head-guarded merge; repository PR/Contents write | 10 |
+| Five-target inventory and promotion manifest | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | `env-vault.attempt-classification.v1` and `env-vault.promotion-verification.v1` | read-only verification of one CI attempt | 11 |
+| Tag planning | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | authorization evidence, settings proof, exact source/tag SHA | only the planning token has scoped Contents write; operator does not create a tag | 12 |
+| Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents/Attestations writes | 12 |
+| Provenance, SBOM and attestations | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | two verified predicate types for each of five archives | automated OIDC/Attestations write; operator read-only | 13 |
+| Homebrew PR-head and post-merge gates | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | exact formula, PR/head/merge/tap SHAs and two successful run identities | tap token only: Actions read, Contents and Pull requests write | 13 |
+| Health and durable evidence | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | health, observation, and routed evidence v1/v2 schemas | health read-only; append-only evidence Contents write | 14 |
+| Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 15 |
+| Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 16 |
+| Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap/evidence JSON and metrics schemas | read-only except already-automated evidence publication | 14 |
 | Artifact post-merge collection, replay, and compact package | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | complete private replay plus content-addressed manifest object/summary | Actions read; local packaging, then a normal small reviewed PR | A1 |
 | Artifact manifest authorization | `[HUMAN REQUIRED]` | byte-exact count/bytes/semantic-SHA confirmation | authorizes only the reviewed manifest; no mutation by itself | A2 |
 | Bounded artifact deletion | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | exact-ID batch plus synced canonical result chain | Actions artifact delete only; maximum 500 IDs; no run delete or retry | A2 |
@@ -304,76 +303,7 @@ authentication failure, rate limit, or transport error as absence.
 custom hosts, and cached observations. Do not overwrite a prior snapshot or
 edit JSON into the expected shape.
 
-### 3. GitHub App identity and installation-scope audits
-
-**Command.** Dispatch the checked-in audits at the exact saved `main`, capture
-the run URLs returned by each dispatch, and require those exact runs to
-succeed. Do not search for “the latest” run:
-
-```sh
-MAIN_SHA="$(jq -er '.object.sha | select(test("^[0-9a-f]{40}$"))' \
-  "$SNAPSHOT_DIR/main-ref.json")"
-PLANNING_AUDIT_URL="$(gh workflow run audit-release-planning-app.yml \
-  --repo "$REPOSITORY" --ref main)"
-TAP_AUDIT_URL="$(gh workflow run audit-release-app.yml \
-  --repo "$REPOSITORY" --ref main)"
-
-if [[ "$PLANNING_AUDIT_URL" =~ ^https://github.com/ildarbinanas-design/env-vault/actions/runs/([1-9][0-9]*)$ ]]; then
-  PLANNING_AUDIT_RUN_ID="${BASH_REMATCH[1]}"
-else
-  echo "planning audit dispatch did not return an exact run URL" >&2
-  exit 1
-fi
-if [[ "$TAP_AUDIT_URL" =~ ^https://github.com/ildarbinanas-design/env-vault/actions/runs/([1-9][0-9]*)$ ]]; then
-  TAP_AUDIT_RUN_ID="${BASH_REMATCH[1]}"
-else
-  echo "tap audit dispatch did not return an exact run URL" >&2
-  exit 1
-fi
-
-gh run watch "$PLANNING_AUDIT_RUN_ID" --repo "$REPOSITORY" --exit-status
-gh run watch "$TAP_AUDIT_RUN_ID" --repo "$REPOSITORY" --exit-status
-gh run view "$PLANNING_AUDIT_RUN_ID" --repo "$REPOSITORY" \
-  --json conclusion,databaseId,event,headSha,status,url,workflowName \
-  > "$SNAPSHOT_DIR/planning-app-audit-run.json"
-gh run view "$TAP_AUDIT_RUN_ID" --repo "$REPOSITORY" \
-  --json conclusion,databaseId,event,headSha,status,url,workflowName \
-  > "$SNAPSHOT_DIR/tap-app-audit-run.json"
-
-jq -e --arg sha "$MAIN_SHA" '
-  .headSha == $sha and .event == "workflow_dispatch" and
-  .workflowName == "audit-release-planning-app" and
-  .status == "completed" and .conclusion == "success"
-' "$SNAPSHOT_DIR/planning-app-audit-run.json" >/dev/null
-jq -e --arg sha "$MAIN_SHA" '
-  .headSha == $sha and .event == "workflow_dispatch" and
-  .workflowName == "audit-release-app" and
-  .status == "completed" and .conclusion == "success"
-' "$SNAPSHOT_DIR/tap-app-audit-run.json" >/dev/null
-```
-
-**Inputs and machine result.** Input is the checked-in workflow at current
-`main`. Run JSON must identify that `main` SHA and end `status=completed`,
-`conclusion=success`. The planning audit requires App slug
-`env-vault-release-planning`, installation scope exactly `env-vault`, and no
-ruleset bypass. The tap audit requires installation scope exactly one repo,
-`ildarbinanas-design/homebrew-tap`; publication separately requires slug
-`env-vault-tap-release`.
-
-**Exit, effect, and permission.** Dispatch is a workflow-run mutation requiring
-Actions write. The audit itself is read-only: the planning audit token has
-metadata and Administration read; the tap audit token has metadata read. App
-tokens are revoked by the action post-step.
-
-**Reverify.** Inspect the exact captured run IDs and their job lists, not merely
-the dispatch responses or an unrelated latest run. Re-run after any App
-identity, key, installation, environment, or ruleset change.
-
-**Forbidden.** Do not broaden either installation, add a bypass actor, grant
-Administration write, log installation tokens, or edit an App merely because a
-read-only audit was already green.
-
-### 4. Clean worktree and branch
+### 3. Clean worktree and branch
 
 **Command.** Preserve any existing dirty checkout. Resolve the remote SHA from
 the saved snapshot and create a separate worktree:
@@ -404,7 +334,7 @@ needs filesystem write access only.
 **Forbidden.** Do not clean, reset, restore, overwrite, or reuse an unrelated
 dirty worktree. Do not branch from an unverified local tracking ref.
 
-### 5. Local quality, recovery, workflow, and product-diff gates
+### 4. Local quality, recovery, workflow, and product-diff gates
 
 **Command.** From the clean worktree:
 
@@ -449,7 +379,7 @@ repeat tests on the exact pushed head; local success is not a release gate.
 adversarial parser tests, change product/E2E behavior, or use a networked
 transition to make the offline recovery checker pass.
 
-### 6. Implementation PR
+### 5. Implementation PR
 
 **Command.** Commit the reviewed scoped diff, push the exact branch, and create
 one PR non-interactively:
@@ -494,7 +424,7 @@ current head is green.
 **Forbidden.** Do not use interactive inferred base/head, force-push after
 review, mix unrelated changes, or edit the generated Release Please PR.
 
-### 7. Exact-head CI monitoring
+### 6. Exact-head CI monitoring
 
 **Command.** Resolve the current PR head, wait for required checks, then fetch
 enough `ci` candidates to prove that exactly one pull-request run has the
@@ -553,7 +483,7 @@ contract: `pr-title`, Dependency review, CodeQL Go, and CodeQL Actions.
 **Forbidden.** Do not accept checks for an older head, a similarly named
 workflow, a synthetic manual run, or a cancelled `quality-gate`.
 
-### 8. Merge the implementation PR
+### 7. Merge the implementation PR
 
 **Command.** Re-read the tuple and merge only the exact green head:
 
@@ -583,7 +513,7 @@ automatic push `ci` on that exact SHA.
 failed/pending checks, or reuse the implementation approval as release
 authorization.
 
-### 9. Observe main CI and the generated Release Please proposal
+### 8. Observe main CI and the generated Release Please proposal
 
 **Command.** Bind the main push run to the implementation merge, then locate
 the single generated proposal and run the checked-in verifier:
@@ -647,7 +577,7 @@ before authorization.
 `v0.0.14`, or proceed if Release Please proposes an unexpected version before
 its cause is understood.
 
-### 10. Human semantic review and exact tuple confirmation
+### 9. Human semantic review and exact tuple confirmation
 
 This card is `[HUMAN REQUIRED]`; neither an LLM nor automation has a substitute.
 
@@ -674,9 +604,9 @@ changed, discard the line and request a new confirmation.
 line. A PR approval, merge queue state, old comment, or partial SHA is not a
 confirmation.
 
-### 11. Authorize and merge the generated release PR
+### 10. Authorize and merge the generated release PR
 
-**Command.** After card 10 only, run the checked-in resumable wrapper:
+**Command.** After card 9 only, run the checked-in resumable wrapper:
 
 ```sh
 GITHUB_REPOSITORY="$REPOSITORY" \
@@ -707,7 +637,7 @@ must return the same exact merge without a second mutation.
 the head guard, post the comment after merge, accept a same-second comment, or
 manually create a tag or Release.
 
-### 12. Five-target CI inventory and promotion manifest
+### 11. Five-target CI inventory and promotion manifest
 
 **Command.** Resolve the generated release merge as `SOURCE_SHA`, prove that
 exactly one `ci` push run matches its workflow/event/branch/head, then save the
@@ -783,7 +713,7 @@ does this automatically.
 execute an untrusted downloaded binary, or accept fewer/more than five targets
 and ten artifact envelopes.
 
-### 13. Tag planning, publisher observation, and narrow repairs
+### 12. Tag planning, publisher observation, and narrow repairs
 
 **Command.** Fetch enough candidates to require exactly one planning run and
 one tag-triggered first publisher for the exact source. Bind the publisher's
@@ -854,7 +784,7 @@ exact head/source, and the seven job identities `metadata`, `preflight`,
 contractually expected success/skips.
 
 **Exit, effect, and permission.** Observation is read-only. Tag creation is an
-automated planning-App Contents-write mutation; there is deliberately no
+automated planning-token Contents-write mutation; there is deliberately no
 manual tag-creation equivalent. Repair dispatch requires Actions write; the
 workflow's own jobs use their narrow permissions.
 
@@ -897,7 +827,7 @@ machine artifact must have schema `env-vault.release-assets-bootstrap.v1`,
 bind the reviewed control SHA, exact source CI and failed publisher identities,
 and contain exactly one archive/checksum pair. Re-read the Release and require
 exactly those two byte-identical assets and no others. Only then dispatch the
-ordinary card-13 `release-assets` repair at `--ref "$VERSION"`; that frozen
+ordinary card-12 `release-assets` repair at `--ref "$VERSION"`; that frozen
 workflow must verify the pair and publish the remaining eight assets before
 the normal supply-chain, Homebrew, health, and evidence stages proceed.
 
@@ -923,7 +853,7 @@ zero-asset state and exact incident tuple before dispatch.
 
 Use this incident-only path only when the immutable tag already has the exact
 stable ten-asset Release and complete exact-source provenance/SPDX attestations,
-but its Homebrew job failed before formula generation, App-token minting, PR,
+but its Homebrew job failed before formula generation, PR,
 or tap mutation. First merge the reviewed transport/bridge PR and require its
 exact-head and new `main` CI to succeed. Read every coordinate afresh, including
 the bootstrap result artifact digest; do not copy a value from this narrative
@@ -965,12 +895,12 @@ asset/checksum bytes, complete signer/source attestations, successful bootstrap
 run/job/result ID/digest/pair bytes, and exact seven-job failed publisher graph.
 The failed run must be `workflow_dispatch`, have diagnostic coordinate
 `repair=release-assets`, and show Homebrew failing at the attestation gate with
-all formula/App/PR/merge steps skipped.
+all formula/PR/merge steps skipped.
 
 The deterministic tap head is searched across every PR state and base. The
 tap formula must still be lower and both branch and PR absent. Protected main
 and this unpublished state are re-read immediately before token minting; the
-one-repository App token then rechecks the same exact tap base, and the
+one-repository tap token then rechecks the same exact tap base, and the
 publisher enforces that base again inside its mutation boundary. Stop on any
 drift. A release head appearing during that race window is reusable only when
 it is one formula-only commit whose sole parent is the exact expected tap base;
@@ -995,7 +925,7 @@ replay the durable bundle offline. Never use this bridge to create or edit a
 Release, upload or replace assets, create attestations, change evidence refs,
 or request Workflows/administration permission. See ADR 0005.
 
-### 14. Provenance, SBOM, Homebrew, and both tap CI gates
+### 13. Provenance, SBOM, Homebrew, and both tap CI gates
 
 **Command.** Verify the published assets and both attestation predicate types,
 then run the exact read-only Homebrew verifier:
@@ -1042,7 +972,7 @@ The Homebrew parser must produce exactly 13 unique allowed keys, including
 
 **Exit, effect, and permission.** Entire card is read-only and requires
 Release/Contents/Attestations/Actions/Pull requests read in the two repos.
-Publisher Homebrew mutation is separate and uses only the tap App's Actions
+Publisher Homebrew mutation is separate and uses only the tap token's Actions
 read, Contents write, and Pull requests write.
 
 **Reverify.** Regenerate the formula and compare it byte-for-byte at current
@@ -1050,10 +980,10 @@ tap `main`; allow tap advancement only when the exact release merge remains an
 ancestor. Re-run both exact-SHA CI queries.
 
 **Forbidden.** Do not parse captured rows before validating raw line count and
-grammar, accept a different App slug/scope, merge a changed PR head, lower the
+grammar, broaden a release token, merge a changed PR head, lower the
 formula version, force-push tap, or substitute only one of the two CI gates.
 
-### 15. Health, durable evidence, permanent absences, and metrics
+### 14. Health, durable evidence, permanent absences, and metrics
 
 **Command.** Require the exact first publisher and its automatic evidence run
 to succeed. Bind the evidence run name to the publisher run ID and attempt,
@@ -1268,7 +1198,7 @@ reviewed checkpoint migration, not a bypass.
 non-prerelease Release; exactly ten assets and matching digests; promotion from
 one attempt; ten attestations; exact Homebrew tuple and both gates; publisher
 health success; evidence success; the `v0.0.12` and `v0.0.8` guarantees; and
-the no-product-diff command from card 5 against the original implementation
+the no-product-diff command from card 4 against the original implementation
 base. Compare with baselines only after those checks: main CI 25 jobs / 387 s
 wall / 1253 runner-s; PR CI 25 / 359 s / 1205 runner-s; publisher 30 / 417 s /
 1280 runner-s.
@@ -1279,9 +1209,9 @@ durable evidence tuple, treat a network failure as 404, manually bootstrap a
 new evidence ref, publish past the 64-commit validation bound, or claim health
 from individual successful publisher jobs.
 
-### 16. Incomplete-attempt classifier and `rerun_all_jobs`
+### 15. Incomplete-attempt classifier and `rerun_all_jobs`
 
-**Command.** After card 12 emits checker exit `4`, inspect the saved document.
+**Command.** After card 11 emits checker exit `4`, inspect the saved document.
 Only this exact predicate authorizes a full rerun:
 
 ```sh
@@ -1317,7 +1247,7 @@ incomplete attempt stops for diagnosis.
 attempts, manually edit the classification/manifest, rerun a stale source, or
 enter an unbounded retry loop.
 
-### 17. Failure diagnosis and separate fix PR
+### 16. Failure diagnosis and separate fix PR
 
 **Command.** Preserve exact machine evidence before changing anything:
 
@@ -1336,7 +1266,7 @@ scripts/release/gh-api-read.sh "$SNAPSHOT_DIR/failed-artifacts.json" \
 
 Classify the cause as an external transient, an incomplete attempt, or a
 deterministic code/workflow/config defect. For a defect, create a new scoped
-branch and implementation PR using cards 4-8; after merge, let the ordinary
+branch and implementation PR using cards 3-7; after merge, let the ordinary
 release path continue.
 
 For Actions run identity, treat exact repository/head-repository, run
@@ -1410,11 +1340,11 @@ error/action/reason codes where available: for example `TRANSPORT_FAILED`,
 
 **Exit, effect, and permission.** Collection is read-only with Actions read.
 The separate fix branch/PR has the same local and repository mutations as
-cards 4-8. It does not broaden release authorization.
+cards 3-7. It does not broaden release authorization.
 
 **Reverify.** Add a deterministic regression/adversarial test, including
 custom `run-name` and post-merge empty-`.pull_requests` fixtures when Actions
-identity is involved; run card 5, wait for exact-head CI, merge normally, and
+identity is involved; run card 4, wait for exact-head CI, merge normally, and
 verify the next workflow attempt or higher patch release. A remote settings
 fix must be minimal and followed by the relevant audit.
 
@@ -1564,19 +1494,18 @@ credentials, semantic authorization, or release truth.
 | 2. Device login completed, but the keyring token later tested invalid | `gh auth login`; then `gh auth status` / `gh api user` | Browser/device completion did not guarantee a usable stored credential | Treat both auth probes as mandatory; re-login only after invalid status | Run probes without reading code/token; stop on failure | Card 1; human handles any browser/keychain prompt | Credential-store access; no token in logs | Both non-JSON status and `GET /user` succeed twice | One-time auth incident; probes are steady-state |
 | 3. Stored auth was shadowed or made ambiguous | auth preflight with inherited `GH_TOKEN`, `GITHUB_TOKEN`, enterprise token/host variables | `gh` environment precedence selected a conflicting credential/host | Unset the named variables for each probe without printing values | Run the `env -u` wrapper and inspect only status | Card 1 verbatim | Process-local environment wrapper | `gh auth status --active --hostname github.com` plus `gh api ... user` | Steady-state wrapper |
 | 4. `Could not resolve host: github.com` | a read-only `gh`/GitHub API command in the filesystem/network sandbox | Sandbox DNS/network denial, not GitHub absence | Preserve failure, request scoped network escalation for that exact command, then make a fresh atomic read | Classify transport failure and request only exact-command escalation | Run the same read in an approved network-capable terminal; save new JSON | Codex: `require_escalated` for the exact read; human: approved network boundary | Normal-path auth/API probe, then one escalated read if required, both parsed normally | Environment incident; wrapper is steady-state |
-| 5. `unexpected Homebrew App identity` | publisher `29556832812`, job `homebrew` / `87810933009`, “Require exact Homebrew App identity and repository scope” | Minted slug was `env-vault-homebrew-release`; contract expected the renamed App | Make App/contract identity exactly `env-vault-tap-release`; rerun the `homebrew` repair at the immutable tag | Compare non-secret slug and stop publication | Dispatch/read card 3, then one card-13 `homebrew` repair | App administration only for the minimal identity correction; publisher App token stays scoped | `audit-release-app` success and publisher identity step success | One-time identity incident; exact slug check is steady-state |
+| 5. `unexpected Homebrew App identity` | publisher `29556832812`, job `homebrew` / `87810933009`, “Require exact Homebrew App identity and repository scope” | Minted slug was `env-vault-homebrew-release`; contract expected the renamed App | Make App/contract identity exactly `env-vault-tap-release`; rerun the `homebrew` repair at the immutable tag | Compare non-secret slug and stop publication | Retired with GitHub App authentication; no audit path remains | App administration only for the minimal identity correction; publisher App token stays scoped | `audit-release-app` success and publisher identity step success | One-time identity incident; retired with GitHub App authentication |
 | 6. Browser, email, OTP, or `sudo` was needed during auth/App recovery | local auth or GitHub App administration fallback | Interactive account/keychain/App administration could not be completed by CLI/API alone | Human performs only the blocked interaction; return to CLI/API and machine audit immediately | Stop and hand off without seeing code/message/password | Human completes UI prompt, revealing nothing to logs/LLM, then runs cards 1 and 3 | Human-only secure UI and, if needed, narrowly scoped local elevation | Auth probes and App audit succeed without browser/email/OTP/sudo in the release workflow | Incident fallback only, never a steady-state release step |
-| 7. Tap App could have been installed too broadly | `audit-release-app.yml`, job `scope` | An App token's repository boundary is its installation selection | Require exactly one installation repository: `ildarbinanas-design/homebrew-tap` | Dispatch audit and report only pass/fail | Card 3 | Audit token metadata read; App admin only to narrow an incorrect installation | Audit run `conclusion=success`; publisher repeats scope check before mutation | Steady-state invariant |
 | 8. Initial CI could not resolve test-only `gotestsum` dependencies with `GOPROXY=off` | reusable quality source/E2E tooling preparation | Test reporter dependencies leaked into the product module/offline phase before being prefetched | Keep exact `gotestsum` pins in `tools/e2e-reporter`, build the five reporter binaries first with bounded download, then verify/build with `GOPROXY=off` | Diagnose module graph and run regression tests | Run `go test ./...`, `go mod tidy -diff`, `go mod verify`, and `go test ./tests -run Reporter` | Network only in bounded reporter-prefetch step; offline quality remains network-denied | Five reporter artifacts plus all five native jobs and E2E gate succeed | One-time design defect; separated tool graph is steady-state |
-| 9. Read-only Homebrew health returned “malformed output” despite 13 valid rows | publisher repair `29557314584`, health job `87812792688`, verification step | Expected key literal was not sorted: `merge_sha` preceded `merge_is_ancestor_of_tap` while observed keys were sorted | Use `scripts/release/homebrew-state.jq` with the correctly sorted canonical key set | Compare parser/test output and locate deterministic order error | `go test ./tests -run HomebrewState`; card 14 | No mutation; public tap read | Adversarial parser test and next health job succeed | One-time parser bug fixed by PR #37; test is steady-state |
+| 9. Read-only Homebrew health returned “malformed output” despite 13 valid rows | publisher repair `29557314584`, health job `87812792688`, verification step | Expected key literal was not sorted: `merge_sha` preceded `merge_is_ancestor_of_tap` while observed keys were sorted | Use `scripts/release/homebrew-state.jq` with the correctly sorted canonical key set | Compare parser/test output and locate deterministic order error | `go test ./tests -run HomebrewState`; card 13 | No mutation; public tap read | Adversarial parser test and next health job succeed | One-time parser bug fixed by PR #37; test is steady-state |
 | 10. Original parser was fail-open for 13 valid rows plus a malformed or blank extra line | old inline `jq` used `[inputs \| capture(...)]` before count | Nonmatching raw inputs disappeared before `$rows \| length == 13`, so extras could be ignored | First collect `[inputs]`, require exactly 13 raw lines, validate every raw line, then `capture`; reject duplicate/unknown/missing keys | Explain the raw-vs-captured count and run adversarial cases | `go test ./tests -run HomebrewStateJQParsesExactOutputsFailClosed` | Read-only parser test | Missing, duplicate, unknown, malformed, additional, additional-malformed, and additional-blank cases all yield no accepted object | One-time fail-open defect; fail-closed parser is steady-state |
 | 11. `v0.0.13` publication state is correct but health/evidence is not green | initial publisher `29556832812`; repair `29557314584`; health job `87812792688`; evidence run `29557533919` | Slug incident was repaired; deterministic parser bug then failed health, so evidence trigger correctly skipped | Preserve `v0.0.13` bytes/state, take the authorized one-time recovery transition, require the next release to pass full health and durable evidence | Report exact partial-success facts without “green evidence” | Verify historical tuple with cards 2, 14, and the run IDs; do not repair history into a false claim | Read-only historical audit; declarative recovery change through reviewed PR | Next release publisher health and evidence both `success`; `v0.0.13` remains documented as failed health/skipped evidence | One-time recovery exception |
 | 12. Planning returned `INPUT_INVALID`, exit `5` after PR #37 | run `29558522786`, plan job `87815819818`, “Build the offline checker and validate the release contract” | Recovery was still `active` while manifest was already `0.0.13`; active recovery intentionally requires manifest `0.0.12` | Complete recovery declaratively with exact `v0.0.13` source SHA; remove temporary config/workflow override; do not loosen validator | Recognize stable code as correct fail-closed behavior | Run card 2 recovery check; require `state=complete` | Offline only; no App token or remote mutation occurred in failed run | New planning run passes complete-config validation; old tuple still fails in tests with `INPUT_INVALID`, exit `5` | Correct one-time fail-closed stop |
 | 13. A sandbox-denied command was at risk of being blindly repeated | any failed network/process command | Repeating unchanged scope cannot cure denied DNS/filesystem permission and can obscure the first failure | Preserve exit/output; retry only with a deliberately scoped permission escalation or changed safe method | Classify and request exact scope once | Operator records failure and reruns exact command only inside approved boundary | No blanket shell/network elevation; never escalate destructive commands | New invocation produces a complete parseable response; compare identities | Steady-state operational rule |
 | 14. Secrets/OTP could leak through traces, logs, JSON, or evidence | auth/App steps, shell environment, Actions logs, evidence assembly | Debug/tracing or copying interactive material crosses the credential boundary | `set +x`; unset debug/trace variables; use environment/credential store; redact by omission; evidence schemas contain identities, never credentials | Refuse to read or echo sensitive material | Human enters secrets only into secure prompt/secret store and verifies non-secret state | Secret-store/environment boundary; least-privilege App tokens | Search logs/artifacts/evidence for secret classes without displaying values; audits and workflows succeed with masked secrets | Permanent invariant |
 | 15. `gh api` rejected `--paginate --slurp` combined with `--jq` or `--template` | local `gh` 2.96 API snapshot command | This CLI version requires raw slurped pages to be emitted without an inline formatter | Save raw `--paginate --slurp` output atomically, then run `jq` offline; preferably use `scripts/release/gh-api-read.sh OUTPUT --paginate --slurp ENDPOINT` | Split transport from validation and preserve the raw response | Run the same helper/command, then `jq -e ... OUTPUT`; never pipe a partial response into a gate | Remote read plus private local output; scoped network escalation only if the first read is sandbox-denied | Transport and offline `jq` each exit `0`; raw file is a complete page array and is re-parseable | CLI compatibility incident; split transport/checking is steady-state |
-| 16. User OAuth token received HTTP 403 on `GET /user/installations` with “access token authorized to a GitHub App” required | local read-only App-installation probe | A user/keyring OAuth token is the wrong credential type for that endpoint; adding user scopes does not turn it into an App-authorized token | Do not broaden user scopes; dispatch the checked-in audit, which mints a metadata-only installation token and lists `installation/repositories` | Stop the 403 path and execute card 3 without seeing the App key/token | Run card 3, capture the exact returned audit run ID, and inspect its success | Dispatch needs Actions write; environment supplies the App private key only to the workflow; minted audit token has metadata read | Exact captured audit run is bound to saved `main`, concludes `success`, and proves one-repository scope | One-time wrong-credential incident; audit workflow is steady-state |
-| 17. `v0.0.14` publisher and health were green, but durable evidence failed immediately in identity resolution | evidence run `29563754061`; `assemble` job `87831640011`; step “Resolve exact CI, release PR, and PR-head CI identities”; `publish` job `87831680693` skipped | Publisher REST `.name` contained custom run-name `env-vault-publication event=push version=v0.0.14 repair=none`, not `build-binaries`; the next latent predicate also required `.pull_requests`, but PR-CI run `29562392602` returns `pull_requests: []` after PR #39 merged; review also found that the old parser discarded the quality-gate job ID from the exact check URL and never resolved or cross-checked that job's `run_attempt` | Bind publisher by exact repository/head-repository/run/attempt, workflow `path`, event, source/ref, status, and conclusion; bind PR CI through the unique successful `quality-gate` URL, exact job/run/attempt identity, and direct exact `head_sha`; emit explicit mismatch errors | Preserve failed logs and observation artifact, replay each predicate against exact run/job API JSON, then prepare one scoped workflow/test/docs PR | Card 17; query `actions/runs/RUN_ID` and `actions/jobs/JOB_ID`; compare stable tuple and exact check URL; after merge dispatch one documented `repair=health` at immutable `v0.0.14` | Actions read for diagnosis; normal reviewed PR; Actions write only for the exact tag-scoped health repair; no asset/tag/tap mutation | Fix PR #41 exact-head and main CI passed; health repair `29566697259` was a publication no-op and succeeded; evidence run `29566800374` completed exact identity resolution and `assemble`, with its later publish transport defect tracked separately in row 19 | One-time deterministic identity defect; stable-path/direct-head/job-attempt identity is steady-state |
+| 16. User OAuth token received HTTP 403 on `GET /user/installations` with “access token authorized to a GitHub App” required | local read-only App-installation probe | A user/keyring OAuth token is the wrong credential type for that endpoint; adding user scopes does not turn it into an App-authorized token | Do not broaden user scopes; dispatch the checked-in audit, which mints a metadata-only installation token and lists `installation/repositories` | Stop the 403 path without seeing any App key/token | Retired with GitHub App authentication; no audit path remains | Dispatch needs Actions write; environment supplies the App private key only to the workflow; minted audit token has metadata read | Exact captured audit run is bound to saved `main`, concludes `success`, and proves one-repository scope | One-time wrong-credential incident; retired with GitHub App authentication |
+| 17. `v0.0.14` publisher and health were green, but durable evidence failed immediately in identity resolution | evidence run `29563754061`; `assemble` job `87831640011`; step “Resolve exact CI, release PR, and PR-head CI identities”; `publish` job `87831680693` skipped | Publisher REST `.name` contained custom run-name `env-vault-publication event=push version=v0.0.14 repair=none`, not `build-binaries`; the next latent predicate also required `.pull_requests`, but PR-CI run `29562392602` returns `pull_requests: []` after PR #39 merged; review also found that the old parser discarded the quality-gate job ID from the exact check URL and never resolved or cross-checked that job's `run_attempt` | Bind publisher by exact repository/head-repository/run/attempt, workflow `path`, event, source/ref, status, and conclusion; bind PR CI through the unique successful `quality-gate` URL, exact job/run/attempt identity, and direct exact `head_sha`; emit explicit mismatch errors | Preserve failed logs and observation artifact, replay each predicate against exact run/job API JSON, then prepare one scoped workflow/test/docs PR | Card 16; query `actions/runs/RUN_ID` and `actions/jobs/JOB_ID`; compare stable tuple and exact check URL; after merge dispatch one documented `repair=health` at immutable `v0.0.14` | Actions read for diagnosis; normal reviewed PR; Actions write only for the exact tag-scoped health repair; no asset/tag/tap mutation | Fix PR #41 exact-head and main CI passed; health repair `29566697259` was a publication no-op and succeeded; evidence run `29566800374` completed exact identity resolution and `assemble`, with its later publish transport defect tracked separately in row 19 | One-time deterministic identity defect; stable-path/direct-head/job-attempt identity is steady-state |
 | 18. GitHub Actions UI appeared to show duplicate jobs for Release Please PR #39 | `pr-title` runs `29562392487` (`synchronize`, cancelled before steps) and `29562393511` (`edited`, success), both for head `40d12c48fe87a7a4ef7fbb735d7b2759d88c53a9`; CI and Dependency Review used the release PR title, while CodeQL appeared as the separate `PR #39` row | Release Please force-pushed the proposal and then edited PR body; different workflows still describe the same PR/head, while `pr-title` intentionally listens to both events and uses one PR-scoped concurrency group | Keep both triggers and `cancel-in-progress: true`; treat the later successful run as canonical; defer optional event-aware `run-name` observability | Group runs by workflow, event, head SHA, and time; distinguish a cancelled zero-step replacement from a rerun or duplicated workflow | `gh run list`/`gh run view` on both IDs and `gh pr checks 39 --required`; inspect `.github/workflows/pr-title.yml` | Read-only Actions/PR metadata; no workflow mutation required for release | Cancelled run has no executed steps, successor succeeds, and all required checks remain green; same pattern is limited to near-simultaneous Release Please `synchronize`/`edited` events | Expected steady-state cancellation noise; optional observability item is backlog only |
 | 19. Identity repair assembled valid evidence, but append-only publish rejected the first real Git blob | publisher health repair `29566697259` succeeded; evidence run `29566800374`; `assemble` job `87841128421` succeeded; `publish` job `87841199069`, step “Publish durable no-clobber evidence branch state” failed; candidate artifact `8401417490` | Git Blobs API returned 1,475,773 bytes as 2,000,495 characters with 32,795 LF separators (32,796 lines); the fake returned one unwrapped line, and `jq '.content \| @base64d'` rejects wrapped input. The immutable `v0.0.14` checkout also freezes the defective helper, so changing only `main` would not affect a later repair | Stream `.content` through CR/LF removal, fail-closed decode, and an exact canonical-base64 round trip before retaining declared-size and exact-byte checks; make the realistic fake wrap at 60 characters and reject malformed/trailing/extra/missing-padding variants; keep assembly/replay on publisher source but execute the mutation helper from a separate checkout pinned to protected listener `github.sha` | Stop after the first failure; verify the evidence ref is still HTTP 404 and classify the created blob as unreachable; fix through a new reviewed PR rather than rerunning the old workflow | Query the exact orphan blob only for metadata/shape; run publisher-script create/no-op/append/race/malformed tests and workflow graph tests; after merge use one new health repair because rerun preserves the old listener/tooling | Read-only diagnosis plus normal reviewed PR; one exact tag-scoped health dispatch after green main; no tag/release/asset/tap mutation | Real wrapped-blob fixture passes; malformed and non-canonical base64 fail before tree/commit/ref; exact-head CI/main CI pass; health repair `29569706872` and evidence run `29569819553` attempt 1 proved candidate replay, then exposed the separate ref-bootstrap defect in row 20 | One-time deterministic transport-fixture and historical-tooling defect; wrapped decode and dual-source trust boundary are steady-state |
 | 20. Valid replay could not create the first protected evidence ref | health repair `29569706872` succeeded; evidence run `29569819553` attempt 1; `assemble` `87850701462` succeeded; `publish` `87850792886` failed with `Resource not accessible by integration (HTTP 403)` at `POST git/refs`; candidate replay digest `124a7706b4129c053fd3b76588b2591296bdda26c31235e98589ba898eabcb0c` | The absent-branch path inherited the release source tree and parent, making ten `.github/workflows/*` files reachable through the new ref. GitHub therefore required `Workflows: write`; the deliberately narrow workflow token had only `Contents: write`. The ruleset allowed creation and fast-forward and was not the cause | Treat `release-evidence` as one-time repository infrastructure: bootstrap it without force at the exact first release source; enforce that source with exact operator pre/post checks; fail before Git-object writes when absent; keep subsequent writes as `force:false` fast-forwards. Track an automated evidence-only root ledger as refactor backlog rather than granting a broad token | Preserve the 403 and branch 404, audit token permissions/ruleset, bootstrap only exact `c42a92144a82c19edea41c76328ec7fd1e408ceb`, then rerun the whole evidence workflow so attempt-qualified artifacts are rebuilt | Run the exact absence/ruleset checks, `git push origin "${SOURCE_SHA}:refs/heads/release-evidence"`, verify the ref, then `gh run rerun 29569819553`; never use `--failed`, `--force`, current `main`, or a different SHA | One authenticated one-time branch creation; steady-state workflow remains `actions: read`, `contents: write`; no App permission, bypass, tag, Release, asset, or tap change | Attempt 2: `assemble` `87853060534` and `publish` `87853170330` succeeded; evidence commit `68547bd880a4d49f44389476b77046aac2ab1675` fast-forwarded from the source; replay artifact `8402901139`; exact tuple verifies offline | Historical one-time bootstrap resolution only. Fresh-ledger automation was later implemented by ADR 0003; the production legacy root remains unchanged |
@@ -1614,7 +1543,7 @@ was `42e908e481d2620c4fc6a330249004acdbfc6cf8` and its squash merge is
 `d4c8ac7c7364e8bc7f85a40bc8fb162bb506a48f`.
 
 Post-PR #37 planning run `29558522786` failed in job `87815819818` with
-`INPUT_INVALID` and exit `5` before minting an App token or making a repository
+`INPUT_INVALID` and exit `5` before using a release token or making a repository
 mutation. The message `active recovery requires manifest version 0.0.12` was a
 correct fail-closed stop, not a validator defect.
 
@@ -1653,4 +1582,4 @@ following for one exact tuple:
   derived from complete machine JSON rather than a failed publication attempt.
 
 If any item is absent, unknown, malformed, unauthenticated, rate-limited, or
-transport-failed, stop. Diagnose with card 17; do not weaken the gate.
+transport-failed, stop. Diagnose with card 16; do not weaken the gate.

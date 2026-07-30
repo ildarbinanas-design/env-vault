@@ -19,7 +19,6 @@ type SourceRoute struct {
 	ContractSemanticSHA256 string                 `json:"contract_semantic_sha256"`
 	ContractFileSHA256     string                 `json:"contract_file_sha256"`
 	Repository             Repository             `json:"repository"`
-	ReleaseAppSlug         string                 `json:"release_app_slug"`
 	Naming                 Naming                 `json:"naming"`
 	Operational            *OperationalProjection `json:"operational,omitempty"`
 	Historical             *HistoricalIdentity    `json:"historical,omitempty"`
@@ -82,10 +81,6 @@ func RouteSourceContract(sourceContractFilename, registryFilename, repository, v
 	if !ok || sourceRepository.FullName != repository {
 		return SourceRoute{}, errors.New("source contract repository differs from the workflow repository")
 	}
-	releaseApp, ok := contract.AppByID("release_planning")
-	if !ok || releaseApp.RepositoryID != "source" {
-		return SourceRoute{}, errors.New("source contract release-planning App binding is invalid")
-	}
 	digest, err := SemanticSHA256(contract)
 	if err != nil {
 		return SourceRoute{}, err
@@ -95,8 +90,7 @@ func RouteSourceContract(sourceContractFilename, registryFilename, repository, v
 		ContractGeneration: contractGeneration, EvidenceFormat: evidenceFormat,
 		ContractSchemaID: contract.SchemaID, ContractSchemaVersion: contract.SchemaVersion,
 		ContractSemanticSHA256: digest, Repository: sourceRepository,
-		ContractFileSHA256: contract.FileSHA256(),
-		ReleaseAppSlug:     releaseApp.Slug, Naming: contract.Naming,
+		ContractFileSHA256: contract.FileSHA256(), Naming: contract.Naming,
 		Operational: operational, Historical: historical,
 	}, nil
 }

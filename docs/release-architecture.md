@@ -94,11 +94,10 @@ normal evidence listener.
 | --- | ---: | --- | --- |
 | `env-vault/ci.yml` | 2 (12 expanded in the measured run) | PR, main push, dispatch; calls reusable quality and seals its gate | none |
 | `env-vault/reusable-quality.yml` | 5 (11 expanded) | reusable source, license, five-target native/E2E quality | none |
-| `env-vault/release-please.yml` | 3 | completed main CI; inspect, bounded whole-attempt rerun, planning/tag transition | isolated Actions write for rerun; scoped App writes for planning/tag |
-| `env-vault/build-binaries.yml` | 7 | exact tag or explicit repair; promotion and publication | Contents write only in release; attestation writes only in supply chain; scoped tap App in Homebrew |
+| `env-vault/release-please.yml` | 3 | completed main CI; inspect, bounded whole-attempt rerun, planning/tag transition | isolated Actions write for rerun; scoped token writes for planning/tag |
+| `env-vault/build-binaries.yml` | 7 | exact tag or explicit repair; promotion and publication | Contents write only in release; attestation writes only in supply chain; scoped tap token in Homebrew |
 | `env-vault/release-evidence.yml` | 2 | successful publisher completion | read-only assembly; Contents write only in replaying publisher job |
 | `env-vault/legacy-rebuild.yml` | 2 | manual diagnostics for `v0.0.1`-`v0.0.7` | none; publication is contract-forbidden |
-| two App audit workflows | 2 total | manual least-privilege audit | metadata/settings observations only |
 | dependency review and PR-title workflows | 2 total | PR policy | no release mutation |
 | `homebrew-tap/test-formula.yml` | 2 (3 expanded) | PR and main push; two macOS formula tests plus required gate | none |
 
@@ -367,7 +366,7 @@ least privilege while removing setup duplication, treating queue order as a
 correctness property, losing attestation/SBOM material during evidence
 compaction, migrating evidence without parity, over-centralizing immutable
 history pins, or optimizing job count at the expense of target concurrency and
-fail-closed gates. External environments, variables, secrets, rulesets, App
+fail-closed gates. External environments, variables, secrets, rulesets, token
 permissions, and required checks remain part of the release contract described
 in `docs/release-external-settings.md`; code cleanup cannot silently weaken
 them.
