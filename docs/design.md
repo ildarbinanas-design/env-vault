@@ -68,6 +68,17 @@ all processes continue to coordinate on one inode. Acquisition retries every
 then returns `CONFIG_LOCKED`. Dry runs do not create a lock. A requested secret
 existence check completes before the config transaction begins.
 
+## Doctor
+
+`doctor` is a read-only diagnostic: it never mutates config and never takes
+the profile lock (`config.LoadForRead`, no `flock` acquisition). It reports
+`config_path`, `config_exists`, the resolved `backend` (`keyring`, `pass`, or
+`test`), and `test_backend`. A config load failure still returns the standard
+error envelope; a secret-backend initialization or listing failure is
+non-fatal and surfaces as a `warnings` entry instead, so a backend problem
+alone does not fail the command. It uses the same success/error envelope as
+every other command (see Output Schema) and never prints a secret value.
+
 ## Exec Flow
 
 1. Validate the `--` delimiter and child argv.

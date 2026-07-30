@@ -1,5 +1,12 @@
 # Release automation refactor backlog
 
+**Frozen by [ADR 0008](adr/0008-freeze-release-ceremony-require-personalos-link.md)
+(2026-07-30)**, except item 11 (explicit structural-necessity exception in
+that ADR). Every open item below (`frozen`) requires an explicit PersonalOS
+consumer or a narrowly-defined security requirement (see ADR 0008) before
+work starts — this backlog being detailed and ordered is not itself
+authorization. See the per-item status tag added to each heading.
+
 This backlog records deliberately deferred release-automation work. None of the
 items below is authorization to change product behavior, rebuild an immutable
 release, relax a release invariant, or add an LLM-controlled decision plane.
@@ -18,7 +25,7 @@ The first successful v2-contract release comparison is now captured in durable
 release-PR CI `29682351617`, and publisher `29683468172`; the measurement and
 its latency follow-up are recorded in items 12 and 6 respectively.
 
-## 1. Dual-source read-only verification for immutable historical tags
+## 1. Dual-source read-only verification for immutable historical tags — `frozen`
 
 - **Problem and evidence:** the current checker validates the current contract
   and can rebuild legacy diagnostics, but a historical tag may predate the
@@ -55,7 +62,7 @@ its latency follow-up are recorded in items 12 and 6 respectively.
   export while proving its GitHub Release remains absent; no token is available
   to the checker; mutation and promotion are structurally impossible.
 
-## 2. Generated recovery state machine and transition proofs
+## 2. Generated recovery state machine and transition proofs — `frozen`
 
 - **Problem and evidence:** the one-time `v0.0.12` recovery required a pinned
   incident identity, a pinned successful `v0.0.13` source, temporary planning
@@ -86,7 +93,7 @@ its latency follow-up are recorded in items 12 and 6 respectively.
   golden fixtures, not workflow conditionals; an undeclared edge returns stable
   `INPUT_INVALID`/exit 5; the `v0.0.12` canonical output is unchanged.
 
-## 3. Reusable GitHub App identity and installation-scope audit
+## 3. Reusable GitHub App identity and installation-scope audit — `frozen`
 
 - **Problem and evidence:** Homebrew App identity/scope checks are repeated in
   `build-binaries.yml` and `audit-release-app.yml`; the standalone tap audit
@@ -118,7 +125,7 @@ its latency follow-up are recorded in items 12 and 6 respectively.
   validate the same typed proof; changing slug, scope, or permissions fails
   before repository mutation; logs contain no credential material.
 
-## 4. Typed GitHub transport and CLI compatibility boundary
+## 4. Typed GitHub transport and CLI compatibility boundary — `already implemented`
 
 **Implemented in refactor Stage 2 (2026-07-17).** The accepted design is
 recorded in [ADR 0002](adr/0002-release-github-transport.md). Operational
@@ -210,7 +217,7 @@ or substituted for the immutable baseline JSON.
   a transport-unknown mutation is classified for inspection rather than
   retried.
 
-## 5. Consolidated promotion-manifest and artifact inventory engine
+## 5. Consolidated promotion-manifest and artifact inventory engine — `frozen`
 
 - **Problem and evidence:** promotion, asset reconciliation, exact-version
   inventory, provenance, SBOM, and attestations cross several Go commands,
@@ -264,7 +271,7 @@ or substituted for the immutable baseline JSON.
   stable codes; five builders stay independent; final metrics meet the target
   without weakening any inventory or attestation check.
 
-## 6. Measurement-first CI latency investigation with native-gate preservation
+## 6. Measurement-first CI latency investigation with native-gate preservation — `frozen`
 
 - **Problem and evidence:** the first successful v2-contract release reduced
   main and PR CI from 25 to 12 jobs each, but exact hosted measurements regressed.
@@ -319,7 +326,7 @@ or substituted for the immutable baseline JSON.
   test count and show a statistically defensible non-regression against the
   preregistered measure; otherwise it is reverted or rejected.
 
-## 7. Hermetic test-tool bootstrap for offline jobs
+## 7. Hermetic test-tool bootstrap for offline jobs — `frozen`
 
 - **Problem and evidence:** the initial `v0.0.13` path exposed test-only
   `gotestsum` dependencies while `GOPROXY=off`. Production dependencies were not
@@ -348,7 +355,7 @@ or substituted for the immutable baseline JSON.
   succeeds without network; reporter output matches the current schema; product
   module dependencies are byte-for-byte unchanged.
 
-## 8. Durable evidence collector independent of publisher conclusion
+## 8. Durable evidence collector independent of publisher conclusion — `frozen`
 
 - **Problem and evidence:** release-evidence run `29557533919` was skipped when
   the `v0.0.13` repair publisher concluded failure in health, even though the
@@ -378,7 +385,7 @@ or substituted for the immutable baseline JSON.
   attempts say `publication_eligible: false`; only one fully green attempt can
   create the durable release-evidence record.
 
-## 9. Event-aware required-check observability without trigger weakening
+## 9. Event-aware required-check observability without trigger weakening — `frozen`
 
 - **Problem and evidence:** Release Please updates can emit `synchronize` and
   `edited` within one second for the same PR head. For PR #39 this produced
@@ -420,7 +427,7 @@ or substituted for the immutable baseline JSON.
   context; title edits are always revalidated; no required-check or ruleset
   weakening occurs.
 
-## 10. Compact content-addressed offline evidence bundle
+## 10. Compact content-addressed offline evidence bundle — `already implemented`
 
 **Implemented in refactor Stage 3 (2026-07-17).** The accepted format and
 migration decision are recorded in [ADR 0003](adr/0003-compact-release-evidence-ledger.md).
@@ -451,7 +458,7 @@ fixture in addition to generated compatibility fixtures. It must contain no
 secret or credential material and must prove stable reconstruction/error codes
 without treating the dated production evidence SHA as an operational constant.
 
-## 11. Automatic evidence-only ledger genesis
+## 11. Automatic evidence-only ledger genesis — `already implemented; residual checkpoint/Merkle work exempt from freeze (ADR 0008)`
 
 **Implemented in refactor Stage 3 (2026-07-17).** Only an exact typed HTTP 404
 enables genesis. The publisher re-observes the exact source immediately before
@@ -483,7 +490,7 @@ accepted legacy parent/source observation with a dynamic, independently bound
 proof before removing any compatibility fixture. Neither follow-up authorizes
 rewriting the current branch.
 
-## 12. Versioned operational release contract and workflow parity
+## 12. Versioned operational release contract and workflow parity — `already implemented`
 
 **Implemented in refactor Stage 4 (2026-07-18).** The accepted trust-domain
 decision is recorded in
@@ -546,7 +553,18 @@ the measurement-first latency investigation without a speedup claim.
   needs its source-tree path; never remove or rewrite the archived v1 bytes or
   tuple registry.
 
-## 13. Post-release Actions artifact lifecycle and storage recovery
+## 13. Post-release Actions artifact lifecycle and storage recovery — `frozen; owner review requested — see note`
+
+**Note added 2026-07-30, during ADR 0008 backlog annotation:** unlike items
+1-3/5-9, this item describes an already-accrued billing exposure (177.8
+GB-hours against a zero-dollar-blocking 0.5 GB-month allowance) that could
+already be blocking CI, not a speculative future risk. This may qualify as
+the same kind of "keep an existing invariant alive" structural necessity as
+item 11 (see ADR 0008 exceptions) rather than discretionary release
+ceremony — but that call is left to the owner rather than decided here,
+since it was not one of the questions this review round covered. If Actions
+runs are currently failing or budget-blocked, treat this as urgent
+independent of the freeze.
 
 - **Problem and evidence:** the pre-release account snapshot observed 2,027
   active Actions artifacts totaling 2,818,282,469 bytes while repository
