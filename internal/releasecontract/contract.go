@@ -24,24 +24,11 @@ const (
 	CanonicalPath  = "release/contract.v2.json"
 	MatrixSchemaID = "env-vault.release-contract-matrix.v1"
 
-	LegacySchemaID               = "env-vault.release-contract.v1"
-	LegacySchemaVersion          = 1
-	LegacyCanonicalPath          = "release/contract.v1.json"
-	LegacyArchivePath            = "release/history/contract.v1.json"
-	LegacySemanticSHA256         = "6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5"
-	LegacyCanonicalFileSHA256    = "69be8d6ccf4480cbdbff3c722d8080d62b31051cef0101fadb47a30cdc0e2715"
-	HistoricalRegistrySchemaID   = "env-vault.release-contract-history.v2"
-	HistoricalRegistryVersion    = 2
-	HistoricalRegistryPath       = "release/contract-history.v2.json"
 	OperationalProjectionSchema  = "env-vault.release-contract-operational.v2"
 	OperationalProjectionVersion = 2
-	HistoricalSourceSchemaID     = "env-vault.release-contract-historical-source.v1"
-	SourceRouteSchemaID          = "env-vault.release-contract-source-route.v2"
-	SourceRouteSchemaVersion     = 2
 
 	VersionSchemaID                    = "env-vault.releasecheck-version.v2"
 	VersionSchemaVersion               = 2
-	LegacyVersionSchemaID              = "env-vault.releasecheck-version.v1"
 	ErrorSchemaID                      = "env-vault.releasecheck-error.v1"
 	ValidationSchemaID                 = "env-vault.contract-validation.v1"
 	ClassificationSchemaID             = "env-vault.attempt-classification.v1"
@@ -86,7 +73,6 @@ var (
 type Contract struct {
 	SchemaID             string            `json:"schema_id"`
 	SchemaVersion        int               `json:"schema_version"`
-	Evolution            Evolution         `json:"evolution"`
 	Repositories         Repositories      `json:"repositories"`
 	VersionPolicy        VersionPolicy     `json:"version_policy"`
 	Naming               Naming            `json:"naming"`
@@ -96,21 +82,13 @@ type Contract struct {
 	Workflows            []Workflow        `json:"workflows"`
 	MainRequiredChecks   []RequiredCheck   `json:"main_required_checks"`
 	Concurrency          Concurrency       `json:"concurrency"`
-	Apps                 []App             `json:"apps,omitempty"`
 	ReleaseStages        []ReleaseStage    `json:"release_stages"`
 	AllowedRepairActions []RepairAction    `json:"allowed_repair_actions"`
 	ActionCodes          []string          `json:"action_codes"`
 	ReasonCodes          []string          `json:"reason_codes"`
 	ErrorCodes           []string          `json:"error_codes"`
 	Schemas              map[string]string `json:"schemas"`
-	historicalIdentity   *HistoricalIdentity
 	fileSHA256           string
-}
-
-type Evolution struct {
-	PreviousSchemaID       string `json:"previous_schema_id"`
-	PreviousSchemaVersion  int    `json:"previous_schema_version"`
-	PreviousSemanticSHA256 string `json:"previous_semantic_sha256"`
 }
 
 type Repositories struct {
@@ -333,15 +311,6 @@ func (c Contract) LegacyVersion(version string) (LegacyRebuildVersion, bool) {
 	return LegacyRebuildVersion{}, false
 }
 
-func (c Contract) AppByID(id string) (App, bool) {
-	for _, app := range c.Apps {
-		if app.ID == id {
-			return app, true
-		}
-	}
-	return App{}, false
-}
-
 func (c Contract) WorkflowByID(id string) (Workflow, bool) {
 	for _, workflow := range c.Workflows {
 		if workflow.ID == id {
@@ -352,14 +321,6 @@ func (c Contract) WorkflowByID(id string) (Workflow, bool) {
 }
 
 func (c Contract) RepositoryByID(id string) (Repository, bool) {
-	if c.SchemaID == LegacySchemaID && c.SchemaVersion == LegacySchemaVersion && c.historicalIdentity != nil {
-		switch id {
-		case "source":
-			return Repository{FullName: "ildarbinanas-design/env-vault", DefaultBranch: "main"}, true
-		case "homebrew_tap":
-			return Repository{FullName: "ildarbinanas-design/homebrew-tap", DefaultBranch: "main"}, true
-		}
-	}
 	switch id {
 	case "source":
 		return c.Repositories.Source, c.Repositories.Source.FullName != ""
@@ -454,11 +415,7 @@ func SemanticSHA256(c Contract) (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
-	var semantic any = c
-	if c.SchemaID == LegacySchemaID && c.SchemaVersion == LegacySchemaVersion {
-		semantic = projectLegacyContract(c)
-	}
-	canonical, err := json.Marshal(semantic)
+	canonical, err := json.Marshal(c)
 	if err != nil {
 		return "", fmt.Errorf("marshal semantic release contract: %w", err)
 	}
@@ -471,24 +428,11 @@ func (c Contract) Validate() error {
 	add := func(format string, values ...any) {
 		problems = append(problems, fmt.Sprintf(format, values...))
 	}
-	legacy := c.SchemaID == LegacySchemaID && c.SchemaVersion == LegacySchemaVersion
-	operational := c.SchemaID == SchemaID && c.SchemaVersion == SchemaVersion
-	if !legacy && !operational {
-		add("schema must be %s version %d or the explicitly loaded archival %s version %d", SchemaID, SchemaVersion, LegacySchemaID, LegacySchemaVersion)
+	if c.SchemaID != SchemaID || c.SchemaVersion != SchemaVersion {
+		add("schema must be %s version %d", SchemaID, SchemaVersion)
 	}
-	if operational {
-		if err := validateOperationalOwnership(c); err != nil {
-			add("operational ownership: %v", err)
-		}
-	} else if legacy {
-		if c.historicalIdentity == nil {
-			add("archival v1 contract requires a closed historical compatibility binding")
-		}
-		if !reflect.DeepEqual(c.Evolution, Evolution{}) || !reflect.DeepEqual(c.Repositories, Repositories{}) ||
-			!reflect.DeepEqual(c.Homebrew, Homebrew{}) || !reflect.DeepEqual(c.Concurrency, Concurrency{}) ||
-			c.VersionPolicy.TagPrefix != "" || !reflect.DeepEqual(c.VersionPolicy.ReleasePlease, ReleasePleasePolicy{}) {
-			add("archival v1 contract must not contain v2 operational fields")
-		}
+	if err := validateOperationalOwnership(c); err != nil {
+		add("operational ownership: %v", err)
 	}
 	if c.VersionPolicy.Pattern != versionPattern {
 		add("version policy pattern is not the canonical strict SemVer expression")
@@ -545,15 +489,9 @@ func (c Contract) Validate() error {
 	workflowIDs := make(map[string]bool)
 	workflowNames := make(map[string]bool)
 	workflowFiles := make(map[string]bool)
-	wantWorkflowIDs := []string{"ci", "quality", "planning", "publisher", "legacy_rebuild", "dependency_review", "pr_title"}
-	if operational {
-		wantWorkflowIDs = append(wantWorkflowIDs, "release_assets_bootstrap", "homebrew_bridge")
-	}
-	if legacy {
-		// The archived v1 contract is frozen: it still records the retired
-		// GitHub App audit workflows and the retired evidence-ledger publisher
-		// that the live pipeline no longer has.
-		wantWorkflowIDs = append(wantWorkflowIDs, "planning_app_audit", "tap_app_audit", "release_evidence")
+	wantWorkflowIDs := []string{
+		"ci", "quality", "planning", "publisher", "legacy_rebuild", "dependency_review", "pr_title",
+		"release_assets_bootstrap", "homebrew_bridge",
 	}
 	if len(c.Workflows) != len(wantWorkflowIDs) {
 		add("workflow count=%d, want %d", len(c.Workflows), len(wantWorkflowIDs))
@@ -566,7 +504,7 @@ func (c Contract) Validate() error {
 			add("workflow %q duplicates an ID, name, or filename", workflow.ID)
 		}
 		eventIDs, jobIDs := map[string]bool{}, map[string]bool{}
-		if operational && (len(workflow.Events) == 0 || len(workflow.Jobs) == 0) {
+		if len(workflow.Events) == 0 || len(workflow.Jobs) == 0 {
 			add("workflow %q must declare non-empty event and job inventories", workflow.ID)
 		}
 		for _, event := range workflow.Events {
@@ -581,9 +519,6 @@ func (c Contract) Validate() error {
 			}
 			jobIDs[job] = true
 		}
-		if legacy && (workflow.Events != nil || workflow.Jobs != nil) {
-			add("archival workflow %q must not contain v2 event/job inventories", workflow.ID)
-		}
 		workflowIDs[workflow.ID], workflowNames[workflow.Name], workflowFiles[workflow.File] = true, true, true
 	}
 	wantWorkflowSet := make(map[string]bool, len(wantWorkflowIDs))
@@ -597,36 +532,8 @@ func (c Contract) Validate() error {
 		add("main required checks: %v", err)
 	}
 
-	if operational {
-		// Release automation authenticates with scoped tokens, not GitHub Apps.
-		if len(c.Apps) != 0 {
-			add("app count=%d, want 0: release automation no longer uses GitHub Apps", len(c.Apps))
-		}
-		if !workflowFile.MatchString(c.Homebrew.TapCIWorkflowFile) || !idPattern.MatchString(c.Homebrew.TapCIWorkflowName) {
-			add("Homebrew section must define the exact tap CI workflow identity")
-		}
-	}
-	if legacy {
-		// The archived v1 contract is frozen with its retired App registry.
-		appIDs, appSlugs := map[string]bool{}, map[string]bool{}
-		if len(c.Apps) != 2 {
-			add("archival app count=%d, want 2", len(c.Apps))
-		}
-		for index, app := range c.Apps {
-			_, repositoryOK := c.RepositoryByID(app.RepositoryID)
-			if !idPattern.MatchString(app.ID) || !slugPattern.MatchString(app.Slug) || !repositoryOK || !idPattern.MatchString(app.Environment) || !workflowIDs[app.AuditWorkflow] {
-				add("archival app %d has invalid ID, slug, repository ID, environment, or audit workflow", index)
-			}
-			if appIDs[app.ID] || appSlugs[app.Slug] {
-				add("archival app %q duplicates an ID or slug", app.ID)
-			}
-			appIDs[app.ID], appSlugs[app.Slug] = true, true
-		}
-		for _, required := range []string{"release_planning", "homebrew_tap"} {
-			if !appIDs[required] {
-				add("required archival app %q is missing", required)
-			}
-		}
+	if !workflowFile.MatchString(c.Homebrew.TapCIWorkflowFile) || !idPattern.MatchString(c.Homebrew.TapCIWorkflowName) {
+		add("Homebrew section must define the exact tap CI workflow identity")
 	}
 
 	stageIDs := make(map[string]bool)
@@ -642,14 +549,6 @@ func (c Contract) Validate() error {
 		{"supply_chain", "publisher", true},
 		{"homebrew", "publisher", true},
 		{"health", "publisher", false},
-	}
-	if legacy {
-		// The frozen archive still ends with the retired evidence stage.
-		wantStages = append(wantStages, struct {
-			id       string
-			workflow string
-			mutating bool
-		}{"evidence", "release_evidence", true})
 	}
 	if len(c.ReleaseStages) != len(wantStages) {
 		add("release stage count=%d, want %d", len(c.ReleaseStages), len(wantStages))
@@ -695,14 +594,10 @@ func (c Contract) Validate() error {
 		add("repair actions: %v", err)
 	}
 
-	contractSchema := SchemaID
-	if legacy {
-		contractSchema = LegacySchemaID
-	}
 	requiredSchemas := map[string]string{
-		"release_contract":                  contractSchema,
+		"release_contract":                  SchemaID,
 		"release_contract_matrix":           MatrixSchemaID,
-		"releasecheck_version":              LegacyVersionSchemaID,
+		"releasecheck_version":              VersionSchemaID,
 		"releasecheck_error":                ErrorSchemaID,
 		"contract_validation":               ValidationSchemaID,
 		"attempt_classification":            ClassificationSchemaID,
@@ -724,13 +619,7 @@ func (c Contract) Validate() error {
 		"release_metrics_baseline":          "env-vault.release-metrics-baseline.v1",
 		"release_metrics_comparison":        "env-vault.release-metrics-comparison.v1",
 	}
-	if operational {
-		requiredSchemas["releasecheck_version"] = VersionSchemaID
-		requiredSchemas["release_contract_history"] = HistoricalRegistrySchemaID
-		requiredSchemas["release_contract_operational"] = OperationalProjectionSchema
-		requiredSchemas["release_contract_historical_source"] = HistoricalSourceSchemaID
-		requiredSchemas["release_contract_source_route"] = SourceRouteSchemaID
-	}
+	requiredSchemas["release_contract_operational"] = OperationalProjectionSchema
 	for name, expected := range requiredSchemas {
 		if c.Schemas[name] != expected {
 			add("required schema %q must be %q", name, expected)
@@ -749,10 +638,6 @@ func (c Contract) Validate() error {
 }
 
 func validateOperationalOwnership(c Contract) error {
-	if c.Evolution.PreviousSchemaID != LegacySchemaID || c.Evolution.PreviousSchemaVersion != LegacySchemaVersion ||
-		c.Evolution.PreviousSemanticSHA256 != LegacySemanticSHA256 {
-		return errors.New("evolution predecessor must pin the immutable v1 semantic identity")
-	}
 	if !validRepository(c.Repositories.Source.FullName) || !validRepository(c.Repositories.HomebrewTap.FullName) ||
 		c.Repositories.Source.FullName == c.Repositories.HomebrewTap.FullName ||
 		!idPattern.MatchString(c.Repositories.Source.DefaultBranch) || !idPattern.MatchString(c.Repositories.HomebrewTap.DefaultBranch) {

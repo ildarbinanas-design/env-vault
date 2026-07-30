@@ -182,29 +182,14 @@ jobs:
           "$RUNNER_TEMP/releasecheck" validate-contract \
             --contract release/contract.v2.json --json > "$RUNNER_TEMP/current-contract-validation.json"
           git cat-file -e "${SOURCE_SHA}^{commit}"
-          git show "${SOURCE_SHA}:release/contract.v1.json" > "$RUNNER_TEMP/source-contract.v1.json"
-          "$RUNNER_TEMP/releasecheck" contract route-source \
-            --source-contract "$RUNNER_TEMP/source-contract.v1.json" \
-            --registry release/contract-history.v2.json \
-            --repository "$GITHUB_REPOSITORY" --version "$VERSION" --source-sha "$SOURCE_SHA" --json \
-            > "$RUNNER_TEMP/source-contract-route.json"
-          jq -e --arg repository "$GITHUB_REPOSITORY" --arg version "$VERSION" --arg source "$SOURCE_SHA" '
-            .schema_id == "env-vault.release-contract-source-route.v2" and .schema_version == 2 and .ok == true and
-            .contract_generation == "v1" and (.evidence_format == "v1" or .evidence_format == "v2") and
-            .contract_schema_id == "env-vault.release-contract.v1" and .contract_schema_version == 1 and
-            .repository.full_name == $repository and .operational == null and
-            .historical.repository == $repository and .historical.release_version == $version and
-            .historical.source_sha == $source and
-            .historical.contract_generation == .contract_generation and
-            .historical.evidence_format == .evidence_format
-          ' "$RUNNER_TEMP/source-contract-route.json" >/dev/null || {
-            echo "immutable source is not an exact closed historical release tuple" >&2
-            exit 1
-          }
+          git show "${SOURCE_SHA}:release/contract.v2.json" > "$RUNNER_TEMP/source-contract.v2.json"
+          "$RUNNER_TEMP/releasecheck" validate-contract \
+            --contract "$RUNNER_TEMP/source-contract.v2.json" --json \
+            > "$RUNNER_TEMP/source-contract-validation.json"
           jq -e --slurp '
             .[0] as $current | .[1] as $source |
             $current.schema_id == "env-vault.release-contract.v2" and $current.schema_version == 2 and
-            $source.schema_id == "env-vault.release-contract.v1" and $source.schema_version == 1 and
+            $source.schema_id == "env-vault.release-contract.v2" and $source.schema_version == 2 and
             $current.naming == $source.naming and
             $current.platforms == $source.platforms and
             $current.assets == $source.assets and
@@ -213,12 +198,10 @@ jobs:
               ([$source.workflows[] | select(.id == "ci" or .id == "publisher") | {id,name,file}] | sort_by(.id)) and
             ([$current.workflows[] | select(.id == "homebrew_bridge") | {id,name,file}] ==
               [{id:"homebrew_bridge",name:"publish-homebrew-bridge",file:"publish-homebrew-bridge.yml"}]) and
-            ([$source.apps[] | select(.id == "homebrew_tap")] | length) == 1 and
-            ([$source.apps[] | select(.id == "homebrew_tap")][0]) as $source_app |
-            $current.repositories.homebrew_tap.full_name == $source_app.repository and
-            $current.homebrew.tap_ci_workflow_file == $source_app.ci_workflow_file and
-            $current.homebrew.tap_ci_workflow_name == $source_app.ci_workflow_name
-          ' release/contract.v2.json "$RUNNER_TEMP/source-contract.v1.json" >/dev/null || {
+            $current.repositories.homebrew_tap == $source.repositories.homebrew_tap and
+            $current.homebrew.tap_ci_workflow_file == $source.homebrew.tap_ci_workflow_file and
+            $current.homebrew.tap_ci_workflow_name == $source.homebrew.tap_ci_workflow_name
+          ' release/contract.v2.json "$RUNNER_TEMP/source-contract.v2.json" >/dev/null || {
             echo "reviewed control and immutable source disagree on release/formula/tap identities" >&2
             exit 1
           }
@@ -241,16 +224,16 @@ jobs:
             cd "$RUNNER_TEMP/source-tooling"
             go build -trimpath -o "$RUNNER_TEMP/source-releasecheck" ./cmd/releasecheck
           )
-          "$RUNNER_TEMP/source-releasecheck" --contract "$RUNNER_TEMP/source-contract.v1.json" --version --json \
+          "$RUNNER_TEMP/source-releasecheck" --contract "$RUNNER_TEMP/source-contract.v2.json" --version --json \
             > "$RUNNER_TEMP/source-releasecheck-version.json"
           "$RUNNER_TEMP/source-releasecheck" validate-contract \
-            --contract "$RUNNER_TEMP/source-contract.v1.json" --json > "$RUNNER_TEMP/source-contract-validation.json"
-          jq -e --slurpfile route "$RUNNER_TEMP/source-contract-route.json" '
-            .schema_id == "env-vault.releasecheck-version.v1" and .schema_version == 1 and .ok == true and
-            .release_contract_schema == "env-vault.release-contract.v1" and
-            .semantic_contract_sha256 == $route[0].contract_semantic_sha256
+            --contract "$RUNNER_TEMP/source-contract.v2.json" --json > "$RUNNER_TEMP/source-contract-validation.json"
+          jq -e --slurpfile validation "$RUNNER_TEMP/source-contract-validation.json" '
+            .schema_id == "env-vault.releasecheck-version.v2" and .schema_version == 2 and .ok == true and
+            .release_contract_schema == "env-vault.release-contract.v2" and
+            .semantic_contract_sha256 == $validation[0].semantic_contract_sha256
           ' "$RUNNER_TEMP/source-releasecheck-version.json" >/dev/null || {
-            echo "source release checker identity differs from the authorized historical contract" >&2
+            echo "source release checker identity differs from the exact source contract" >&2
             exit 1
           }
           printf 'SOURCE_RELEASECHECK=%s\n' "$RUNNER_TEMP/source-releasecheck" >> "$GITHUB_ENV"
@@ -513,7 +496,7 @@ jobs:
             "$RUNNER_TEMP/source-formula-home"
           git show "${SOURCE_SHA}:scripts/release/generate-homebrew-formula.sh" > "$RUNNER_TEMP/source-formula/scripts/release/generate-homebrew-formula.sh"
           git show "${SOURCE_SHA}:scripts/release/lib.sh" > "$RUNNER_TEMP/source-formula/scripts/release/lib.sh"
-          git show "${SOURCE_SHA}:release/contract.v1.json" > "$RUNNER_TEMP/source-formula/release/contract.v1.json"
+          git show "${SOURCE_SHA}:release/contract.v2.json" > "$RUNNER_TEMP/source-formula/release/contract.v2.json"
           chmod 0700 "$RUNNER_TEMP/source-formula/scripts/release/generate-homebrew-formula.sh"
           env -i PATH="$PATH" HOME="$RUNNER_TEMP/source-formula-home" LC_ALL=C TMPDIR="$RUNNER_TEMP" \
             scripts/release/generate-homebrew-formula.sh "$VERSION" release-dist "$TAP_FORMULA_PATH"

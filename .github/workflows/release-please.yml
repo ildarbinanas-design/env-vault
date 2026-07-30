@@ -427,62 +427,39 @@ jobs:
           "$RELEASECHECK" --version --json > "${RUNNER_TEMP}/source-releasecheck-capabilities.json"
           "$RELEASECHECK" validate-contract --json > "${RUNNER_TEMP}/release-contract-validation.json"
           source_schema="$(jq -er '.release_contract_schema' "${RUNNER_TEMP}/source-releasecheck-capabilities.json")"
-          case "$source_schema" in
-            env-vault.release-contract.v1) source_contract=release/contract.v1.json; source_generation=v1 ;;
-            env-vault.release-contract.v2) source_contract=release/contract.v2.json; source_generation=v2 ;;
-            *) echo "unsupported source release contract schema: $source_schema" >&2; exit 1 ;;
-          esac
-          route_args=(
-            contract route-source
-            --source-contract "$source_contract"
-            --registry release-control-plane/release/contract-history.v2.json
-            --repository "$GITHUB_REPOSITORY"
-            --source-sha "$SOURCE_SHA"
-            --json
-          )
-          if [[ -n "$VERSION" ]]; then
-            route_args+=(--version "$VERSION")
-          fi
-          "$CONTROL_RELEASECHECK" "${route_args[@]}" > "${RUNNER_TEMP}/source-contract-route.json"
-          jq -e --arg generation "$source_generation" \
-            --slurpfile capabilities "${RUNNER_TEMP}/source-releasecheck-capabilities.json" '
-            .schema_id == "env-vault.release-contract-source-route.v2" and
-            .schema_version == 2 and .ok == true and
+          [[ "$source_schema" == "env-vault.release-contract.v2" ]] || {
+            echo "unsupported source release contract schema: $source_schema" >&2
+            exit 1
+          }
+          source_contract=release/contract.v2.json
+          release_please_target_branch=main
+          release_please_config_path=release-please-config.json
+          release_please_manifest_path=.release-please-manifest.json
+
+          # The reviewed control plane re-derives the source projection itself
+          # and requires it to equal the one the source checker generated, so a
+          # source that changed its own contract cannot widen its identities.
+          "$RELEASECHECK" contract operational --contract "$source_contract" --json \
+            > "${RUNNER_TEMP}/source-contract-operational.json"
+          "$CONTROL_RELEASECHECK" contract operational --contract "$source_contract" --json \
+            > "${RUNNER_TEMP}/control-contract-operational.json"
+          cmp "${RUNNER_TEMP}/source-contract-operational.json" \
+            "${RUNNER_TEMP}/control-contract-operational.json"
+          jq -e --slurpfile capabilities "${RUNNER_TEMP}/source-releasecheck-capabilities.json" '
+            .schema_id == "env-vault.release-contract-operational.v2" and
+            .schema_version == 2 and
             .contract_schema_id == $capabilities[0].release_contract_schema and
             .contract_semantic_sha256 == $capabilities[0].semantic_contract_sha256 and
-            (.contract_file_sha256 | test("^[0-9a-f]{64}$")) and
-            .contract_generation == $generation and
-            (.evidence_format == "v1" or .evidence_format == "v2") and
-            (
-              (.contract_generation == "v1" and .historical != null and .operational == null) or
-              (.contract_generation == "v2" and .historical == null and
-                .contract_file_sha256 == $capabilities[0].contract_file_sha256 and
-                .operational.schema_id == "env-vault.release-contract-operational.v2" and
-                .operational.contract_semantic_sha256 == .contract_semantic_sha256 and
-                .operational.contract_file_sha256 == .contract_file_sha256)
-            )
-          ' "${RUNNER_TEMP}/source-contract-route.json" >/dev/null
-          if [[ "$source_generation" == v2 ]]; then
-            "$RELEASECHECK" contract operational --contract "$source_contract" --json \
-              > "${RUNNER_TEMP}/source-contract-operational.json"
-            jq -e --slurpfile generated "${RUNNER_TEMP}/source-contract-operational.json" \
-              '.operational == $generated[0]' \
-              "${RUNNER_TEMP}/source-contract-route.json" >/dev/null
-            release_please_target_branch="$(jq -er '.operational.version.release_please.target_branch' "${RUNNER_TEMP}/source-contract-route.json")"
-            release_please_config_path="$(jq -er '.operational.version.release_please.config_path' "${RUNNER_TEMP}/source-contract-route.json")"
-            release_please_manifest_path="$(jq -er '.operational.version.release_please.manifest_path' "${RUNNER_TEMP}/source-contract-route.json")"
-            {
-              printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RELEASECHECK"
-              printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "${RUNNER_TEMP}/source-releasecheck-capabilities.json"
-              printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "${RUNNER_TEMP}/source-contract-operational.json"
-            } >> "$GITHUB_ENV"
-          else
-            # Closed v1 compatibility is release-only; these immutable files
-            # predate the v2 operational projection.
-            release_please_target_branch=main
-            release_please_config_path=release-please-config.json
-            release_please_manifest_path=.release-please-manifest.json
-          fi
+            .contract_file_sha256 == $capabilities[0].contract_file_sha256
+          ' "${RUNNER_TEMP}/source-contract-operational.json" >/dev/null
+          release_please_target_branch="$(jq -er '.version.release_please.target_branch' "${RUNNER_TEMP}/source-contract-operational.json")"
+          release_please_config_path="$(jq -er '.version.release_please.config_path' "${RUNNER_TEMP}/source-contract-operational.json")"
+          release_please_manifest_path="$(jq -er '.version.release_please.manifest_path' "${RUNNER_TEMP}/source-contract-operational.json")"
+          {
+            printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RELEASECHECK"
+            printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "${RUNNER_TEMP}/source-releasecheck-capabilities.json"
+            printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "${RUNNER_TEMP}/source-contract-operational.json"
+          } >> "$GITHUB_ENV"
 
           "$RELEASECHECK" recovery validate-config \
             --contract "$source_contract" \
@@ -492,13 +469,13 @@ jobs:
 
           platform_artifact_template="$(jq -er '.naming.platform_artifact_template |
             select(type == "string" and test("^[a-z0-9{}._-]+$"))
-          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          ' "${RUNNER_TEMP}/source-contract-operational.json")"
           promotion_manifest_template="$(jq -er '.naming.promotion_manifest_template |
             select(type == "string" and test("^[a-z0-9{}._-]+$"))
-          ' "${RUNNER_TEMP}/source-contract-route.json")"
-          source_default_branch="$(jq -er '.repository.default_branch |
+          ' "${RUNNER_TEMP}/source-contract-operational.json")"
+          source_default_branch="$(jq -er '.repositories.source.default_branch |
             select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$"))
-          ' "${RUNNER_TEMP}/source-contract-route.json")"
+          ' "${RUNNER_TEMP}/source-contract-operational.json")"
           ci_workflow_file="$(jq -er '[.workflows[] | select(.id == "ci")] |
             select(length == 1) | .[0].file |
             select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9_.-]*\\.yml$"))

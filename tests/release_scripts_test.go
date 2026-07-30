@@ -1692,7 +1692,7 @@ func TestTypedReleaseProjectionStrictlyValidatesExactLocalContractBeforeConsumer
 		},
 		{
 			name: "unknown nested unprojected member",
-			data: replaceOnce(t, "  \"evolution\": {\n", "  \"evolution\": {\n    \"unexpected\": true,\n"),
+			data: replaceOnce(t, "  \"version_policy\": {\n", "  \"version_policy\": {\n    \"unexpected\": true,\n"),
 		},
 		{
 			name: "duplicate top-level member",
@@ -1703,8 +1703,8 @@ func TestTypedReleaseProjectionStrictlyValidatesExactLocalContractBeforeConsumer
 		{
 			name: "duplicate nested member",
 			data: replaceOnce(t,
-				"    \"previous_schema_version\": 1,\n",
-				"    \"previous_schema_version\": 1,\n    \"previous_schema_version\": 1,\n"),
+				"    \"tag_prefix\": \"v\",\n",
+				"    \"tag_prefix\": \"v\",\n    \"tag_prefix\": \"v\",\n"),
 		},
 		{
 			name: "case-variant top-level member",
@@ -1713,8 +1713,8 @@ func TestTypedReleaseProjectionStrictlyValidatesExactLocalContractBeforeConsumer
 		{
 			name: "case-variant nested member",
 			data: replaceOnce(t,
-				"  \"evolution\": {\n",
-				"  \"evolution\": {\n    \"Previous_Schema_ID\": \"env-vault.release-contract.v1\",\n"),
+				"  \"version_policy\": {\n",
+				"  \"version_policy\": {\n    \"Tag_Prefix\": \"v\",\n"),
 		},
 		{
 			name: "multiple JSON roots",

@@ -27,13 +27,11 @@ equivalents, and the incident matrix, see
   Homebrew templates, twelve workflow identities, five shared-concurrency
   participants, token environments, required checks, repair actions,
   schemas, and stable action/reason/error codes.
-- [`release/history/contract.v1.json`](release/history/contract.v1.json) and
-  [`release/contract-history.v2.json`](release/contract-history.v2.json) are the
-  closed v1 compatibility authority. They admit only exact historical
-  repository/version/source tuples. Their `evidence_format` entries are frozen
-  identity for those v1 releases and authorize nothing new: the ledger they
-  described was retired on 2026-07-30. The live `release/contract.v1.json` is a transition
-  artifact, not the immutable archive or a source of new operational defaults.
+  It is the **only** contract generation: the v1 archive, its closed historical
+  registry, and the source-routing commands were removed on 2026-07-30. Repair
+  workflows read `release/contract.v2.json` from the exact immutable source
+  commit and require it to agree with the reviewed control plane on naming,
+  platforms, assets, the promotion-manifest schema, and workflow identities.
 - [`docs/e2e-baseline.json`](docs/e2e-baseline.json) is the durable E2E
   compatibility baseline. CI verifies it from the current checkout; it does
   not download an expiring historical comparator artifact.

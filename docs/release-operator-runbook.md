@@ -137,16 +137,14 @@ mkdir -p "$SNAPSHOT_DIR"
 go build -trimpath -o "$SNAPSHOT_DIR/releasecheck" ./cmd/releasecheck
 ```
 
-Current operational schemas are declared by `release/contract.v2.json`.
-Historical v1 routing is authorized only by the exact archive and tuples in
-`release/history/contract.v1.json` and `release/contract-history.v2.json`; the
-live v1 file is not an operational fallback. The key operator-facing schemas
-are:
+Operational schemas are declared by `release/contract.v2.json`, which is now the
+only contract generation: the v1 archive, its historical registry, and the
+source-routing commands were removed on 2026-07-30. The key operator-facing
+schemas are:
 
-- `env-vault.releasecheck-version.v1` and
+- `env-vault.releasecheck-version.v2` and
   `env-vault.contract-validation.v1`;
-- `env-vault.release-contract-operational.v2` and
-  `env-vault.release-contract-source-route.v2`;
+- `env-vault.release-contract-operational.v2`;
 - `env-vault.release-please-recovery-check.v1`;
 - `env-vault.attempt-classification.v1`;
 - `env-vault.promotion-manifest.v1` and

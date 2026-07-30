@@ -753,9 +753,11 @@ func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.
 	if !containsAll(contractStep.Run,
 		"recovery validate-config", `--config "$release_please_config_path"`,
 		`--manifest "$release_please_manifest_path"`, "release-please-recovery-check.json",
-		"release-control-plane", "contract route-source", "contract.v1.json", "contract.v2.json",
-		"source-releasecheck-capabilities.json", "source-contract-route.json", "release-contract-operational.v2",
+		"release-control-plane", "contract operational", "contract.v2.json",
+		"source-releasecheck-capabilities.json", "source-contract-operational.json", "release-contract-operational.v2",
 		"contract_file_sha256") ||
+		strings.Contains(contractStep.Run, "route-source") ||
+		strings.Contains(contractStep.Run, "contract.v1.json") ||
 		strings.Contains(contractStep.Run, "recovery_state") || strings.Contains(contractStep.Run, "recovery_resume_version") ||
 		strings.Contains(contractStep.Run, `if [[ "$PUBLISH"`) || contractStep.Env["PUBLISH"] != "" {
 		t.Fatalf("planning does not validate the completed Release Please config unconditionally: env=%v run=%q", contractStep.Env, contractStep.Run)
@@ -929,13 +931,10 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 		`"$RELEASECHECK" --version --json > "${RUNNER_TEMP}/source-releasecheck-capabilities.json"`,
 		`"$RELEASECHECK" contract operational --contract "$source_contract" --json`,
 		`> "${RUNNER_TEMP}/source-contract-operational.json"`,
-		`--slurpfile generated "${RUNNER_TEMP}/source-contract-operational.json"`,
-		`.operational == $generated[0]`,
+		`"$CONTROL_RELEASECHECK" contract operational --contract "$source_contract" --json`,
+		`cmp "${RUNNER_TEMP}/source-contract-operational.json"`,
 		`printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RELEASECHECK"`) {
-		t.Fatalf("Release Please v2 planning does not emit one same-checker raw pair and bind it to the reviewed route: %s", route.Run)
-	}
-	if strings.Contains(route.Run, `jq -e '.operational'`) {
-		t.Fatal("Release Please v2 planning reformats the routed projection instead of preserving checker bytes")
+		t.Fatalf("Release Please planning does not emit one same-checker raw pair and corroborate it with the reviewed control plane: %s", route.Run)
 	}
 }
 
@@ -1155,10 +1154,9 @@ func TestEmptyReleaseBootstrapIsMainBoundMinimalAndFailClosed(t *testing.T) {
 	control := namedStep(t, job, "Validate protected-main control plane, contracts, tag, and empty Release")
 	if !containsAll(control.Run,
 		`refs/heads/${DEFAULT_BRANCH}`, `"$GITHUB_SHA" == "$(git rev-parse HEAD)"`,
-		"release_require_typed_contract_projection", "validate-contract", `git show "${SOURCE_SHA}:release/contract.v1.json"`,
-		"contract route-source", "contract-history.v2.json", `.contract_generation == "v1"`, `.historical.source_sha == $source`,
+		"release_require_typed_contract_projection", "validate-contract", `git show "${SOURCE_SHA}:release/contract.v2.json"`,
 		"$current.naming == $source.naming", "$current.platforms == $source.platforms", "$current.assets == $source.assets",
-		"source-releasecheck", `.semantic_contract_sha256 == $route[0].contract_semantic_sha256`,
+		"source-releasecheck", `.semantic_contract_sha256 == $validation[0].semantic_contract_sha256`,
 		"default-branch-ref.json", `resolve-tag-sha.sh "$VERSION"`,
 		"${RELEASE_CI_WORKFLOW_FILE}", "$RELEASE_CI_WORKFLOW_PATH", "control-ci-runs.json", "expected one successful exact-control main CI attempt", "control-ci-identity.json",
 		".id == $release_id", ".draft == false", ".prerelease == false",
@@ -1196,7 +1194,7 @@ func TestEmptyReleaseBootstrapIsMainBoundMinimalAndFailClosed(t *testing.T) {
 
 	offline := namedStep(t, job, "Verify source CI and retained publisher bytes entirely offline")
 	if !containsAll(offline.Run,
-		"env -i", "$SOURCE_RELEASECHECK", "source-contract.v1.json", "promotion verify", "source-native",
+		"env -i", "$SOURCE_RELEASECHECK", "source-contract.v2.json", "promotion verify", "source-native",
 		"failed-publisher-bundle/assets", "cmp -s", "diff -r --no-dereference", ".[0] == .[1]",
 		"BOOTSTRAP_ARCHIVE", ".platforms[0].archive",
 	) {
@@ -1365,10 +1363,11 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 	control := namedStep(t, job, "Validate protected-main control, source contract, tag, and Release")
 	if !containsAll(control.Run,
 		`"$GITHUB_SHA" == "$CONTROL_SHA"`, `refs/heads/${DEFAULT_BRANCH}`,
-		"release_require_typed_contract_projection", "contract route-source", "contract-history.v2.json",
+		"release_require_typed_contract_projection", `git show "${SOURCE_SHA}:release/contract.v2.json"`,
 		"control-ci-identity.json", "source-ci-identity.json", "actions/workflows/${RELEASE_CI_WORKFLOW_FILE}/runs",
 		`$current.naming == $source.naming`, `$current.platforms == $source.platforms`, `$current.assets == $source.assets`,
-		`.id == "homebrew_tap"`, `.id == "ci" or .id == "publisher"`, `.id == "homebrew_bridge"`,
+		`$current.repositories.homebrew_tap == $source.repositories.homebrew_tap`,
+		`.id == "ci" or .id == "publisher"`, `.id == "homebrew_bridge"`,
 		"source-releasecheck", "TAP_DEFAULT_BRANCH", "TAP_FORMULA_PATH",
 		`resolve-tag-sha.sh "$VERSION"`, `.id == $release_id`, `length == 10`, `$contract[0].assets`) {
 		t.Fatalf("Homebrew bridge control/source/release guard is incomplete: %s", control.Run)
