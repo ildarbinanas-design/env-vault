@@ -20,28 +20,24 @@ with the numbered command cards below.
   LLM may perform. Its output is never accepted without the machine check named
   in the corresponding command card.
 - **`[HUMAN REQUIRED]`** is semantic review and exact destructive
-  confirmation. The release flow has one release-tuple confirmation; a later
-  Actions artifact cleanup has its own separate manifest confirmation. These
+  confirmation. The release flow's stop is the semantic review plus merge of the
+  generated release PR; a later Actions artifact cleanup has its own separate
+  byte-exact manifest confirmation. These
   decisions cannot be delegated to an LLM.
 - **`[HUMAN NO-LLM]`** is the exact manual equivalent of an
   `[LLM OPTIONAL]` operation. It is an alternative execution path, not an
   additional approval.
 
-There is one and only one release stop. Immediately before the generated
-Release Please PR is merged, the human reviews and confirms this exact tuple:
+There is one and only one release stop: the semantic review of the generated
+Release Please PR (card 9), followed by its head-guarded squash merge (card 10).
+**That merge is the authorization.** The byte-exact `ПОДТВЕРЖДАЮ RELEASE …`
+confirmation comment and its resumable wrapper were removed on 2026-07-30 at the
+owner's instruction. There is no other routine confirmation for the
+implementation PR, tag planning, publisher, Homebrew, or health.
 
-```text
-ПОДТВЕРЖДАЮ RELEASE <version> PR #<number> SHA <full-sha>
-```
-
-The version includes the leading `v`, and the SHA is the full 40-character PR
-head. Any change to version, PR number, or head SHA invalidates the
-confirmation. There is no other routine confirmation for the implementation
-PR, tag planning, publisher, Homebrew, or health.
-
-The release statement above does not authorize post-release artifact deletion.
-That separate, non-routine operation has its own `[HUMAN REQUIRED]` gate and
-never substitutes for or reuses a release confirmation:
+Merging a release does not authorize post-release artifact deletion. That
+separate, non-routine and irreversible operation keeps its own `[HUMAN
+REQUIRED]` byte-exact gate:
 
 ```text
 ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS COUNT <count> BYTES <bytes> MANIFEST SHA256 <sha256>
@@ -66,8 +62,8 @@ flowchart TD
     E["[LLM OPTIONAL] Observe proposal tuple<br/>card 8"]
     E0["[HUMAN NO-LLM] Run card 8 unchanged"]
     F["[HUMAN REQUIRED] Semantic review"]
-    G["[HUMAN REQUIRED] Exact tuple confirmation"]
-    H["[LLM OPTIONAL] Checked-in authorization and merge wrapper<br/>card 10"]
+    G["[HUMAN REQUIRED] Semantic review of the generated release PR"]
+    H["[LLM OPTIONAL] Head-guarded squash merge<br/>card 10"]
     H0["[HUMAN NO-LLM] Run card 10 unchanged"]
     I["[AUTOMATED] Release-source main CI: five native targets<br/>promotion manifest for one attempt"]
     J["[AUTOMATED] Pre-tag inventory, settings proof, authorization,<br/>abandoned-release policy, exact immutable tag"]
@@ -110,8 +106,8 @@ flowchart TD
 | Implementation PR merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | unchanged head plus required checks; merged PR JSON | squash-merge mutation with `--match-head-commit`; no admin bypass | 7 |
 | Main CI and Release Please | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact `main` SHA, workflow run, generated PR identity and files | automation uses the release-planning token; operator reads | 8 |
 | Semantic release review | `[HUMAN REQUIRED]` | human interpretation of exact generated diff/changelog | no mutation | 9 |
-| Exact tuple confirmation | `[HUMAN REQUIRED]` | byte-exact confirmation line for unchanged tuple | authorizes only that tuple; no mutation by itself | 9 |
-| Generated release PR authorization and merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | checked-in wrapper, exact PR/base/check/comment tuple | one comment and one head-guarded merge; repository PR/Contents write | 10 |
+| Semantic review of the generated release PR | `[HUMAN REQUIRED]` | exact diff, version, changelog, checks, head SHA | judgement only; no mutation | 9 |
+| Generated release PR merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after review | exact PR number and reviewed head SHA | one head-guarded squash merge; repository PR/Contents write | 10 |
 | Five-target inventory and promotion manifest | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | `env-vault.attempt-classification.v1` and `env-vault.promotion-verification.v1` | read-only verification of one CI attempt | 11 |
 | Tag planning | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | authorization tuple, settings proof, exact source/tag SHA | only the planning token has scoped Contents write; operator does not create a tag | 12 |
 | Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents/Attestations writes | 12 |
@@ -573,65 +569,59 @@ before authorization.
 `v0.0.14`, or proceed if Release Please proposes an unexpected version before
 its cause is understood.
 
-### 9. Human semantic review and exact tuple confirmation
+### 9. Human semantic review of the generated release PR
 
-This card is `[HUMAN REQUIRED]`; neither an LLM nor automation has a substitute.
+This card is `[HUMAN REQUIRED]`; neither an LLM nor automation has a substitute
+for the judgement, although the owner may delegate the merge itself (card 10).
 
-**Procedure.** The human reads the exact generated PR diff, version, changelog,
-manifest, marked README version, CI result, and full head SHA. The human then
-returns exactly:
-
-```text
-ПОДТВЕРЖДАЮ RELEASE <version> PR #<number> SHA <full-sha>
-```
+**Procedure.** The reviewer reads the exact generated PR diff, version,
+changelog, manifest, marked README version, CI result, and full head SHA, and
+decides whether this version should be published.
 
 **Inputs and machine result.** Inputs are immutable snapshots of the exact open
-PR and its checks. There is no checker schema for semantic judgment. The
-authorizing comment on the pull request is itself the durable record of the
-exact tuple.
+PR and its checks. There is no checker schema for semantic judgment.
 
 **Exit, effect, and permission.** The review has no process exit and performs no
-mutation. The confirmation authorizes only the named unchanged tuple.
+mutation.
 
-**Reverify.** Compare every character to a fresh PR read. If any coordinate has
-changed, discard the line and request a new confirmation.
+**Reverify.** Re-read the PR immediately before card 10. If the head SHA,
+version, or changelog changed, review again.
 
-**Forbidden.** An LLM must not invent, paraphrase, normalize, infer, or reuse the
-line. A PR approval, merge queue state, old comment, or partial SHA is not a
-confirmation.
+**Forbidden.** Do not treat a PR approval, a merge-queue state, or a green
+check set as a substitute for reading the diff.
 
-### 10. Authorize and merge the generated release PR
+### 10. Merge the generated release PR
 
-**Command.** After card 9 only, run the checked-in resumable wrapper:
+**Command.** After card 9 only, squash-merge the reviewed head:
 
 ```sh
-GITHUB_REPOSITORY="$REPOSITORY" \
-  scripts/release/with-typed-contract.sh \
-  scripts/release/authorize-and-merge-release-pr.sh \
-  "$VERSION" "$RELEASE_PR_NUMBER" "$RELEASE_PR_HEAD_SHA" \
+gh pr merge "$RELEASE_PR_NUMBER" --repo "$REPOSITORY" \
+  --squash --match-head-commit "$RELEASE_PR_HEAD_SHA"
+gh pr view "$RELEASE_PR_NUMBER" --repo "$REPOSITORY" \
+  --json mergeCommit --jq '.mergeCommit.oid' \
   > "$SNAPSHOT_DIR/release-merge-sha.txt"
 ```
 
-**Inputs and machine result.** Inputs are the confirmed version, PR number, and
-full head SHA plus a local contract byte-identical to the exact PR base. The
-wrapper validates the proposal, base, required workflow/check identities and
-trusted owner/member comment timing. Success output is exactly the merge SHA;
-downstream planning generates `env-vault.release-authorization.v1`.
+**Inputs and machine result.** Inputs are the reviewed PR number and its full
+head SHA. `--match-head-commit` makes GitHub refuse the merge server-side if the
+head moved after review. The output is the merge SHA, which becomes
+`SOURCE_SHA`.
 
-**Exit, effect, and permission.** Exit `0` is success, `2` is usage, and `1` is
-a fail-closed stop. The wrapper performs at most one canonical PR comment write
-and one squash merge guarded by `--match-head-commit`. It requires Issues/Pull
-requests/Contents write appropriate to those operations and read access to
-checks and the exact base contract.
+**Exit, effect, and permission.** One squash merge; requires Pull requests and
+Contents write. The byte-exact `ПОДТВЕРЖДАЮ RELEASE …` comment ceremony and its
+resumable wrapper were removed on 2026-07-30 at the owner's instruction: the
+merge itself is the authorization.
 
-**Reverify.** The wrapper waits for a later GitHub server second, rechecks the
-unchanged tuple/checks/comment, reconciles ambiguous responses by reads, reads
-the comment after merge, and verifies the merge on `main`. A resumed invocation
-must return the same exact merge without a second mutation.
+**Reverify.** Confirm the PR state is `MERGED`, its merge commit is on the
+default branch, and `verify-release-authorization.sh` (run by the planning
+workflow) accepts that exact commit. That verifier still requires exactly one
+generated release PR with the contract's title/header/footer/label/base, an
+agreeing manifest version at source and at `main`, and a typed successful `main`
+CI attempt.
 
-**Forbidden.** Do not split this into `gh pr comment` and `gh pr merge`, omit
-the head guard, post the comment after merge, accept a same-second comment, or
-manually create a tag or Release.
+**Forbidden.** Do not omit `--match-head-commit`, merge a head you did not
+review, use rebase or a merge commit instead of squash, or manually create a tag
+or Release.
 
 ### 11. Five-target CI inventory and promotion manifest
 
@@ -1466,15 +1456,14 @@ transition based on those exact facts; it does not retrofit health/evidence
 success onto `v0.0.13` and does not weaken the permanent `v0.0.12` prohibition.
 The next release after that transition, expected to be `v0.0.14` only if
 Release Please derives it, must be the first release in this sequence with a
-fully successful publisher, Homebrew, health, and durable evidence cycle.
+fully successful publisher, Homebrew, and health cycle.
 
 ## Release-complete checklist
 
-A release is complete only when the machine evidence proves all of the
-following for one exact tuple:
+A release is complete only when all of the following hold for one exact tuple:
 
-- Release Please derived the reviewed expected version; the human confirmed
-  its exact PR number and full unchanged head SHA once.
+- Release Please derived the reviewed expected version; its PR was reviewed and
+  merged head-guarded at the exact unchanged head SHA.
 - The release PR merge SHA passed the complete main CI graph, including the
   five native targets, `e2e-gate`, and `quality-gate`.
 - One CI attempt supplied the promotion manifest and all ten packaged assets;

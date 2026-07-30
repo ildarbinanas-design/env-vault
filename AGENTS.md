@@ -44,18 +44,21 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
   interpret informational RFC `Link` metadata; paginated reads follow only one
   unanchored, trusted, invariant-preserving `rel="next"` and ignore other
   well-formed relation contexts.
-- Do not commit, push, tag, release, create a remote, or publish without explicit approval.
-  A generated Release Please pull request may be merged only after the operator
-  records the exact authorization tuple as a comment on that pull request,
-  containing its version, pull-request number, and full unchanged head SHA.
-  The comment must be authored by a repository owner or member and its creation
-  and last edit must be strictly earlier than the recorded merge timestamp;
-  same-second, post-merge, and post-merge-edited comments are invalid. That one
-  tuple authorizes only the resulting exact merge source, immutable tag, and
-  fail-closed publisher; it is not approval for any changed PR head, version,
-  or ref. Use `scripts/release/authorize-and-merge-release-pr.sh` to record the
-  comment and merge; do not perform those two mutations as independent manual
-  commands.
+- Merging the generated Release Please pull request is the release
+  authorization. The byte-exact `ПОДТВЕРЖДАЮ RELEASE …` confirmation comment and
+  its authorize-and-merge wrapper were removed on 2026-07-30 at the owner's
+  instruction. Merge it head-guarded — `gh pr merge <n> --squash
+  --match-head-commit <head-sha>` — so a head that moved during review can never
+  be published silently. The merge authorizes only the resulting exact merge
+  source, immutable tag, and fail-closed publisher; it is not approval for any
+  changed head, version, or ref. `scripts/release/verify-release-authorization.sh`
+  still fails closed unless exactly one generated release pull request with the
+  contract's title, header, labels, and base merged to that exact source commit,
+  the manifest version agrees at source and at the default branch, and that
+  commit has a typed successful default-branch CI attempt.
+- Deleting Actions artifacts is a separate, still-mandatory ceremony: it keeps
+  its byte-exact `ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS …` confirmation, because
+  that operation is irreversible and has no release gate behind it (ADR 0007).
 
 ## Project Scope
 

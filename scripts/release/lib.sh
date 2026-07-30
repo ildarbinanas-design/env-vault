@@ -359,7 +359,7 @@ _release_load_contract() {
     release_die "Homebrew bridge workflow name is invalid"
   RELEASE_HOMEBREW_BRIDGE_WORKFLOW_PATH=".github/workflows/$RELEASE_HOMEBREW_BRIDGE_WORKFLOW_FILE"
   RELEASE_PR_TITLE_PREFIX="chore($RELEASE_PLEASE_TARGET_BRANCH): release $RELEASE_PRODUCT "
-  RELEASE_PR_HEADER="Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes $RELEASE_SOURCE_DEFAULT_BRANCH CI."
+  RELEASE_PR_HEADER="Merging this unchanged reviewed pull request authorizes publication once its merge commit passes $RELEASE_SOURCE_DEFAULT_BRANCH CI."
   RELEASE_HOMEBREW_TAP_REPOSITORY=$(jq -er '.repositories.homebrew_tap.full_name' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
     release_die "Homebrew tap repository identity is invalid"
   RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH=$(jq -er '.repositories.homebrew_tap.default_branch' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||

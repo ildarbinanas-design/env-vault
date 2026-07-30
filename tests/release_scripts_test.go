@@ -1230,7 +1230,6 @@ exit 97
 	}{
 		{"labels", "../scripts/release/ensure-release-labels.sh", nil, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
 		{"tag label", "../scripts/release/mark-release-pr-tagged.sh", []string{"42"}, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
-		{"authorization", "../scripts/release/authorize-and-merge-release-pr.sh", []string{releaseTestVersion, "42", sha}, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
 		{"assets", "../scripts/release/reconcile-release-assets.sh", []string{releaseTestVersion, root, filepath.Join(root, "verified"), "other/source"}, nil},
 		{"asset bootstrap", "../scripts/release/bootstrap-release-asset-pair.sh", []string{releaseTestVersion, sha, root, releaseTestArchives[0], "42", filepath.Join(root, "bootstrap.json"), "other/source"}, nil},
 		{"Homebrew publish", "../scripts/release/publish-homebrew-pr.sh", []string{releaseTestVersion, dummy, "other/tap"}, nil},

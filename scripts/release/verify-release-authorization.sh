@@ -22,7 +22,6 @@ version=$1
 source_sha=$2
 label_state=$3
 repository=${GITHUB_REPOSITORY:-}
-authorization_output=${RELEASE_AUTHORIZATION_OUTPUT:-}
 
 release_require_version "$version"
 release_require_repository "$repository"
@@ -164,85 +163,12 @@ jq -e \
 
 pr_number=$(jq -er '.number | select(type == "number" and . > 0 and floor == .)' "$release_pr") ||
   release_die "generated release pull request number is malformed"
-pr_head_sha=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' "$release_pr") ||
+jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' "$release_pr" >/dev/null ||
   release_die "generated release pull request head SHA is malformed"
-merged_at=$(jq -er '.merged_at | select(type == "string") | fromdateiso8601 | todateiso8601' "$release_pr") ||
-  release_die "generated release pull request merge time is malformed"
 
-canonical_body="ПОДТВЕРЖДАЮ RELEASE $version PR #$pr_number SHA $pr_head_sha"
-comments="$probe_dir/comments.json"
-"$SCRIPT_DIR/gh-api-read.sh" "$comments" \
-  --paginate \
-  --slurp \
-  --header 'Accept: application/vnd.github+json' \
-  "repos/$repository/issues/$pr_number/comments?per_page=100"
-
-confirmation="$probe_dir/confirmation.json"
-jq -e \
-  --arg body "$canonical_body" \
-  --arg merged_at "$merged_at" \
-  --arg repository "$repository" \
-  --argjson pr_number "$pr_number" '
-    [.[][] |
-      select(
-        (.id | type == "number" and . > 0 and floor == .) and
-        .body == $body and
-        .user.type == "User" and
-        (.user.login | type == "string" and test("^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")) and
-        (.author_association == "OWNER" or .author_association == "MEMBER") and
-        (.created_at | type == "string") and
-        (.updated_at | type == "string") and
-        ((.created_at | fromdateiso8601) < ($merged_at | fromdateiso8601)) and
-        ((.updated_at | fromdateiso8601) < ($merged_at | fromdateiso8601)) and
-        .html_url == ("https://github.com/" + $repository + "/pull/" + ($pr_number | tostring) + "#issuecomment-" + (.id | tostring))
-      )
-    ] |
-    if length == 1 then .[0] else empty end
-  ' "$comments" > "$confirmation" ||
-  release_die "exactly one exact pre-merge release confirmation comment from a repository owner or member is required"
-
-canonical_body_file="$probe_dir/canonical-body.txt"
-printf '%s' "$canonical_body" > "$canonical_body_file"
-body_sha256=$(release_sha256_file "$canonical_body_file")
-
-if [[ -n "$authorization_output" ]]; then
-  [[ ! -e "$authorization_output" && ! -L "$authorization_output" ]] ||
-    release_die "refusing to overwrite release authorization output"
-  authorization_parent=$(dirname -- "$authorization_output")
-  [[ -d "$authorization_parent" && ! -L "$authorization_parent" ]] ||
-    release_die "release authorization output directory is invalid"
-  jq -n \
-    --arg repository "$repository" \
-    --arg version "$version" \
-    --arg source_sha "$source_sha" \
-    --arg head_sha "$pr_head_sha" \
-    --arg merged_at "$merged_at" \
-    --arg body_sha256 "$body_sha256" \
-    --argjson pr_number "$pr_number" \
-    --slurpfile confirmation "$confirmation" '
-      {
-        repository: $repository,
-        release_version: $version,
-        release_source_sha: $source_sha,
-        generated_release_pr: {
-          number: $pr_number,
-          head_sha: $head_sha,
-          merge_sha: $source_sha,
-          merged_at: $merged_at
-        },
-        confirmation: {
-          comment_id: $confirmation[0].id,
-          url: $confirmation[0].html_url,
-          actor: $confirmation[0].user.login,
-          actor_association: $confirmation[0].author_association,
-          created_at: $confirmation[0].created_at,
-          updated_at: $confirmation[0].updated_at,
-          body_sha256: $body_sha256
-        },
-        result: "pass"
-      }
-    ' > "$authorization_output"
-  release_require_regular_file "$authorization_output"
-fi
+# Merging the generated release pull request is itself the authorization. The
+# byte-exact confirmation-comment ceremony was removed on 2026-07-30; the exact
+# identity checks above (generated PR, its merge commit, labels, manifest
+# version, and the typed successful main CI attempt) remain the release gate.
 
 printf '%s\n' "$pr_number"
