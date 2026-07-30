@@ -484,7 +484,15 @@ checkpoint/Merkle summary and the dynamic legacy parent/source proof are moot
 now that the ledger is gone. Do not build either; do not rewrite the frozen
 branch.
 
-## 12. Versioned operational release contract and workflow parity — `already implemented`
+## 12. Versioned operational release contract and workflow parity — `partially retired (2026-07-30): the versioned dimension is gone, the operational contract stays`
+
+**Partially retired (2026-07-30).** Phase 2 of
+[`trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md) removed the versioned
+dimension described below: the v1 archive, the closed historical registry,
+`contract route-source`/`historical-source`, and dual-generation routing are
+gone. `release/contract.v2.json`, its typed operational projection, and the
+digest-bound checker pair remain in force and unchanged. The rest of this item
+is the historical record of Stage 4.
 
 **Implemented in refactor Stage 4 (2026-07-18).** The accepted trust-domain
 decision is recorded in
@@ -499,12 +507,10 @@ The operator wrapper builds one private checker, overrides caller projection
 variables, and cleans up on success, failure, and signals; jq fallback remains
 read-only and non-authoritative.
 
-Historical v1 authority is closed to exact archived bytes and exact
-repository/version/source tuples in `release/contract-history.v2.json`.
-Contract generation and evidence format are separate: `v0.0.14` and `v0.0.15`
-route v1/v1, while `v0.0.16` routes v1/v2. Arbitrary in-memory v1 documents and
-the live transition file have no compatibility authority. Frozen capability
-fixtures and the compact `v0.0.16` bundle verify that route fully offline.
+Historical v1 authority was closed to exact archived bytes and exact
+repository/version/source tuples in `release/contract-history.v2.json`. That
+whole mechanism was deleted on 2026-07-30; those releases stay published and
+immutable, but nothing in the tree routes them any more.
 
 Static parity tests bind Actions fields that cannot consume runtime shell:
 workflow trigger names/branches/tags, exact events/jobs, five shared release

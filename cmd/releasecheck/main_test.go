@@ -37,12 +37,12 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if document.ReleaseContractSchema != releasecontract.SchemaID || len(document.SemanticContractSHA256) != 64 {
 		t.Fatalf("contract identity=%+v", document)
 	}
-	for _, schema := range []string{"actions_artifact_deletion_batch", "actions_artifact_deletion_result", "actions_artifact_decision_manifest", "actions_artifact_decision_scope", "actions_artifact_live_collection", "actions_artifact_live_observation", "actions_artifact_manifest_package_summary", "actions_artifact_policy", "actions_artifact_policy_validation", "actions_artifact_raw_collection", "actions_artifact_repair_proof", "actions_artifact_snapshot", "actions_artifact_snapshot_validation", "release_contract_historical_source", "release_contract_matrix", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_please_recovery", "release_please_recovery_check", "repository_release_settings_check", "repository_release_settings_proof"} {
+	for _, schema := range []string{"actions_artifact_deletion_batch", "actions_artifact_deletion_result", "actions_artifact_decision_manifest", "actions_artifact_decision_scope", "actions_artifact_live_collection", "actions_artifact_live_observation", "actions_artifact_manifest_package_summary", "actions_artifact_policy", "actions_artifact_policy_validation", "actions_artifact_raw_collection", "actions_artifact_repair_proof", "actions_artifact_snapshot", "actions_artifact_snapshot_validation", "release_contract_matrix", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_please_recovery", "release_please_recovery_check", "repository_release_settings_check", "repository_release_settings_proof"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 1 || versions[0] != 1 {
 			t.Fatalf("supported %s versions=%v", schema, versions)
 		}
 	}
-	for _, schema := range []string{"release_contract_history", "release_contract_operational", "release_contract_source_route", "releasecheck_version"} {
+	for _, schema := range []string{"release_contract_operational", "releasecheck_version"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 1 || versions[0] != 2 {
 			t.Fatalf("supported %s versions=%v", schema, versions)
 		}
@@ -50,9 +50,9 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if versions := document.SupportedSchemaVersions["release_contract"]; len(versions) != 1 || versions[0] != 2 {
 		t.Fatalf("supported release_contract versions=%v", versions)
 	}
-	for _, schema := range []string{"release_evidence", "release_evidence_bundle", "release_observation", "release_health_proof", "attestation_verification_bundle"} {
+	for _, schema := range []string{"release_evidence", "release_evidence_bundle", "release_observation", "release_health_proof", "attestation_verification_bundle", "release_contract_history", "release_contract_historical_source", "release_contract_source_route"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 0 {
-			t.Fatalf("retired evidence schema %s is still advertised: %v", schema, versions)
+			t.Fatalf("retired schema %s is still advertised: %v", schema, versions)
 		}
 	}
 	if stderr.Len() != 0 {
@@ -98,40 +98,6 @@ func TestContractMatrixJSONIsDirectlyConsumable(t *testing.T) {
 	decodeOneJSON(t, stdout.Bytes(), &raw)
 	if len(raw) != 1 || raw["include"] == nil {
 		t.Fatalf("matrix has non-strategy envelope fields: %s", stdout.String())
-	}
-}
-
-func TestContractRouteSourceCLISeparatesSourceAndControlInputs(t *testing.T) {
-	for _, test := range []struct {
-		name, contract, version, sourceSHA, contractGeneration, evidenceFormat string
-	}{
-		{"current", releasecontract.CanonicalPath, "", "fa5e3fdfe75c956dbd9e4f70484de1f0ec81de3a", "v2", "v2"},
-		{"historical v1", releasecontract.LegacyArchivePath, "v0.0.15", "c7dd1fd6176ac2abbea22f226795a0787e774c1b", "v1", "v1"},
-		{"historical v2", releasecontract.LegacyArchivePath, "v0.0.16", "ddfd38c3144ed3d0968d2c5e7e4b2acfef841478", "v1", "v2"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			args := []string{
-				"contract", "route-source",
-				"--source-contract", canonicalRepositoryFile(t, test.contract),
-				"--registry", canonicalRepositoryFile(t, releasecontract.HistoricalRegistryPath),
-				"--repository", "ildarbinanas-design/env-vault",
-				"--source-sha", test.sourceSHA,
-				"--json",
-			}
-			if test.version != "" {
-				args = append(args, "--version", test.version)
-			}
-			var stdout, stderr bytes.Buffer
-			if code := run(args, &stdout, &stderr); code != exitOK {
-				t.Fatalf("code=%d stderr=%s", code, stderr.String())
-			}
-			var document releasecontract.SourceRoute
-			decodeOneJSON(t, stdout.Bytes(), &document)
-			if !document.OK || document.SchemaID != releasecontract.SourceRouteSchemaID ||
-				document.ContractGeneration != test.contractGeneration || document.EvidenceFormat != test.evidenceFormat {
-				t.Fatalf("route=%+v", document)
-			}
-		})
 	}
 }
 

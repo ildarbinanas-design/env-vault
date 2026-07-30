@@ -26,12 +26,13 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
   `release_require_typed_contract_projection` before GitHub access. Static
   Actions fields that cannot consume the projection must have exact contract
   parity tests.
-- Historical v1 authority is closed: only the exact bytes in
-  `release/history/contract.v1.json` and exact tuples in
-  `release/contract-history.v2.json` may route a v1 source. The live
-  `release/contract.v1.json` is not the archive or a source of new operational
-  defaults. The registry's `evidence_format` entries are frozen historical
-  identity for those v1 releases; they authorize nothing new.
+- There is exactly one contract generation. The v1 archive, its closed
+  historical registry, and the source-routing machinery were removed on
+  2026-07-30: every live and repair path reads `release/contract.v2.json`,
+  either from the checkout or from the exact immutable source commit. A
+  contract that does not decode as `env-vault.release-contract.v2` version 2
+  fails closed; releases published before that generation are historical
+  records, not inputs.
 - GitHub transport and mutations use `gh` or the GitHub API. Repository
   checkers consume saved files offline, hold no credentials, and fail closed on
   unknown, incomplete, invalid, or unsupported input.

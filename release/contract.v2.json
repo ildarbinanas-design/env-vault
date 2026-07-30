@@ -1,11 +1,6 @@
 {
   "schema_id": "env-vault.release-contract.v2",
   "schema_version": 2,
-  "evolution": {
-    "previous_schema_id": "env-vault.release-contract.v1",
-    "previous_schema_version": 1,
-    "previous_semantic_sha256": "6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5"
-  },
   "repositories": {
     "source": {
       "full_name": "ildarbinanas-design/env-vault",

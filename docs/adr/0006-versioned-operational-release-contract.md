@@ -1,6 +1,12 @@
 # ADR 0006: Versioned operational release contract and closed historical routing
 
-- Status: accepted
+- Status: partially superseded by `docs/trim-plan-2026-07-30.md` Phase 2
+  (2026-07-30). The operational contract, its typed projection, and the
+  digest-bound checker pair remain in force. The **versioned** dimension this
+  ADR introduced — dual v1/v2 generations, the closed historical registry,
+  `contract route-source`/`historical-source`, and the archived v1 bytes — was
+  removed: there is one generation, `release/contract.v2.json`. Kept for
+  history; the generation-routing sections are no longer active design.
 - Date: 2026-07-18
 - Scope: release parameters, workflow identities, historical source contracts,
   typed runtime projections, and contract evolution

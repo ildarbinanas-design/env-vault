@@ -510,9 +510,6 @@ func settingsPolicyFromContract(contract releasecontract.Contract) (settingsPoli
 		return settingsPolicy{}, fail(CodeInputInvalid, "release contract has no source repository identity", nil)
 	}
 	tagPrefix := contract.VersionPolicy.TagPrefix
-	if contract.SchemaID == releasecontract.LegacySchemaID && contract.SchemaVersion == releasecontract.LegacySchemaVersion {
-		tagPrefix = "v"
-	}
 	return settingsPolicy{
 		Repository:    source.FullName,
 		DefaultBranch: source.DefaultBranch,

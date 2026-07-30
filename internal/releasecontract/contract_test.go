@@ -14,11 +14,6 @@ func TestCanonicalContract(t *testing.T) {
 	if contract.SchemaID != "env-vault.release-contract.v2" || contract.SchemaVersion != 2 || CanonicalPath != "release/contract.v2.json" {
 		t.Fatalf("canonical contract identity=%s/%d path=%s", contract.SchemaID, contract.SchemaVersion, CanonicalPath)
 	}
-	if contract.Evolution.PreviousSchemaID != "env-vault.release-contract.v1" ||
-		contract.Evolution.PreviousSchemaVersion != 1 ||
-		contract.Evolution.PreviousSemanticSHA256 != "6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5" {
-		t.Fatalf("contract evolution=%+v", contract.Evolution)
-	}
 	if len(contract.Platforms) != 5 || len(contract.Assets) != 10 {
 		t.Fatalf("platforms=%d assets=%d", len(contract.Platforms), len(contract.Assets))
 	}
@@ -183,9 +178,6 @@ func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
 	if !reflect.DeepEqual(contract.Workflows, wantWorkflows) {
 		t.Fatalf("workflows=%+v", contract.Workflows)
 	}
-	if len(contract.Apps) != 0 {
-		t.Fatalf("apps=%+v, want none: release automation no longer uses GitHub Apps", contract.Apps)
-	}
 	if contract.Homebrew.TapCIWorkflowFile != "test-formula.yml" || contract.Homebrew.TapCIWorkflowName != "test-formula" {
 		t.Fatalf("homebrew tap CI identity=%+v", contract.Homebrew)
 	}
@@ -242,8 +234,6 @@ func TestLoadFileRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
         "pull_request",
         "workflow_dispatch"
       ]`, `"events": null`, 1)),
-		"evolution downgrade": []byte(strings.Replace(string(canonical),
-			`"previous_schema_version": 1`, `"previous_schema_version": 0`, 1)),
 		"required false null": []byte(strings.Replace(string(canonical),
 			`"cancel_in_progress": false`, `"cancel_in_progress": null`, 1)),
 		"required true null": []byte(strings.Replace(string(canonical),
@@ -272,15 +262,9 @@ func TestLoadFileRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
 	}
 }
 
-func TestCanonicalLoaderRejectsArchivedV1Downgrade(t *testing.T) {
-	if _, err := LoadFile(filepath.Join("..", "..", "release", "contract.v1.json")); err == nil {
-		t.Fatal("archival v1 contract was accepted as the operational contract")
-	}
+func TestCanonicalLoaderRejectsAForeignContractGeneration(t *testing.T) {
 	canonical := readCanonicalForTest(t)
 	for name, data := range map[string][]byte{
-		"predecessor digest": []byte(strings.Replace(string(canonical),
-			"6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5",
-			strings.Repeat("f", 64), 1)),
 		"schema id": []byte(strings.Replace(string(canonical),
 			"env-vault.release-contract.v2", "env-vault.release-contract.v1", 1)),
 		"schema version": []byte(strings.Replace(string(canonical),
@@ -444,11 +428,8 @@ func TestValidateRejectsGuaranteeWeakening(t *testing.T) {
 		"invalid source repository": func(c *Contract) {
 			c.Repositories.Source.FullName = "env-vault"
 		},
-		"source default branch": func(c *Contract) { c.Repositories.Source.DefaultBranch = "trunk" },
-		"same tap repository":   func(c *Contract) { c.Repositories.HomebrewTap = c.Repositories.Source },
-		"reintroduced github app": func(c *Contract) {
-			c.Apps = []App{{ID: "release_planning", Slug: "env-vault-release-planning", RepositoryID: "source", Environment: "release-planning", AuditWorkflow: "planning_app_audit"}}
-		},
+		"source default branch":     func(c *Contract) { c.Repositories.Source.DefaultBranch = "trunk" },
+		"same tap repository":       func(c *Contract) { c.Repositories.HomebrewTap = c.Repositories.Source },
 		"formula path":              func(c *Contract) { c.Homebrew.FormulaPath = "Formula/other.rb" },
 		"release please branch":     func(c *Contract) { c.VersionPolicy.ReleasePlease.Branch = "release/other" },
 		"tag prefix":                func(c *Contract) { c.VersionPolicy.TagPrefix = "release-" },
@@ -529,4 +510,28 @@ func writeTempFile(t *testing.T, data []byte) string {
 		t.Fatal(err)
 	}
 	return filename
+}
+
+// Phase 2 removed the versioned-contract dimension: there is no second
+// generation, no historical registry, and no App registry. Strict decoding is
+// what keeps those keys from silently reappearing.
+func TestRetiredContractSectionsCannotReappear(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", CanonicalPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, injected := range map[string]string{
+		"apps":      `"apps":[{"id":"release_planning","slug":"env-vault-release-planning","repository_id":"source","environment":"release-planning","audit_workflow":"planning_app_audit"}],`,
+		"evolution": `"evolution":{"previous_schema_id":"env-vault.release-contract.v1","previous_schema_version":1,"previous_semantic_sha256":"6b83efee82bf8a0d9c1fcc3f491f313dee3dd29f31f0837b27051c7c65e61ef5"},`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(string(data), `"schema_id"`, injected+`"schema_id"`, 1)
+			if mutated == string(data) {
+				t.Fatal("fixture did not change")
+			}
+			if _, err := LoadBytes([]byte(mutated)); err == nil {
+				t.Fatalf("retired %q section was accepted", name)
+			}
+		})
+	}
 }

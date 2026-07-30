@@ -56,8 +56,8 @@ func TestOperationalProjectionOwnsIndependentSlices(t *testing.T) {
 	}
 }
 
-func TestOperationalProjectionRejectsHistoricalContract(t *testing.T) {
-	if _, err := (Contract{SchemaID: LegacySchemaID, SchemaVersion: LegacySchemaVersion}).OperationalProjection(); err == nil {
-		t.Fatal("historical contract produced an operational projection")
+func TestOperationalProjectionRejectsAnUnknownContractGeneration(t *testing.T) {
+	if _, err := (Contract{SchemaID: "env-vault.release-contract.v1", SchemaVersion: 1}).OperationalProjection(); err == nil {
+		t.Fatal("a foreign contract generation produced an operational projection")
 	}
 }
