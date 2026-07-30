@@ -30,8 +30,9 @@ equivalents, and the incident matrix, see
 - [`release/history/contract.v1.json`](release/history/contract.v1.json) and
   [`release/contract-history.v2.json`](release/contract-history.v2.json) are the
   closed v1 compatibility authority. They admit only exact historical
-  repository/version/source tuples and record contract generation separately
-  from evidence format. The live `release/contract.v1.json` is a transition
+  repository/version/source tuples. Their `evidence_format` entries are frozen
+  identity for those v1 releases and authorize nothing new: the ledger they
+  described was retired on 2026-07-30. The live `release/contract.v1.json` is a transition
   artifact, not the immutable archive or a source of new operational defaults.
 - [`docs/e2e-baseline.json`](docs/e2e-baseline.json) is the durable E2E
   compatibility baseline. CI verifies it from the current checkout; it does
@@ -72,9 +73,10 @@ must be strictly earlier than the PR merge time. GitHub timestamps have
 one-second precision, so a comment created or edited in the same recorded
 second as the merge is ambiguous and fails closed; automation waits for the
 next observable second, rechecks the unchanged tuple, and only then merges.
-The user is not asked to post a second manual confirmation. Durable evidence
+The user is not asked to post a second manual confirmation. The gate itself
 binds the comment ID, URL, actor, association, timestamps, canonical-body
-SHA-256, PR number and head SHA.
+SHA-256, PR number and head SHA; the pull request and its comment remain the
+durable record.
 
 The operator must record and consume the confirmation with the checked-in
 transport wrapper; do not call `gh pr comment` and `gh pr merge` as separate
@@ -99,8 +101,8 @@ bounded retries. Ambiguous comment-write or merge responses are reconciled by
 reads, never by a blind second mutation; an interrupted invocation can resume
 an already exact merged tuple without another mutation. The comment is read
 again after merge before success is reported. The wrapper prints only the
-exact merge SHA; the independent pre-tag workflow generates and preserves the
-versioned authorization evidence.
+exact merge SHA. The pull request, its one authorizing comment, and the merge
+commit are the durable authorization record.
 
 Release-planning REST observations use `scripts/release/gh-api-read.sh`. It
 accepts only explicit or implicit GET reads, publishes a response file only
@@ -181,9 +183,9 @@ authentication state is not absence.
 This completion uses the authorized one-time exception; it does not rewrite
 the `v0.0.13` outcome. That version has the correct immutable tag, ten assets,
 attestations, and Homebrew state, but its health job failed on the deterministic
-Homebrew parser bug and its durable evidence run was skipped. It has no
-successful evidence run. The next release must complete publisher, Homebrew,
-health, and durable evidence successfully. See the
+Homebrew parser bug and its durable evidence run was skipped. The next release
+must complete publisher, Homebrew, and health successfully; the evidence ledger
+that this record refers to was retired on 2026-07-30. See the
 [`v0.0.12`/`v0.0.13` record](docs/release-operator-runbook.md#honest-v0012-and-v0013-record)
 for the exact run and commit identities.
 
@@ -228,11 +230,11 @@ for the exact run and commit identities.
    exception. It also downloads the unique attempt-qualified settings proof
    from the exact successful planning run and replays it offline; `health`
    never receives the planning token or queries Administration APIs.
-10. `release-evidence` preserves versioned machine JSON, a generated Markdown
-    index, and automatic timing/retry metrics.
+A green `health` job is the end of the release: the GitHub Release page, the
+tag, and the pull-request history are the audit trail.
 
-The shared `env-vault-release` concurrency group covers planning,
-publication, and durable evidence with cancellation disabled and
+The shared `env-vault-release` concurrency group covers planning and
+publication with cancellation disabled and
 `queue: max`; GitHub retains up to 100 pending runs, but does not guarantee
 their dispatch order. Correctness therefore depends on every stage
 revalidating the exact repository/workflow/run/job/attempt/source identity,
@@ -293,17 +295,17 @@ gh api --paginate --slurp \
 
 The checker accepts complete saved responses and rejects duplicate or
 case-variant JSON keys, unknown fields, unsupported schemas, incompatible
-contract identities, and incomplete evidence.
+contract identities, and incomplete input documents.
 
 Exit statuses are stable:
 
 | Status | Meaning |
 | ---: | --- |
-| `0` | requested offline validation or evidence generation succeeded |
+| `0` | requested offline validation or document generation succeeded |
 | `2` | command-line usage error |
 | `3` | release contract invalid or schema unsupported |
 | `4` | valid attempt classification requires waiting, inspection, or `rerun_all_jobs` |
-| `5` | saved input or promotion evidence is invalid, incomplete, or inconsistent |
+| `5` | saved input or promotion proof is invalid, incomplete, or inconsistent |
 | `6` | internal or no-clobber output failure |
 
 Promotion verification is explicit about every coordinate:
@@ -371,7 +373,7 @@ gh workflow run build-binaries.yml \
 | --- | --- | --- | --- |
 | `release-assets` | no | promotion/publication | exact tag and publication-eligible CI promotion attempt |
 | `homebrew` | no | Homebrew | exact public Release, ten assets, and attestations |
-| `health` | no | read-only health | publication complete; regenerate verification/evidence only |
+| `health` | no | read-only health | publication complete; re-verify published state only |
 
 The publisher resolves the source SHA from the tag and fails if the tag,
 generated release provenance, CI attempt, promotion manifest, existing Release
@@ -437,9 +439,9 @@ Accept only an `env-vault.homebrew-publication-bridge.v1` result whose control,
 source, bootstrap, failed publisher, PR/head/merge, both tap CI attempts, and
 final tap snapshot all match. Its `next_action` must be exactly
 `dispatch_tag_scoped_health`. Then dispatch one normal `repair=health` at the
-immutable tag and require health plus durable evidence success. The bridge
+immutable tag and require health success. The bridge
 must never create/move tags, create/edit Releases, upload/replace assets, create
-attestations, write evidence refs, or broaden token permissions. See
+attestations, or broaden token permissions. See
 [ADR 0005](docs/adr/0005-informational-link-and-homebrew-bridge.md).
 
 ## Legacy and blocked versions
@@ -481,7 +483,8 @@ lower the tap.
 
 ## Healthy release definition
 
-A release is healthy only when one evidence tuple proves all of the following:
+A release is healthy only when the publisher's `health` job proves all of the
+following against live GitHub state:
 
 1. The immutable tag peels to the exact release source SHA.
 2. The GitHub Release is public, non-draft, non-prerelease, and bound to that
@@ -494,7 +497,8 @@ A release is healthy only when one evidence tuple proves all of the following:
 5. Build-provenance and SPDX SBOM attestations for all five archives verify
    against the exact source SHA and publisher workflow identity. Evidence
    embeds the exact raw `gh attestation verify` JSON and its digest for each
-   archive/predicate pair, then replays all ten documents offline.
+   archive/predicate pair; `health` re-runs and re-checks all ten
+   verifications.
 6. The generated Homebrew formula is byte-exact for the version and four
    supported Homebrew archives; the version is monotonic.
 7. The deterministic tap PR's recorded head passed pull-request CI, the exact
@@ -502,7 +506,7 @@ A release is healthy only when one evidence tuple proves all of the following:
    the current tap SHA contains the merge with the byte-exact formula intact.
 8. A pre-tag settings proof binds the exact repository merge policy, three
    rulesets, present empty bypass lists, source/version, and planning run
-   attempt; health and durable evidence replay its self-digest offline.
+   attempt; `health` replays its self-digest offline.
 9. Release health passed and every blocked failed tag, currently `v0.0.8`
    through `v0.0.11`, still has no GitHub Release.
 
@@ -524,58 +528,21 @@ env-vault-windows-amd64.zip.sha256
 Supply-chain documents remain attestations and workflow artifacts; they are
 not added to the ten-asset Release contract.
 
-## Evidence and metrics
+## Audit trail and metrics
 
-The release workflows automatically generate versioned machine JSON and a
-short Markdown index. Evidence binds source and tag SHAs, CI and publisher run
-IDs/attempts, promotion and artifact digests, attestation verification,
-Homebrew PR/head/merge coordinates, both tap CI gates, publication state, and
-health state. It also records the exact publisher repair mode. The first
-successful evidence remains immutable at `evidence/releases/vX.Y.Z/`; every
-successful publisher run and attempt, including that first publication, is
-additionally stored at
-`evidence/releases/vX.Y.Z/publisher-runs/run-RUN_ID/attempt-ATTEMPT/`.
-The source checker selects v1 only when both compact-format capability keys are
-absent, and selects v2 only for the exact `[2]` bundle / `[1]` genesis pair.
-Any partial, null, empty, or unknown capability fails closed. The seven-day
-handoff retains v1 and v2 during migration. The per-release/per-attempt portion
-of v2 durable Git state and the 90-day replay artifact contains only the six
-compact metadata files and the content-addressed object set; fresh Git state
-also contains genesis, while production retains immutable legacy history.
-`release-evidence-bundle.json` reconstructs the canonical v1 decision
-byte-for-byte offline. `parity.json` is emitted only for a successful v1/v2
-replay; it is not failure evidence.
+The release audit trail is the GitHub Releases page, the immutable tag, and
+ordinary git and pull-request history. There is no evidence ledger: the
+`health` job verifies live release, attestation, Homebrew, tap CI, blocked-tag,
+and abandoned-release state and fails the publisher when anything drifts, but
+it stores nothing durable. Timing and retry metrics stay as workflow artifacts
+and step summaries.
 
-Routing is tuple-based, not inferred from the current branch: `v0.0.14` and
-`v0.0.15` are contract-generation v1/evidence-format v1, while `v0.0.16` is
-contract-generation v1/evidence-format v2. The reviewed current checker binds
-the history registry and archived contract bytes; the checker built from the
-immutable source validates the historical generation. See
-[ADR 0006](docs/adr/0006-versioned-operational-release-contract.md).
-
-Replaying the same run/attempt is a no-op only when every file for that format
-is byte-identical. A partial tuple directory, unexpected path, conflicting
-bytes, rewritten earlier object, or inherited-path change fails closed; a
-later repair appends its own tuple directory without rewriting the initial
-snapshot. Evidence must not contain credentials or secret values.
-
-For a genuinely absent `release-evidence` ref—proved only by an exact HTTP
-404—the v2 publisher automatically creates a parentless evidence-only commit
-and `evidence/genesis.v1.json`. It never inherits the release source tree and
-therefore needs no Workflows permission or manual bootstrap. Every genesis
-mutation is immediately preceded by a fresh exact-source observation. A race
-is accepted only after exact read-back reconciliation. Do not pre-create a new
-ledger, replace `GITHUB_TOKEN` with a workflows-capable token, broaden either
-release token, or add a ruleset bypass.
-
-The already published production ledger remains `legacy-compatible` and is
-never migrated or rewritten. Both v1 and v2 listeners validate its bounded
-first-parent history and refuse a new append before any mutation when the
-64-commit validation window is full. The two-commit baseline left 62 append
-slots; published `v0.0.16` added the third entry, so 61 slots remain now and
-the next successful patch will leave 60. Land a reviewed checkpoint/Merkle
-design before that window is exhausted. See
-[ADR 0003](docs/adr/0003-compact-release-evidence-ledger.md).
+The append-only ledger that earlier releases published is frozen history. The
+`release-evidence` branch, the durable replay artifacts already in Actions
+storage, and the tooling that produced them at tag `pre-trim-2026-07-30` remain
+valid and replayable; nothing rewrites, extends, or migrates them. See
+[ADR 0003](docs/adr/0003-compact-release-evidence-ledger.md), superseded by
+Phase 3 of [`trim-plan-2026-07-30.md`](docs/trim-plan-2026-07-30.md).
 
 Metrics are derived from a saved complete `gh run view` document:
 
@@ -629,11 +596,6 @@ The job's `workflow_name` is diagnostic just like the run's `.name`; workflow
 authority comes from the run `path`. See the incident matrix in the
 [operator runbook](docs/release-operator-runbook.md).
 
-The Git Blobs API returns base64 content with transport line wrapping. Evidence
-publication removes only CR/LF wrapping, decodes fail-closed, requires an exact
-canonical-base64 round trip, then checks the declared byte count and exact byte
-equality. Historical evidence assembly
-and replay stay pinned to the immutable publisher source; the append-only
-mutation helper is separately checked out at the protected listener
-`github.sha`, so a reviewed transport fix can recover an old immutable release
-without changing that release's code, tag, assets, or Homebrew state.
+Publisher and repair workflows stay pinned to the immutable release source, so
+a reviewed fix in a listener can recover an old immutable release without
+changing that release's code, tag, assets, or Homebrew state.

@@ -22,7 +22,7 @@ structure, and that the release path itself has no bypass.
 The operational pre-tag check is authoritative for the complete global bypass
 lists: it reads each canonical ruleset's GraphQL `bypassActors.totalCount`,
 requires all three counts to be zero, and seals that response together with the
-exact REST rule details for offline health/evidence replay. Missing GraphQL
+exact REST rule details for offline health replay. Missing GraphQL
 data, partial errors, pagination, or a nonzero count fails closed.
 
 That check reads repository merge settings and actor-independent ruleset bypass
@@ -176,7 +176,7 @@ release values:
 | Secret | `HOMEBREW_TAP_TOKEN` | Fine-grained PAT scoped to `homebrew-tap` |
 
 The token is a credential and belongs in an environment secret. It does not
-belong in the repository, a branch, a workflow artifact, release evidence, or a
+belong in the repository, a branch, a workflow artifact, or a
 job summary.
 
 Environment branch and tag policy:
@@ -294,22 +294,14 @@ deleting a published version through the normal repository path.
 Apply a third active branch ruleset named
 `Protect env-vault release evidence` to the exact ref
 `refs/heads/release-evidence`. It must block non-fast-forward updates and
-deletion, have no bypass actor, and allow initial branch creation plus ordinary
-fast-forward commits. Evidence links use exact commit SHAs; this ruleset also
-prevents the durable evidence history from being rewritten or removed.
+deletion and have no bypass actor. Nothing writes to this branch any more: the
+evidence ledger was retired on 2026-07-30 (Phase 3 of
+[`trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md)), and the ruleset now
+exists solely to keep that frozen history from being rewritten or removed.
+Evidence links in historical documents use exact commit SHAs and must stay
+resolvable.
 
-For a fresh repository, do not pre-create the evidence ref. The v2 evidence
-publisher treats only an exact typed HTTP 404 as absence, freshly revalidates
-the release source before each Git mutation, and creates a parentless commit
-whose tree contains only the strict `evidence/` namespace and versioned genesis
-anchor. It then creates `refs/heads/release-evidence` without force. This path
-needs `Contents: write`, but no Workflows write, credential replacement, ruleset
-bypass, or operator bootstrap. Authentication, authorization, rate-limit, and
-transport failures must never be classified as absence.
-
-The production ref predates automatic genesis and remains an immutable
-`legacy-compatible` exception. Never rewrite it, move its root, add an anchor
-retroactively, or use a fresh-ledger operation to normalize it. On 2026-07-17,
+Never rewrite the ref, move its root, or resurrect the ledger. On 2026-07-17,
 read-only inspection observed ruleset ID `19058721` active on the exact ref,
 with deletion and non-fast-forward protection, `bypass_actors=[]`, and
 `current_user_can_bypass=never`; the ref tip was
@@ -370,7 +362,7 @@ through GraphQL, preserving the read-only permission boundary. Correct the
 repository if the automated check reports rebase merging,
 `COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`, a non-squash ruleset merge method, a
 missing strict check, weakened branch protection, a missing immutable `v*` tag
-ruleset, or a mutable/deletable evidence branch. The workflow does not weaken
+ruleset, or a mutable/deletable frozen evidence branch. The workflow does not weaken
 the contract to accommodate unsafe settings.
 
 ## 5. `homebrew-tap` branch and merge policy
@@ -464,8 +456,8 @@ The release modes use the tap token and environment as follows:
 
 | Mode | Tap credential | Tap behavior | Health behavior |
 | --- | --- | --- | --- |
-| `release-assets` | `homebrew` only | create/reuse PR or exact no-op after asset reconciliation; wait exact PR and push CI | verify all release and tap evidence |
-| `homebrew` | `homebrew` only | resume/reuse PR or exact no-op; wait exact CI | verify all release and tap evidence |
+| `release-assets` | `homebrew` only | create/reuse PR or exact no-op after asset reconciliation; wait exact PR and push CI | verify all live release and tap state |
+| `homebrew` | `homebrew` only | resume/reuse PR or exact no-op; wait exact CI | verify all live release and tap state |
 | `health` | none | no branch, PR, merge, or formula mutation | re-download assets, verify attestations/formula, and wait for exact tap push CI |
 
 The automatic tag event uses the internal normal mode; it is not selectable by
@@ -476,7 +468,7 @@ None of the repair modes rebuilds product artifacts.
 failure. It accepts existing remote state only when every version, source SHA,
 formula byte, marker, PR head, and merge relationship remains consistent.
 `repair=health` is strictly read-only and is appropriate after publication is
-already complete but the final evidence step failed.
+already complete but the final verification step failed.
 
 ## 8. Tap credential cutover and legacy credential removal
 

@@ -37,7 +37,7 @@ func TestArtifactsValidatePolicyCLIIsDeterministic(t *testing.T) {
 	}
 	var document actionsartifact.Validation
 	decodeOneJSON(t, first.Bytes(), &document)
-	if !document.OK || document.SchemaID != actionsartifact.ValidationSchemaID || document.UploadSiteCount != 23 || document.WorkflowCount != 7 {
+	if !document.OK || document.SchemaID != actionsartifact.ValidationSchemaID || document.UploadSiteCount != 19 || document.WorkflowCount != 6 {
 		t.Fatalf("validation=%+v", document)
 	}
 	if stderr.Len() != 0 {

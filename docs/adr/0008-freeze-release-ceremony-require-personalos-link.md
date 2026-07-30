@@ -44,13 +44,14 @@ own trajectory, disconnected from that goal.
 
 - **Structural necessity to keep an existing invariant alive is not "new
   scope"** and does not require a PersonalOS consumer or security
-  justification. Concretely: `docs/release-refactor-backlog.md` item 11
-  (evidence-ledger checkpoint/Merkle design) is explicitly exempt from this
-  freeze — the bounded evidence-ledger validation window (64 commits, ~61
-  slots remaining as of this ADR) will hard-fail future releases on append
-  if exhausted before that design lands. This is maintenance of an already
-  -accepted guarantee (ADR 0003), not release-engineering ceremony, and may
-  proceed without further sign-off.
+  justification. The concrete example given here was
+  `docs/release-refactor-backlog.md` item 11 (evidence-ledger
+  checkpoint/Merkle design), exempt because the bounded 64-commit validation
+  window would otherwise hard-fail a future release on append. **That example
+  lapsed on 2026-07-30:** Phase 3 of `docs/trim-plan-2026-07-30.md` removed the
+  evidence ledger and its window, so item 11 is moot and the exception now has
+  no open instance. The principle stands for a future invariant that genuinely
+  needs maintenance.
 - **"Security requirement" (used above and in `backlog.md` P1/P2 gating)
   means:** a concrete, already-exploited or documented vulnerability or
   credential/secret exposure (e.g. tracked in `SECURITY.md` or an incident

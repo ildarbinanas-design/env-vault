@@ -37,7 +37,7 @@ Release Please PR is merged, the human reviews and confirms this exact tuple:
 The version includes the leading `v`, and the SHA is the full 40-character PR
 head. Any change to version, PR number, or head SHA invalidates the
 confirmation. There is no other routine confirmation for the implementation
-PR, tag planning, publisher, Homebrew, health, or evidence.
+PR, tag planning, publisher, Homebrew, or health.
 
 The release statement above does not authorize post-release artifact deletion.
 That separate, non-routine operation has its own `[HUMAN REQUIRED]` gate and
@@ -49,7 +49,7 @@ never substitutes for or reuses a release confirmation:
 
 Never expose a token, private key, OAuth device code, OTP, verification-email
 contents, credential-store contents, or secret value in a command line, log,
-saved JSON, artifact, evidence file, issue, or PR. Keep shell tracing and GitHub
+saved JSON, artifact, proof file, issue, or PR. Keep shell tracing and GitHub
 debug logging disabled around authentication and release operations.
 
 ## End-to-end flow
@@ -75,7 +75,7 @@ flowchart TD
     K0["[HUMAN NO-LLM] Run cards 11-12 unchanged"]
     L["[AUTOMATED] Promote bytes, GitHub Release, 10 assets,<br/>provenance and SPDX SBOM attestations"]
     M["[AUTOMATED] Homebrew PR, exact PR-head CI,<br/>head-guarded merge, exact post-merge CI"]
-    N["[AUTOMATED] Health proof and durable release evidence"]
+    N["[AUTOMATED] Health verification of live published state"]
     O["[LLM OPTIONAL] Post-release verification and metrics<br/>cards 13-14"]
     O0["[HUMAN NO-LLM] Run cards 13-14 unchanged"]
     X["[AUTOMATED] Incomplete-attempt classifier"]
@@ -113,14 +113,14 @@ flowchart TD
 | Exact tuple confirmation | `[HUMAN REQUIRED]` | byte-exact confirmation line for unchanged tuple | authorizes only that tuple; no mutation by itself | 9 |
 | Generated release PR authorization and merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | checked-in wrapper, exact PR/base/check/comment tuple | one comment and one head-guarded merge; repository PR/Contents write | 10 |
 | Five-target inventory and promotion manifest | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | `env-vault.attempt-classification.v1` and `env-vault.promotion-verification.v1` | read-only verification of one CI attempt | 11 |
-| Tag planning | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | authorization evidence, settings proof, exact source/tag SHA | only the planning token has scoped Contents write; operator does not create a tag | 12 |
+| Tag planning | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | authorization tuple, settings proof, exact source/tag SHA | only the planning token has scoped Contents write; operator does not create a tag | 12 |
 | Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents/Attestations writes | 12 |
 | Provenance, SBOM and attestations | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | two verified predicate types for each of five archives | automated OIDC/Attestations write; operator read-only | 13 |
 | Homebrew PR-head and post-merge gates | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | exact formula, PR/head/merge/tap SHAs and two successful run identities | tap token only: Actions read, Contents and Pull requests write | 13 |
-| Health and durable evidence | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | health, observation, and routed evidence v1/v2 schemas | health read-only; append-only evidence Contents write | 14 |
+| Health verification of published state | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | live tag/Release/asset/attestation/Homebrew/tap state | health is read-only and stores nothing durable | 14 |
 | Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 15 |
 | Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 16 |
-| Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap/evidence JSON and metrics schemas | read-only except already-automated evidence publication | 14 |
+| Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap state and metrics schemas | read-only | 14 |
 | Artifact post-merge collection, replay, and compact package | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | complete private replay plus content-addressed manifest object/summary | Actions read; local packaging, then a normal small reviewed PR | A1 |
 | Artifact manifest authorization | `[HUMAN REQUIRED]` | byte-exact count/bytes/semantic-SHA confirmation | authorizes only the reviewed manifest; no mutation by itself | A2 |
 | Bounded artifact deletion | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | exact-ID batch plus synced canonical result chain | Actions artifact delete only; maximum 500 IDs; no run delete or retry | A2 |
@@ -157,11 +157,7 @@ are:
   `env-vault.promotion-verification.v1`;
 - `env-vault.repository-release-settings-proof.v1`;
 - `env-vault.release-authorization.v1`;
-- `env-vault.release-health-proof.v1` and
-  `env-vault.release-observation.v1`;
-- `env-vault.attestation-verification-bundle.v1`;
-- `env-vault.release-evidence.v1`, `env-vault.release-evidence-bundle.v2`, and
-  `env-vault.release-metrics.v1`;
+- `env-vault.release-metrics.v1`;
 - `env-vault.actions-artifact-snapshot.v1`,
   `env-vault.actions-artifact-live-collection.v1`,
   `env-vault.actions-artifact-live-observation.v1`,
@@ -175,7 +171,7 @@ are:
 `releasecheck` has stable exits: `0` success; `2` CLI usage; `3` invalid or
 unsupported contract; `4` a valid classification that requires waiting,
 inspection, or `rerun_all_jobs`; `5` invalid, incomplete, or inconsistent
-saved input/evidence; `6` internal or no-clobber output failure. A GitHub or
+saved input; `6` internal or no-clobber output failure. A GitHub or
 Git command succeeds only on exit `0`. For checked-in shell helpers, usage is
 normally `2`, a deterministic failure is `1`, and a documented absence probe
 uses `4`. Any unlisted exit stops the release.
@@ -591,8 +587,8 @@ returns exactly:
 
 **Inputs and machine result.** Inputs are immutable snapshots of the exact open
 PR and its checks. There is no checker schema for semantic judgment. The
-authorization wrapper later creates `env-vault.release-authorization.v1`
-evidence for the exact tuple and trusted comment.
+authorizing comment on the pull request is itself the durable record of the
+exact tuple.
 
 **Exit, effect, and permission.** The review has no process exit and performs no
 mutation. The confirmation authorizes only the named unchanged tuple.
@@ -829,7 +825,7 @@ and contain exactly one archive/checksum pair. Re-read the Release and require
 exactly those two byte-identical assets and no others. Only then dispatch the
 ordinary card-12 `release-assets` repair at `--ref "$VERSION"`; that frozen
 workflow must verify the pair and publish the remaining eight assets before
-the normal supply-chain, Homebrew, health, and evidence stages proceed.
+the normal supply-chain, Homebrew, and health stages proceed.
 
 Stop on every input mismatch, expired/missing bundle, nonempty initial asset
 set, unexpected/duplicate name, byte difference, concurrent mutation, or
@@ -920,9 +916,8 @@ gh workflow run build-binaries.yml \
 ```
 
 Capture that new run ID atomically. Require the tag-scoped health job to
-succeed and its resulting automatic `release-evidence` run to publish and
-replay the durable bundle offline. Never use this bridge to create or edit a
-Release, upload or replace assets, create attestations, change evidence refs,
+succeed. Never use this bridge to create or edit a
+Release, upload or replace assets, create attestations,
 or request Workflows/administration permission. See ADR 0005.
 
 ### 13. Provenance, SBOM, Homebrew, and both tap CI gates
@@ -983,97 +978,30 @@ ancestor. Re-run both exact-SHA CI queries.
 grammar, broaden a release token, merge a changed PR head, lower the
 formula version, force-push tap, or substitute only one of the two CI gates.
 
-### 14. Health, durable evidence, permanent absences, and metrics
+### 14. Health, permanent absences, and metrics
 
-**Command.** Require the exact first publisher and its automatic evidence run
-to succeed. Bind the evidence run name to the publisher run ID and attempt,
-then download its one exact durable artifact and replay it offline.
-
-For a fresh repository, do not create the evidence ref manually. The reviewed
-v2 publisher treats only an exact HTTP 404 as absence, freshly verifies the
-release source before each Git mutation, and creates a parentless,
-evidence-only root plus `evidence/genesis.v1.json`. Authentication, rate-limit,
-and transport errors are not absence. The workflow must retain `contents:
-write` without Workflows write or a ruleset bypass. The published production
-ledger is the historical `legacy-compatible` exception and must not be
-retrofitted with an anchor or rewritten.
-
-If a genesis attempt races or loses its response, rerun only after the current
-attempt has failed and the exact ref/commit state has been read. The publisher
-itself reconciles an exact committed result and otherwise fails closed; never
-repeat a mutation by hand or create the ref at current `main`.
+**Command.** Require the exact first publisher run and its `health` job to
+succeed. `health` re-observes live state — tag, Release, ten assets and their
+digests, ten attestation verifications, the Homebrew formula and both tap CI
+gates, the replayed pre-tag settings proof, every blocked failed tag, and the
+abandoned-release policy — and fails the publisher on any drift. It stores
+nothing durable: the Release page, the tag, and pull-request history are the
+audit trail. The append-only evidence ledger was retired on 2026-07-30; the
+`release-evidence` branch and the durable replay artifacts already in Actions
+storage are frozen history and must never be extended or rewritten.
 
 ```sh
 gh run view "$PUBLISHER_RUN_ID" --attempt "$PUBLISHER_RUN_ATTEMPT" \
   --repo "$REPOSITORY" --exit-status
-EVIDENCE_TITLE="env-vault-release-evidence publisher-run=${PUBLISHER_RUN_ID} attempt=${PUBLISHER_RUN_ATTEMPT}"
-gh run list --repo "$REPOSITORY" --workflow release-evidence.yml \
-  --commit "$SOURCE_SHA" --limit 100 \
-  --json attempt,databaseId,displayTitle,event,headBranch,headSha,workflowName \
-  > "$SNAPSHOT_DIR/evidence-candidates.json"
-EVIDENCE_RUN_TUPLE="$(jq -er --arg head "$SOURCE_SHA" --arg title "$EVIDENCE_TITLE" '
-  [.[] | select(
-    .workflowName == "release-evidence" and .displayTitle == $title and
-    .event == "workflow_run" and .headBranch == "main" and .headSha == $head
-  )] |
-  if length == 1 then .[0] else error("expected one exact evidence run") end |
-  [.databaseId, .attempt] | @tsv
-' "$SNAPSHOT_DIR/evidence-candidates.json")"
-IFS=$'\t' read -r EVIDENCE_RUN_ID EVIDENCE_RUN_ATTEMPT <<< "$EVIDENCE_RUN_TUPLE"
-gh run view "$EVIDENCE_RUN_ID" --attempt "$EVIDENCE_RUN_ATTEMPT" \
-  --repo "$REPOSITORY" \
-  --json attempt,conclusion,databaseId,displayTitle,event,headBranch,headSha,status,url,workflowName \
-  > "$SNAPSHOT_DIR/evidence-run.json"
-gh run view "$EVIDENCE_RUN_ID" --attempt "$EVIDENCE_RUN_ATTEMPT" \
-  --repo "$REPOSITORY" --exit-status
-scripts/release/gh-api-read.sh "$SNAPSHOT_DIR/evidence-artifacts.json" \
-  --paginate --slurp \
-  "repos/${REPOSITORY}/actions/runs/${EVIDENCE_RUN_ID}/artifacts?per_page=100"
-EVIDENCE_ARTIFACT="$(jq -er \
-  --arg v1 "env-vault-release-evidence-${VERSION}-" \
-  --arg v2 "env-vault-release-evidence-v2-${VERSION}-" \
-  --arg suffix "-publisher-${PUBLISHER_RUN_ID}-attempt-${PUBLISHER_RUN_ATTEMPT}-evidence-${EVIDENCE_RUN_ID}-${EVIDENCE_RUN_ATTEMPT}" '
-  [.[]?.artifacts[]? |
-    .name as $name |
-    (if ($name | startswith($v2)) then $v2
-     elif ($name | startswith($v1)) then $v1
-     else ""
-     end) as $prefix |
-    select(
-      .expired == false and $prefix != "" and
-      ($name | endswith($suffix)) and
-      ($name | length) == (($prefix | length) + 40 + ($suffix | length)) and
-      ($name[($prefix | length):(($prefix | length) + 40)] |
-        test("^[0-9a-f]{40}$"))
-    )
-  ] |
-  if length == 1 then .[0].name
-  else error("expected one exact attempt-bound durable evidence artifact")
+gh run view "$PUBLISHER_RUN_ID" --attempt "$PUBLISHER_RUN_ATTEMPT" \
+  --repo "$REPOSITORY" --json jobs \
+  > "$SNAPSHOT_DIR/publisher-jobs.json"
+jq -e '
+  [.jobs[] | select(.name == "health")] |
+  if length == 1 then .[0].conclusion == "success"
+  else error("expected exactly one health job")
   end
-' "$SNAPSHOT_DIR/evidence-artifacts.json")"
-gh run download "$EVIDENCE_RUN_ID" --repo "$REPOSITORY" \
-  --name "$EVIDENCE_ARTIFACT" --dir "$SNAPSHOT_DIR/evidence"
-mapfile -t BUNDLE_ROOTS < <(find "$SNAPSHOT_DIR/evidence" \
-  -type f -name release-evidence-bundle.json -print | LC_ALL=C sort)
-mapfile -t LEGACY_ROOTS < <(find "$SNAPSHOT_DIR/evidence" \
-  -type f -name release-evidence.json -print | LC_ALL=C sort)
-EMPTY_PATH="$SNAPSHOT_DIR/no-network-commands"
-mkdir "$EMPTY_PATH"
-if test "${#BUNDLE_ROOTS[@]}" -eq 1 && test "${#LEGACY_ROOTS[@]}" -eq 0; then
-  BUNDLE_DIR="$(dirname "${BUNDLE_ROOTS[0]}")"
-  env -i PATH="$EMPTY_PATH" TMPDIR="$SNAPSHOT_DIR" \
-    "$SNAPSHOT_DIR/releasecheck" evidence bundle-verify \
-      --bundle-dir "$BUNDLE_DIR" --json \
-      > "$SNAPSHOT_DIR/evidence-verification.json"
-elif test "${#BUNDLE_ROOTS[@]}" -eq 0 && test "${#LEGACY_ROOTS[@]}" -eq 1; then
-  env -i PATH="$EMPTY_PATH" TMPDIR="$SNAPSHOT_DIR" \
-    "$SNAPSHOT_DIR/releasecheck" evidence verify \
-      --input "${LEGACY_ROOTS[0]}" --json \
-      > "$SNAPSHOT_DIR/evidence-verification.json"
-else
-  echo "durable artifact has a partial or mixed evidence format" >&2
-  exit 1
-fi
+' "$SNAPSHOT_DIR/publisher-jobs.json" >/dev/null
 ```
 
 Prove the permanent exceptions without converting unknown state to absence:
@@ -1172,42 +1100,32 @@ jq -e \
 ' "$SNAPSHOT_DIR/metrics-comparison.json" >/dev/null
 ```
 
-**Inputs and machine result.** Health must have uploaded exactly one
-`env-vault.release-health-proof.v1`, one
-`env-vault.release-observation.v1`, raw attestation verification bundle, and
-the replayed settings/abandoned-policy proofs. Durable evidence is either the
-legacy `env-vault.release-evidence.v1` record or a complete
-`env-vault.release-evidence-bundle.v2` directory. The latter contains the six
-metadata files and exact content-addressed objects and reconstructs/revalidates
-v1 entirely offline. Verification must exit `0`; v2 typed output also returns
-`ok=true`, `decision=pass`, and an empty error code. Metrics are
+**Inputs and machine result.** The publisher's `health` job must have concluded
+`success`; its step summary records the verified version, source SHA, Release
+URL, asset count, attestation count, rechecked blocked versions, and the
+Homebrew PR/merge/tap tuple. Health uploads no artifact. Metrics are
 `env-vault.release-metrics.v1`; comparison is
 `env-vault.release-metrics-comparison.v1`. They bind the three distinct exact
 run IDs/attempts and include job count, queue time, wall time, aggregate
 runner-seconds, retries, critical path, and available artifact/cache transfer
 time.
 
-**Exit, effect, and permission.** Observation/download/checking is read-only.
-The automated evidence `publish` job alone creates or fast-forwards the
-protected `release-evidence` branch with Contents write. Absence is proven only
-by the typed transport's exact HTTP-404 classification. Existing ledgers are
-validated to a bounded depth of 64 before mutation; a full window requires a
-reviewed checkpoint migration, not a bypass.
+**Exit, effect, and permission.** Observation and checking are read-only. The
+publisher's `health` job holds `actions: read`, `contents: read`,
+`attestations: read`, and `pull-requests: read`; it performs no mutation.
 
 **Reverify.** Require the tag to peel to `SOURCE_SHA`; stable non-draft,
 non-prerelease Release; exactly ten assets and matching digests; promotion from
 one attempt; ten attestations; exact Homebrew tuple and both gates; publisher
-health success; evidence success; the `v0.0.12` and `v0.0.8` guarantees; and
+health success; the `v0.0.12` and `v0.0.8` guarantees; and
 the no-product-diff command from card 4 against the original implementation
 base. Compare with baselines only after those checks: main CI 25 jobs / 387 s
 wall / 1253 runner-s; PR CI 25 / 359 s / 1205 runner-s; publisher 30 / 417 s /
 1280 runner-s.
 
-**Forbidden.** Do not call a skipped evidence run successful, use a failed
-publisher as the publication-eligible metrics comparison, overwrite the first
-durable evidence tuple, treat a network failure as 404, manually bootstrap a
-new evidence ref, publish past the 64-commit validation bound, or claim health
-from individual successful publisher jobs.
+**Forbidden.** Do not use a failed publisher as the publication-eligible
+metrics comparison, claim health from individual successful publisher jobs, or
+append to, rewrite, or resurrect the retired `release-evidence` branch.
 
 ### 15. Incomplete-attempt classifier and `rerun_all_jobs`
 
@@ -1315,22 +1233,18 @@ responses. Every next-page URL must retain the exact initial query scope
 (endpoint query plus fields); `per_page` stays invariant and `page` advances by
 exactly one.
 
-Direct REST reads are prohibited outside this boundary. The eight baseline
+Direct REST reads are prohibited outside this boundary. The four baseline
 direct mutations, one registered typed v2 mutation adapter, and one GraphQL
 observation are registered in
 `release/github-transport-boundary.v1.json`; tests fail if another `gh` command
 is introduced without path, operation, category, owner, count, and rationale.
-After an ambiguous evidence blob POST, do not repeat POST: calculate the Git
-object SHA and require one typed exact-byte read-back. A mismatch or 404 stops
-before tree, commit, or ref mutation.
+After any ambiguous mutation, do not repeat it: re-read the exact state and
+require a typed exact-byte match before continuing. A mismatch stops the
+operation.
 
-Evidence assembly and offline replay remain pinned to the immutable publisher
-source. The write-scoped append-only helper is a separate checkout pinned to
-the protected listener `github.sha`; otherwise a defect frozen in an old tag
-cannot be repaired without moving the tag. Git Blobs API `.content` is
-line-wrapped base64: remove only CR/LF wrapping, decode fail-closed, and require
-both the declared byte count and exact byte equality before any tree, commit,
-or ref mutation.
+Publication work stays pinned to the immutable release source, while listener
+workflows run from the protected default branch; otherwise a defect frozen in
+an old tag cannot be repaired without moving the tag.
 
 **Inputs and machine result.** Inputs are exact run/attempt/head/event,
 failed job/step logs, and complete artifact inventory. Use stable checker

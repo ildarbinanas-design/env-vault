@@ -1233,8 +1233,6 @@ exit 97
 		{"authorization", "../scripts/release/authorize-and-merge-release-pr.sh", []string{releaseTestVersion, "42", sha}, map[string]string{"GITHUB_REPOSITORY": "other/source"}},
 		{"assets", "../scripts/release/reconcile-release-assets.sh", []string{releaseTestVersion, root, filepath.Join(root, "verified"), "other/source"}, nil},
 		{"asset bootstrap", "../scripts/release/bootstrap-release-asset-pair.sh", []string{releaseTestVersion, sha, root, releaseTestArchives[0], "42", filepath.Join(root, "bootstrap.json"), "other/source"}, nil},
-		{"evidence v1", "../scripts/release/publish-release-evidence.sh", []string{releaseTestVersion, sha, "other/source", dummy, dummy, dummy, dummy}, nil},
-		{"evidence v2", "../scripts/release/publish-release-evidence-v2.sh", []string{releaseTestVersion, sha, "other/source", root, dummy, dummy, dummy, dummy, dummy, dummy}, nil},
 		{"Homebrew publish", "../scripts/release/publish-homebrew-pr.sh", []string{releaseTestVersion, dummy, "other/tap"}, nil},
 		{"Homebrew merge", "../scripts/release/merge-homebrew-pr.sh", []string{"other/tap", "42", sha}, nil},
 	}
@@ -1508,7 +1506,7 @@ exit 97
 			name: "version document omits unrelated capability",
 			mutate: func(version map[string]any) {
 				supported := version["supported_schema_versions"].(map[string]any)
-				delete(supported, "release_evidence_bundle")
+				delete(supported, "release_metrics_baseline")
 			},
 		},
 		{

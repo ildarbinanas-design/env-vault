@@ -111,8 +111,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runContract(args[1:], stdout, stderr)
 	case "promotion":
 		return runPromotion(args[1:], stdout, stderr)
-	case "evidence":
-		return runEvidence(args[1:], stdout, stderr)
 	case "settings":
 		return runSettings(args[1:], stdout, stderr)
 	case "artifacts":
@@ -181,19 +179,8 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 			"promotion_platform":                        {1},
 			"promotion_manifest":                        {1},
 			"promotion_verification":                    {1},
-			"release_observation":                       {1},
-			"release_health_proof":                      {1},
-			"release_authorization":                     {1},
 			"release_please_recovery":                   {1},
 			"release_please_recovery_check":             {1},
-			"attestation_verification_bundle":           {1},
-			"release_evidence":                          {1},
-			"release_evidence_bundle":                   {2},
-			"release_evidence_bundle_verification":      {1},
-			"release_evidence_parity":                   {1},
-			"release_evidence_storage_metrics":          {1},
-			"release_evidence_genesis":                  {1},
-			"release_evidence_genesis_verification":     {1},
 			"repository_release_settings_check":         {1},
 			"repository_release_settings_proof":         {1},
 		},
@@ -334,7 +321,7 @@ func runContractHistoricalSource(args []string, stdout, stderr io.Writer) int {
 	version := set.String("version", "", "exact historical release version")
 	sourceSHA := set.String("source-sha", "", "exact historical source SHA")
 	jsonOutput := set.Bool("json", false, "emit the historical source authorization")
-	if err := set.Parse(args); err != nil || set.NArg() != 0 || *repository == "" || !releasecontract.IsVersion(*version) || !evidenceSHA.MatchString(*sourceSHA) {
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *repository == "" || !releasecontract.IsVersion(*version) || !sourceSHAPattern.MatchString(*sourceSHA) {
 		fmt.Fprint(stderr, contractUsage())
 		return exitUsage
 	}
@@ -361,7 +348,7 @@ func runContractRouteSource(args []string, stdout, stderr io.Writer) int {
 	version := set.String("version", "", "exact release version for a historical source")
 	sourceSHA := set.String("source-sha", "", "exact source SHA")
 	jsonOutput := set.Bool("json", false, "emit the normalized source route")
-	if err := set.Parse(args); err != nil || set.NArg() != 0 || *sourceContractPath == "" || *repository == "" || !evidenceSHA.MatchString(*sourceSHA) {
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || *sourceContractPath == "" || *repository == "" || !sourceSHAPattern.MatchString(*sourceSHA) {
 		fmt.Fprint(stderr, contractUsage())
 		return exitUsage
 	}
@@ -649,7 +636,6 @@ Usage:
   releasecheck legacy --version v0.0.N [--contract FILE] [--json]
   releasecheck contract matrix [--contract FILE] [--json]
   releasecheck promotion <record-platform|seal-source-quality|assemble|verify> ...
-  releasecheck evidence <seal-health|assemble|verify> ...
   releasecheck settings <check|seal|verify> ...
   releasecheck artifacts <validate-policy|assemble-snapshot|validate-snapshot|derive-scope|classify|package-manifest|verify-manifest-package> ...
   releasecheck recovery validate-config --contract FILE --config FILE --manifest FILE [--json]
@@ -666,11 +652,11 @@ Transport examples (run outside releasecheck):
   gh run view "$RUN_ID" --attempt "$RUN_ATTEMPT" --json attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName > metrics-input.json
 
 Exit statuses:
-  0  requested offline validation or evidence generation succeeded
+  0  requested offline validation or document generation succeeded
   2  command-line usage error
   3  release contract invalid or schema unsupported
   4  valid classification requires wait, inspection, or rerun_all_jobs
-  5  saved input or promotion evidence invalid, incomplete, or inconsistent
+  5  saved input or promotion proof invalid, incomplete, or inconsistent
   6  internal output failure
 
 The classifier always emits rerun_failed_jobs_allowed=false and names

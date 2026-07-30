@@ -294,7 +294,7 @@ _release_load_contract() {
           (.platforms | type == "array" and length == 5) and
           (.assets | type == "array" and length == 10) and
           (.homebrew.tap_ci_workflow_file | type == "string" and length > 0) and
-          (.workflows | type == "array" and length == 10) and
+          (.workflows | type == "array" and length == 9) and
           (.main_required_checks | type == "array" and length == 5)
         )
     ' "$RELEASE_CONTRACT_PATH") || release_die "strict operational release projection fallback failed"
@@ -358,11 +358,6 @@ _release_load_contract() {
   RELEASE_HOMEBREW_BRIDGE_WORKFLOW_NAME=$(jq -er '[.workflows[] | select(.id == "homebrew_bridge")] | select(length == 1) | .[0].name' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
     release_die "Homebrew bridge workflow name is invalid"
   RELEASE_HOMEBREW_BRIDGE_WORKFLOW_PATH=".github/workflows/$RELEASE_HOMEBREW_BRIDGE_WORKFLOW_FILE"
-  RELEASE_EVIDENCE_WORKFLOW_FILE=$(jq -er '[.workflows[] | select(.id == "release_evidence")] | select(length == 1) | .[0].file' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
-    release_die "release-evidence workflow identity is invalid"
-  RELEASE_EVIDENCE_WORKFLOW_NAME=$(jq -er '[.workflows[] | select(.id == "release_evidence")] | select(length == 1) | .[0].name' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
-    release_die "release-evidence workflow name is invalid"
-  RELEASE_EVIDENCE_WORKFLOW_PATH=".github/workflows/$RELEASE_EVIDENCE_WORKFLOW_FILE"
   RELEASE_PR_TITLE_PREFIX="chore($RELEASE_PLEASE_TARGET_BRANCH): release $RELEASE_PRODUCT "
   RELEASE_PR_HEADER="Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes $RELEASE_SOURCE_DEFAULT_BRANCH CI."
   RELEASE_HOMEBREW_TAP_REPOSITORY=$(jq -er '.repositories.homebrew_tap.full_name' <<< "$RELEASE_CONTRACT_PROJECTION_JSON") ||
@@ -404,7 +399,6 @@ _release_load_contract() {
   readonly RELEASE_PUBLISHER_WORKFLOW_FILE RELEASE_PUBLISHER_WORKFLOW_NAME RELEASE_PUBLISHER_WORKFLOW_PATH
   readonly RELEASE_ASSETS_BOOTSTRAP_WORKFLOW_FILE RELEASE_ASSETS_BOOTSTRAP_WORKFLOW_NAME RELEASE_ASSETS_BOOTSTRAP_WORKFLOW_PATH
   readonly RELEASE_HOMEBREW_BRIDGE_WORKFLOW_FILE RELEASE_HOMEBREW_BRIDGE_WORKFLOW_NAME RELEASE_HOMEBREW_BRIDGE_WORKFLOW_PATH
-  readonly RELEASE_EVIDENCE_WORKFLOW_FILE RELEASE_EVIDENCE_WORKFLOW_NAME RELEASE_EVIDENCE_WORKFLOW_PATH
   readonly RELEASE_PR_TITLE_PREFIX RELEASE_PR_HEADER
   readonly RELEASE_HOMEBREW_TAP_CI_WORKFLOW_FILE RELEASE_HOMEBREW_TAP_CI_WORKFLOW_NAME
   readonly -a RELEASE_ARCHIVES RELEASE_ASSETS

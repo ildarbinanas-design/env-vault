@@ -248,13 +248,12 @@ later unrelated tap commits cannot make the immutable release's CI evidence
 move. Style, installation, and the installed exact version therefore form an
 automated release gate rather than a follow-up operator check.
 
-Durable evidence is append-only at publisher-attempt granularity. The first
-successful record for a version remains at the version root, while the same
-four deterministic files are stored for every successful initial or repair
-publisher under `publisher-runs/run-RUN_ID/attempt-ATTEMPT/`. Machine evidence
-binds the run, attempt, event, and repair mode. An exact tuple may be replayed
-only when its bytes are identical; partial, conflicting, case-colliding, or
-otherwise non-canonical lineage paths fail closed instead of rewriting history.
+The release audit trail is the GitHub Releases page plus git and pull-request
+history. The `health` job verifies live published state and fails the publisher
+on drift; it stores no durable record. The append-only evidence ledger that
+earlier releases published was retired on 2026-07-30 (Phase 3 of
+`docs/trim-plan-2026-07-30.md`); its `release-evidence` branch and durable
+artifacts stay frozen and replayable at tag `pre-trim-2026-07-30`.
 
 The two release tokens are deliberately independent. The release-planning
 token is scoped to `env-vault` only; the Release Please planning job is the only

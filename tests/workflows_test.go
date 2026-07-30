@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -406,16 +405,10 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 		!slices.Equal(planningTrigger.Branches, []string{contract.Repositories.Source.DefaultBranch}) {
 		t.Fatalf("planning static trigger=%+v, CI=%q default=%q", planningTrigger, ciIdentity.Name, contract.Repositories.Source.DefaultBranch)
 	}
-	publisherIdentity, publisher := requireWorkflow("publisher")
+	_, publisher := requireWorkflow("publisher")
 	publisherPush := decodeTrigger[pushTrigger](t, publisher, "push")
 	if !slices.Equal(publisherPush.Tags, []string{contract.VersionPolicy.TagPrefix + "*"}) {
 		t.Fatalf("publisher tag trigger=%v, contract prefix=%q", publisherPush.Tags, contract.VersionPolicy.TagPrefix)
-	}
-	_, evidence := requireWorkflow("release_evidence")
-	evidenceTrigger := decodeTrigger[workflowRunTrigger](t, evidence, "workflow_run")
-	if !slices.Equal(evidenceTrigger.Workflows, []string{publisherIdentity.Name}) ||
-		!slices.Equal(evidenceTrigger.Types, []string{"completed"}) || len(evidenceTrigger.Branches) != 0 {
-		t.Fatalf("evidence static trigger=%+v, publisher=%q", evidenceTrigger, publisherIdentity.Name)
 	}
 	if contract.VersionPolicy.ReleasePlease.TargetBranch != contract.Repositories.Source.DefaultBranch {
 		t.Fatalf("Release Please target=%q differs from source default=%q", contract.VersionPolicy.ReleasePlease.TargetBranch, contract.Repositories.Source.DefaultBranch)
@@ -904,10 +897,10 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 			}
 		}
 	}
-	// 8 since the two retired App audit workflows, which each established a
-	// typed pair, were removed with GitHub App authentication.
-	if directPairSteps != 8 {
-		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 8", directPairSteps)
+	// 6 since the two retired App audit workflows and the retired evidence
+	// publisher, which each established a typed pair, were removed.
+	if directPairSteps != 6 {
+		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 6", directPairSteps)
 	}
 	if activationCalls != 5 {
 		t.Fatalf("typed-contract activation calls=%d, want one for each of five native jobs", activationCalls)
@@ -943,17 +936,6 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 	}
 	if strings.Contains(route.Run, `jq -e '.operational'`) {
 		t.Fatal("Release Please v2 planning reformats the routed projection instead of preserving checker bytes")
-	}
-
-	evidence := readFile(t, "../.github/workflows/release-evidence.yml")
-	if !containsAll(evidence,
-		`RELEASE_CONTRACT_CHECKER=%s\n' "$SOURCE_RELEASECHECK"`,
-		`RELEASE_CONTRACT_CHECKER=%s\n' "$RUNNER_TEMP/releasecheck-reviewed"`,
-		`EVIDENCE_PUBLISHER_CHECK: ${{ runner.temp }}/releasecheck-reviewed`,
-		`SOURCE_RELEASECHECK: ${{ runner.temp }}/releasecheck-source`,
-		`publisher_check=$EVIDENCE_PUBLISHER_CHECK`,
-		`publisher_check=$SOURCE_RELEASECHECK`) {
-		t.Fatal("release evidence does not preserve separate source, reviewed, and publisher checker identities")
 	}
 }
 
@@ -1116,28 +1098,30 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 		t.Fatalf("health does not replay the settings proof against the exact release/planning tuple")
 	}
 	healthVerify := namedStep(t, health, "Verify release, supply chain, Homebrew, blocked tags, and abandoned release")
-	if healthVerify.Env["REPAIR_MODE"] != "${{ needs.metadata.outputs.repair }}" || !containsAll(healthVerify.Run, "publisher_repair_mode", `--arg repair_mode "$REPAIR_MODE"`) {
-		t.Fatalf("health observation does not bind the exact publisher repair mode: env=%v", healthVerify.Env)
-	}
 	if !containsAll(healthVerify.Run,
 		"wait-tap-ci.sh", "pull_request", "push", "version_policy.blocked_versions[]",
 		"--verify-published-pr", `include "homebrew-state"`, "env_vault_homebrew_state",
 		"gh attestation verify", "runInvocationURI",
-		"attestation-verifications.json", "document_sha256", "document_json",
+		`[[ "$verified_attestations" == "10" ]]`,
 		"merge_is_ancestor_of_tap", `merge-base --is-ancestor "$merge_sha" "$tap_sha"`,
 		`wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push`,
-		"blocked_versions:$blocked_versions", "verify-abandoned-release-policy.sh",
-		"abandoned_release_policy_exact:true", "abandoned_release:$abandoned_release",
-		"releasecheck evidence seal-health") {
+		"checked_blocked_versions", "verify-abandoned-release-policy.sh") {
 		t.Fatalf("health does not independently re-observe release, attestations, both tap gates, and all blocked versions")
 	}
-	if strings.Contains(healthVerify.Run, "verify-repository-release-settings.sh") || !containsAll(healthVerify.Run, "repository_release_settings", "repository-release-settings-proof.json") {
-		t.Fatalf("read-scoped health must embed the sealed proof without a live administration query")
+	if strings.Contains(healthVerify.Run, "verify-repository-release-settings.sh") || !strings.Contains(healthVerify.Run, "$GITHUB_STEP_SUMMARY") {
+		t.Fatalf("read-scoped health must replay the sealed proof without a live administration query")
 	}
-	healthUpload := namedStep(t, health, "Upload typed release observation and sealed health proof")
-	if healthUpload.Uses != uploadArtifactAction || !containsAll(healthUpload.With["name"], "version", "github.run_attempt") ||
-		!containsAll(healthUpload.With["path"], "release-observation.json", "health-proof.json", "attestation-verifications.json", "abandoned-release-policy.json", "repository-release-settings-proof.json") {
-		t.Fatalf("machine-readable health observation is not version/current-attempt qualified: %v", healthUpload.With)
+	// The evidence ledger is retired: health verifies live state and fails the
+	// publisher, it no longer assembles or uploads a durable observation.
+	for _, retired := range []string{"releasecheck evidence", "release-observation.json", "health-proof.json", "attestation-verifications.json"} {
+		if strings.Contains(healthVerify.Run, retired) {
+			t.Fatalf("health still produces retired evidence-ledger output %q", retired)
+		}
+	}
+	for _, step := range health.Steps {
+		if step.Uses == uploadArtifactAction {
+			t.Fatalf("health still uploads an artifact: %v", step.With)
+		}
 	}
 }
 
@@ -1489,273 +1473,6 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("Homebrew bridge contains forbidden mutation/scope %q", forbidden)
 		}
-	}
-}
-
-func TestReleaseEvidenceBindsExactSuccessfulAttemptsAndPublishesNoClobber(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
-	assertPermissions(t, "release evidence", wf.Permissions, map[string]string{
-		"actions": "read", "contents": "read", "pull-requests": "read",
-	})
-	assertGlobalReleaseConcurrency(t, "release evidence", wf)
-	trigger := decodeTrigger[workflowRunTrigger](t, wf, "workflow_run")
-	if !slices.Equal(trigger.Workflows, []string{"build-binaries"}) || !slices.Equal(trigger.Types, []string{"completed"}) {
-		t.Fatalf("release evidence trigger=%+v", trigger)
-	}
-	assertJobIDs(t, wf, "assemble", "publish")
-	assembleJob := wf.Jobs["assemble"]
-	if assembleJob.Outputs["format"] != "${{ steps.identity.outputs.format }}" ||
-		assembleJob.Outputs["historical_evidence_commit"] != "${{ steps.identity.outputs.historical_evidence_commit }}" {
-		t.Fatalf("assemble does not expose the capability-selected format: %v", assembleJob.Outputs)
-	}
-	if assembleJob.TimeoutMinutes != 20 || !containsAll(compactExpression(assembleJob.If),
-		"conclusion=='success'", "head_repository.full_name==github.repository", "path=='.github/workflows/build-binaries.yml'", "event=='push'", "event=='workflow_dispatch'") {
-		t.Fatalf("release evidence trust boundary is incomplete: timeout=%d if=%q", assembleJob.TimeoutMinutes, assembleJob.If)
-	}
-
-	observation := namedStep(t, assembleJob, "Download the exact publisher-attempt observation")
-	if observation.Uses != downloadAction || !containsAll(observation.With["pattern"], "release-observation", "workflow_run.run_attempt") || observation.With["run-id"] != "${{ github.event.workflow_run.id }}" {
-		t.Fatalf("release observation download is not exact-attempt bound: %v", observation.With)
-	}
-	controlCheckout := namedStep(t, assembleJob, "Check out the exact reviewed listener control plane")
-	if controlCheckout.Uses != checkoutAction || controlCheckout.With["ref"] != "${{ github.workflow_sha }}" ||
-		controlCheckout.With["path"] != "release-control-plane" || controlCheckout.With["persist-credentials"] != "false" {
-		t.Fatalf("evidence listener control plane is not exact/reviewed: %+v", controlCheckout.With)
-	}
-	sourceTooling := namedStep(t, assembleJob, "Build exact source tooling")
-	if !containsAll(sourceTooling.Run, `go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck`, "./cmd/releasetransport") ||
-		strings.Contains(sourceTooling.Run, "release-control-plane") {
-		t.Fatalf("source evidence tooling is not built under the source toolchain: %s", sourceTooling.Run)
-	}
-	controlSetup := namedStep(t, assembleJob, "Set up Go for the reviewed listener control plane")
-	if controlSetup.Uses != setupGoAction || controlSetup.With["go-version-file"] != "release-control-plane/go.mod" {
-		t.Fatalf("evidence control checker does not use its reviewed toolchain: %+v", controlSetup.With)
-	}
-	capabilities := namedStep(t, assembleJob, "Build reviewed control-plane tooling and route source capabilities")
-	if capabilities.ID != "capabilities" || !containsAll(capabilities.Run,
-		`has("release_evidence_bundle") | not`, `has("release_evidence_genesis") | not`, "contract.v1.json",
-		"release_evidence_bundle == [2]", "release_evidence_genesis == [1]", "contract.v2.json",
-		"release_contract_operational == [2]", "source-operational-contract.json") ||
-		!containsAll(capabilities.Env["CONTROL_RELEASECHECK"], "releasecheck-control") ||
-		strings.Contains(capabilities.Run, `go build -trimpath -o "$SOURCE_RELEASECHECK"`) || strings.Contains(capabilities.Run, "// []") {
-		t.Fatalf("evidence capability routing is not exact and fail-closed: id=%q run=%s", capabilities.ID, capabilities.Run)
-	}
-	identity := namedStep(t, assembleJob, "Resolve exact CI, release PR, and PR-head CI identities")
-	if !containsAll(identity.Run,
-		"classify-attempt", "ATTEMPT_MATRIX_COMPLETE", "verify-release-authorization.sh", "gh pr checks", "quality-gate", "run_attempt", ".head_branch == $version",
-		"RELEASE_AUTHORIZATION_OUTPUT", "confirmation", "generated_release_pr_head_sha",
-		`.path == $publisher_path`, ".head_sha == $release_pr_head",
-		"publisher run identity mismatch", "release PR CI run identity mismatch", "release planning run identity mismatch",
-		`^([1-9][0-9]*)/job/([1-9][0-9]*)$`, "releasetransport.sh actions identity", "snapshots/pr-ci-identity.json",
-		"--job-id", "--job-name quality-gate", `--job-url "$quality_link"`, "--run-attempt",
-		"release-authorization.json", "attestation-verifications.json", "repository_release_settings", "settings verify",
-		"actions/runs/${planning_run_id}", "snapshots/planning-run.json",
-		"contract route-source", "contract-history.v2.json", "source-contract-route.json",
-		"historical_evidence_commit", "release-contract-operational.v2") {
-		t.Fatalf("evidence identity resolution is missing an exact tuple gate")
-	}
-	if strings.Contains(identity.Run, `.name == "build-binaries"`) || strings.Contains(identity.Run, `.name == "ci"`) ||
-		strings.Contains(identity.Run, `.name == "release-please"`) || strings.Contains(identity.Run, ".pull_requests") {
-		t.Fatalf("evidence identity resolution depends on lifecycle-unstable Actions API fields")
-	}
-	promotion := namedStep(t, assembleJob, "Download the exact promotion manifest")
-	if promotion.Uses != downloadAction || !containsAll(promotion.With["name"], "source_sha", "ci_attempt") || promotion.With["run-id"] != "${{ steps.identity.outputs.ci_run_id }}" {
-		t.Fatalf("evidence promotion download is not exact CI attempt bound: %v", promotion.With)
-	}
-	metrics := namedStep(t, assembleJob, "Compute exact current metrics and before/after comparison")
-	if strings.Count(metrics.Run, "gh run view") != 3 || !containsAll(metrics.Run, "--attempt", "metrics compare", "metrics-comparison.json") {
-		t.Fatalf("evidence metrics do not bind all three exact attempts")
-	}
-	assemble := namedStep(t, assembleJob, "Assemble and replay durable release evidence offline")
-	if assemble.Env["EVIDENCE_FORMAT"] != "${{ steps.identity.outputs.format }}" ||
-		assemble.Env["HISTORICAL_EVIDENCE_COMMIT"] != "${{ steps.identity.outputs.historical_evidence_commit }}" || !containsAll(assemble.Run,
-		"evidence assemble", "evidence verify", "promotion-manifest.json", "--authorization", "--attestations",
-		`[[ "$CONTRACT_GENERATION" == v1 && "$EVIDENCE_FORMAT" == v1 ]]`, "evidence verify-historical", "contract-history.v2.json",
-		`[[ "$EVIDENCE_FORMAT" == v2 ]]`, "evidence bundle-create", "evidence bundle-verify",
-		"evidence bundle-parity", "evidence bundle-measure", "evidence genesis-create", "evidence genesis-verify") {
-		t.Fatalf("evidence is not assembled and replayed by the offline checker")
-	}
-	candidate := namedStep(t, assembleJob, "Upload immutable evidence candidate for the write-scoped job")
-	if candidate.Uses != uploadArtifactAction || !containsAll(candidate.With["name"], "version", "source_sha", "github.run_id", "github.run_attempt") {
-		t.Fatalf("read-scoped evidence candidate is not exact-run qualified: %v", candidate.With)
-	}
-
-	publishJob := wf.Jobs["publish"]
-	assertCancellationSafe(t, "release evidence publish", publishJob)
-	assertNeeds(t, "release evidence publish", publishJob, "assemble")
-	assertPermissions(t, "release evidence publish", publishJob.Permissions, map[string]string{"actions": "read", "contents": "write"})
-	tooling := namedStep(t, publishJob, "Check out the reviewed evidence publisher")
-	if tooling.Uses != checkoutAction || tooling.With["ref"] != "${{ github.workflow_sha }}" || tooling.With["path"] != "evidence-tooling" || tooling.With["persist-credentials"] != "false" {
-		t.Fatalf("write-scoped evidence tooling is not pinned to the reviewed listener SHA: %v", tooling.With)
-	}
-	sourceBuild := namedStep(t, publishJob, "Build the exact source checker")
-	if !containsAll(sourceBuild.Run, `go build -trimpath -o "$SOURCE_RELEASECHECK" ./cmd/releasecheck`) || strings.Contains(sourceBuild.Run, "evidence-tooling") {
-		t.Fatalf("write-scoped source checker is not built under its own toolchain: %s", sourceBuild.Run)
-	}
-	reviewedSetup := namedStep(t, publishJob, "Set up Go for the reviewed evidence publisher")
-	if reviewedSetup.Uses != setupGoAction || reviewedSetup.With["go-version-file"] != "evidence-tooling/go.mod" {
-		t.Fatalf("write-scoped reviewed checker does not use its reviewed toolchain: %+v", reviewedSetup.With)
-	}
-	reviewedBuild := namedStep(t, publishJob, "Build the reviewed checker and strict GitHub release transport once")
-	if !containsAll(reviewedBuild.Run, "releasecheck-reviewed", "releasetransport") {
-		t.Fatalf("write-scoped job does not build reviewed checker and transport: %s", reviewedBuild.Run)
-	}
-	replay := namedStep(t, publishJob, "Replay the complete candidate before granting it mutation authority")
-	if replay.Env["EVIDENCE_FORMAT"] != "${{ needs.assemble.outputs.format }}" || !containsAll(replay.Env["SOURCE_RELEASECHECK"], "releasecheck-source") ||
-		!containsAll(replay.Env["REVIEWED_RELEASECHECK"], "releasecheck-reviewed") || !containsAll(replay.Run,
-		"evidence verify", "metrics compare",
-		"cmp candidate/final/index.md", "SOURCE_SHA", "evidence bundle-verify", "evidence bundle-create",
-		"diff -r candidate/final/bundle replay/bundle", "evidence bundle-parity", "cmp candidate/final/parity.json",
-		"evidence bundle-measure", "cmp candidate/final/storage-metrics.json", "evidence genesis-verify",
-		"evidence genesis-create", "cmp candidate/final/genesis.v1.json", "release_evidence_bundle == [2]", "release_evidence_genesis == [1]",
-		"env -i", "no-network-commands", "sentinel-gh-must-not-be-read", "classify_capabilities",
-		"evidence verify-historical", "evidence-tooling/release/contract-history.v2.json", "HISTORICAL_EVIDENCE_COMMIT",
-		"--contract evidence-tooling/release/contract.v2.json",
-		`[[ "$source_format" == "$EVIDENCE_FORMAT" ]]`, `[[ "$reviewed_format" == v2 ]]`) || strings.Contains(replay.Run, "// []") {
-		t.Fatalf("write-scoped evidence job does not replay its complete candidate")
-	}
-	publish := namedStep(t, publishJob, "Publish durable no-clobber evidence branch state")
-	if publish.Env["EVIDENCE_FORMAT"] != "${{ needs.assemble.outputs.format }}" || publish.Env["EVIDENCE_PUBLISHER_CHECK"] != "${{ runner.temp }}/releasecheck-reviewed" || !containsAll(publish.Run,
-		"evidence-tooling/scripts/release/publish-release-evidence.sh", "--format v2", "release-evidence.json",
-		"candidate/final/bundle", "storage-metrics.json", "parity.json", "genesis.v1.json", "metrics-comparison.json", "GITHUB_OUTPUT") {
-		t.Fatalf("durable evidence publisher invocation is incomplete")
-	}
-	coordinates := namedStep(t, publishJob, "Report exact immutable evidence coordinates")
-	if !containsAll(coordinates.Run, "blob/${EVIDENCE_COMMIT_SHA}/${EVIDENCE_PATH_PREFIX}", "publisher-runs/run-${PUBLISHER_RUN_ID}/attempt-${PUBLISHER_RUN_ATTEMPT}", "OUTPUT_PUBLISHER_RUN_ID", "OUTPUT_PUBLISHER_RUN_ATTEMPT", "EVIDENCE_REPAIR_MODE", "release-evidence.json", "release-evidence-bundle.json", "metrics-comparison.json") {
-		t.Fatalf("evidence links are not pinned to the exact immutable evidence commit and publisher-attempt lineage")
-	}
-	upload := namedStep(t, publishJob, "Upload replayable release evidence artifact")
-	if compactExpression(upload.If) != "needs.assemble.outputs.format=='v1'" || upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "commit_sha", "workflow_run.id", "workflow_run.run_attempt", "github.run_id", "github.run_attempt") {
-		t.Fatalf("release evidence artifact is not tuple-qualified: %v", upload.With)
-	}
-	compactUpload := namedStep(t, publishJob, "Upload compact replayable release evidence artifact")
-	if compactExpression(compactUpload.If) != "needs.assemble.outputs.format=='v2'" || compactUpload.Uses != uploadArtifactAction || compactUpload.With["retention-days"] != "90" ||
-		!containsAll(compactUpload.With["path"], "candidate/final/bundle", "index.md", "metrics-comparison.json", "metrics-comparison.md", "storage-metrics.json", "parity.json") ||
-		strings.Contains(compactUpload.With["path"], "release-evidence.json") || strings.Contains(compactUpload.With["path"], "genesis.v1.json") {
-		t.Fatalf("90-day v2 artifact is not exact compact metadata+objects: if=%q with=%v", compactUpload.If, compactUpload.With)
-	}
-	if raw := readFile(t, "../.github/workflows/release-evidence.yml"); containsAll(raw, "go test ./...", "-ldflags=") || strings.Contains(raw, "browser") || strings.Contains(raw, "gh release edit") {
-		t.Fatalf("release evidence workflow must not rebuild product quality or use browser automation")
-	}
-}
-
-func TestReleaseEvidenceRoutePredicateAcceptsFrozenHistoricalCapabilitiesWithoutRawDigest(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
-	identity := namedStep(t, wf.Jobs["assemble"], "Resolve exact CI, release PR, and PR-head CI identities")
-	predicatePattern := regexp.MustCompile(`(?s)jq -e --arg version "\$version" --arg generation "\$SOURCE_CONTRACT_GENERATION"\s+\\?\s*--arg evidence_format "\$SOURCE_CAPABILITY_EVIDENCE_FORMAT"\s+\\?\s*--slurpfile capabilities "\$RUNNER_TEMP/source-releasecheck-capabilities.json" '(.*?)'\s+"\$RUNNER_TEMP/source-contract-route.json"`)
-	match := predicatePattern.FindStringSubmatch(identity.Run)
-	if len(match) != 2 {
-		t.Fatalf("cannot extract the exact evidence source-route predicate")
-	}
-
-	checker := os.Getenv("RELEASECHECK_BIN")
-	if checker == "" {
-		t.Fatal("shared release checker is unavailable")
-	}
-	for _, test := range []struct {
-		version, source, evidenceFormat, fixture string
-	}{
-		{"v0.0.15", "c7dd1fd6176ac2abbea22f226795a0787e774c1b", "v1", "fixtures/release/v0.0.15-releasecheck-version.json"},
-		{"v0.0.16", "ddfd38c3144ed3d0968d2c5e7e4b2acfef841478", "v2", "fixtures/release/v0.0.16-releasecheck-version.json"},
-	} {
-		t.Run(test.version, func(t *testing.T) {
-			capabilitiesPath, err := filepath.Abs(test.fixture)
-			if err != nil {
-				t.Fatal(err)
-			}
-			capabilities, err := os.ReadFile(capabilitiesPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if bytes.Contains(capabilities, []byte("contract_file_sha256")) {
-				t.Fatalf("frozen %s capabilities fixture must preserve the pre-v2 shape", test.version)
-			}
-			route, err := exec.Command(checker,
-				"contract", "route-source",
-				"--source-contract", "../release/history/contract.v1.json",
-				"--registry", "../release/contract-history.v2.json",
-				"--repository", "ildarbinanas-design/env-vault",
-				"--version", test.version,
-				"--source-sha", test.source,
-				"--json",
-			).Output()
-			if err != nil {
-				t.Fatalf("route frozen %s source: %v", test.version, err)
-			}
-			routePath := filepath.Join(t.TempDir(), "source-contract-route.json")
-			if err := os.WriteFile(routePath, route, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			command := exec.Command("jq", "-e",
-				"--arg", "version", test.version,
-				"--arg", "generation", "v1",
-				"--arg", "evidence_format", test.evidenceFormat,
-				"--slurpfile", "capabilities", capabilitiesPath,
-				strings.TrimSpace(match[1]), routePath)
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("exact workflow predicate rejected frozen %s capabilities: %v\n%s", test.version, err, output)
-			}
-		})
-	}
-}
-
-func TestReleaseEvidenceActionsIdentityPredicatesUseStableExactFields(t *testing.T) {
-	const (
-		repository = "example/env-vault"
-		version    = "v1.2.3"
-		source     = "1111111111111111111111111111111111111111"
-		prHead     = "2222222222222222222222222222222222222222"
-		branch     = "release-please--branches--main--components--env-vault"
-	)
-
-	wf := readWorkflow(t, "../.github/workflows/release-evidence.yml")
-	identityRun := namedStep(t, wf.Jobs["assemble"], "Resolve exact CI, release PR, and PR-head CI identities").Run
-	if !containsAll(identityRun, "releasetransport.sh actions identity", "--job-id", "--job-name quality-gate", "--job-url", "snapshots/pr-ci-identity.json") || strings.Contains(identityRun, "actions/jobs/") {
-		t.Fatalf("release evidence does not use attempt-qualified typed job identity")
-	}
-	publisherPredicate := workflowJQProgram(t, identityRun, "snapshots/publisher-run.json")
-	publisher := map[string]any{
-		"id": 91, "run_attempt": 1,
-		"repository": map[string]any{"full_name": repository}, "head_repository": map[string]any{"full_name": repository},
-		"head_sha": source, "head_branch": version, "event": "push", "status": "completed", "conclusion": "success",
-		"name": "env-vault-publication event=push version=v1.2.3 repair=none", "path": ".github/workflows/build-binaries.yml",
-		"pull_requests": []any{},
-	}
-	publisherArgs := []string{"--arg", "repository", repository, "--arg", "source", source, "--arg", "version", version,
-		"--arg", "publisher_path", ".github/workflows/build-binaries.yml", "--argjson", "run_id", "91", "--argjson", "attempt", "1"}
-	assertJQIdentityPredicate(t, publisherPredicate, publisher, publisherArgs, true)
-
-	runPredicate := workflowJQProgram(t, identityRun, "snapshots/pr-ci-run.json")
-	prRun := map[string]any{
-		"id": 92, "run_attempt": 2,
-		"repository": map[string]any{"full_name": repository}, "head_repository": map[string]any{"full_name": repository},
-		"head_sha": prHead, "head_branch": branch, "event": "pull_request", "status": "completed", "conclusion": "success",
-		"name": "chore(main): release env-vault v1.2.3", "path": ".github/workflows/ci.yml", "pull_requests": []any{},
-	}
-	runArgs := []string{"--arg", "repository", repository, "--arg", "branch", branch,
-		"--arg", "workflow_path", ".github/workflows/ci.yml", "--arg", "release_pr_head", prHead,
-		"--argjson", "run_id", "92", "--argjson", "attempt", "2"}
-	assertJQIdentityPredicate(t, runPredicate, prRun, runArgs, true)
-
-	for name, test := range map[string]struct {
-		predicate string
-		fixture   map[string]any
-		args      []string
-		field     string
-		value     any
-	}{
-		"publisher wrong path":        {publisherPredicate, publisher, publisherArgs, "path", ".github/workflows/other.yml"},
-		"publisher wrong head":        {publisherPredicate, publisher, publisherArgs, "head_sha", prHead},
-		"publisher wrong head repo":   {publisherPredicate, publisher, publisherArgs, "head_repository", map[string]any{"full_name": "other/env-vault"}},
-		"PR CI run wrong attempt":     {runPredicate, prRun, runArgs, "run_attempt", 1},
-		"PR CI run wrong direct head": {runPredicate, prRun, runArgs, "head_sha", source},
-		"PR CI run wrong path":        {runPredicate, prRun, runArgs, "path", ".github/workflows/other.yml"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			mutated := cloneJSONMap(t, test.fixture)
-			mutated[test.field] = test.value
-			assertJQIdentityPredicate(t, test.predicate, mutated, test.args, false)
-		})
 	}
 }
 

@@ -1093,7 +1093,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
           SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
-          REPAIR_MODE: ${{ needs.metadata.outputs.repair }}
           CI_RUN_ID: ${{ needs.metadata.outputs.ci_run_id }}
           CI_RUN_ATTEMPT: ${{ needs.metadata.outputs.ci_run_attempt }}
           TAP_REPOSITORY: ${{ needs.metadata.outputs.tap_repository }}
@@ -1185,7 +1184,6 @@ jobs:
           if [[ -n "$PUBLISHED_PR_CI_URL" && "$PUBLISHED_PR_CI_URL" != "$pr_ci_url" ]]; then echo "tap PR CI output mismatch" >&2; exit 1; fi
           if [[ -n "$PUBLISHED_TAP_CI_URL" && "$PUBLISHED_TAP_CI_URL" != "$tap_ci_url" ]]; then echo "tap push CI output mismatch" >&2; exit 1; fi
           scripts/release/verify-homebrew-formula.sh "$VERSION" health-dist "health-tap/$RELEASE_HOMEBREW_FORMULA_PATH"
-          formula_sha="$(shasum -a 256 "health-tap/$RELEASE_HOMEBREW_FORMULA_PATH" | awk '{print $1}')"
 
           pr_ci_run_id="${pr_ci_url##*/}"
           tap_ci_run_id="${tap_ci_url##*/}"
@@ -1228,7 +1226,7 @@ jobs:
             --head-sha "$merge_sha" \
             --head-ref "$RELEASE_HOMEBREW_TAP_DEFAULT_BRANCH"
 
-          blocked_versions='[]'
+          checked_blocked_versions=0
           while IFS= read -r blocked; do
             blocked_version="$(jq -er '.version | select(type == "string")' <<< "$blocked")"
             blocked_sha="$(jq -er '.tag_sha | select(test("^[0-9a-f]{40}$"))' <<< "$blocked")"
@@ -1249,38 +1247,29 @@ jobs:
               echo "${blocked_version} must remain without a GitHub Release" >&2
               exit 1
             }
-            blocked_versions="$(jq -c \
-              --arg version "$blocked_version" \
-              --arg sha "$blocked_sha" \
-              '. + [{version:$version,tag_sha:$sha,tag_exists:true,release_exists:false}]' \
-              <<< "$blocked_versions")"
+            checked_blocked_versions=$((checked_blocked_versions + 1))
           done < <(jq -c '.version_policy.blocked_versions[]' release/contract.v2.json)
-          [[ "$(jq 'length' <<< "$blocked_versions")" == "$(jq '.version_policy.blocked_versions | length' release/contract.v2.json)" ]] || {
+          [[ "$checked_blocked_versions" == "$(jq '.version_policy.blocked_versions | length' release/contract.v2.json)" ]] || {
             echo "blocked-version observation is incomplete" >&2
             exit 1
           }
 
-          mkdir health-evidence
-          assets='[]'
+          mkdir health-checks
           while IFS= read -r asset; do
-            digest="$(shasum -a 256 "health-dist/$asset" | awk '{print $1}')"
             size="$(wc -c < "health-dist/$asset" | tr -d '[:space:]')"
             api_count="$(jq --arg name "$asset" '[.assets[] | select(.name == $name)] | length' release-state.json)"
             api_size="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .size' release-state.json)"
             [[ "$api_count" == "1" && "$api_size" == "$size" ]] || { echo "release asset API mismatch: $asset" >&2; exit 1; }
-            assets="$(jq -c --arg name "$asset" --arg sha "$digest" --argjson size "$size" '. + [{name:$name,size:$size,sha256:$sha}]' <<< "$assets")"
           done < <(printf '%s\n' "${RELEASE_ASSETS[@]}")
 
-          attestations='[]'
           signer_workflow="${GITHUB_REPOSITORY}/${RELEASE_PUBLISHER_WORKFLOW_PATH}"
-          : > health-evidence/attestation-verification-entries.jsonl
+          verified_attestations=0
           while IFS=$'\t' read -r platform archive; do
             archive_sha="$(shasum -a 256 "health-dist/$archive" | awk '{print $1}')"
-            records='{}'
             for label in provenance sbom; do
               predicate='https://slsa.dev/provenance/v1'
               if [[ "$label" == "sbom" ]]; then predicate='https://spdx.dev/Document/v2.3'; fi
-              output="health-evidence/${platform}-${label}-attestation.json"
+              output="health-checks/${platform}-${label}-attestation.json"
               gh attestation verify "health-dist/$archive" \
                 --repo "$GITHUB_REPOSITORY" \
                 --signer-workflow "$signer_workflow" \
@@ -1319,148 +1308,24 @@ jobs:
                 echo "attestation run invocation is malformed" >&2
                 exit 1
               }
-              output_sha="$(shasum -a 256 "$output" | awk '{print $1}')"
-              jq -nc \
-                --arg asset "$archive" \
-                --arg kind "$label" \
-                --arg predicate "$predicate" \
-                --arg sha "$output_sha" \
-                --rawfile document "$output" '
-                  {asset_name:$asset,kind:$kind,predicate_type:$predicate,
-                   document_sha256:$sha,document_json:$document}
-                ' >> health-evidence/attestation-verification-entries.jsonl
-              verified_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-              record="$(jq -n \
-                --arg predicate "$predicate" \
-                --arg repository "$GITHUB_REPOSITORY" \
-                --arg signer "$signer_workflow" \
-                --arg source "$SOURCE_SHA" \
-                --argjson run_id "$attestation_run_id" \
-                --argjson attempt "$attestation_attempt" \
-                --arg document_sha256 "$output_sha" \
-                --arg verified_at "$verified_at" '
-                  {predicate_type:$predicate,verified:true,repository:$repository,
-                   signer_workflow:$signer,source_sha:$source,workflow_run_id:$run_id,
-                   workflow_run_attempt:$attempt,document_sha256:$document_sha256,
-                   verified_at:$verified_at}
-                ')"
-              records="$(jq -c --arg label "$label" --argjson record "$record" '. + {($label):$record}' <<< "$records")"
+              verified_attestations=$((verified_attestations + 1))
             done
-            attestations="$(jq -c \
-              --arg name "$archive" \
-              --arg sha "$archive_sha" \
-              --argjson provenance "$(jq -c '.provenance' <<< "$records")" \
-              --argjson sbom "$(jq -c '.sbom' <<< "$records")" '
-                . + [{asset_name:$name,asset_sha256:$sha,provenance:$provenance,sbom:$sbom}]
-              ' <<< "$attestations")"
           done < <(go run ./cmd/releasecheck contract matrix --json | jq -r '.include[] | [.id,.archive] | @tsv')
-
-          jq -s \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg source "$SOURCE_SHA" '
-              {schema_id:"env-vault.attestation-verification-bundle.v1",schema_version:1,
-               repository:$repository,source_sha:$source,entries:.}
-            ' health-evidence/attestation-verification-entries.jsonl \
-            > health-evidence/attestation-verifications.json
-          jq -e '
-            .schema_id == "env-vault.attestation-verification-bundle.v1" and
-            .schema_version == 1 and (.entries | length == 10) and
-            ([.entries[] | [.asset_name,.kind]] | unique | length == 10) and
-            all(.entries[];
-              (.document_sha256 | test("^[0-9a-f]{64}$")) and
-              (.document_json | type == "string" and length > 0)
-            )
-          ' health-evidence/attestation-verifications.json >/dev/null
+          [[ "$verified_attestations" == "10" ]] || {
+            echo "verified attestation count=${verified_attestations}, want 10" >&2
+            exit 1
+          }
 
           scripts/release/verify-abandoned-release-policy.sh \
-            "$VERSION" "$SOURCE_SHA" health-evidence/abandoned-release-policy.json
-          abandoned_release="$(jq -c . health-evidence/abandoned-release-policy.json)"
+            "$VERSION" "$SOURCE_SHA" health-checks/abandoned-release-policy.json
 
-          checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg version "$VERSION" \
-            --arg source "$SOURCE_SHA" \
-            --argjson run_id "$GITHUB_RUN_ID" \
-            --argjson attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg checked_at "$checked_at" '
-              {schema_id:"env-vault.release-health-proof.v1",schema_version:1,
-               repository:$repository,release_version:$version,source_sha:$source,
-               publisher_run_id:$run_id,publisher_run_attempt:$attempt,checked_at:$checked_at,
-               tag_exact_source:true,release_published:true,assets_exact:true,
-               attestations_exact:true,homebrew_exact:true,homebrew_pr_head_ci_success:true,
-               homebrew_post_merge_ci_success:true,blocked_version_policy_exact:true,
-               abandoned_release_policy_exact:true,
-               result:"pass",proof_sha256:""}
-            ' > health-evidence/health-unsealed.json
-          go run ./cmd/releasecheck evidence seal-health \
-            --input health-evidence/health-unsealed.json \
-            --output health-evidence/health-proof.json
-
-          observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg version "$VERSION" \
-            --arg source "$SOURCE_SHA" \
-            --arg repair_mode "$REPAIR_MODE" \
-            --arg observed_at "$observed_at" \
-            --arg ref_sha "$tag_ref_sha" \
-            --arg release_url "$(jq -er '.html_url' release-state.json)" \
-            --arg published_at "$(jq -er '.published_at' release-state.json)" \
-            --argjson assets "$assets" \
-            --argjson attestations "$attestations" \
-            --arg tap_repository "$TAP_REPOSITORY" \
-            --arg formula_sha "$formula_sha" \
-            --argjson pr_number "$pr_number" \
-            --arg pr_url "$pr_url" \
-            --arg pr_head_sha "$pr_head_sha" \
-            --arg merge_sha "$merge_sha" \
-            --arg tap_sha "$tap_sha" \
-            --argjson pr_ci_run_id "$pr_ci_run_id" \
-            --argjson pr_ci_attempt "$pr_ci_attempt" \
-            --arg pr_ci_url "$pr_ci_url" \
-            --argjson tap_ci_run_id "$tap_ci_run_id" \
-            --argjson tap_ci_attempt "$tap_ci_attempt" \
-            --arg tap_ci_url "$tap_ci_url" \
-            --arg tap_ci_workflow "$TAP_CI_WORKFLOW" \
-            --arg formula_path "$RELEASE_HOMEBREW_FORMULA_PATH" \
-            --argjson blocked_versions "$blocked_versions" \
-            --argjson abandoned_release "$abandoned_release" \
-            --argjson repository_release_settings "$(jq -c . repository-release-settings-proof.json)" \
-            --argjson health "$(jq -c . health-evidence/health-proof.json)" '
-              {schema_id:"env-vault.release-observation.v1",schema_version:1,
-               repository:$repository,release_version:$version,source_sha:$source,
-               publisher_repair_mode:$repair_mode,observed_at:$observed_at,
-               repository_release_settings:$repository_release_settings,
-               tag:{name:$version,ref_sha:$ref_sha,target_sha:$source,immutable:true,ruleset_protected:true},
-               release:{state:"published",url:$release_url,tag_name:$version,target_sha:$source,
-                 draft:false,prerelease:false,published_at:$published_at,no_clobber_verified:true,assets:$assets},
-               attestations:$attestations,
-               homebrew:{repository:$tap_repository,formula_path:$formula_path,
-                 formula_sha256:$formula_sha,version:$version,version_monotonic:true,
-                 pr_number:$pr_number,pr_url:$pr_url,pr_head_sha:$pr_head_sha,
-                 pr_merge_sha:$merge_sha,tap_sha:$tap_sha,merge_is_ancestor_of_tap:true,
-                 pr_head_ci:{run_id:$pr_ci_run_id,run_attempt:$pr_ci_attempt,workflow:$tap_ci_workflow,
-                   event:"pull_request",head_sha:$pr_head_sha,conclusion:"success",url:$pr_ci_url},
-                 post_merge_ci:{run_id:$tap_ci_run_id,run_attempt:$tap_ci_attempt,workflow:$tap_ci_workflow,
-                   event:"push",head_sha:$merge_sha,conclusion:"success",url:$tap_ci_url}},
-               blocked_versions:$blocked_versions,
-               abandoned_release:$abandoned_release,
-               health:$health}
-            ' > health-evidence/release-observation.json
-          jq -e '.schema_id == "env-vault.release-observation.v1" and .health.result == "pass"' \
-            health-evidence/release-observation.json >/dev/null
-          jq . health-evidence/health-proof.json >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload typed release observation and sealed health proof
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-release-observation-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}
-          path: |
-            health-evidence/release-observation.json
-            health-evidence/health-proof.json
-            health-evidence/attestation-verifications.json
-            health-evidence/abandoned-release-policy.json
-            repository-release-settings-proof.json
-          if-no-files-found: error
-          retention-days: 90
+          {
+            printf '## Release health checks passed\n\n'
+            printf -- '- Version: `%s`\n' "$VERSION"
+            printf -- '- Source SHA: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Release: %s\n' "$(jq -er '.html_url' release-state.json)"
+            printf -- '- Assets verified: `%d`\n' "${#RELEASE_ASSETS[@]}"
+            printf -- '- Attestations verified: `%d`\n' "$verified_attestations"
+            printf -- '- Blocked versions rechecked: `%d`\n' "$checked_blocked_versions"
+            printf -- '- Homebrew PR: %s (merge `%s`, tap `%s`)\n' "$pr_url" "$merge_sha" "$tap_sha"
+          } >> "$GITHUB_STEP_SUMMARY"

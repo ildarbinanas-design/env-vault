@@ -1,8 +1,9 @@
 # Release automation refactor backlog
 
 **Frozen by [ADR 0008](adr/0008-freeze-release-ceremony-require-personalos-link.md)
-(2026-07-30)**, except item 11 (explicit structural-necessity exception in
-that ADR). Every open item below (`frozen`) requires an explicit PersonalOS
+(2026-07-30).** Item 11's structural-necessity exception lapsed on 2026-07-30:
+Phase 3 of [`trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md) removed the
+evidence ledger, so its checkpoint/Merkle follow-up is moot. Every open item below (`frozen`) requires an explicit PersonalOS
 consumer or a narrowly-defined security requirement (see ADR 0008) before
 work starts — this backlog being detailed and ordered is not itself
 authorization. See the per-item status tag added to each heading.
@@ -443,7 +444,17 @@ fixture in addition to generated compatibility fixtures. It must contain no
 secret or credential material and must prove stable reconstruction/error codes
 without treating the dated production evidence SHA as an operational constant.
 
-## 11. Automatic evidence-only ledger genesis — `already implemented; residual checkpoint/Merkle work exempt from freeze (ADR 0008)`
+## 11. Automatic evidence-only ledger genesis — `resolved (moot): the evidence ledger was removed in trim Phase 3, 2026-07-30`
+
+**Resolved as moot (2026-07-30).** Phase 3 of
+[`trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md) deleted the evidence
+ledger, its publisher workflow, and the 64-commit validation window. There is
+no window left to exhaust, so the residual checkpoint/Merkle design below is
+retired unbuilt and its ADR-0008 freeze exception no longer applies. The
+published `release-evidence` branch and the durable replay artifacts already in
+Actions storage stay frozen and verifiable with the tooling at tag
+`pre-trim-2026-07-30`. The rest of this item is the historical record of what
+was implemented in Stage 3.
 
 **Implemented in refactor Stage 3 (2026-07-17).** Only an exact typed HTTP 404
 enables genesis. The publisher re-observes the exact source immediately before
@@ -468,12 +479,10 @@ no-op replay is allowed at depth 64; append is rejected before any mutation.
 The two-commit production baseline had 62 append slots before this stage and is
 expected to have 61 after the next successful patch.
 
-**Residual architecture backlog:** design and review a checkpoint or Merkle
-summary before the validation window is exhausted. It must preserve historical
-root/source binding and complete offline verification. Also replace the oldest
-accepted legacy parent/source observation with a dynamic, independently bound
-proof before removing any compatibility fixture. Neither follow-up authorizes
-rewriting the current branch.
+**Residual architecture backlog (retired 2026-07-30, unbuilt):** the
+checkpoint/Merkle summary and the dynamic legacy parent/source proof are moot
+now that the ledger is gone. Do not build either; do not rewrite the frozen
+branch.
 
 ## 12. Versioned operational release contract and workflow parity — `already implemented`
 
@@ -529,8 +538,8 @@ the measurement-first latency investigation without a speedup claim.
 
 - investigate the measured hosted latency regression through item 6 before any
   graph or setup optimization, preserving race/native/E2E and fail-closed gates;
-- keep the residual checkpoint/Merkle work in item 11 before the 64-commit
-  evidence validation window is exhausted;
+- item 11's checkpoint/Merkle work is retired unbuilt: trim Phase 3 removed the
+  evidence ledger and its 64-commit validation window;
 - keep the failed legacy-tag export in item 1, generic recovery transitions in
   item 2, reusable App proof in item 3, inventory engine in item 5, and any CI
   job reduction in item 6 as separately reviewed changes;
@@ -545,7 +554,7 @@ the measurement-first latency investigation without a speedup claim.
 GB-hours against a zero-dollar-blocking 0.5 GB-month allowance) that could
 already be blocking CI, not a speculative future risk. This may qualify as
 the same kind of "keep an existing invariant alive" structural necessity as
-item 11 (see ADR 0008 exceptions) rather than discretionary release
+the retired item 11 exception (see ADR 0008) rather than discretionary release
 ceremony — but that call is left to the owner rather than decided here,
 since it was not one of the questions this review round covered. If Actions
 runs are currently failing or budget-blocked, treat this as urgent

@@ -7,6 +7,15 @@ pins `env-vault` to
 `c7dd1fd6176ac2abbea22f226795a0787e774c1b` and `homebrew-tap` to
 `71217af8d0c692e27d8c268c9cce5a2a533f4ea9`.
 
+**Retired subsystems (2026-07-30):** this document still describes the release
+system as it published `v0.0.15`, including the append-only evidence ledger and
+its compact bundle format. That ledger was removed by Phase 3 of
+[`trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md); the audit trail is now the
+GitHub Releases page plus git and pull-request history. The published
+`release-evidence` branch stays frozen and replayable at tag
+`pre-trim-2026-07-30`. Sections below about evidence assembly, ledger genesis,
+and stage 3 are historical measurement, not current behavior.
+
 This document describes the release system that published `v0.0.15`; it is not
 a new release contract and does not change product behavior. `v0.0.12` is the
 permanently abandoned no-tag/no-Release incident, while published `v0.0.13`

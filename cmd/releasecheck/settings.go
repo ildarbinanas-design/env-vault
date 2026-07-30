@@ -89,7 +89,7 @@ func runSettingsSeal(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeFailure(stdout, stderr, *output == "-", "OUTPUT_FAILED", err, exitInternal)
 	}
-	if code := writeEvidenceOutput(*output, encoded, stdout, stderr); code != exitOK {
+	if code := writeCheckOutput(*output, encoded, stdout, stderr); code != exitOK {
 		return code
 	}
 	if *output != "-" {
@@ -112,7 +112,7 @@ func runSettingsVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeFailure(stdout, stderr, *jsonOutput, "CONTRACT_INVALID", err, exitContractInvalid)
 	}
-	data, err := readRegularEvidenceInput(*input)
+	data, err := readRegularInput(*input)
 	if err != nil {
 		return writeFailure(stdout, stderr, *jsonOutput, releasesettings.CodeInputInvalid, err, exitSnapshotInvalid)
 	}
@@ -206,7 +206,7 @@ func readSettingsRawInputs(merge, pages, main, tag, evidence string) (releaseset
 	paths := []string{merge, pages, main, tag, evidence}
 	data := make([][]byte, len(paths))
 	for index, path := range paths {
-		value, err := readRegularEvidenceInput(path)
+		value, err := readRegularInput(path)
 		if err != nil {
 			return releasesettings.RawInputs{}, fmt.Errorf("read settings input %s: %w", path, err)
 		}
