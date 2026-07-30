@@ -1,6 +1,12 @@
 # ADR 0003: Compact content-addressed release evidence and automatic ledger genesis
 
-- Status: accepted
+- Status: superseded by `docs/trim-plan-2026-07-30.md` Phase 3 (2026-07-30).
+  The evidence ledger, its compact bundle format, and automatic genesis were
+  removed; the release audit trail is now the GitHub Releases page plus git and
+  pull-request history. The published `release-evidence` branch and the durable
+  evidence artifacts already in Actions storage stay frozen and replayable at
+  the pre-trim tag `pre-trim-2026-07-30`. This file is kept for history and is
+  no longer active design.
 - Date: 2026-07-17
 - Scope: release-evidence format selection, offline replay, durable Git layout,
   automatic genesis, and compatibility with the published legacy ledger

@@ -27,7 +27,7 @@ const (
 	ValidationSchemaID      = "env-vault.actions-artifact-policy-validation.v1"
 	ValidationSchemaVersion = 1
 	CanonicalPolicyPath     = "release/actions-artifact-policy.v1.json"
-	ExpectedUploadSiteCount = 23
+	ExpectedUploadSiteCount = 19
 	SupportedUploadAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 	RunAttemptExpression    = "${{ github.run_attempt }}"
 
@@ -41,12 +41,15 @@ var (
 	consumerPattern = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 
 	supportedRetentionDays = []int{7, 14, 30, 90}
-	supportedWorkflows     = []string{
+	// uploadingWorkflows are the current workflows that upload artifacts; each
+	// must own at least one policy site. Retired workflows (release-evidence.yml)
+	// are absent here but keep their name patterns, so artifacts they already
+	// uploaded stay classifiable instead of failing the lifecycle tooling closed.
+	uploadingWorkflows = []string{
 		"bootstrap-release-assets.yml",
 		"build-binaries.yml",
 		"legacy-rebuild.yml",
 		"publish-homebrew-bridge.yml",
-		"release-evidence.yml",
 		"release-please.yml",
 		"reusable-quality.yml",
 	}
@@ -196,7 +199,7 @@ func (policy Policy) Validate() error {
 	}
 	seenIDs := make(map[string]bool, len(policy.Sites))
 	seenLocations := make(map[string]bool, len(policy.Sites))
-	seenWorkflows := make(map[string]bool, len(supportedWorkflows))
+	seenWorkflows := make(map[string]bool, len(uploadingWorkflows))
 	seenTiers := make(map[int]bool, len(supportedRetentionDays))
 	for index, site := range policy.Sites {
 		if err := validatePolicySite(site); err != nil {
@@ -227,7 +230,7 @@ func (policy Policy) Validate() error {
 	if len(policy.Sites) != ExpectedUploadSiteCount {
 		return fmt.Errorf("policy has %d upload sites, want exactly %d", len(policy.Sites), ExpectedUploadSiteCount)
 	}
-	for _, workflow := range supportedWorkflows {
+	for _, workflow := range uploadingWorkflows {
 		if !seenWorkflows[workflow] {
 			return fmt.Errorf("policy is missing supported workflow %q", workflow)
 		}
@@ -256,7 +259,7 @@ func ValidateWorkflowDirectory(policy Policy, workflowDirectory string) (Validat
 	}
 	seenPolicyLocations := make(map[string]bool, len(actualSites))
 	for _, actual := range actualSites {
-		if !containsString(supportedWorkflows, actual.Workflow) {
+		if !containsString(uploadingWorkflows, actual.Workflow) {
 			return Validation{}, fmt.Errorf("unknown upload workflow %q", actual.Workflow)
 		}
 		location := siteLocation(actual.Workflow, actual.Job, actual.Step)
@@ -312,7 +315,7 @@ func validatePolicySite(site PolicySite) error {
 	if !policyIDPattern.MatchString(site.ID) {
 		return fmt.Errorf("invalid policy key %q", site.ID)
 	}
-	if !containsString(supportedWorkflows, site.Workflow) {
+	if !containsString(uploadingWorkflows, site.Workflow) {
 		return fmt.Errorf("unknown workflow %q", site.Workflow)
 	}
 	if !jobIDPattern.MatchString(site.Job) {
@@ -455,7 +458,7 @@ func buildValidation(policy Policy, digest string) Validation {
 	for _, days := range supportedRetentionDays {
 		tiers = append(tiers, RetentionTierCount{Days: days, SiteCount: tierCounts[days]})
 	}
-	workflows := append([]string(nil), supportedWorkflows...)
+	workflows := append([]string(nil), uploadingWorkflows...)
 	return Validation{
 		SchemaID: ValidationSchemaID, SchemaVersion: ValidationSchemaVersion, OK: true,
 		PolicySchemaID: policy.SchemaID, PolicySHA256: digest,

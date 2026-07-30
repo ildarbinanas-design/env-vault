@@ -545,14 +545,15 @@ func (c Contract) Validate() error {
 	workflowIDs := make(map[string]bool)
 	workflowNames := make(map[string]bool)
 	workflowFiles := make(map[string]bool)
-	wantWorkflowIDs := []string{"ci", "quality", "planning", "publisher", "release_evidence", "legacy_rebuild", "dependency_review", "pr_title"}
+	wantWorkflowIDs := []string{"ci", "quality", "planning", "publisher", "legacy_rebuild", "dependency_review", "pr_title"}
 	if operational {
 		wantWorkflowIDs = append(wantWorkflowIDs, "release_assets_bootstrap", "homebrew_bridge")
 	}
 	if legacy {
 		// The archived v1 contract is frozen: it still records the retired
-		// GitHub App audit workflows that the live pipeline no longer has.
-		wantWorkflowIDs = append(wantWorkflowIDs, "planning_app_audit", "tap_app_audit")
+		// GitHub App audit workflows and the retired evidence-ledger publisher
+		// that the live pipeline no longer has.
+		wantWorkflowIDs = append(wantWorkflowIDs, "planning_app_audit", "tap_app_audit", "release_evidence")
 	}
 	if len(c.Workflows) != len(wantWorkflowIDs) {
 		add("workflow count=%d, want %d", len(c.Workflows), len(wantWorkflowIDs))
@@ -641,7 +642,14 @@ func (c Contract) Validate() error {
 		{"supply_chain", "publisher", true},
 		{"homebrew", "publisher", true},
 		{"health", "publisher", false},
-		{"evidence", "release_evidence", true},
+	}
+	if legacy {
+		// The frozen archive still ends with the retired evidence stage.
+		wantStages = append(wantStages, struct {
+			id       string
+			workflow string
+			mutating bool
+		}{"evidence", "release_evidence", true})
 	}
 	if len(c.ReleaseStages) != len(wantStages) {
 		add("release stage count=%d, want %d", len(c.ReleaseStages), len(wantStages))
@@ -708,15 +716,10 @@ func (c Contract) Validate() error {
 		"e2e_baseline":                      "env-vault.e2e-baseline.v2",
 		"e2e_matrix_proof":                  "env-vault.e2e-matrix-proof.v1",
 		"e2e_baseline_verification":         "env-vault.e2e-baseline-verification.v1",
-		"release_observation":               "env-vault.release-observation.v1",
-		"release_health_proof":              "env-vault.release-health-proof.v1",
 		"repository_release_settings_check": "env-vault.repository-release-settings-check.v1",
 		"repository_release_settings_proof": "env-vault.repository-release-settings-proof.v1",
-		"release_authorization":             "env-vault.release-authorization.v1",
 		"release_please_recovery":           ReleasePleaseRecoverySchemaID,
 		"release_please_recovery_check":     ReleasePleaseRecoveryCheckSchemaID,
-		"attestation_verification_bundle":   "env-vault.attestation-verification-bundle.v1",
-		"release_evidence":                  "env-vault.release-evidence.v1",
 		"release_metrics":                   "env-vault.release-metrics.v1",
 		"release_metrics_baseline":          "env-vault.release-metrics-baseline.v1",
 		"release_metrics_comparison":        "env-vault.release-metrics-comparison.v1",
@@ -804,7 +807,7 @@ func validateOperationalOwnership(c Contract) error {
 	}
 	wantSerializedWorkflows := map[string]bool{
 		"planning": true, "publisher": true, "release_assets_bootstrap": true,
-		"homebrew_bridge": true, "release_evidence": true,
+		"homebrew_bridge": true,
 	}
 	for id := range releaseWorkflows {
 		if !configuredWorkflows[id] {
@@ -813,7 +816,7 @@ func validateOperationalOwnership(c Contract) error {
 	}
 	if c.Concurrency.Release.Group != "env-vault-release" || c.Concurrency.Release.CancelInProgress ||
 		c.Concurrency.Release.Queue != "max" || !sameSet(configuredWorkflows, wantSerializedWorkflows) || !c.Concurrency.CI.CancelInProgress {
-		return errors.New("release serialization must be the canonical five-workflow global queue and CI cancellation must remain enabled")
+		return errors.New("release serialization must be the canonical four-workflow global queue and CI cancellation must remain enabled")
 	}
 	return nil
 }

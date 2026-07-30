@@ -1,22 +1,15 @@
-# Release evidence
+# Checked-in operational proofs
 
-Release evidence is machine-first. Workflows collect remote observations with
-`gh`, save them as files, and pass those files plus verified artifacts to the
-offline checker. The checker emits versioned JSON; the Markdown index is
-generated from that JSON and is never a second source of truth.
+This directory holds a few reviewed, machine-readable one-time proofs. It is
+**not** the release audit trail: that is the GitHub Releases page plus git and
+pull-request history. The per-release evidence ledger that once lived on the
+`release-evidence` branch was retired on 2026-07-30 (Phase 3 of
+[`docs/trim-plan-2026-07-30.md`](../docs/trim-plan-2026-07-30.md)); that branch
+and the durable replay artifacts in Actions storage stay frozen and are never
+extended or rewritten.
 
-Per-release evidence binds the exact version, source and tag SHAs, CI and
-publisher run IDs/attempts, promotion manifest and artifact digests,
-attestation verification, publication state, Homebrew PR/head/exact-merge and
-current-tap ancestry state, both tap CI gates, health, and automatic
-timing/retry metrics. Evidence must
-not contain credentials, installation tokens, private keys, secret values, or
-unredacted environment dumps.
-
-The release workflows publish their evidence automatically. Do not maintain an
-append-only narrative log and do not edit a successful machine document to
-describe a later retry. A new workflow attempt produces a new exact-attempt
-document; only a fully verified terminal tuple is indexed as successful.
+No file here may contain credentials, installation tokens, private keys, secret
+values, or unredacted environment dumps.
 
 [`e2e-baseline-migration/`](e2e-baseline-migration/) is the checked-in one-time
 proof that replaced the expiring historical E2E comparator with

@@ -13,9 +13,13 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - A test or insecure backend is allowed only behind an explicit environment gate and must be impossible to enable accidentally.
 - Structured errors are mandatory for implemented commands.
 - Mandatory tests are required once behavior beyond the local version placeholder is implemented.
-- Release evidence must be versioned machine JSON generated from exact workflow
-  and artifact identities. A generated Markdown index may summarize that JSON;
-  append-only narrative evidence is not an authorization or release gate.
+- The release audit trail is the GitHub Releases page plus ordinary git and pull
+  request history. There is no append-only evidence ledger: the publisher's
+  `health` job verifies live release, attestation, Homebrew, blocked-tag, and
+  abandoned-release state and fails the release, it does not assemble a durable
+  record. The published `release-evidence` branch and the durable evidence
+  artifacts already in Actions storage are frozen history: never rewrite,
+  extend, or retrofit them.
 - `release/contract.v2.json` is the only current operational release contract.
   Runtime mutation code must consume a digest-bound releasecheck version plus
   operational-projection pair and call
@@ -26,18 +30,8 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
   `release/history/contract.v1.json` and exact tuples in
   `release/contract-history.v2.json` may route a v1 source. The live
   `release/contract.v1.json` is not the archive or a source of new operational
-  defaults. Contract generation and evidence format are independent versioned
-  dimensions; never infer one from the other.
-- Compact evidence capabilities fail closed: v1 is selected only when both v2
-  capability keys are absent, while v2 requires the exact supported
-  bundle/genesis versions. Content-addressed objects must reconstruct canonical
-  v1 bytes entirely offline and remain bound by raw and encoded digests, strict
-  size/count limits, and deterministic canonical gzip.
-- Only an exact typed HTTP 404 may create a fresh evidence ledger. Its first
-  commit is parentless and evidence-only, uses no source `base_tree`, and needs
-  no Workflows write or manual ref bootstrap. The published production ledger
-  is an immutable `legacy-compatible` exception: never rewrite it or retrofit
-  genesis. Both modes fail before append beyond the bounded 64-commit window.
+  defaults. The registry's `evidence_format` entries are frozen historical
+  identity for those v1 releases; they authorize nothing new.
 - GitHub transport and mutations use `gh` or the GitHub API. Repository
   checkers consume saved files offline, hold no credentials, and fail closed on
   unknown, incomplete, invalid, or unsupported input.

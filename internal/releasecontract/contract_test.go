@@ -155,7 +155,7 @@ func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
 		t.Fatalf("homebrew=%+v", contract.Homebrew)
 	}
 	if contract.Concurrency.Release.Group != "env-vault-release" || contract.Concurrency.Release.CancelInProgress || contract.Concurrency.Release.Queue != "max" ||
-		!reflect.DeepEqual(contract.Concurrency.Release.Workflows, []string{"planning", "publisher", "release_assets_bootstrap", "homebrew_bridge", "release_evidence"}) ||
+		!reflect.DeepEqual(contract.Concurrency.Release.Workflows, []string{"planning", "publisher", "release_assets_bootstrap", "homebrew_bridge"}) ||
 		!contract.Concurrency.CI.CancelInProgress {
 		t.Fatalf("concurrency=%+v", contract.Concurrency)
 	}
@@ -176,7 +176,6 @@ func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
 		{ID: "publisher", Name: "build-binaries", File: "build-binaries.yml", Events: []string{"workflow_dispatch", "push"}, Jobs: []string{"metadata", "preflight", "promotion", "release", "supply_chain", "homebrew", "health"}},
 		{ID: "release_assets_bootstrap", Name: "bootstrap-release-assets", File: "bootstrap-release-assets.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"bootstrap"}},
 		{ID: "homebrew_bridge", Name: "publish-homebrew-bridge", File: "publish-homebrew-bridge.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"homebrew_bridge"}},
-		{ID: "release_evidence", Name: "release-evidence", File: "release-evidence.yml", Events: []string{"workflow_run"}, Jobs: []string{"assemble", "publish"}},
 		{ID: "legacy_rebuild", Name: "legacy-rebuild", File: "legacy-rebuild.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"resolve", "diagnostic"}},
 		{ID: "dependency_review", Name: "Dependency review", File: "dependency-review.yml", Events: []string{"pull_request"}, Jobs: []string{"dependency-review"}},
 		{ID: "pr_title", Name: "pr-title", File: "pr-title.yml", Events: []string{"pull_request"}, Jobs: []string{"pr-title"}},

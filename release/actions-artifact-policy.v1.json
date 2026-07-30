@@ -25,21 +25,6 @@
       "retention_rationale": "Keeps the exact no-rebuild bootstrap handoff available to the queued Homebrew bridge and its bounded repair review."
     },
     {
-      "id": "release-observation",
-      "workflow": "build-binaries.yml",
-      "job": "health",
-      "step": "Upload typed release observation and sealed health proof",
-      "class": "release-observation",
-      "pattern_id": "release-observation-current",
-      "artifact_name": "env-vault-release-observation-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 90,
-      "consumers": [
-        "operator.release-audit",
-        "release-evidence.assemble"
-      ],
-      "retention_rationale": "Preserves the exact health observation consumed by the queued evidence workflow and later release audit."
-    },
-    {
       "id": "operational-contract",
       "workflow": "build-binaries.yml",
       "job": "metadata",
@@ -117,48 +102,6 @@
       "retention_rationale": "Preserves the exact Homebrew publication tuple for operator dispatch and bounded repair audit; health independently re-verifies live state."
     },
     {
-      "id": "evidence-candidate",
-      "workflow": "release-evidence.yml",
-      "job": "assemble",
-      "step": "Upload immutable evidence candidate for the write-scoped job",
-      "class": "evidence-candidate",
-      "pattern_id": "evidence-candidate-current",
-      "artifact_name": "env-vault-release-evidence-candidate-${{ steps.identity.outputs.version }}-${{ steps.identity.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
-      "retention_days": 7,
-      "consumers": [
-        "release-evidence.publish"
-      ],
-      "retention_rationale": "Bounds the same-attempt handoff from read-only assembly to the write-scoped evidence append job."
-    },
-    {
-      "id": "release-evidence-v2",
-      "workflow": "release-evidence.yml",
-      "job": "publish",
-      "step": "Upload compact replayable release evidence artifact",
-      "class": "release-evidence",
-      "pattern_id": "release-evidence-v2-durable",
-      "artifact_name": "env-vault-release-evidence-v2-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-      "retention_days": 90,
-      "consumers": [
-        "offline-replay.audit"
-      ],
-      "retention_rationale": "Keeps the compact independently replayable evidence handoff while Git history remains the immutable authority."
-    },
-    {
-      "id": "release-evidence-v1",
-      "workflow": "release-evidence.yml",
-      "job": "publish",
-      "step": "Upload replayable release evidence artifact",
-      "class": "release-evidence",
-      "pattern_id": "release-evidence-v1-durable",
-      "artifact_name": "env-vault-release-evidence-${{ needs.assemble.outputs.version }}-${{ steps.publish.outputs.commit_sha }}-publisher-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-evidence-${{ github.run_id }}-${{ github.run_attempt }}",
-      "retention_days": 90,
-      "consumers": [
-        "offline-replay.audit"
-      ],
-      "retention_rationale": "Keeps the supported legacy-format replay handoff while Git history remains the immutable authority."
-    },
-    {
       "id": "attempt-classification",
       "workflow": "release-please.yml",
       "job": "inspect",
@@ -185,8 +128,7 @@
       "consumers": [
         "build-binaries.health",
         "build-binaries.metadata",
-        "operator.release-audit",
-        "release-evidence.assemble"
+        "operator.release-audit"
       ],
       "retention_rationale": "Preserves the exact pre-tag repository-protection observation through publisher health and evidence append."
     },
@@ -230,7 +172,6 @@
       "consumers": [
         "bootstrap-release-assets.bootstrap",
         "build-binaries.promotion",
-        "release-evidence.assemble",
         "release-please.plan"
       ],
       "retention_rationale": "Covers publisher promotion and the admissible no-rebuild release-asset bootstrap repair boundary."
@@ -262,7 +203,6 @@
       "consumers": [
         "bootstrap-release-assets.bootstrap",
         "build-binaries.promotion",
-        "release-evidence.assemble",
         "release-please.inspect",
         "release-please.plan",
         "reusable-quality.e2e-gate"
@@ -281,7 +221,6 @@
       "consumers": [
         "bootstrap-release-assets.bootstrap",
         "build-binaries.promotion",
-        "release-evidence.assemble",
         "release-please.inspect",
         "release-please.plan"
       ],
@@ -498,7 +437,7 @@
       "examples": [
         "env-vault-release-evidence-candidate-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-101-2"
       ],
-      "dependency_repair_rationale": "Same-attempt handoff from read-scoped assembly to the write-scoped evidence append job."
+      "dependency_repair_rationale": "Historical: the retired evidence workflow no longer uploads; the pattern stays so existing stored artifacts remain classifiable."
     },
     {
       "id": "homebrew-bridge-current",
@@ -688,7 +627,7 @@
       "examples": [
         "env-vault-release-evidence-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-publisher-101-attempt-1-evidence-202-2"
       ],
-      "dependency_repair_rationale": "Durable supported legacy-format offline replay artifact; never cleanup eligible."
+      "dependency_repair_rationale": "Historical durable legacy-format replay artifact from the retired evidence ledger; never cleanup eligible."
     },
     {
       "id": "release-evidence-v2-durable",
@@ -705,7 +644,7 @@
       "examples": [
         "env-vault-release-evidence-v2-v1.2.3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-publisher-101-attempt-1-evidence-202-2"
       ],
-      "dependency_repair_rationale": "Durable compact offline replay artifact; never cleanup eligible."
+      "dependency_repair_rationale": "Historical durable compact replay artifact from the retired evidence ledger; never cleanup eligible."
     },
     {
       "id": "release-observation-current",
@@ -722,7 +661,7 @@
       "examples": [
         "env-vault-release-observation-v1.2.3-attempt-1"
       ],
-      "dependency_repair_rationale": "Durable publisher health observation consumed by queued evidence and release audit."
+      "dependency_repair_rationale": "Historical durable publisher health observation from the retired evidence ledger; no longer uploaded."
     },
     {
       "id": "release-please-recovery-history",

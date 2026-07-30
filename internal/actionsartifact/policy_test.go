@@ -26,10 +26,10 @@ func TestCanonicalPolicyMatchesCompleteWorkflowSurface(t *testing.T) {
 	if !first.OK || first.SchemaID != ValidationSchemaID || first.SchemaVersion != ValidationSchemaVersion {
 		t.Fatalf("validation identity=%+v", first)
 	}
-	if first.UploadSiteCount != 23 || first.WorkflowCount != 7 || first.ClassCount != 18 || len(first.PolicySHA256) != 64 {
+	if first.UploadSiteCount != 19 || first.WorkflowCount != 6 || first.ClassCount != 15 || len(first.PolicySHA256) != 64 {
 		t.Fatalf("validation summary=%+v", first)
 	}
-	wantTiers := []RetentionTierCount{{Days: 7, SiteCount: 3}, {Days: 14, SiteCount: 10}, {Days: 30, SiteCount: 5}, {Days: 90, SiteCount: 5}}
+	wantTiers := []RetentionTierCount{{Days: 7, SiteCount: 2}, {Days: 14, SiteCount: 10}, {Days: 30, SiteCount: 5}, {Days: 90, SiteCount: 2}}
 	if !reflect.DeepEqual(first.RetentionTiers, wantTiers) {
 		t.Fatalf("retention tiers=%v want=%v", first.RetentionTiers, wantTiers)
 	}
@@ -42,23 +42,19 @@ func TestCanonicalPolicyConsumerGraphIsSemanticallyComplete(t *testing.T) {
 	policy := loadCanonicalPolicy(t)
 	want := map[string][]string{
 		"release-assets-bootstrap":   {"operator.repair-audit", "publish-homebrew-bridge.homebrew-bridge"},
-		"release-observation":        {"operator.release-audit", "release-evidence.assemble"},
 		"operational-contract":       {"build-binaries.health", "build-binaries.homebrew", "build-binaries.promotion", "build-binaries.release", "build-binaries.supply-chain"},
 		"publisher-bundle":           {"bootstrap-release-assets.bootstrap", "build-binaries.release", "operator.repair-audit"},
 		"spdx-sbom":                  {"operator.supply-chain-audit"},
 		"legacy-diagnostic":          {"operator.legacy-diagnostic-audit"},
 		"homebrew-bridge":            {"operator.homebrew-dispatch-audit", "operator.repair-audit"},
-		"evidence-candidate":         {"release-evidence.publish"},
-		"release-evidence-v2":        {"offline-replay.audit"},
-		"release-evidence-v1":        {"offline-replay.audit"},
 		"attempt-classification":     {"operator.release-planning-audit", "operator.rerun-audit"},
-		"release-settings":           {"build-binaries.health", "build-binaries.metadata", "operator.release-audit", "release-evidence.assemble"},
+		"release-settings":           {"build-binaries.health", "build-binaries.metadata", "operator.release-audit"},
 		"abandoned-release-policy":   {"operator.release-planning-audit"},
 		"e2e-baseline":               {"operator.quality-audit"},
-		"promotion-manifest":         {"bootstrap-release-assets.bootstrap", "build-binaries.promotion", "release-evidence.assemble", "release-please.plan"},
+		"promotion-manifest":         {"bootstrap-release-assets.bootstrap", "build-binaries.promotion", "release-please.plan"},
 		"e2e-candidate":              {"operator.quality-audit", "reusable-quality.e2e-gate"},
-		"promotion-platform":         {"bootstrap-release-assets.bootstrap", "build-binaries.promotion", "release-evidence.assemble", "release-please.inspect", "release-please.plan", "reusable-quality.e2e-gate"},
-		"native-release":             {"bootstrap-release-assets.bootstrap", "build-binaries.promotion", "release-evidence.assemble", "release-please.inspect", "release-please.plan"},
+		"promotion-platform":         {"bootstrap-release-assets.bootstrap", "build-binaries.promotion", "release-please.inspect", "release-please.plan", "reusable-quality.e2e-gate"},
+		"native-release":             {"bootstrap-release-assets.bootstrap", "build-binaries.promotion", "release-please.inspect", "release-please.plan"},
 		"e2e-reporter-darwin-amd64":  {"reusable-quality.native"},
 		"e2e-reporter-darwin-arm64":  {"reusable-quality.native"},
 		"e2e-reporter-linux-amd64":   {"reusable-quality.native"},

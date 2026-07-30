@@ -292,18 +292,6 @@
       ]
     },
     {
-      "id": "release_evidence",
-      "name": "release-evidence",
-      "file": "release-evidence.yml",
-      "events": [
-        "workflow_run"
-      ],
-      "jobs": [
-        "assemble",
-        "publish"
-      ]
-    },
-    {
       "id": "legacy_rebuild",
       "name": "legacy-rebuild",
       "file": "legacy-rebuild.yml",
@@ -374,8 +362,7 @@
         "planning",
         "publisher",
         "release_assets_bootstrap",
-        "homebrew_bridge",
-        "release_evidence"
+        "homebrew_bridge"
       ]
     },
     "ci": {
@@ -424,12 +411,6 @@
       "ordinal": 7,
       "workflow": "publisher",
       "state_mutating": false
-    },
-    {
-      "id": "evidence",
-      "ordinal": 8,
-      "workflow": "release_evidence",
-      "state_mutating": true
     }
   ],
   "allowed_repair_actions": [
@@ -538,15 +519,10 @@
     "e2e_baseline": "env-vault.e2e-baseline.v2",
     "e2e_matrix_proof": "env-vault.e2e-matrix-proof.v1",
     "e2e_baseline_verification": "env-vault.e2e-baseline-verification.v1",
-    "release_observation": "env-vault.release-observation.v1",
-    "release_health_proof": "env-vault.release-health-proof.v1",
     "repository_release_settings_check": "env-vault.repository-release-settings-check.v1",
     "repository_release_settings_proof": "env-vault.repository-release-settings-proof.v1",
-    "release_authorization": "env-vault.release-authorization.v1",
     "release_please_recovery": "env-vault.release-please-recovery.v1",
     "release_please_recovery_check": "env-vault.release-please-recovery-check.v1",
-    "attestation_verification_bundle": "env-vault.attestation-verification-bundle.v1",
-    "release_evidence": "env-vault.release-evidence.v1",
     "release_metrics": "env-vault.release-metrics.v1",
     "release_metrics_baseline": "env-vault.release-metrics-baseline.v1",
     "release_metrics_comparison": "env-vault.release-metrics-comparison.v1",

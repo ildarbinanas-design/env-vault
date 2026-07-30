@@ -35,31 +35,6 @@ type HistoricalIdentity struct {
 	CompactArtifactDigest                  string `json:"compact_artifact_digest,omitempty"`
 }
 
-// HistoricalBundleObservation is the complete identity available from an
-// offline compact bundle plus its immutable evidence-branch commit. The
-// release contract package deliberately does not parse bundle internals, which
-// keeps the contract/evidence dependency one-directional.
-type HistoricalBundleObservation struct {
-	Repository                             string
-	ReleaseVersion                         string
-	SourceSHA                              string
-	EvidenceCommitSHA                      string
-	EvidenceRootFileSHA256                 string
-	EvidenceRootSemanticSHA256             string
-	EvidenceRootSchemaID                   string
-	EvidenceRootSchemaVersion              int
-	ReconstructedLegacyEvidenceSHA256      string
-	ReconstructedLegacyCanonicalJSONSHA256 string
-	ReconstructedLegacyCanonicalJSONSize   int64
-	EvidenceParentCommitSHA                string
-	EvidenceRunID                          int64
-	EvidenceRunAttempt                     int
-	CompactArtifactID                      int64
-	CompactArtifactDigest                  string
-	PublisherRunID                         int64
-	PublisherRunAttempt                    int
-}
-
 type HistoricalSourceAuthorization struct {
 	SchemaID      string             `json:"schema_id"`
 	SchemaVersion int                `json:"schema_version"`
@@ -121,94 +96,6 @@ type legacyApp struct {
 	AuditWorkflow  string `json:"audit_workflow"`
 	CIWorkflowFile string `json:"ci_workflow_file,omitempty"`
 	CIWorkflowName string `json:"ci_workflow_name,omitempty"`
-}
-
-const maxHistoricalEvidenceBytes = 16 << 20
-
-// LoadHistoricalEvidence verifies the raw evidence bytes and their embedded
-// identity before exposing an archival v1 contract to the normal offline
-// evidence verifier. The raw digest is always computed here; it is never a
-// trusted caller flag.
-func LoadHistoricalEvidence(contractFilename, registryFilename, evidenceFilename, evidenceCommitSHA string) (Contract, []byte, error) {
-	evidenceData, err := readLimitedFile(evidenceFilename, maxHistoricalEvidenceBytes)
-	if err != nil {
-		return Contract{}, nil, fmt.Errorf("read historical release evidence: %w", err)
-	}
-	var envelope struct {
-		SchemaID       string `json:"schema_id"`
-		SchemaVersion  int    `json:"schema_version"`
-		Repository     string `json:"repository"`
-		ReleaseVersion string `json:"release_version"`
-		SourceSHA      string `json:"source_sha"`
-		EvidenceSHA256 string `json:"evidence_sha256"`
-	}
-	if err := decodeKnownJSON(evidenceData, &envelope); err != nil {
-		return Contract{}, nil, fmt.Errorf("decode historical release evidence identity: %w", err)
-	}
-	identity, err := findHistoricalIdentity(registryFilename, envelope.Repository, envelope.ReleaseVersion, envelope.SourceSHA)
-	if err != nil {
-		return Contract{}, nil, err
-	}
-	fileDigest := sha256.Sum256(evidenceData)
-	if identity.ContractGeneration != "v1" || identity.EvidenceFormat != "v1" ||
-		identity.EvidenceCommitSHA != evidenceCommitSHA ||
-		identity.EvidenceRootPath != fmt.Sprintf("evidence/releases/%s/release-evidence.json", envelope.ReleaseVersion) ||
-		identity.EvidenceRootFileSHA256 != hex.EncodeToString(fileDigest[:]) ||
-		identity.EvidenceRootSemanticSHA256 != envelope.EvidenceSHA256 ||
-		identity.EvidenceRootSchemaID != envelope.SchemaID || identity.EvidenceRootSchemaVersion != envelope.SchemaVersion {
-		return Contract{}, nil, errors.New("historical v1 evidence root does not match its registered release tuple")
-	}
-	contract, err := loadHistoricalContract(contractFilename, registryFilename, identity)
-	if err != nil {
-		return Contract{}, nil, err
-	}
-	if err := contract.ValidateHistoricalEvidenceIdentity(identity.Repository, identity.ReleaseVersion, identity.SourceSHA, identity.EvidenceRootSemanticSHA256); err != nil {
-		return Contract{}, nil, err
-	}
-	return contract, evidenceData, nil
-}
-
-// LoadHistoricalBundleContract authorizes a compact bundle only when every
-// identity observable offline matches a closed registry entry. It returns the
-// immutable archival v1 contract required to replay the reconstructed legacy
-// evidence semantics.
-func LoadHistoricalBundleContract(contractFilename, registryFilename string, observed HistoricalBundleObservation) (Contract, HistoricalIdentity, error) {
-	identity, err := findHistoricalIdentity(registryFilename, observed.Repository, observed.ReleaseVersion, observed.SourceSHA)
-	if err != nil {
-		return Contract{}, HistoricalIdentity{}, err
-	}
-	if identity.ContractGeneration != "v1" || identity.EvidenceFormat != "v2" ||
-		identity.EvidenceCommitSHA != observed.EvidenceCommitSHA ||
-		identity.EvidenceRootPath != fmt.Sprintf("evidence/releases/%s/release-evidence-bundle.json", observed.ReleaseVersion) ||
-		identity.EvidenceRootFileSHA256 != observed.EvidenceRootFileSHA256 ||
-		identity.EvidenceRootSemanticSHA256 != observed.EvidenceRootSemanticSHA256 ||
-		identity.EvidenceRootSchemaID != observed.EvidenceRootSchemaID ||
-		identity.EvidenceRootSchemaVersion != observed.EvidenceRootSchemaVersion ||
-		identity.ReconstructedLegacyEvidenceSHA256 != observed.ReconstructedLegacyEvidenceSHA256 ||
-		identity.ReconstructedLegacyCanonicalJSONSHA256 != observed.ReconstructedLegacyCanonicalJSONSHA256 ||
-		identity.ReconstructedLegacyCanonicalJSONSize != observed.ReconstructedLegacyCanonicalJSONSize ||
-		identity.EvidenceParentCommitSHA != observed.EvidenceParentCommitSHA ||
-		identity.PublisherRunID != observed.PublisherRunID || identity.PublisherRunAttempt != observed.PublisherRunAttempt ||
-		identity.EvidenceRunID != observed.EvidenceRunID || identity.EvidenceRunAttempt != observed.EvidenceRunAttempt ||
-		identity.CompactArtifactID != observed.CompactArtifactID || identity.CompactArtifactDigest != observed.CompactArtifactDigest {
-		return Contract{}, HistoricalIdentity{}, errors.New("historical compact evidence does not match its registered release tuple")
-	}
-	contract, err := loadHistoricalContract(contractFilename, registryFilename, identity)
-	if err != nil {
-		return Contract{}, HistoricalIdentity{}, err
-	}
-	return contract, identity, nil
-}
-
-// ValidateHistoricalBundleReconstruction closes the last offline boundary
-// after bundle verification has reconstructed canonical legacy evidence.
-func ValidateHistoricalBundleReconstruction(identity HistoricalIdentity, evidenceSHA256, canonicalJSONSHA256 string, canonicalJSONSize int64) error {
-	if identity.EvidenceFormat != "v2" || identity.ReconstructedLegacyEvidenceSHA256 != evidenceSHA256 ||
-		identity.ReconstructedLegacyCanonicalJSONSHA256 != canonicalJSONSHA256 ||
-		identity.ReconstructedLegacyCanonicalJSONSize != canonicalJSONSize {
-		return errors.New("historical compact evidence reconstruction differs from the registry")
-	}
-	return nil
 }
 
 // AuthorizeHistoricalSource resolves an exact closed registry entry and also
@@ -300,34 +187,6 @@ func loadHistoricalContract(contractFilename, registryFilename string, identity 
 	}
 	contract.fileSHA256 = hex.EncodeToString(fileDigest[:])
 	return contract, nil
-}
-
-func loadHistoricalCanonical(repositoryRoot string, identity HistoricalIdentity) (Contract, error) {
-	return loadHistoricalContract(
-		repositoryRoot+"/"+LegacyArchivePath,
-		repositoryRoot+"/"+HistoricalRegistryPath,
-		identity,
-	)
-}
-
-// ValidateHistoricalEvidenceIdentity binds an archival contract to exactly one
-// registered release document. Operational v2 contracts have no such binding.
-func (c Contract) ValidateHistoricalEvidenceIdentity(repository, version, sourceSHA, evidenceSHA256 string) error {
-	if c.SchemaID == SchemaID && c.SchemaVersion == SchemaVersion {
-		return nil
-	}
-	if c.historicalIdentity == nil {
-		return errors.New("historical contract has no compatibility binding")
-	}
-	want := c.historicalIdentity
-	expectedEvidenceSHA256 := want.EvidenceRootSemanticSHA256
-	if want.EvidenceFormat == "v2" {
-		expectedEvidenceSHA256 = want.ReconstructedLegacyEvidenceSHA256
-	}
-	if repository != want.Repository || version != want.ReleaseVersion || sourceSHA != want.SourceSHA || evidenceSHA256 != expectedEvidenceSHA256 {
-		return errors.New("historical evidence does not match its registered release/source/digest tuple")
-	}
-	return nil
 }
 
 func validateHistoricalRegistry(registry historicalRegistry) error {

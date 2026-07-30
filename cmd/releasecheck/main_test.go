@@ -37,7 +37,7 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if document.ReleaseContractSchema != releasecontract.SchemaID || len(document.SemanticContractSHA256) != 64 {
 		t.Fatalf("contract identity=%+v", document)
 	}
-	for _, schema := range []string{"actions_artifact_deletion_batch", "actions_artifact_deletion_result", "actions_artifact_decision_manifest", "actions_artifact_decision_scope", "actions_artifact_live_collection", "actions_artifact_live_observation", "actions_artifact_manifest_package_summary", "actions_artifact_policy", "actions_artifact_policy_validation", "actions_artifact_raw_collection", "actions_artifact_repair_proof", "actions_artifact_snapshot", "actions_artifact_snapshot_validation", "release_contract_historical_source", "release_contract_matrix", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_observation", "release_health_proof", "release_authorization", "release_please_recovery", "release_please_recovery_check", "attestation_verification_bundle", "release_evidence", "release_evidence_bundle_verification", "release_evidence_parity", "release_evidence_storage_metrics", "release_evidence_genesis", "release_evidence_genesis_verification", "repository_release_settings_check", "repository_release_settings_proof"} {
+	for _, schema := range []string{"actions_artifact_deletion_batch", "actions_artifact_deletion_result", "actions_artifact_decision_manifest", "actions_artifact_decision_scope", "actions_artifact_live_collection", "actions_artifact_live_observation", "actions_artifact_manifest_package_summary", "actions_artifact_policy", "actions_artifact_policy_validation", "actions_artifact_raw_collection", "actions_artifact_repair_proof", "actions_artifact_snapshot", "actions_artifact_snapshot_validation", "release_contract_historical_source", "release_contract_matrix", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_please_recovery", "release_please_recovery_check", "repository_release_settings_check", "repository_release_settings_proof"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 1 || versions[0] != 1 {
 			t.Fatalf("supported %s versions=%v", schema, versions)
 		}
@@ -50,8 +50,10 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if versions := document.SupportedSchemaVersions["release_contract"]; len(versions) != 1 || versions[0] != 2 {
 		t.Fatalf("supported release_contract versions=%v", versions)
 	}
-	if versions := document.SupportedSchemaVersions["release_evidence_bundle"]; len(versions) != 1 || versions[0] != 2 {
-		t.Fatalf("supported release_evidence_bundle versions=%v", versions)
+	for _, schema := range []string{"release_evidence", "release_evidence_bundle", "release_observation", "release_health_proof", "attestation_verification_bundle"} {
+		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 0 {
+			t.Fatalf("retired evidence schema %s is still advertised: %v", schema, versions)
+		}
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr=%q", stderr.String())
@@ -512,7 +514,7 @@ func TestHelpDocumentsOfflineBoundaryAndExitStatuses(t *testing.T) {
 		"rerun_failed_jobs_allowed=false",
 		"Exit statuses:",
 		"4  valid classification requires wait, inspection, or rerun_all_jobs",
-		"5  saved input or promotion evidence invalid, incomplete, or inconsistent",
+		"5  saved input or promotion proof invalid, incomplete, or inconsistent",
 	} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help missing %q:\n%s", text, stdout.String())

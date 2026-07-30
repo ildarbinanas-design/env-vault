@@ -160,8 +160,8 @@ published; `v0.0.8` through `v0.0.11` remain failed tags without Releases.
 The only routine human release checkpoint is semantic review plus an exact
 version/PR/head-SHA authorization. Automation records that exact line as a
 pre-merge generated-PR comment from the authorizing owner/member and binds its
-identity and body digest into machine evidence. Planning, publisher,
-supply-chain, Homebrew, health, machine evidence, and metrics then run
+identity and body digest to the merge it authorizes. Planning, publisher,
+supply-chain, Homebrew, health, and metrics then run
 automatically. Planning and publication share one non-cancelling global
 concurrency group.
 
