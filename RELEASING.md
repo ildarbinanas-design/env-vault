@@ -48,61 +48,35 @@ equivalents, and the incident matrix, see
 Unknown, incomplete, malformed, authentication-failed, rate-limited, or
 transport-failed state is not absence. Every release gate fails closed.
 
-## The only human checkpoint
+## Authorizing a release
 
 Review the generated Release Please pull request semantically: confirm the
 version and changelog describe the changes, its required checks are green, and
-its exact head has not changed. Before that generated pull request is merged,
-record all three coordinates:
+its exact head has not changed. **Merging that pull request is the release
+authorization.** The byte-exact `ПОДТВЕРЖДАЮ RELEASE …` confirmation comment and
+the `authorize-and-merge-release-pr.sh` wrapper were removed on 2026-07-30 at
+the owner's instruction; there is no separate confirmation step.
 
-- exact `vX.Y.Z` version;
-- generated release PR number;
-- full 40-character head SHA.
-
-The one release authorization must be exactly:
-
-```text
-ПОДТВЕРЖДАЮ RELEASE <version> PR #<number> SHA <full-sha>
-```
-
-After receiving that one human confirmation, automation records the same
-byte-exact line as a comment on the generated PR before merging it. The release
-gate accepts exactly one matching comment from a GitHub `User` whose author
-association is `OWNER` or `MEMBER`; both its creation and last-update times
-must be strictly earlier than the PR merge time. GitHub timestamps have
-one-second precision, so a comment created or edited in the same recorded
-second as the merge is ambiguous and fails closed; automation waits for the
-next observable second, rechecks the unchanged tuple, and only then merges.
-The user is not asked to post a second manual confirmation. The gate itself
-binds the comment ID, URL, actor, association, timestamps, canonical-body
-SHA-256, PR number and head SHA; the pull request and its comment remain the
-durable record.
-
-The operator must record and consume the confirmation with the checked-in
-transport wrapper; do not call `gh pr comment` and `gh pr merge` as separate
-steps:
+Merge it head-guarded, so a head that moved during review can never be
+published silently:
 
 ```sh
-GITHUB_REPOSITORY=ildarbinanas-design/env-vault \
-  scripts/release/with-typed-contract.sh \
-  scripts/release/authorize-and-merge-release-pr.sh \
-  <version> <pr-number> <full-head-sha>
+gh pr merge <pr-number> --repo ildarbinanas-design/env-vault \
+  --squash --match-head-commit <full-head-sha>
 ```
 
-The wrapper uses `gh` for transport and keeps no credential. Before the only
-comment write it binds the local contract byte-for-byte to the exact remote PR
-base, validates it with the offline checker, and verifies the generated
-proposal, exact base, planning token, and exact successful name/workflow/event
-identities declared by that contract. It then records or idempotently reuses
-one trusted canonical comment, observes a later GitHub server second, repeats
-the proposal/base/comment/check checks, requires the same check identities,
-and squash-merges only with `--match-head-commit`. Read-only observations have
-bounded retries. Ambiguous comment-write or merge responses are reconciled by
-reads, never by a blind second mutation; an interrupted invocation can resume
-an already exact merged tuple without another mutation. The comment is read
-again after merge before success is reported. The wrapper prints only the
-exact merge SHA. The pull request, its one authorizing comment, and the merge
-commit are the durable authorization record.
+`scripts/release/verify-release-authorization.sh` still runs in the planning
+workflow and fails closed unless **exactly one** generated release pull request
+— with the contract's title, header, footer, lifecycle label, base branch, and
+head branch — merged to that exact source commit, the manifest version agrees
+at the source commit and at the current default branch, and that commit has a
+typed successful default-branch CI attempt. That merge authorizes only the
+resulting exact merge source, immutable tag, and fail-closed publisher; it is
+not approval for any changed head, version, or ref.
+
+Deleting Actions artifacts keeps its own byte-exact confirmation ceremony —
+that operation is irreversible and has no release gate behind it. See
+[ADR 0007](docs/adr/0007-actions-artifact-lifecycle.md).
 
 Release-planning REST observations use `scripts/release/gh-api-read.sh`. It
 accepts only explicit or implicit GET reads, publishes a response file only
@@ -194,10 +168,9 @@ for the exact run and commit identities.
 1. Release Please opens or updates the generated release PR in PR-only mode.
 2. The PR's normal `ci` run verifies the exact proposed version on all five
    native targets.
-3. Pass the confirmed tuple to
-   `scripts/release/authorize-and-merge-release-pr.sh`. It records the exact
-   pre-merge PR comment and squash-merges the unchanged head with a server-side
-   head guard. The merge commit becomes the release source SHA.
+3. Squash-merge the reviewed PR with a server-side head guard
+   (`gh pr merge <n> --squash --match-head-commit <head-sha>`). That merge is
+   the release authorization; its merge commit becomes the release source SHA.
 4. The `ci` push run for that exact `main` SHA performs source quality once,
    builds the five native artifacts, runs E2E and leak gates, and verifies all
    three literal version forms on every target. A bounded native

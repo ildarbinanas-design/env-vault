@@ -204,7 +204,7 @@ func validateCanonicalReleasePleaseConfig(contract Contract, config releasePleas
 	if pkg.PullRequestTitlePattern != "chore${scope}: release "+contract.Naming.Product+" "+contract.VersionPolicy.TagPrefix+"${version}" {
 		return errors.New("pull-request-title-pattern is invalid")
 	}
-	if pkg.PullRequestHeader != "Merging this unchanged reviewed pull request after the required exact tuple confirmation authorizes publication once its merge commit passes "+contract.Repositories.Source.DefaultBranch+" CI." {
+	if pkg.PullRequestHeader != "Merging this unchanged reviewed pull request authorizes publication once its merge commit passes "+contract.Repositories.Source.DefaultBranch+" CI." {
 		return errors.New("pull-request-header is invalid")
 	}
 	if pkg.PullRequestFooter != "This PR was generated with Release Please." {
