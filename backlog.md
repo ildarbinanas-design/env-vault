@@ -11,6 +11,9 @@
 
 ## P1
 
+Gated by ADR 0008 (2026-07-30): none of these are picked up without an
+explicit PersonalOS consumer or a security requirement driving them.
+
 - Evaluate whether GoReleaser would materially improve the working custom release and Homebrew pipeline.
 - Nexus binary publishing.
 - Shell completions.
@@ -18,6 +21,8 @@
 - Profile import/export without values.
 
 ## P2
+
+Gated by ADR 0008 (2026-07-30) — same rule as P1.
 
 - Optional Vault/1Password/KeePassXC connectors.
 - Passwork connector deferred; requires separate design and explicit approval.
