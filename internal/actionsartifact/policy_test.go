@@ -26,10 +26,10 @@ func TestCanonicalPolicyMatchesCompleteWorkflowSurface(t *testing.T) {
 	if !first.OK || first.SchemaID != ValidationSchemaID || first.SchemaVersion != ValidationSchemaVersion {
 		t.Fatalf("validation identity=%+v", first)
 	}
-	if first.UploadSiteCount != 19 || first.WorkflowCount != 6 || first.ClassCount != 15 || len(first.PolicySHA256) != 64 {
+	if first.UploadSiteCount != 18 || first.WorkflowCount != 6 || first.ClassCount != 14 || len(first.PolicySHA256) != 64 {
 		t.Fatalf("validation summary=%+v", first)
 	}
-	wantTiers := []RetentionTierCount{{Days: 7, SiteCount: 2}, {Days: 14, SiteCount: 10}, {Days: 30, SiteCount: 5}, {Days: 90, SiteCount: 2}}
+	wantTiers := []RetentionTierCount{{Days: 7, SiteCount: 2}, {Days: 14, SiteCount: 9}, {Days: 30, SiteCount: 5}, {Days: 90, SiteCount: 2}}
 	if !reflect.DeepEqual(first.RetentionTiers, wantTiers) {
 		t.Fatalf("retention tiers=%v want=%v", first.RetentionTiers, wantTiers)
 	}
@@ -42,9 +42,8 @@ func TestCanonicalPolicyConsumerGraphIsSemanticallyComplete(t *testing.T) {
 	policy := loadCanonicalPolicy(t)
 	want := map[string][]string{
 		"release-assets-bootstrap":   {"operator.repair-audit", "publish-homebrew-bridge.homebrew-bridge"},
-		"operational-contract":       {"build-binaries.health", "build-binaries.homebrew", "build-binaries.promotion", "build-binaries.release", "build-binaries.supply-chain"},
+		"operational-contract":       {"build-binaries.health", "build-binaries.homebrew", "build-binaries.promotion", "build-binaries.release"},
 		"publisher-bundle":           {"bootstrap-release-assets.bootstrap", "build-binaries.release", "operator.repair-audit"},
-		"spdx-sbom":                  {"operator.supply-chain-audit"},
 		"legacy-diagnostic":          {"operator.legacy-diagnostic-audit"},
 		"homebrew-bridge":            {"operator.homebrew-dispatch-audit", "operator.repair-audit"},
 		"attempt-classification":     {"operator.release-planning-audit", "operator.rerun-audit"},

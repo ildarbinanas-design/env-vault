@@ -230,9 +230,7 @@ runners with `CGO_ENABLED=1` because the macOS Keychain backend requires
 CGO-enabled darwin binaries. Linux and Windows artifact builds remain
 `CGO_ENABLED=0`.
 
-After the GitHub Release succeeds, the workflow generates a combined SPDX SBOM
-and GitHub provenance/SBOM attestations for all five archives without changing
-the exact ten-asset Release contract. It then generates declarative
+After the GitHub Release succeeds, the workflow generates declarative
 `on_macos`/`on_linux` and `on_arm`/`on_intel` URL/checksum blocks. The formula
 declares macOS Sequoia as its minimum and installs the archived README, license,
 and third-party notices as documentation. The `homebrew-tap`-scoped release
@@ -265,9 +263,9 @@ inside `Contents: write`, so this separation is an audited workflow invariant,
 not a claim that the credential lacks Release API capability. The tap token is
 scoped to `homebrew-tap` only; only the `homebrew` job declares
 `environment: release` and can read `HOMEBREW_TAP_TOKEN`. Build-only, build,
-Release, supply-chain, and `health`
+Release, and `health`
 jobs cannot read either credential. The `health` repair is read-only: it
-verifies the tag, Release, checksums, attestations, generated formula, and the
+verifies the tag, Release, checksums, generated formula, and the
 exact release-merge push run plus current tap ancestry using public repository state and its
 read-only workflow token. It also downloads the attempt-qualified repository
 settings proof sealed by release planning before tag creation and replays that

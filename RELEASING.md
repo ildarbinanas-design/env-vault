@@ -187,16 +187,15 @@ for the exact run and commit identities.
    verifies the manifest and all ten bytes offline, rechecks generated-PR
    provenance, and only then creates or verifies the immutable tag at the
    release source SHA.
-7. The tag starts `build-binaries`. Its seven jobs are `metadata`, `preflight`,
-   `promotion`, `release`, `supply_chain`, `homebrew`, and `health`.
+7. The tag starts `build-binaries`. Its six jobs are `metadata`, `preflight`,
+   `promotion`, `release`, `homebrew`, and `health`.
    `promotion` downloads and verifies the same CI attempt again; `release`
    publishes those bytes without rebuilding.
-8. `supply_chain` creates exact-source provenance and SPDX SBOM attestations.
-   `homebrew` creates or reuses the deterministic tap PR, requires CI on its
+8. `homebrew` creates or reuses the deterministic tap PR, requires CI on its
    exact head, squash-merges with a head guard, and requires post-merge tap CI
    on the exact release merge SHA. The current tap SHA is observed separately
    and may advance only as a descendant while the formula remains exact.
-9. `health` verifies the tag, Release, ten assets, digests, attestations,
+9. `health` verifies the tag, Release, ten assets, digests,
    Homebrew formula, PR head, both tap CI gates, and the protected failed-tag
    exception. It also downloads the unique attempt-qualified settings proof
    from the exact successful planning run and replays it offline; `health`
@@ -343,7 +342,7 @@ gh workflow run build-binaries.yml \
 | Repair | Rebuilds product | Resume point | Required existing state |
 | --- | --- | --- | --- |
 | `release-assets` | no | promotion/publication | exact tag and publication-eligible CI promotion attempt |
-| `homebrew` | no | Homebrew | exact public Release, ten assets, and attestations |
+| `homebrew` | no | Homebrew | exact public Release and ten assets |
 | `health` | no | read-only health | publication complete; re-verify published state only |
 
 The publisher resolves the source SHA from the tag and fails if the tag,
@@ -390,7 +389,7 @@ malformed even when every value independently has a valid Release shape.
 ### Protected-main Homebrew-only recovery
 
 If an immutable tag has already produced the exact stable ten-asset Release
-and complete provenance/SPDX attestations but its Homebrew job failed in
+but its Homebrew job failed in
 source-frozen tooling before formula/tap mutation, do not rerun the same
 deterministic path. Merge the reviewed transport/bridge fix with exact-head and
 main CI green, then dispatch `publish-homebrew-bridge.yml` from that exact
@@ -398,8 +397,8 @@ protected `main` commit. Every control/source/bootstrap/publisher/job/Release
 and artifact coordinate is a required input; there are no incident defaults.
 
 The bridge's source permissions remain read-only. It verifies contract and
-formula parity, exact bootstrap-result pair bytes, the seven-job failed
-publisher graph, all ten assets and attestations, and absence of a deterministic
+formula parity, exact bootstrap-result pair bytes, the six-job failed
+publisher graph, all ten assets, and absence of a deterministic
 tap branch/PR in every state/base. It rechecks protected main and tap absence
 before using the release-environment tap token, then enforces the exact tap
 base again inside `publish-homebrew-pr.sh` before branch/PR mutation. The token
@@ -411,8 +410,8 @@ source, bootstrap, failed publisher, PR/head/merge, both tap CI attempts, and
 final tap snapshot all match. Its `next_action` must be exactly
 `dispatch_tag_scoped_health`. Then dispatch one normal `repair=health` at the
 immutable tag and require health success. The bridge
-must never create/move tags, create/edit Releases, upload/replace assets, create
-attestations, or broaden token permissions. See
+must never create/move tags, create/edit Releases, upload/replace assets,
+or broaden token permissions. See
 [ADR 0005](docs/adr/0005-informational-link-and-homebrew-bridge.md).
 
 ## Legacy and blocked versions
@@ -465,20 +464,15 @@ following against live GitHub state:
 4. All five archives were promoted from one CI run attempt whose manifest
    passed source quality, contracts, coverage, leak scanning, semantic-suite
    identity, and the three literal version checks.
-5. Build-provenance and SPDX SBOM attestations for all five archives verify
-   against the exact source SHA and publisher workflow identity. Evidence
-   embeds the exact raw `gh attestation verify` JSON and its digest for each
-   archive/predicate pair; `health` re-runs and re-checks all ten
-   verifications.
-6. The generated Homebrew formula is byte-exact for the version and four
+5. The generated Homebrew formula is byte-exact for the version and four
    supported Homebrew archives; the version is monotonic.
-7. The deterministic tap PR's recorded head passed pull-request CI, the exact
+6. The deterministic tap PR's recorded head passed pull-request CI, the exact
    head was merged, post-merge tap CI passed on that immutable merge SHA, and
    the current tap SHA contains the merge with the byte-exact formula intact.
-8. A pre-tag settings proof binds the exact repository merge policy, three
+7. A pre-tag settings proof binds the exact repository merge policy, three
    rulesets, present empty bypass lists, source/version, and planning run
    attempt; `health` replays its self-digest offline.
-9. Release health passed and every blocked failed tag, currently `v0.0.8`
+8. Release health passed and every blocked failed tag, currently `v0.0.8`
    through `v0.0.11`, still has no GitHub Release.
 
 The Release asset set is always exactly:
@@ -496,14 +490,17 @@ env-vault-windows-amd64.zip
 env-vault-windows-amd64.zip.sha256
 ```
 
-Supply-chain documents remain attestations and workflow artifacts; they are
-not added to the ten-asset Release contract.
+Provenance/SBOM attestations are no longer generated. The bespoke supply-chain
+contour was removed by Phase 5 of the 2026-07 trim; attestations already
+created for published versions stay on GitHub's registry as immutable history.
+The deferred DevSecOps-standard replacement is
+`docs/release-refactor-backlog.md` item 14.
 
 ## Audit trail and metrics
 
 The release audit trail is the GitHub Releases page, the immutable tag, and
 ordinary git and pull-request history. There is no evidence ledger: the
-`health` job verifies live release, attestation, Homebrew, tap CI, blocked-tag,
+`health` job verifies live release, Homebrew, tap CI, blocked-tag,
 and abandoned-release state and fails the publisher when anything drifts, but
 it stores nothing durable. Timing and retry metrics stay as workflow artifacts
 and step summaries.
@@ -537,8 +534,8 @@ Before a release, the release-planning token, tap token, environments,
 branch/tag rulesets, and required checks must match
 [`docs/release-external-settings.md`](docs/release-external-settings.md).
 Neither token may bypass a ruleset. Only the `homebrew` job receives the tap
-token; supply-chain OIDC and Release writes remain separate permission
-boundaries.
+token; Release writes remain a separate permission
+boundary.
 
 For a wrong SHA, checksum mismatch, unsafe binary, or inconsistent published
 state:

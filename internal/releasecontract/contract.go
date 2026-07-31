@@ -546,7 +546,6 @@ func (c Contract) Validate() error {
 		{"exact_version_artifact_quality", "quality", false},
 		{"planning", "planning", true},
 		{"publication", "publisher", true},
-		{"supply_chain", "publisher", true},
 		{"homebrew", "publisher", true},
 		{"health", "publisher", false},
 	}

@@ -37,10 +37,9 @@
         "build-binaries.health",
         "build-binaries.homebrew",
         "build-binaries.promotion",
-        "build-binaries.release",
-        "build-binaries.supply-chain"
+        "build-binaries.release"
       ],
-      "retention_rationale": "Retains the digest-bound operational projection consumed across promotion, release, supply-chain, Homebrew, and health jobs in the exact publisher attempt."
+      "retention_rationale": "Retains the digest-bound operational projection consumed across promotion, release, Homebrew, and health jobs in the exact publisher attempt."
     },
     {
       "id": "publisher-bundle",
@@ -57,20 +56,6 @@
         "operator.repair-audit"
       ],
       "retention_rationale": "Covers same-attempt publication and the admissible no-rebuild release-asset bootstrap repair window."
-    },
-    {
-      "id": "spdx-sbom",
-      "workflow": "build-binaries.yml",
-      "job": "supply_chain",
-      "step": "Upload SPDX SBOM workflow artifact",
-      "class": "spdx-sbom",
-      "pattern_id": "spdx-sbom-current",
-      "artifact_name": "env-vault-sbom-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "operator.supply-chain-audit"
-      ],
-      "retention_rationale": "Keeps the workflow copy available for supply-chain diagnosis after the immutable SPDX attestation is created."
     },
     {
       "id": "legacy-diagnostic",
@@ -712,7 +697,7 @@
       "examples": [
         "env-vault-sbom-v1.2.3-attempt-1"
       ],
-      "dependency_repair_rationale": "SPDX workflow artifact is explicitly outside cleanup scope and retained for offline supply-chain audit."
+      "dependency_repair_rationale": "Historical: the retired supply-chain job no longer uploads; the pattern stays so existing stored SBOM artifacts remain classifiable."
     }
   ]
 }

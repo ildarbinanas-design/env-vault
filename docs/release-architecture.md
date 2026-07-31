@@ -16,6 +16,13 @@ GitHub Releases page plus git and pull-request history. The published
 `pre-trim-2026-07-30`. Sections below about evidence assembly, ledger genesis,
 and stage 3 are historical measurement, not current behavior.
 
+**Retired subsystems (2026-07-31):** trim Phase 5 removed the publisher's
+`supply_chain` job and the whole bespoke provenance/SBOM contour (generation,
+gating, and health re-verification). The publisher graph below is six jobs
+now; existing attestations for already-published versions remain on GitHub's
+registry as immutable history. The deferred DevSecOps-standard replacement is
+`docs/release-refactor-backlog.md` item 14.
+
 This document describes the release system that published `v0.0.15`; it is not
 a new release contract and does not change product behavior. `v0.0.12` is the
 permanently abandoned no-tag/no-Release incident, while published `v0.0.13`

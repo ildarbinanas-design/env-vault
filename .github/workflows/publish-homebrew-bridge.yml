@@ -84,10 +84,6 @@ on:
         description: "Exact successful release job ID in the failed publisher."
         required: true
         type: string
-      supply_chain_job_id:
-        description: "Exact successful supply-chain job ID in the failed publisher."
-        required: true
-        type: string
       failed_homebrew_job_id:
         description: "Exact failed pre-mutation Homebrew job ID in the failed publisher."
         required: true
@@ -99,7 +95,6 @@ on:
 
 permissions:
   actions: read
-  attestations: read
   contents: read
 
 concurrency:
@@ -114,7 +109,6 @@ jobs:
     environment: release
     permissions:
       actions: read
-      attestations: read
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -306,7 +300,6 @@ jobs:
           PUBLISHER_RUN_ID: ${{ inputs.failed_publisher_run_id }}
           RELEASE_JOB_ID: ${{ inputs.release_job_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          SUPPLY_CHAIN_JOB_ID: ${{ inputs.supply_chain_job_id }}
           VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -317,7 +310,7 @@ jobs:
           for value in "$BOOTSTRAP_RUN_ID" "$BOOTSTRAP_RUN_ATTEMPT" "$BOOTSTRAP_JOB_ID" \
             "$BOOTSTRAP_RESULT_ARTIFACT_ID" "$PUBLISHER_RUN_ID" "$PUBLISHER_RUN_ATTEMPT" \
             "$METADATA_JOB_ID" "$PROMOTION_JOB_ID" "$PREFLIGHT_JOB_ID" "$RELEASE_JOB_ID" \
-            "$SUPPLY_CHAIN_JOB_ID" "$FAILED_HOMEBREW_JOB_ID" "$HEALTH_JOB_ID"; do
+            "$FAILED_HOMEBREW_JOB_ID" "$HEALTH_JOB_ID"; do
             [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "bootstrap/publisher identity is malformed" >&2; exit 1; }
           done
           [[ "$BOOTSTRAP_RESULT_ARTIFACT_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || {
@@ -362,15 +355,15 @@ jobs:
             --argjson run_id "$PUBLISHER_RUN_ID" \
             --argjson metadata "$METADATA_JOB_ID" --argjson promotion "$PROMOTION_JOB_ID" \
             --argjson preflight "$PREFLIGHT_JOB_ID" --argjson release "$RELEASE_JOB_ID" \
-            --argjson supply_chain "$SUPPLY_CHAIN_JOB_ID" --argjson homebrew "$FAILED_HOMEBREW_JOB_ID" \
+            --argjson homebrew "$FAILED_HOMEBREW_JOB_ID" \
             --argjson health "$HEALTH_JOB_ID" '
             def exact_step($job; $name; $conclusion):
               [$job.steps[] | select(.name == $name and .status == "completed" and .conclusion == $conclusion)] | length == 1;
             select(type == "array" and length > 0 and
               all(.[]; type == "object" and (.jobs | type) == "array") and
-              ([.[].total_count] | unique) == [7]) |
+              ([.[].total_count] | unique) == [6]) |
             [.[].jobs[]] as $jobs |
-            ($jobs | length) == 7 and ($jobs | map(.id) | unique | length) == 7 and
+            ($jobs | length) == 6 and ($jobs | map(.id) | unique | length) == 6 and
             all($jobs[]; .run_id == $run_id and .head_sha == $source and .status == "completed") and
             ($jobs | map({id,name,conclusion}) | sort_by(.name)) == ([
               {id:$health,name:"health",conclusion:"skipped"},
@@ -378,17 +371,13 @@ jobs:
               {id:$metadata,name:"metadata",conclusion:"success"},
               {id:$preflight,name:"preflight",conclusion:"success"},
               {id:$promotion,name:"promotion",conclusion:"success"},
-              {id:$release,name:"release",conclusion:"success"},
-              {id:$supply_chain,name:"supply_chain",conclusion:"success"}
+              {id:$release,name:"release",conclusion:"success"}
             ] | sort_by(.name)) and
             ([$jobs[] | select(.id == $homebrew and
               .html_url == ("https://github.com/" + $repository + "/actions/runs/" + ($run_id|tostring) + "/job/" + ($homebrew|tostring))
             )] | length) == 1 and
             ([$jobs[] | select(.id == $homebrew)][0]) as $homebrew_job |
-            exact_step($homebrew_job; "Require exact-source attestations before tap mutation"; "failure") and
-            exact_step($homebrew_job; "Generate exact Homebrew formula"; "skipped") and
-            exact_step($homebrew_job; "Mint scoped Homebrew App token"; "skipped") and
-            exact_step($homebrew_job; "Require exact Homebrew App identity and repository scope"; "skipped") and
+            ([$homebrew_job.steps[] | select(.conclusion == "failure")] | length) == 1 and
             exact_step($homebrew_job; "Create or reuse deterministic Homebrew pull request"; "skipped") and
             exact_step($homebrew_job; "Require exact Homebrew pull-request head CI"; "skipped") and
             exact_step($homebrew_job; "Merge exact Homebrew pull-request head"; "skipped") and
@@ -480,17 +469,6 @@ jobs:
             echo "Release identity or asset metadata changed during bridge validation" >&2
             exit 1
           }
-
-          state=$(scripts/release/artifact-attestation-state.sh \
-            release-dist "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" "$SOURCE_SHA")
-          [[ "$state" == "complete|complete" ]] || {
-            echo "Homebrew bridge requires complete exact-source provenance and SPDX attestations; observed $state" >&2
-            exit 1
-          }
-          scripts/release/verify-artifact-attestations.sh \
-            release-dist "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" "$SOURCE_SHA" all
 
           mkdir -p tap-out "$RUNNER_TEMP/source-formula/scripts/release" "$RUNNER_TEMP/source-formula/release" \
             "$RUNNER_TEMP/source-formula-home"
@@ -718,7 +696,6 @@ jobs:
           SOURCE_CI_RUN_ATTEMPT: ${{ inputs.source_ci_run_attempt }}
           SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          SUPPLY_CHAIN_JOB_ID: ${{ inputs.supply_chain_job_id }}
           VERSION: ${{ inputs.version }}
           PUBLICATION_STATE: ${{ steps.tap-result.outputs.publication_state }}
           PR_NUMBER: ${{ steps.tap-result.outputs.pr_number }}
@@ -752,7 +729,7 @@ jobs:
             --argjson bootstrap_artifact_id "$BOOTSTRAP_RESULT_ARTIFACT_ID" --argjson publisher_run_id "$PUBLISHER_RUN_ID" \
             --argjson publisher_attempt "$PUBLISHER_RUN_ATTEMPT" --argjson metadata_job_id "$METADATA_JOB_ID" \
             --argjson promotion_job_id "$PROMOTION_JOB_ID" --argjson preflight_job_id "$PREFLIGHT_JOB_ID" \
-            --argjson release_job_id "$RELEASE_JOB_ID" --argjson supply_chain_job_id "$SUPPLY_CHAIN_JOB_ID" \
+            --argjson release_job_id "$RELEASE_JOB_ID" \
             --argjson homebrew_job_id "$FAILED_HOMEBREW_JOB_ID" --argjson health_job_id "$HEALTH_JOB_ID" \
             --argjson pr_number "$PR_NUMBER" '
             {
@@ -771,7 +748,7 @@ jobs:
               failed_publisher:{
                 run_id:$publisher_run_id,run_attempt:$publisher_attempt,identity:$publisher[0],
                 jobs:{metadata:$metadata_job_id,promotion:$promotion_job_id,preflight:$preflight_job_id,
-                  release:$release_job_id,supply_chain:$supply_chain_job_id,homebrew:$homebrew_job_id,health:$health_job_id}
+                  release:$release_job_id,homebrew:$homebrew_job_id,health:$health_job_id}
               },
               homebrew:{
                 repository:$tap_repository,formula_sha256:$formula_sha256,tap_before_sha:$tap_before_sha,

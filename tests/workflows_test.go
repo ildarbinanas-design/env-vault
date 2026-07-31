@@ -226,9 +226,7 @@ func TestWorkflowFilesParseAndPinReviewedActions(t *testing.T) {
 		"actions/setup-go":                 setupGoAction,
 		"actions/upload-artifact":          uploadArtifactAction,
 		"actions/download-artifact":        downloadAction,
-		"actions/attest":                   "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
 		"actions/create-github-app-token":  createAppTokenAction,
-		"anchore/sbom-action":              "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 		"actions/dependency-review-action": "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
 		"googleapis/release-please-action": releasePleaseAction,
 	}
@@ -447,22 +445,21 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 		}
 	}
 
-	wantSubjects := make([]string, 0, len(contract.Platforms))
-	for _, platform := range contract.Platforms {
-		wantSubjects = append(wantSubjects, "release-dist/"+platform.Archive)
+	// Trim Phase 5 removed the bespoke provenance/SBOM contour outright
+	// (docs/release-refactor-backlog.md item 14 holds the deferred
+	// replacement). No workflow may quietly reintroduce it.
+	if _, ok := publisher.Jobs["supply_chain"]; ok {
+		t.Fatal("publisher reintroduces the retired supply_chain job")
 	}
-	var attestationSteps int
-	for _, step := range publisher.Jobs["supply_chain"].Steps {
-		if step.Uses != "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6" {
-			continue
+	for _, identity := range contract.Workflows {
+		raw := readFile(t, filepath.Join("..", ".github", "workflows", identity.File))
+		for _, marker := range []string{
+			"actions/attest", "anchore/sbom-action", "gh attestation", "attestations:",
+		} {
+			if strings.Contains(raw, marker) {
+				t.Fatalf("%s reintroduces attestation machinery via %q", identity.File, marker)
+			}
 		}
-		attestationSteps++
-		if got := strings.Fields(step.With["subject-path"]); !slices.Equal(got, wantSubjects) {
-			t.Fatalf("%s attestation subjects=%v, contract archives=%v", step.Name, got, wantSubjects)
-		}
-	}
-	if attestationSteps != 2 {
-		t.Fatalf("publisher attestation step count=%d, want provenance+SBOM", attestationSteps)
 	}
 
 	_ = planningIdentity
@@ -904,8 +901,8 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 	if directPairSteps != 6 {
 		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 6", directPairSteps)
 	}
-	if activationCalls != 5 {
-		t.Fatalf("typed-contract activation calls=%d, want one for each of five native jobs", activationCalls)
+	if activationCalls != 4 {
+		t.Fatalf("typed-contract activation calls=%d, want one for each of four publisher consumer jobs", activationCalls)
 	}
 	wantConsumers := []string{
 		"../.github/workflows/publish-homebrew-bridge.yml|homebrew_bridge|Validate protected-main control, source contract, tag, and Release",
@@ -941,9 +938,9 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
 	assertGlobalReleaseConcurrency(t, "publisher", wf)
-	assertJobIDs(t, wf, "metadata", "preflight", "promotion", "release", "supply_chain", "homebrew", "health")
-	if len(wf.Jobs) != 7 {
-		t.Fatalf("publisher job count=%d, want 7", len(wf.Jobs))
+	assertJobIDs(t, wf, "metadata", "preflight", "promotion", "release", "homebrew", "health")
+	if len(wf.Jobs) != 6 {
+		t.Fatalf("publisher job count=%d, want 6", len(wf.Jobs))
 	}
 	assertPermissions(t, "publisher", wf.Permissions, map[string]string{
 		"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read",
@@ -957,15 +954,14 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 		t.Fatalf("publisher manual inputs=%+v", dispatch.Inputs)
 	}
 
-	for _, jobID := range []string{"preflight", "promotion", "release", "supply_chain", "homebrew", "health"} {
+	for _, jobID := range []string{"preflight", "promotion", "release", "homebrew", "health"} {
 		assertCancellationSafe(t, "publisher "+jobID, wf.Jobs[jobID])
 	}
 	assertNeeds(t, "preflight", wf.Jobs["preflight"], "metadata")
 	assertNeeds(t, "promotion", wf.Jobs["promotion"], "metadata")
 	assertNeeds(t, "release", wf.Jobs["release"], "metadata", "preflight", "promotion")
-	assertNeeds(t, "supply_chain", wf.Jobs["supply_chain"], "metadata", "release")
-	assertNeeds(t, "homebrew", wf.Jobs["homebrew"], "metadata", "preflight", "promotion", "release", "supply_chain")
-	assertNeeds(t, "health", wf.Jobs["health"], "metadata", "promotion", "release", "supply_chain", "homebrew")
+	assertNeeds(t, "homebrew", wf.Jobs["homebrew"], "metadata", "preflight", "promotion", "release")
+	assertNeeds(t, "health", wf.Jobs["health"], "metadata", "promotion", "release", "homebrew")
 
 	metadata := wf.Jobs["metadata"]
 	resolve := namedStep(t, metadata, "Resolve exact tag, source, CI attempt, and repair stage")
@@ -1044,25 +1040,11 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 	}
 }
 
-func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.T) {
+func TestPublisherKeepsReleaseHomebrewAndHealthBoundaries(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
 	assertPermissions(t, "release", wf.Jobs["release"].Permissions, map[string]string{"contents": "write"})
-	assertPermissions(t, "supply chain", wf.Jobs["supply_chain"].Permissions, map[string]string{
-		"contents": "read", "id-token": "write", "attestations": "write", "artifact-metadata": "write",
-	})
-	assertPermissions(t, "homebrew", wf.Jobs["homebrew"].Permissions, map[string]string{"contents": "read", "attestations": "read"})
-	assertPermissions(t, "health", wf.Jobs["health"].Permissions, map[string]string{"actions": "read", "contents": "read", "attestations": "read", "pull-requests": "read"})
-
-	supply := wf.Jobs["supply_chain"]
-	if namedStep(t, supply, "Safely extract packages for SBOM").Run != "go run ./cmd/release-extract --input-dir release-dist --output-dir sbom-root" {
-		t.Fatalf("supply chain does not use the shared safe extractor")
-	}
-	if namedStep(t, supply, "Attest build provenance").Uses == "" || namedStep(t, supply, "Attest SPDX SBOM").Uses == "" {
-		t.Fatalf("supply chain provenance/SBOM attestation stages missing")
-	}
-	if finalVerify := namedStep(t, supply, "Require complete exact-source attestations after creation or reuse"); !containsAll(finalVerify.Run, "verify-artifact-attestations.sh", `"$SOURCE_SHA"`, "all") {
-		t.Fatalf("supply chain does not fail closed on the exact post-create attestation tuple")
-	}
+	assertPermissions(t, "homebrew", wf.Jobs["homebrew"].Permissions, map[string]string{"contents": "read"})
+	assertPermissions(t, "health", wf.Jobs["health"].Permissions, map[string]string{"actions": "read", "contents": "read", "pull-requests": "read"})
 
 	homebrew := wf.Jobs["homebrew"]
 	if homebrew.Environment != "release" {
@@ -1079,7 +1061,8 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 		t.Fatalf("Homebrew must preserve both exact PR-head and post-merge CI gates")
 	}
 	assertStepOrder(t, homebrew,
-		"Require exact-source attestations before tap mutation",
+		"Download and verify published assets",
+		"Generate exact Homebrew formula",
 		"Create or reuse deterministic Homebrew pull request",
 		"Require exact Homebrew pull-request head CI",
 		"Merge exact Homebrew pull-request head",
@@ -1096,25 +1079,24 @@ func TestPublisherKeepsReleaseSupplyChainHomebrewAndHealthBoundaries(t *testing.
 	if !containsAll(settingsVerify.Run, "settings verify", "--planning-run-id", "--planning-run-attempt", "--source-sha", "--release-version", "cmp") {
 		t.Fatalf("health does not replay the settings proof against the exact release/planning tuple")
 	}
-	healthVerify := namedStep(t, health, "Verify release, supply chain, Homebrew, blocked tags, and abandoned release")
+	healthVerify := namedStep(t, health, "Verify release, Homebrew, blocked tags, and abandoned release")
 	if !containsAll(healthVerify.Run,
 		"wait-tap-ci.sh", "pull_request", "push", "version_policy.blocked_versions[]",
 		"--verify-published-pr", `include "homebrew-state"`, "env_vault_homebrew_state",
-		"gh attestation verify", "runInvocationURI",
-		`[[ "$verified_attestations" == "10" ]]`,
 		"merge_is_ancestor_of_tap", `merge-base --is-ancestor "$merge_sha" "$tap_sha"`,
 		`wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push`,
 		"checked_blocked_versions", "verify-abandoned-release-policy.sh") {
-		t.Fatalf("health does not independently re-observe release, attestations, both tap gates, and all blocked versions")
+		t.Fatalf("health does not independently re-observe release, both tap gates, and all blocked versions")
 	}
 	if strings.Contains(healthVerify.Run, "verify-repository-release-settings.sh") || !strings.Contains(healthVerify.Run, "$GITHUB_STEP_SUMMARY") {
 		t.Fatalf("read-scoped health must replay the sealed proof without a live administration query")
 	}
-	// The evidence ledger is retired: health verifies live state and fails the
-	// publisher, it no longer assembles or uploads a durable observation.
-	for _, retired := range []string{"releasecheck evidence", "release-observation.json", "health-proof.json", "attestation-verifications.json"} {
+	// The evidence ledger and the bespoke provenance/SBOM contour are retired:
+	// health verifies live state and fails the publisher, it no longer uploads
+	// an observation or re-verifies attestations.
+	for _, retired := range []string{"releasecheck evidence", "release-observation.json", "health-proof.json", "attestation-verifications.json", "gh attestation verify", "verified_attestations"} {
 		if strings.Contains(healthVerify.Run, retired) {
-			t.Fatalf("health still produces retired evidence-ledger output %q", retired)
+			t.Fatalf("health still produces retired output %q", retired)
 		}
 	}
 	for _, step := range health.Steps {
@@ -1168,8 +1150,8 @@ func TestEmptyReleaseBootstrapIsMainBoundMinimalAndFailClosed(t *testing.T) {
 	if !containsAll(identity.Run,
 		"release_require_typed_contract_projection", "actions identity", "$RELEASE_CI_WORKFLOW_PATH", `--head-ref "$DEFAULT_BRANCH"`,
 		`.head_branch == $branch`, "classify-attempt", "ATTEMPT_MATRIX_COMPLETE",
-		"$SOURCE_RELEASECHECK", "$RELEASE_PUBLISHER_WORKFLOW_PATH", "--conclusion failure", "([.[].total_count] | unique) == [7]", "($jobs | length) == 7",
-		"No-clobber reconcile all ten release assets", "supply_chain", "skipped", "homebrew", "health",
+		"$SOURCE_RELEASECHECK", "$RELEASE_PUBLISHER_WORKFLOW_PATH", "--conclusion failure", "([.[].total_count] | unique) == [6]", "($jobs | length) == 6",
+		"No-clobber reconcile all ten release assets", "skipped", "homebrew", "health",
 		"artifact-pages", "env_vault_exact_artifact($name; $run_id; $source)",
 		".id == $artifact_id", ".digest == $digest", ".workflow_run.head_branch == $version",
 	) {
@@ -1284,7 +1266,6 @@ func TestEmptyReleaseBootstrapFailedPublisherPredicateUsesRealisticJobPages(t *t
 					map[string]any{"name": "No-clobber reconcile all ten release assets", "status": "completed", "conclusion": "failure"},
 				},
 			},
-			job(8007, "supply_chain", "skipped"),
 		}
 		if mutate != nil {
 			mutate(jobs)
@@ -1329,7 +1310,7 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/publish-homebrew-bridge.yml")
 	assertGlobalReleaseConcurrency(t, "Homebrew bridge", wf)
 	assertPermissions(t, "Homebrew bridge", wf.Permissions, map[string]string{
-		"actions": "read", "attestations": "read", "contents": "read",
+		"actions": "read", "contents": "read",
 	})
 	assertJobIDs(t, wf, "homebrew_bridge")
 	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
@@ -1340,7 +1321,7 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		"bootstrap_result_artifact_id", "bootstrap_result_artifact_sha256",
 		"failed_publisher_run_id", "failed_publisher_run_attempt",
 		"metadata_job_id", "promotion_job_id", "preflight_job_id", "release_job_id",
-		"supply_chain_job_id", "failed_homebrew_job_id", "health_job_id",
+		"failed_homebrew_job_id", "health_job_id",
 	}
 	if len(dispatch.Inputs) != len(wantInputs) {
 		t.Fatalf("Homebrew bridge inputs=%v, want exact %v", dispatch.Inputs, wantInputs)
@@ -1357,7 +1338,7 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		t.Fatalf("Homebrew bridge environment/timeout=%q/%d", job.Environment, job.TimeoutMinutes)
 	}
 	assertPermissions(t, "Homebrew bridge job", job.Permissions, map[string]string{
-		"actions": "read", "attestations": "read", "contents": "read",
+		"actions": "read", "contents": "read",
 	})
 
 	control := namedStep(t, job, "Validate protected-main control, source contract, tag, and Release")
@@ -1377,9 +1358,9 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 	if !containsAll(incident.Run,
 		"bootstrap-identity.json", `--workflow-path "$RELEASE_ASSETS_BOOTSTRAP_WORKFLOW_PATH"`, "--job-name bootstrap",
 		"BOOTSTRAP_RESULT_ARTIFACT_SHA256", "env_vault_exact_artifact", "failed-publisher-identity.json",
-		"event=workflow_dispatch version=${VERSION} repair=release-assets", "([.[].total_count] | unique) == [7]",
+		"event=workflow_dispatch version=${VERSION} repair=release-assets", "([.[].total_count] | unique) == [6]",
 		`{id:$homebrew,name:"homebrew",conclusion:"failure"}`,
-		"Require exact-source attestations before tap mutation", "Generate exact Homebrew formula", "skipped",
+		`select(.conclusion == "failure")] | length) == 1`,
 		"Create or reuse deterministic Homebrew pull request") {
 		t.Fatalf("Homebrew bridge bootstrap/publisher incident guard is incomplete: %s", incident.Run)
 	}
@@ -1394,8 +1375,7 @@ func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
 		"source scripts/release/lib.sh", "env-vault.release-assets-bootstrap.v1", "bootstrap_pair",
 		`release_sha256_file "release-dist/$bootstrap_archive"`, `release_sha256_file "release-dist/$bootstrap_checksum"`,
 		`.name == $archive and .sha256 == $archive_sha256`, `.name == $checksum and .sha256 == $checksum_sha256`,
-		"download-release-assets.sh", "artifact-attestation-state.sh", "complete|complete",
-		"verify-artifact-attestations.sh", `"$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH"`,
+		"download-release-assets.sh",
 		`git show "${SOURCE_SHA}:scripts/release/generate-homebrew-formula.sh"`,
 		"env -i", "source-formula-home", "current and immutable-source Homebrew formulas differ",
 		"--require-unpublished", ".state == \"UNPUBLISHED\"") {

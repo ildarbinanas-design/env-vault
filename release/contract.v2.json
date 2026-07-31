@@ -259,7 +259,6 @@
         "preflight",
         "promotion",
         "release",
-        "supply_chain",
         "homebrew",
         "health"
       ]
@@ -390,20 +389,14 @@
       "state_mutating": true
     },
     {
-      "id": "supply_chain",
+      "id": "homebrew",
       "ordinal": 5,
       "workflow": "publisher",
       "state_mutating": true
     },
     {
-      "id": "homebrew",
-      "ordinal": 6,
-      "workflow": "publisher",
-      "state_mutating": true
-    },
-    {
       "id": "health",
-      "ordinal": 7,
+      "ordinal": 6,
       "workflow": "publisher",
       "state_mutating": false
     }
