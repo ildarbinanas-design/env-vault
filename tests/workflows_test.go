@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	checkoutAction       = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+	checkoutAction       = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction        = "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16"
 	uploadArtifactAction = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 	downloadAction       = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
@@ -226,7 +226,7 @@ func TestWorkflowFilesParseAndPinReviewedActions(t *testing.T) {
 		"actions/setup-go":                 setupGoAction,
 		"actions/upload-artifact":          uploadArtifactAction,
 		"actions/download-artifact":        downloadAction,
-		"actions/attest":                   "actions/attest@a1948c3f048ba23858d222213b7c278aabede763",
+		"actions/attest":                   "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6",
 		"actions/create-github-app-token":  createAppTokenAction,
 		"anchore/sbom-action":              "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
 		"actions/dependency-review-action": "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
@@ -453,7 +453,7 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 	}
 	var attestationSteps int
 	for _, step := range publisher.Jobs["supply_chain"].Steps {
-		if step.Uses != "actions/attest@a1948c3f048ba23858d222213b7c278aabede763" {
+		if step.Uses != "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6" {
 			continue
 		}
 		attestationSteps++
