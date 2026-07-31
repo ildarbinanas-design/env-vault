@@ -69,7 +69,7 @@ flowchart TD
     J["[AUTOMATED] Pre-tag inventory, settings proof, authorization,<br/>abandoned-release policy, exact immutable tag"]
     K["[LLM OPTIONAL] Observe planning and publisher<br/>cards 11-12"]
     K0["[HUMAN NO-LLM] Run cards 11-12 unchanged"]
-    L["[AUTOMATED] Promote bytes, GitHub Release, 10 assets,<br/>provenance and SPDX SBOM attestations"]
+    L["[AUTOMATED] Promote bytes, GitHub Release, 10 assets"]
     M["[AUTOMATED] Homebrew PR, exact PR-head CI,<br/>head-guarded merge, exact post-merge CI"]
     N["[AUTOMATED] Health verification of live published state"]
     O["[LLM OPTIONAL] Post-release verification and metrics<br/>cards 13-14"]
@@ -110,10 +110,9 @@ flowchart TD
 | Generated release PR merge | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after review | exact PR number and reviewed head SHA | one head-guarded squash merge; repository PR/Contents write | 10 |
 | Five-target inventory and promotion manifest | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | `env-vault.attempt-classification.v1` and `env-vault.promotion-verification.v1` | read-only verification of one CI attempt | 11 |
 | Tag planning | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | authorization tuple, settings proof, exact source/tag SHA | only the planning token has scoped Contents write; operator does not create a tag | 12 |
-| Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents/Attestations writes | 12 |
-| Provenance, SBOM and attestations | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | two verified predicate types for each of five archives | automated OIDC/Attestations write; operator read-only | 13 |
+| Publisher and no-clobber Release | `[AUTOMATED]`; observation is `[LLM OPTIONAL]` | exact tag trigger, promotion verification, Release with ten assets | publisher-scoped Contents write | 12 |
 | Homebrew PR-head and post-merge gates | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | exact formula, PR/head/merge/tap SHAs and two successful run identities | tap token only: Actions read, Contents and Pull requests write | 13 |
-| Health verification of published state | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | live tag/Release/asset/attestation/Homebrew/tap state | health is read-only and stores nothing durable | 14 |
+| Health verification of published state | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | live tag/Release/asset/Homebrew/tap state | health is read-only and stores nothing durable | 14 |
 | Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 15 |
 | Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 16 |
 | Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap state and metrics schemas | read-only | 14 |
@@ -763,8 +762,8 @@ Choose exactly one repair; the three lines are alternatives, not a sequence.
 the exact source and succeed after producing authorization/settings/abandoned
 policy proofs. Publisher JSON must identify workflow `build-binaries`, event
 `push` for first publication or `workflow_dispatch` for one named repair,
-exact head/source, and the seven job identities `metadata`, `preflight`,
-`promotion`, `release`, `supply_chain`, `homebrew`, and `health` with the
+exact head/source, and the six job identities `metadata`, `preflight`,
+`promotion`, `release`, `homebrew`, and `health` with the
 contractually expected success/skips.
 
 **Exit, effect, and permission.** Observation is read-only. Tag creation is an
@@ -813,7 +812,7 @@ and contain exactly one archive/checksum pair. Re-read the Release and require
 exactly those two byte-identical assets and no others. Only then dispatch the
 ordinary card-12 `release-assets` repair at `--ref "$VERSION"`; that frozen
 workflow must verify the pair and publish the remaining eight assets before
-the normal supply-chain, Homebrew, and health stages proceed.
+the normal Homebrew and health stages proceed.
 
 Stop on every input mismatch, expired/missing bundle, nonempty initial asset
 set, unexpected/duplicate name, byte difference, concurrent mutation, or
@@ -836,7 +835,7 @@ zero-asset state and exact incident tuple before dispatch.
 #### 13b. Protected-main Homebrew bridge after a source-frozen transport failure
 
 Use this incident-only path only when the immutable tag already has the exact
-stable ten-asset Release and complete exact-source provenance/SPDX attestations,
+stable ten-asset Release,
 but its Homebrew job failed before formula generation, PR,
 or tap mutation. First merge the reviewed transport/bridge PR and require its
 exact-head and new `main` CI to succeed. Read every coordinate afresh, including
@@ -866,20 +865,19 @@ gh workflow run publish-homebrew-bridge.yml \
   -f promotion_job_id="$PROMOTION_JOB_ID" \
   -f preflight_job_id="$PREFLIGHT_JOB_ID" \
   -f release_job_id="$RELEASE_JOB_ID" \
-  -f supply_chain_job_id="$SUPPLY_CHAIN_JOB_ID" \
   -f failed_homebrew_job_id="$FAILED_HOMEBREW_JOB_ID" \
   -f health_job_id="$HEALTH_JOB_ID"
 ```
 
-The 23 top-level inputs are separate required strings. The source workflow
-token has only Actions, Attestations, and Contents read. Before the tap secret
+The 22 top-level inputs are separate required strings. The source workflow
+token has only Actions and Contents read. Before the tap secret
 is accessed, the workflow binds the protected-main SHA/CI, source CI/tag,
 current/source contract and formula parity, stable Release ID and ten exact
-asset/checksum bytes, complete signer/source attestations, successful bootstrap
-run/job/result ID/digest/pair bytes, and exact seven-job failed publisher graph.
+asset/checksum bytes, successful bootstrap
+run/job/result ID/digest/pair bytes, and exact six-job failed publisher graph.
 The failed run must be `workflow_dispatch`, have diagnostic coordinate
-`repair=release-assets`, and show Homebrew failing at the attestation gate with
-all formula/PR/merge steps skipped.
+`repair=release-assets`, and show Homebrew failing at exactly one pre-mutation
+step with all tap-mutation steps skipped.
 
 The deterministic tap head is searched across every PR state and base. The
 tap formula must still be lower and both branch and PR absent. Protected main
@@ -905,20 +903,17 @@ gh workflow run build-binaries.yml \
 
 Capture that new run ID atomically. Require the tag-scoped health job to
 succeed. Never use this bridge to create or edit a
-Release, upload or replace assets, create attestations,
+Release, upload or replace assets,
 or request Workflows/administration permission. See ADR 0005.
 
-### 13. Provenance, SBOM, Homebrew, and both tap CI gates
+### 13. Homebrew and both tap CI gates
 
-**Command.** Verify the published assets and both attestation predicate types,
-then run the exact read-only Homebrew verifier:
+**Command.** Download the published assets, then run the exact read-only
+Homebrew verifier:
 
 ```sh
 scripts/release/download-release-assets.sh \
   "$VERSION" "$SNAPSHOT_DIR/release-assets" "$REPOSITORY"
-SOURCE_SHA="$SOURCE_SHA" scripts/release/with-typed-contract.sh \
-  scripts/release/verify-artifact-attestations.sh \
-  "$SNAPSHOT_DIR/release-assets" "$REPOSITORY"
 
 scripts/release/generate-homebrew-formula.sh \
   "$VERSION" "$SNAPSHOT_DIR/release-assets" "$SNAPSHOT_DIR/env-vault.rb"
@@ -946,15 +941,14 @@ scripts/release/wait-tap-ci.sh \
 ```
 
 **Inputs and machine result.** Inputs are the ten exact Release assets, exact
-source SHA, signer workflow, generated formula, and tap repository. Every one
-of five archives must verify both SLSA provenance and SPDX 2.3 attestations.
+source SHA, generated formula, and tap repository.
 The Homebrew parser must produce exactly 13 unique allowed keys, including
 `state=MERGED`, `already_merged=true`, `no_op=true`, and
 `merge_is_ancestor_of_tap=true`. Each tap run must bind workflow
 `test-formula.yml`, its exact event/head, and `conclusion=success`.
 
 **Exit, effect, and permission.** Entire card is read-only and requires
-Release/Contents/Attestations/Actions/Pull requests read in the two repos.
+Release/Contents/Actions/Pull requests read in the two repos.
 Publisher Homebrew mutation is separate and uses only the tap token's Actions
 read, Contents write, and Pull requests write.
 
@@ -970,7 +964,7 @@ formula version, force-push tap, or substitute only one of the two CI gates.
 
 **Command.** Require the exact first publisher run and its `health` job to
 succeed. `health` re-observes live state — tag, Release, ten assets and their
-digests, ten attestation verifications, the Homebrew formula and both tap CI
+digests, the Homebrew formula and both tap CI
 gates, the replayed pre-tag settings proof, every blocked failed tag, and the
 abandoned-release policy — and fails the publisher on any drift. It stores
 nothing durable: the Release page, the tag, and pull-request history are the
@@ -1090,7 +1084,7 @@ jq -e \
 
 **Inputs and machine result.** The publisher's `health` job must have concluded
 `success`; its step summary records the verified version, source SHA, Release
-URL, asset count, attestation count, rechecked blocked versions, and the
+URL, asset count, rechecked blocked versions, and the
 Homebrew PR/merge/tap tuple. Health uploads no artifact. Metrics are
 `env-vault.release-metrics.v1`; comparison is
 `env-vault.release-metrics-comparison.v1`. They bind the three distinct exact
@@ -1100,11 +1094,11 @@ time.
 
 **Exit, effect, and permission.** Observation and checking are read-only. The
 publisher's `health` job holds `actions: read`, `contents: read`,
-`attestations: read`, and `pull-requests: read`; it performs no mutation.
+and `pull-requests: read`; it performs no mutation.
 
 **Reverify.** Require the tag to peel to `SOURCE_SHA`; stable non-draft,
 non-prerelease Release; exactly ten assets and matching digests; promotion from
-one attempt; ten attestations; exact Homebrew tuple and both gates; publisher
+one attempt; exact Homebrew tuple and both gates; publisher
 health success; the `v0.0.12` and `v0.0.8` guarantees; and
 the no-product-diff command from card 4 against the original implementation
 base. Compare with baselines only after those checks: main CI 25 jobs / 387 s
@@ -1468,13 +1462,13 @@ A release is complete only when all of the following hold for one exact tuple:
   its classifier returned `none` / `ATTEMPT_MATRIX_COMPLETE`.
 - The immutable tag peels to the exact release source; the stable GitHub
   Release has exactly ten no-clobber assets and matching digests.
-- All five archives pass three literal-version probes and both exact-source
-  attestation predicates: SLSA provenance and SPDX 2.3 SBOM.
+- All five archives pass three literal-version probes.
 - The exact Homebrew PR head passed pull-request CI, was merged unchanged, and
   its exact merge passed post-merge CI; current tap `main` contains that merge
   and the byte-exact monotonic formula.
-- Publisher `health` succeeded and uploaded the observation/health tuple;
-  automatic `release-evidence` succeeded and the v1 evidence replays offline.
+- Publisher `health` succeeded. It uploads nothing durable: the Release page,
+  the tag, and pull-request history are the audit trail (the evidence ledger
+  was retired on 2026-07-30).
 - `v0.0.12` still has neither tag nor Release; `v0.0.8` still points to
   `1d094f9e4a3e0343e713d4126f6118a8a9e98e2d` and still has no Release; failed
   immutable tags `v0.0.8` through `v0.0.11` have not moved or gained Releases.

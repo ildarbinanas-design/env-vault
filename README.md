@@ -143,9 +143,9 @@ For an exact release merge, a bounded native probe verifies `--version`,
 environment. The file-only checker binds those saved results and seals the five
 archives, five checksum sidecars, contract/coverage/leak results, and semantic
 suite identity in one promotion manifest. Release planning verifies that exact
-attempt before creating the immutable tag. The seven-job `build-binaries`
-publisher then promotes those checked bytes, creates provenance and SPDX SBOM
-attestations, publishes Homebrew through exact PR-head and post-merge CI gates,
+attempt before creating the immutable tag. The six-job `build-binaries`
+publisher then promotes those checked bytes,
+publishes Homebrew through exact PR-head and post-merge CI gates,
 and performs release health checks. It does not rebuild the product or repeat
 source quality.
 
@@ -157,11 +157,10 @@ dispatch can only resume `release-assets`, `homebrew`, or `health` for an exact
 existing tag. `v0.0.1`–`v0.0.7` rebuilds are diagnostic-only and can never be
 published; `v0.0.8` through `v0.0.11` remain failed tags without Releases.
 
-The only routine human release checkpoint is semantic review plus an exact
-version/PR/head-SHA authorization. Automation records that exact line as a
-pre-merge generated-PR comment from the authorizing owner/member and binds its
-identity and body digest to the merge it authorizes. Planning, publisher,
-supply-chain, Homebrew, health, and metrics then run
+The only routine human release checkpoint is reviewing the generated release
+pull request and squash-merging it with a server-side head guard
+(`--match-head-commit`); that merge is the release authorization. Planning,
+publisher, Homebrew, and health then run
 automatically. Planning and publication share one non-cancelling global
 concurrency group.
 
@@ -172,9 +171,11 @@ planning, publication, and repair contracts.
 
 Supported targets are Linux amd64/arm64, macOS 15+ amd64/arm64, and Windows amd64.
 Each release contains exactly five archives and five matching SHA-256 files.
-The combined SPDX SBOM is a 14-day workflow artifact, and GitHub build
-provenance and SBOM attestations are stored separately for all five archives;
-they are deliberately not added to the immutable ten-asset Release contract.
+Provenance/SBOM attestations are no longer generated: the bespoke supply-chain
+contour was removed in the 2026-07 release-pipeline trim, and a
+DevSecOps-standard replacement is deferred to
+`docs/release-refactor-backlog.md` item 14 until a real consumer or security
+requirement appears.
 
 macOS 15+ release artifacts are built on macOS runners with `CGO_ENABLED=1`;
 the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux

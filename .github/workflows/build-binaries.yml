@@ -644,148 +644,6 @@ jobs:
           VERSION: ${{ needs.metadata.outputs.version }}
         run: scripts/release/reconcile-release-assets.sh "$VERSION" dist/assets
 
-  supply_chain:
-    if: >-
-      ${{
-        always() &&
-        !cancelled() &&
-        needs.metadata.result == 'success' &&
-        (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
-        needs.release.result == 'success'
-      }}
-    needs: [metadata, release]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.metadata.outputs.source_sha }}
-          persist-credentials: "false"
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-
-      - name: Download typed operational release projection
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.metadata.outputs.release_contract_artifact_id }}
-          path: ${{ runner.temp }}/release-contract-control
-
-      - name: Activate typed operational release projection
-        run: scripts/release/activate-typed-contract.sh "$RUNNER_TEMP/release-contract-control" "$GITHUB_ENV"
-
-      - name: Build the strict GitHub release transport once
-        run: |
-          set -euo pipefail
-          go build -trimpath -o "$RUNNER_TEMP/releasetransport" ./cmd/releasetransport
-          echo "RELEASE_TRANSPORT_BIN=$RUNNER_TEMP/releasetransport" >> "$GITHUB_ENV"
-
-      - name: Download canonical release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.metadata.outputs.version }}
-        run: scripts/release/download-release-assets.sh "$VERSION" release-dist
-
-      - id: attestation-state
-        name: Detect complete exact-source attestations
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_SHA: ${{ github.sha }}
-          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          source scripts/release/lib.sh
-          release_require_typed_contract_projection
-          state="$(scripts/release/artifact-attestation-state.sh \
-            release-dist \
-            "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" \
-            "$SOURCE_SHA")"
-          IFS='|' read -r provenance_state sbom_state extra <<< "$state"
-          for value in "$provenance_state" "$sbom_state"; do
-            case "$value" in complete|missing) ;; *) echo "unexpected attestation state: $state" >&2; exit 1 ;; esac
-          done
-          [[ -z "$extra" ]] || { echo "unexpected attestation state: $state" >&2; exit 1; }
-          create_provenance=false
-          create_sbom=false
-          [[ "$provenance_state" == "complete" ]] || create_provenance=true
-          [[ "$sbom_state" == "complete" ]] || create_sbom=true
-          if [[ "$create_provenance" == "true" || "$create_sbom" == "true" ]]; then
-            [[ "$RUN_SHA" == "$SOURCE_SHA" ]] || {
-              echo "cannot attest release ${SOURCE_SHA} from workflow source ${RUN_SHA}" >&2
-              exit 1
-            }
-          fi
-          {
-            printf 'create_provenance=%s\n' "$create_provenance"
-            printf 'create_sbom=%s\n' "$create_sbom"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Safely extract packages for SBOM
-        if: steps.attestation-state.outputs.create_sbom == 'true'
-        run: go run ./cmd/release-extract --input-dir release-dist --output-dir sbom-root
-
-      - name: Generate SPDX SBOM
-        if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          path: sbom-root
-          format: spdx-json
-          output-file: env-vault-sbom.spdx.json
-          syft-version: v1.44.0
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Upload SPDX SBOM workflow artifact
-        if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-sbom-${{ needs.metadata.outputs.version }}-attempt-${{ github.run_attempt }}
-          path: env-vault-sbom.spdx.json
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Attest build provenance
-        if: steps.attestation-state.outputs.create_provenance == 'true'
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
-        with:
-          subject-path: |
-            release-dist/env-vault-linux-amd64.tar.gz
-            release-dist/env-vault-linux-arm64.tar.gz
-            release-dist/env-vault-darwin-amd64.tar.gz
-            release-dist/env-vault-darwin-arm64.tar.gz
-            release-dist/env-vault-windows-amd64.zip
-
-      - name: Attest SPDX SBOM
-        if: steps.attestation-state.outputs.create_sbom == 'true'
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
-        with:
-          subject-path: |
-            release-dist/env-vault-linux-amd64.tar.gz
-            release-dist/env-vault-linux-arm64.tar.gz
-            release-dist/env-vault-darwin-amd64.tar.gz
-            release-dist/env-vault-darwin-arm64.tar.gz
-            release-dist/env-vault-windows-amd64.zip
-          sbom-path: env-vault-sbom.spdx.json
-
-      - name: Require complete exact-source attestations after creation or reuse
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          source scripts/release/lib.sh
-          release_require_typed_contract_projection
-          scripts/release/verify-artifact-attestations.sh \
-            release-dist "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" \
-            "$SOURCE_SHA" all
-
   homebrew:
     if: >-
       ${{
@@ -798,24 +656,21 @@ jobs:
           (
             (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
             needs.promotion.result == 'success' &&
-            needs.release.result == 'success' &&
-            needs.supply_chain.result == 'success'
+            needs.release.result == 'success'
           ) ||
           (
             needs.metadata.outputs.repair == 'homebrew' &&
             needs.promotion.result == 'skipped' &&
-            needs.release.result == 'skipped' &&
-            needs.supply_chain.result == 'skipped'
+            needs.release.result == 'skipped'
           )
         )
       }}
-    needs: [metadata, preflight, promotion, release, supply_chain]
+    needs: [metadata, preflight, promotion, release]
     runs-on: ubuntu-latest
     timeout-minutes: 55
     environment: release
     permissions:
       contents: read
-      attestations: read
     outputs:
       publication_state: ${{ steps.tap-result.outputs.publication_state }}
       pr_number: ${{ steps.tap-result.outputs.pr_number }}
@@ -855,24 +710,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: scripts/release/download-release-assets.sh "$VERSION" release-dist
-
-      - name: Require exact-source attestations before tap mutation
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.metadata.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          source scripts/release/lib.sh
-          release_require_typed_contract_projection
-          state="$(scripts/release/artifact-attestation-state.sh \
-            release-dist \
-            "$GITHUB_REPOSITORY" \
-            "$GITHUB_REPOSITORY/$RELEASE_PUBLISHER_WORKFLOW_PATH" \
-            "$SOURCE_SHA")"
-          [[ "$state" == "complete|complete" ]] || {
-            echo "Homebrew mutation requires complete exact-source provenance and SBOM attestations; observed ${state}" >&2
-            exit 1
-          }
 
       - name: Generate exact Homebrew formula
         env:
@@ -1000,31 +837,27 @@ jobs:
             (needs.metadata.outputs.repair == 'none' || needs.metadata.outputs.repair == 'release-assets') &&
             needs.promotion.result == 'success' &&
             needs.release.result == 'success' &&
-            needs.supply_chain.result == 'success' &&
             needs.homebrew.result == 'success'
           ) ||
           (
             needs.metadata.outputs.repair == 'homebrew' &&
             needs.promotion.result == 'skipped' &&
             needs.release.result == 'skipped' &&
-            needs.supply_chain.result == 'skipped' &&
             needs.homebrew.result == 'success'
           ) ||
           (
             needs.metadata.outputs.repair == 'health' &&
             needs.promotion.result == 'skipped' &&
             needs.release.result == 'skipped' &&
-            needs.supply_chain.result == 'skipped' &&
             needs.homebrew.result == 'skipped'
           )
         )
       }}
-    needs: [metadata, promotion, release, supply_chain, homebrew]
+    needs: [metadata, promotion, release, homebrew]
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
-      attestations: read
       pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1088,7 +921,7 @@ jobs:
             --json > repository-release-settings-proof.json
           cmp "${proofs[0]}" repository-release-settings-proof.json
 
-      - name: Verify release, supply chain, Homebrew, blocked tags, and abandoned release
+      - name: Verify release, Homebrew, blocked tags, and abandoned release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.metadata.outputs.version }}
@@ -1262,60 +1095,6 @@ jobs:
             [[ "$api_count" == "1" && "$api_size" == "$size" ]] || { echo "release asset API mismatch: $asset" >&2; exit 1; }
           done < <(printf '%s\n' "${RELEASE_ASSETS[@]}")
 
-          signer_workflow="${GITHUB_REPOSITORY}/${RELEASE_PUBLISHER_WORKFLOW_PATH}"
-          verified_attestations=0
-          while IFS=$'\t' read -r platform archive; do
-            archive_sha="$(shasum -a 256 "health-dist/$archive" | awk '{print $1}')"
-            for label in provenance sbom; do
-              predicate='https://slsa.dev/provenance/v1'
-              if [[ "$label" == "sbom" ]]; then predicate='https://spdx.dev/Document/v2.3'; fi
-              output="health-checks/${platform}-${label}-attestation.json"
-              gh attestation verify "health-dist/$archive" \
-                --repo "$GITHUB_REPOSITORY" \
-                --signer-workflow "$signer_workflow" \
-                --source-digest "$SOURCE_SHA" \
-                --predicate-type "$predicate" \
-                --format json > "$output"
-              jq -e \
-                --arg predicate "$predicate" \
-                --arg asset "$archive" \
-                --arg digest "$archive_sha" \
-                --arg source "$SOURCE_SHA" '
-                  type == "array" and length > 0 and
-                  all(.[];
-                    .verificationResult.statement.predicateType == $predicate and
-                    ([.verificationResult.statement.subject[] |
-                      select(.name == $asset and .digest.sha256 == $digest)] | length == 1) and
-                    .verificationResult.signature.certificate.githubWorkflowSHA == $source and
-                    .verificationResult.signature.certificate.sourceRepositoryDigest == $source and
-                    (.verificationResult.signature.certificate.runInvocationURI | type == "string")
-                  )
-                ' "$output" >/dev/null
-              prefix="https://github.com/${GITHUB_REPOSITORY}/actions/runs/"
-              selected_invocation="$(jq -er --arg prefix "$prefix" '
-                [.[] |
-                  .verificationResult.signature.certificate.runInvocationURI as $uri |
-                  select($uri | startswith($prefix)) |
-                  ($uri[($prefix | length):] |
-                    capture("^(?<run>[1-9][0-9]*)/attempts/(?<attempt>[1-9][0-9]*)$")) |
-                  {run_id:(.run | tonumber), attempt:(.attempt | tonumber)}
-                ] |
-                unique_by([.run_id,.attempt]) | sort_by(.run_id,.attempt) | last |
-                [.run_id,.attempt] | @tsv
-              ' "$output")"
-              IFS=$'\t' read -r attestation_run_id attestation_attempt extra <<< "$selected_invocation"
-              [[ "$attestation_run_id" =~ ^[1-9][0-9]*$ && "$attestation_attempt" =~ ^[1-9][0-9]*$ && -z "$extra" ]] || {
-                echo "attestation run invocation is malformed" >&2
-                exit 1
-              }
-              verified_attestations=$((verified_attestations + 1))
-            done
-          done < <(go run ./cmd/releasecheck contract matrix --json | jq -r '.include[] | [.id,.archive] | @tsv')
-          [[ "$verified_attestations" == "10" ]] || {
-            echo "verified attestation count=${verified_attestations}, want 10" >&2
-            exit 1
-          }
-
           scripts/release/verify-abandoned-release-policy.sh \
             "$VERSION" "$SOURCE_SHA" health-checks/abandoned-release-policy.json
 
@@ -1325,7 +1104,6 @@ jobs:
             printf -- '- Source SHA: `%s`\n' "$SOURCE_SHA"
             printf -- '- Release: %s\n' "$(jq -er '.html_url' release-state.json)"
             printf -- '- Assets verified: `%d`\n' "${#RELEASE_ASSETS[@]}"
-            printf -- '- Attestations verified: `%d`\n' "$verified_attestations"
             printf -- '- Blocked versions rechecked: `%d`\n' "$checked_blocked_versions"
             printf -- '- Homebrew PR: %s (merge `%s`, tap `%s`)\n' "$pr_url" "$merge_sha" "$tap_sha"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -15,7 +15,7 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - Mandatory tests are required once behavior beyond the local version placeholder is implemented.
 - The release audit trail is the GitHub Releases page plus ordinary git and pull
   request history. There is no append-only evidence ledger: the publisher's
-  `health` job verifies live release, attestation, Homebrew, blocked-tag, and
+  `health` job verifies live release, Homebrew, blocked-tag, and
   abandoned-release state and fails the release, it does not assemble a durable
   record. The published `release-evidence` branch and the durable evidence
   artifacts already in Actions storage are frozen history: never rewrite,

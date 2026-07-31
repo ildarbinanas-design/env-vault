@@ -168,7 +168,7 @@ func TestCanonicalContractOwnsOperationalReleaseIdentities(t *testing.T) {
 		{ID: "ci", Name: "ci", File: "ci.yml", Events: []string{"push", "pull_request", "workflow_dispatch"}, Jobs: []string{"quality", "quality-gate"}},
 		{ID: "quality", Name: "reusable-quality", File: "reusable-quality.yml", Events: []string{"workflow_call"}, Jobs: []string{"resolve", "source-quality", "license", "native", "e2e-gate"}},
 		{ID: "planning", Name: "release-please", File: "release-please.yml", Events: []string{"workflow_run"}, Jobs: []string{"inspect", "rerun-incomplete-attempt", "plan"}},
-		{ID: "publisher", Name: "build-binaries", File: "build-binaries.yml", Events: []string{"workflow_dispatch", "push"}, Jobs: []string{"metadata", "preflight", "promotion", "release", "supply_chain", "homebrew", "health"}},
+		{ID: "publisher", Name: "build-binaries", File: "build-binaries.yml", Events: []string{"workflow_dispatch", "push"}, Jobs: []string{"metadata", "preflight", "promotion", "release", "homebrew", "health"}},
 		{ID: "release_assets_bootstrap", Name: "bootstrap-release-assets", File: "bootstrap-release-assets.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"bootstrap"}},
 		{ID: "homebrew_bridge", Name: "publish-homebrew-bridge", File: "publish-homebrew-bridge.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"homebrew_bridge"}},
 		{ID: "legacy_rebuild", Name: "legacy-rebuild", File: "legacy-rebuild.yml", Events: []string{"workflow_dispatch"}, Jobs: []string{"resolve", "diagnostic"}},

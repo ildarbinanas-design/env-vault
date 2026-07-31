@@ -283,14 +283,13 @@ jobs:
             --argjson run_id "$PUBLISHER_RUN_ID" --argjson failed_job_id "$FAILED_JOB_ID" '
             select(type == "array" and length > 0 and
               all(.[]; type == "object" and (.jobs | type) == "array") and
-              ([.[].total_count] | unique) == [7]) |
+              ([.[].total_count] | unique) == [6]) |
             [.[].jobs[]] as $jobs |
-            ($jobs | length) == 7 and ($jobs | map(.id) | unique | length) == 7 and
+            ($jobs | length) == 6 and ($jobs | map(.id) | unique | length) == 6 and
             ($jobs | map({name, conclusion}) | sort_by(.name)) == [
               {name:"health",conclusion:"skipped"}, {name:"homebrew",conclusion:"skipped"},
               {name:"metadata",conclusion:"success"}, {name:"preflight",conclusion:"success"},
-              {name:"promotion",conclusion:"success"}, {name:"release",conclusion:"failure"},
-              {name:"supply_chain",conclusion:"skipped"}
+              {name:"promotion",conclusion:"success"}, {name:"release",conclusion:"failure"}
             ] and
             ([$jobs[] | select(.id == $failed_job_id and .run_id == $run_id and .head_sha == $source and
               .name == "release" and .status == "completed" and .conclusion == "failure" and

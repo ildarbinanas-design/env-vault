@@ -26,7 +26,13 @@ The first successful v2-contract release comparison is now captured in durable
 release-PR CI `29682351617`, and publisher `29683468172`; the measurement and
 its latency follow-up are recorded in items 12 and 6 respectively.
 
-## 1. Dual-source read-only verification for immutable historical tags — `frozen`
+## 1. Dual-source read-only verification for immutable historical tags — `retired unbuilt (trim Phase 4, 2026-07-31)`
+
+> Retired by `docs/trim-plan-2026-07-30.md` Phase 4 without ever being built.
+> Nothing existed to delete: the item below is kept verbatim as the record of
+> what was considered and consciously not pursued. The failed tags
+> `v0.0.8`-`v0.0.11` remain immutable and Release-less under the live
+> blocked-versions policy; investigating them needs no dedicated tooling.
 
 - **Problem and evidence:** the current checker validates the current contract
   and can rebuild legacy diagnostics, but a historical tag may predate the
@@ -546,7 +552,8 @@ the measurement-first latency investigation without a speedup claim.
   graph or setup optimization, preserving race/native/E2E and fail-closed gates;
 - item 11's checkpoint/Merkle work is retired unbuilt: trim Phase 3 removed the
   evidence ledger and its 64-commit validation window;
-- keep the failed legacy-tag export in item 1, generic recovery transitions in
+- item 1's failed legacy-tag export is retired unbuilt (trim Phase 4,
+  2026-07-31); keep generic recovery transitions in
   item 2, reusable App proof in item 3, inventory engine in item 5, and any CI
   job reduction in item 6 as separately reviewed changes;
 - do not remove the live v1 transition file until no supported immutable source

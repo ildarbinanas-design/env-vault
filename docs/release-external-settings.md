@@ -200,10 +200,10 @@ homebrew:
   environment: release
 ```
 
-The `metadata`, `preflight`, `promotion`, `release`, `supply_chain`, and
+The `metadata`, `preflight`, `promotion`, `release`, and
 `health` jobs must not declare it. The publisher has no build-only mode and no
 product build job. `repair=health` skips `homebrew`; the read-only health job
-uses `contents: read`, `attestations: read`, public tap state, and the repository
+uses `contents: read`, public tap state, and the repository
 workflow token. The environment-backed publication job also declares
 `release`, but it is manual-only and mints metadata-read rather than
 write-capable permissions.
@@ -441,8 +441,7 @@ The final job summary contains links to:
 - the immutable env-vault source SHA;
 - the tap pull request when one exists;
 - the exact release merge and current tap commits;
-- the successful `test-formula` push run for the release merge commit;
-- repository attestations; and
+- the successful `test-formula` push run for the release merge commit; and
 - the env-vault release workflow run.
 
 ## 7. Repair behavior
@@ -453,7 +452,7 @@ The release modes use the tap token and environment as follows:
 | --- | --- | --- | --- |
 | `release-assets` | `homebrew` only | create/reuse PR or exact no-op after asset reconciliation; wait exact PR and push CI | verify all live release and tap state |
 | `homebrew` | `homebrew` only | resume/reuse PR or exact no-op; wait exact CI | verify all live release and tap state |
-| `health` | none | no branch, PR, merge, or formula mutation | re-download assets, verify attestations/formula, and wait for exact tap push CI |
+| `health` | none | no branch, PR, merge, or formula mutation | re-download assets, verify the formula, and wait for exact tap push CI |
 
 The automatic tag event uses the internal normal mode; it is not selectable by
 manual dispatch. Every manual repair must run from the exact immutable tag ref.
