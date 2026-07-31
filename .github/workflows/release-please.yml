@@ -42,7 +42,7 @@ jobs:
       attempt: ${{ steps.attempt.outputs.attempt }}
     steps:
       - name: Check out the exact completed main commit
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
@@ -227,7 +227,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the exact release candidate
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.inspect.outputs.source_sha }}
           persist-credentials: "false"
@@ -355,7 +355,7 @@ jobs:
       version: ${{ steps.classify.outputs.version }}
     steps:
       - name: Check out the exact green main commit
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
@@ -363,7 +363,7 @@ jobs:
           persist-credentials: "false"
 
       - name: Check out the exact reviewed listener control plane
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           path: release-control-plane
