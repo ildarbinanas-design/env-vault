@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
-	"github.com/ildarbinanas-design/env-vault/internal/releasemetrics"
 	"github.com/ildarbinanas-design/env-vault/internal/releasepromotion"
 )
 
@@ -37,7 +36,7 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if document.ReleaseContractSchema != releasecontract.SchemaID || len(document.SemanticContractSHA256) != 64 {
 		t.Fatalf("contract identity=%+v", document)
 	}
-	for _, schema := range []string{"actions_artifact_deletion_batch", "actions_artifact_deletion_result", "actions_artifact_decision_manifest", "actions_artifact_decision_scope", "actions_artifact_live_collection", "actions_artifact_live_observation", "actions_artifact_manifest_package_summary", "actions_artifact_policy", "actions_artifact_policy_validation", "actions_artifact_raw_collection", "actions_artifact_repair_proof", "actions_artifact_snapshot", "actions_artifact_snapshot_validation", "release_contract_matrix", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "release_metrics", "release_metrics_baseline", "release_metrics_comparison", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_please_recovery", "release_please_recovery_check", "repository_release_settings_check", "repository_release_settings_proof"} {
+	for _, schema := range []string{"actions_artifact_deletion_batch", "actions_artifact_deletion_result", "actions_artifact_decision_manifest", "actions_artifact_decision_scope", "actions_artifact_live_collection", "actions_artifact_live_observation", "actions_artifact_manifest_package_summary", "actions_artifact_policy", "actions_artifact_policy_validation", "actions_artifact_raw_collection", "actions_artifact_repair_proof", "actions_artifact_snapshot", "actions_artifact_snapshot_validation", "release_contract_matrix", "attempt_classification", "legacy_rebuild_query", "legacy_rebuild_diagnostic", "source_quality_proof", "literal_version_results", "e2e_matrix_proof", "promotion_platform", "promotion_manifest", "promotion_verification", "release_please_recovery", "release_please_recovery_check", "repository_release_settings_check", "repository_release_settings_proof"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 1 || versions[0] != 1 {
 			t.Fatalf("supported %s versions=%v", schema, versions)
 		}
@@ -50,7 +49,7 @@ func TestVersionJSONReportsCheckerAndSemanticContract(t *testing.T) {
 	if versions := document.SupportedSchemaVersions["release_contract"]; len(versions) != 1 || versions[0] != 2 {
 		t.Fatalf("supported release_contract versions=%v", versions)
 	}
-	for _, schema := range []string{"release_evidence", "release_evidence_bundle", "release_observation", "release_health_proof", "attestation_verification_bundle", "release_contract_history", "release_contract_historical_source", "release_contract_source_route"} {
+	for _, schema := range []string{"release_evidence", "release_evidence_bundle", "release_observation", "release_health_proof", "attestation_verification_bundle", "release_contract_history", "release_contract_historical_source", "release_contract_source_route", "release_metrics", "release_metrics_baseline", "release_metrics_comparison"} {
 		if versions := document.SupportedSchemaVersions[schema]; len(versions) != 0 {
 			t.Fatalf("retired schema %s is still advertised: %v", schema, versions)
 		}
@@ -188,103 +187,6 @@ func TestPromotionCommandRequiresKnownSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"promotion", "unknown"}, &stdout, &stderr); code != exitUsage || !strings.Contains(stderr.String(), "record-platform") {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
-	}
-}
-
-func TestMetricsCLIStdoutAndFile(t *testing.T) {
-	runJSON, err := json.Marshal(validMetricsRun())
-	if err != nil {
-		t.Fatal(err)
-	}
-	runPath := writeTestFile(t, runJSON)
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"metrics", "--run-json", runPath, "--output", "-"}, &stdout, &stderr); code != exitOK {
-		t.Fatalf("stdout code=%d stderr=%s", code, stderr.String())
-	}
-	var metrics releasemetrics.Metrics
-	decodeOneJSON(t, stdout.Bytes(), &metrics)
-	if metrics.SchemaID != releasemetrics.SchemaID || metrics.RunID != 77 || metrics.JobCount != 1 || metrics.AggregateRunnerSeconds != 30 {
-		t.Fatalf("metrics=%+v", metrics)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	output := filepath.Join(t.TempDir(), "metrics.json")
-	if code := run([]string{"metrics", "--run-json", runPath, "--output", output}, &stdout, &stderr); code != exitOK {
-		t.Fatalf("file code=%d stderr=%s", code, stderr.String())
-	}
-	data, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decodeOneJSON(t, data, &metrics)
-	if stdout.Len() != 0 || stderr.Len() != 0 {
-		t.Fatalf("file output stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
-}
-
-func TestMetricsCLIFailsClosed(t *testing.T) {
-	invalid := writeTestFile(t, []byte(`{"attempt":1,"unexpected":true}`))
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"metrics", "--run-json", invalid, "--output", "-"}, &stdout, &stderr); code != exitSnapshotInvalid {
-		t.Fatalf("invalid code=%d stderr=%s", code, stderr.String())
-	}
-	var document errorDocument
-	decodeOneJSON(t, stdout.Bytes(), &document)
-	if document.Error.Code != "INPUT_INVALID" || document.OK {
-		t.Fatalf("error=%+v", document)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	valid, err := json.Marshal(validMetricsRun())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := run([]string{"metrics", "--run-json", writeTestFile(t, valid), "--output", t.TempDir()}, &stdout, &stderr); code != exitInternal {
-		t.Fatalf("output code=%d stderr=%s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "OUTPUT_FAILED") {
-		t.Fatalf("output failure=%q", stderr.String())
-	}
-}
-
-func TestMetricsOutputIsNoClobberAndRejectsSymlink(t *testing.T) {
-	valid, err := json.Marshal(validMetricsRun())
-	if err != nil {
-		t.Fatal(err)
-	}
-	runPath := writeTestFile(t, valid)
-	directory := t.TempDir()
-	existing := filepath.Join(directory, "existing.json")
-	if err := os.WriteFile(existing, []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"metrics", "--run-json", runPath, "--output", existing}, &stdout, &stderr); code != exitInternal {
-		t.Fatalf("existing code=%d stderr=%s", code, stderr.String())
-	}
-	data, err := os.ReadFile(existing)
-	if err != nil || string(data) != "preserve" {
-		t.Fatalf("existing output changed: data=%q err=%v", data, err)
-	}
-
-	target := filepath.Join(directory, "target.json")
-	if err := os.WriteFile(target, []byte("target-preserved"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	symlink := filepath.Join(directory, "metrics.json")
-	if err := os.Symlink(target, symlink); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := run([]string{"metrics", "--run-json", runPath, "--output", symlink}, &stdout, &stderr); code != exitInternal {
-		t.Fatalf("symlink code=%d stderr=%s", code, stderr.String())
-	}
-	data, err = os.ReadFile(target)
-	if err != nil || string(data) != "target-preserved" {
-		t.Fatalf("symlink target changed: data=%q err=%v", data, err)
 	}
 }
 
@@ -583,21 +485,5 @@ func decodeOneJSON(t *testing.T, data []byte, destination any) {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		t.Fatalf("extra JSON in %q: %v", data, err)
-	}
-}
-
-func validMetricsRun() releasemetrics.GHRun {
-	return releasemetrics.GHRun{
-		Attempt: 1, Conclusion: "success", CreatedAt: "2026-07-16T06:00:00Z", DatabaseID: 77,
-		Event: "push", HeadSHA: strings.Repeat("e", 40), StartedAt: "2026-07-16T06:00:05Z",
-		Status: "completed", UpdatedAt: "2026-07-16T06:00:40Z", URL: "https://github.example/runs/77", WorkflowName: "ci",
-		Jobs: []releasemetrics.GHJob{{
-			CompletedAt: "2026-07-16T06:00:35Z", Conclusion: "success", DatabaseID: 78,
-			Name: "quality / source", StartedAt: "2026-07-16T06:00:05Z", Status: "completed",
-			URL: "https://github.example/jobs/78", Steps: []releasemetrics.GHStep{{
-				CompletedAt: "2026-07-16T06:00:15Z", Conclusion: "success", Name: "Run tests",
-				Number: 1, StartedAt: "2026-07-16T06:00:06Z", Status: "completed",
-			}},
-		}},
 	}
 }

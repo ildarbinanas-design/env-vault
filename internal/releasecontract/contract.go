@@ -614,9 +614,6 @@ func (c Contract) Validate() error {
 		"repository_release_settings_proof": "env-vault.repository-release-settings-proof.v1",
 		"release_please_recovery":           ReleasePleaseRecoverySchemaID,
 		"release_please_recovery_check":     ReleasePleaseRecoveryCheckSchemaID,
-		"release_metrics":                   "env-vault.release-metrics.v1",
-		"release_metrics_baseline":          "env-vault.release-metrics-baseline.v1",
-		"release_metrics_comparison":        "env-vault.release-metrics-comparison.v1",
 	}
 	requiredSchemas["release_contract_operational"] = OperationalProjectionSchema
 	for name, expected := range requiredSchemas {
