@@ -496,14 +496,13 @@ created for published versions stay on GitHub's registry as immutable history.
 The deferred DevSecOps-standard replacement is
 `docs/release-refactor-backlog.md` item 14.
 
-## Audit trail and metrics
+## Audit trail
 
 The release audit trail is the GitHub Releases page, the immutable tag, and
 ordinary git and pull-request history. There is no evidence ledger: the
 `health` job verifies live release, Homebrew, tap CI, blocked-tag,
 and abandoned-release state and fails the publisher when anything drifts, but
-it stores nothing durable. Timing and retry metrics stay as workflow artifacts
-and step summaries.
+it stores nothing durable.
 
 The append-only ledger that earlier releases published is frozen history. The
 `release-evidence` branch, the durable replay artifacts already in Actions
@@ -512,21 +511,9 @@ valid and replayable; nothing rewrites, extends, or migrates them. See
 [ADR 0003](docs/adr/0003-compact-release-evidence-ledger.md), superseded by
 Phase 3 of [`trim-plan-2026-07-30.md`](docs/trim-plan-2026-07-30.md).
 
-Metrics are derived from a saved complete `gh run view` document:
-
-```sh
-gh run view "$RUN_ID" --attempt "$RUN_ATTEMPT" --repo "$REPOSITORY" \
-  --json attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName \
-  > run-metrics-input.json
-
-./releasecheck metrics \
-  --run-json run-metrics-input.json \
-  --output release-metrics.json
-```
-
-The versioned metrics record includes queue time, wall time, job count,
-aggregate runner-seconds, retries, observed critical path, and available
-artifact/cache transfer time. Outputs are no-clobber regular files.
+The dedicated release-metrics tooling was removed by trim Phase 7
+(2026-07-31); for ad-hoc timing questions, `gh run view --json jobs` on the
+exact run is sufficient.
 
 ## External configuration and incidents
 

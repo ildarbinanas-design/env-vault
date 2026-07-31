@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
-	"github.com/ildarbinanas-design/env-vault/internal/releasemetrics"
 )
 
 const (
@@ -100,11 +99,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runValidateContract(args[1:], stdout, stderr)
 	case "classify-attempt":
 		return runClassifyAttempt(args[1:], stdout, stderr)
-	case "metrics":
-		if len(args) > 1 && args[1] == "compare" {
-			return runMetricsCompare(args[2:], stdout, stderr)
-		}
-		return runMetrics(args[1:], stdout, stderr)
 	case "legacy":
 		return runLegacy(args[1:], stdout, stderr)
 	case "contract":
@@ -168,9 +162,6 @@ func runRootFlags(args []string, stdout, stderr io.Writer) int {
 			"release_contract_matrix":                   {1},
 			"releasecheck_error":                        {1},
 			"releasecheck_version":                      {releasecontract.VersionSchemaVersion},
-			"release_metrics":                           {1},
-			"release_metrics_baseline":                  {1},
-			"release_metrics_comparison":                {1},
 			"source_quality_proof":                      {1},
 			"literal_version_results":                   {1},
 			"promotion_platform":                        {1},
@@ -302,47 +293,6 @@ func runContractOperational(args []string, stdout, stderr io.Writer) int {
 		}
 	} else {
 		fmt.Fprintf(stdout, "operational release contract: schema=%s digest=%s\n", projection.ContractSchemaID, projection.ContractSemanticSHA256)
-	}
-	return exitOK
-}
-
-func runMetrics(args []string, stdout, stderr io.Writer) int {
-	set := newFlagSet("metrics")
-	runPath := set.String("run-json", "", "saved gh run view JSON")
-	outputPath := set.String("output", "", "output JSON file, or - for stdout")
-	if err := set.Parse(args); err != nil || set.NArg() != 0 || *runPath == "" || *outputPath == "" {
-		fmt.Fprint(stderr, metricsUsage())
-		return exitUsage
-	}
-	data, err := readLimitedInput(*runPath, 32<<20)
-	if err != nil {
-		return writeFailure(stdout, stderr, *outputPath == "-", "INPUT_INVALID", err, exitSnapshotInvalid)
-	}
-	runDocument, err := releasemetrics.DecodeGHRun(data)
-	if err != nil {
-		return writeFailure(stdout, stderr, *outputPath == "-", "INPUT_INVALID", err, exitSnapshotInvalid)
-	}
-	metrics, err := releasemetrics.Compute(runDocument)
-	if err != nil {
-		return writeFailure(stdout, stderr, *outputPath == "-", "INPUT_INVALID", err, exitSnapshotInvalid)
-	}
-	if err := releasemetrics.Validate(metrics); err != nil {
-		return writeFailure(stdout, stderr, *outputPath == "-", "INPUT_INVALID", fmt.Errorf("validate computed metrics: %w", err), exitSnapshotInvalid)
-	}
-	if *outputPath == "-" {
-		if err := writeJSON(stdout, metrics); err != nil {
-			fmt.Fprintf(stderr, "write JSON: %v\n", err)
-			return exitInternal
-		}
-		return exitOK
-	}
-	encoded, err := json.Marshal(metrics)
-	if err != nil {
-		return writeFailure(stdout, stderr, false, "OUTPUT_FAILED", err, exitInternal)
-	}
-	encoded = append(encoded, '\n')
-	if err := writeExclusiveFile(*outputPath, encoded); err != nil {
-		return writeFailure(stdout, stderr, false, "OUTPUT_FAILED", err, exitInternal)
 	}
 	return exitOK
 }
@@ -570,8 +520,6 @@ Usage:
   releasecheck --version [--contract FILE] [--json]
   releasecheck validate-contract [--contract FILE] [--json]
   releasecheck classify-attempt --run FILE --artifacts FILE [--contract FILE] [--json]
-  releasecheck metrics --run-json FILE --output FILE|-
-  releasecheck metrics compare --main-ci FILE --pr-ci FILE --publisher FILE --output FILE|- [--markdown-output FILE]
   releasecheck legacy --version v0.0.N [--contract FILE] [--json]
   releasecheck contract matrix [--contract FILE] [--json]
   releasecheck promotion <record-platform|seal-source-quality|assemble|verify> ...
@@ -588,7 +536,6 @@ be present but can never satisfy the current attempt.
 Transport examples (run outside releasecheck):
   gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" > run.json
   gh api --paginate --slurp "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" > artifacts.json
-  gh run view "$RUN_ID" --attempt "$RUN_ATTEMPT" --json attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName > metrics-input.json
 
 Exit statuses:
   0  requested offline validation or document generation succeeded
@@ -610,10 +557,6 @@ func validateUsage() string {
 
 func classifyUsage() string {
 	return "usage: releasecheck classify-attempt --run FILE --artifacts FILE [--contract FILE] [--json]\n"
-}
-
-func metricsUsage() string {
-	return "usage: releasecheck metrics --run-json FILE --output FILE|-\n"
 }
 
 func legacyUsage() string {

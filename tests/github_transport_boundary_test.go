@@ -110,7 +110,7 @@ func TestGitHubTransportBoundaryRegistryIsExactAndComplete(t *testing.T) {
 		case "graphql-observation":
 			registeredCount += entry.Count
 			graphqlObservations += entry.Count
-		case "high-level-observation", "metrics-observation", "high-level-mutation", "credential-setup":
+		case "high-level-observation", "high-level-mutation", "credential-setup":
 			registeredCount += entry.Count
 		default:
 			t.Fatalf("unknown registry category %q", entry.Category)

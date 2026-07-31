@@ -14,12 +14,15 @@ release, relax a release invariant, or add an LLM-controlled decision plane.
 Every proposal must land in a separate reviewed pull request and must preserve
 the offline, fail-closed `releasecheck` boundary.
 
-The measurements used for planning are the established baselines in
-`release/metrics-baseline.v1.json`: main CI is 25 jobs / 387 seconds wall /
-1,253 runner-seconds, pull-request CI is 25 jobs / 359 seconds wall / 1,205
-runner-seconds, and a publication-eligible publisher is 30 jobs / 417 seconds
-wall / 1,280 runner-seconds. Reduction estimates are targets, not claims about
-work completed by the documentation release.
+The measurements used for planning were the pre-trim baselines (main CI
+25 jobs / 387 seconds wall / 1,253 runner-seconds, pull-request CI 25 jobs /
+359 seconds wall / 1,205 runner-seconds, publication-eligible publisher
+30 jobs / 417 seconds wall / 1,280 runner-seconds). The baseline file
+`release/metrics-baseline.v1.json` and the metrics tooling were removed by
+trim Phase 7 (2026-07-31) — the 2026-07 trim invalidated those shapes; any
+future item should re-measure from `gh run view --json jobs` on current runs.
+Reduction estimates are targets, not claims about work completed by the
+documentation release.
 
 The first successful v2-contract release comparison is now captured in durable
 `v0.0.17` evidence. It measures exact attempt 1 of main CI `29682997343`,

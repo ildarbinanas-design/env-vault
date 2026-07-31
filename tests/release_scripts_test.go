@@ -1300,7 +1300,7 @@ exit 97
 			name: "version document omits unrelated capability",
 			mutate: func(version map[string]any) {
 				supported := version["supported_schema_versions"].(map[string]any)
-				delete(supported, "release_metrics_baseline")
+				delete(supported, "legacy_rebuild_query")
 			},
 		},
 		{

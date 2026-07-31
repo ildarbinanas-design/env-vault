@@ -72,7 +72,7 @@ flowchart TD
     L["[AUTOMATED] Promote bytes, GitHub Release, 10 assets"]
     M["[AUTOMATED] Homebrew PR, exact PR-head CI,<br/>head-guarded merge, exact post-merge CI"]
     N["[AUTOMATED] Health verification of live published state"]
-    O["[LLM OPTIONAL] Post-release verification and metrics<br/>cards 13-14"]
+    O["[LLM OPTIONAL] Post-release verification<br/>cards 13-14"]
     O0["[HUMAN NO-LLM] Run cards 13-14 unchanged"]
     X["[AUTOMATED] Incomplete-attempt classifier"]
     Y["[LLM OPTIONAL] Full rerun or failure diagnosis/fix PR<br/>cards 15-16"]
@@ -115,7 +115,7 @@ flowchart TD
 | Health verification of published state | `[AUTOMATED]`; verification is `[LLM OPTIONAL]` | live tag/Release/asset/Homebrew/tap state | health is read-only and stores nothing durable | 14 |
 | Incomplete-attempt classification | `[AUTOMATED]`; guarded rerun can be `[LLM OPTIONAL]` | `rerun_all_jobs` / `ATTEMPT_MATRIX_INCOMPLETE`, checker exit `4` | re-snapshot read; isolated Actions write mutation | 15 |
 | Failure diagnosis and separate fix PR | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | exact failed run/job/step/log/artifact tuple | diagnosis read-only; fix uses normal branch/PR permissions | 16 |
-| Post-release verification and metrics | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap state and metrics schemas | read-only | 14 |
+| Post-release verification | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | immutable tag/Release/tap state | read-only | 14 |
 | Artifact post-merge collection, replay, and compact package | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` | complete private replay plus content-addressed manifest object/summary | Actions read; local packaging, then a normal small reviewed PR | A1 |
 | Artifact manifest authorization | `[HUMAN REQUIRED]` | byte-exact count/bytes/semantic-SHA confirmation | authorizes only the reviewed manifest; no mutation by itself | A2 |
 | Bounded artifact deletion | `[LLM OPTIONAL]` or `[HUMAN NO-LLM]` after confirmation | exact-ID batch plus synced canonical result chain | Actions artifact delete only; maximum 500 IDs; no run delete or retry | A2 |
@@ -150,7 +150,6 @@ schemas are:
   `env-vault.promotion-verification.v1`;
 - `env-vault.repository-release-settings-proof.v1`;
 - `env-vault.release-authorization.v1`;
-- `env-vault.release-metrics.v1`;
 - `env-vault.actions-artifact-snapshot.v1`,
   `env-vault.actions-artifact-live-collection.v1`,
   `env-vault.actions-artifact-live-observation.v1`,
@@ -960,7 +959,7 @@ ancestor. Re-run both exact-SHA CI queries.
 grammar, broaden a release token, merge a changed PR head, lower the
 formula version, force-push tap, or substitute only one of the two CI gates.
 
-### 14. Health, permanent absences, and metrics
+### 14. Health and permanent absences
 
 **Command.** Require the exact first publisher run and its `health` job to
 succeed. `health` re-observes live state — tag, Release, ten assets and their
@@ -1004,93 +1003,14 @@ test "$(scripts/release/resolve-tag-sha.sh v0.0.8 "$REPOSITORY")" = \
   1d094f9e4a3e0343e713d4126f6118a8a9e98e2d
 ```
 
-Derive metrics from the final release-source main CI, the exact generated
-release-PR CI, and the successful first publisher. Then run the strict
-three-scenario comparison:
-
-```sh
-gh run list --repo "$REPOSITORY" --workflow ci.yml \
-  --commit "$RELEASE_PR_HEAD_SHA" --event pull_request --limit 100 \
-  --json attempt,databaseId,displayTitle,event,headBranch,headSha,workflowName \
-  > "$SNAPSHOT_DIR/release-pr-ci-candidates.json"
-RELEASE_PR_CI_TUPLE="$(jq -er --arg head "$RELEASE_PR_HEAD_SHA" --arg version "$VERSION" '
-  [.[] | select(
-    .workflowName == "ci" and .event == "pull_request" and
-    .headBranch == "release-please--branches--main--components--env-vault" and
-    .headSha == $head and
-    .displayTitle == ("chore(main): release env-vault " + $version)
-  )] |
-  if length == 1 then .[0] else error("expected one exact release-PR CI run") end |
-  [.databaseId, .attempt] | @tsv
-' "$SNAPSHOT_DIR/release-pr-ci-candidates.json")"
-IFS=$'\t' read -r RELEASE_PR_CI_RUN_ID RELEASE_PR_CI_RUN_ATTEMPT \
-  <<< "$RELEASE_PR_CI_TUPLE"
-
-gh run view "$CI_RUN_ID" --attempt "$CI_RUN_ATTEMPT" --repo "$REPOSITORY" \
-  --json attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName \
-  > "$SNAPSHOT_DIR/main-ci-metrics-input.json"
-gh run view "$RELEASE_PR_CI_RUN_ID" --attempt "$RELEASE_PR_CI_RUN_ATTEMPT" \
-  --repo "$REPOSITORY" \
-  --json attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName \
-  > "$SNAPSHOT_DIR/pr-ci-metrics-input.json"
-gh run view "$PUBLISHER_RUN_ID" --attempt "$PUBLISHER_RUN_ATTEMPT" \
-  --repo "$REPOSITORY" \
-  --json attempt,conclusion,createdAt,databaseId,event,headSha,jobs,startedAt,status,updatedAt,url,workflowName \
-  > "$SNAPSHOT_DIR/publisher-metrics-input.json"
-"$SNAPSHOT_DIR/releasecheck" metrics \
-  --run-json "$SNAPSHOT_DIR/main-ci-metrics-input.json" \
-  --output "$SNAPSHOT_DIR/main-ci-metrics.json"
-"$SNAPSHOT_DIR/releasecheck" metrics \
-  --run-json "$SNAPSHOT_DIR/pr-ci-metrics-input.json" \
-  --output "$SNAPSHOT_DIR/pr-ci-metrics.json"
-"$SNAPSHOT_DIR/releasecheck" metrics \
-  --run-json "$SNAPSHOT_DIR/publisher-metrics-input.json" \
-  --output "$SNAPSHOT_DIR/publisher-metrics.json"
-"$SNAPSHOT_DIR/releasecheck" metrics compare \
-  --main-ci "$SNAPSHOT_DIR/main-ci-metrics.json" \
-  --pr-ci "$SNAPSHOT_DIR/pr-ci-metrics.json" \
-  --publisher "$SNAPSHOT_DIR/publisher-metrics.json" \
-  --output "$SNAPSHOT_DIR/metrics-comparison.json" \
-  --markdown-output "$SNAPSHOT_DIR/metrics-comparison.md"
-jq -e \
-  --argjson main_id "$CI_RUN_ID" \
-  --argjson main_attempt "$CI_RUN_ATTEMPT" \
-  --arg main_head "$SOURCE_SHA" \
-  --argjson pr_id "$RELEASE_PR_CI_RUN_ID" \
-  --argjson pr_attempt "$RELEASE_PR_CI_RUN_ATTEMPT" \
-  --arg pr_head "$RELEASE_PR_HEAD_SHA" \
-  --argjson publisher_id "$PUBLISHER_RUN_ID" \
-  --argjson publisher_attempt "$PUBLISHER_RUN_ATTEMPT" '
-  .schema_id == "env-vault.release-metrics-comparison.v1" and
-  .schema_version == 1 and
-  ([.scenarios[].scenario] == ["main_ci", "pr_ci", "publisher"]) and
-  .scenarios[0].current_run_id == $main_id and
-  .scenarios[0].current_attempt == $main_attempt and
-  .scenarios[0].current_head_sha == $main_head and
-  .scenarios[0].current_workflow == "ci" and
-  .scenarios[0].current_event == "push" and
-  .scenarios[1].current_run_id == $pr_id and
-  .scenarios[1].current_attempt == $pr_attempt and
-  .scenarios[1].current_head_sha == $pr_head and
-  .scenarios[1].current_workflow == "ci" and
-  .scenarios[1].current_event == "pull_request" and
-  .scenarios[2].current_run_id == $publisher_id and
-  .scenarios[2].current_attempt == $publisher_attempt and
-  .scenarios[2].current_head_sha == $main_head and
-  .scenarios[2].current_workflow == "build-binaries" and
-  .scenarios[2].current_event == "push"
-' "$SNAPSHOT_DIR/metrics-comparison.json" >/dev/null
-```
-
 **Inputs and machine result.** The publisher's `health` job must have concluded
 `success`; its step summary records the verified version, source SHA, Release
 URL, asset count, rechecked blocked versions, and the
-Homebrew PR/merge/tap tuple. Health uploads no artifact. Metrics are
-`env-vault.release-metrics.v1`; comparison is
-`env-vault.release-metrics-comparison.v1`. They bind the three distinct exact
-run IDs/attempts and include job count, queue time, wall time, aggregate
-runner-seconds, retries, critical path, and available artifact/cache transfer
-time.
+Homebrew PR/merge/tap tuple. Health uploads no artifact. The dedicated
+release-metrics tooling (`releasecheck metrics`/`metrics compare`) was removed
+by trim Phase 7 (2026-07-31): its checked-in baselines described the pre-trim
+25-job CI / 30-job publisher and stopped describing the pipeline. For ad-hoc
+timing questions, `gh run view --json jobs` on the exact run is sufficient.
 
 **Exit, effect, and permission.** Observation and checking are read-only. The
 publisher's `health` job holds `actions: read`, `contents: read`,
@@ -1101,12 +1021,9 @@ non-prerelease Release; exactly ten assets and matching digests; promotion from
 one attempt; exact Homebrew tuple and both gates; publisher
 health success; the `v0.0.12` and `v0.0.8` guarantees; and
 the no-product-diff command from card 4 against the original implementation
-base. Compare with baselines only after those checks: main CI 25 jobs / 387 s
-wall / 1253 runner-s; PR CI 25 / 359 s / 1205 runner-s; publisher 30 / 417 s /
-1280 runner-s.
+base.
 
-**Forbidden.** Do not use a failed publisher as the publication-eligible
-metrics comparison, claim health from individual successful publisher jobs, or
+**Forbidden.** Do not claim health from individual successful publisher jobs, or
 append to, rewrite, or resurrect the retired `release-evidence` branch.
 
 ### 15. Incomplete-attempt classifier and `rerun_all_jobs`
@@ -1473,8 +1390,7 @@ A release is complete only when all of the following hold for one exact tuple:
   `1d094f9e4a3e0343e713d4126f6118a8a9e98e2d` and still has no Release; failed
   immutable tags `v0.0.8` through `v0.0.11` have not moved or gained Releases.
 - The final source diff against the original implementation base has no product
-  or product-E2E changes, and the final successful CI/publisher metrics were
-  derived from complete machine JSON rather than a failed publication attempt.
+  or product-E2E changes.
 
 If any item is absent, unknown, malformed, unauthenticated, rate-limited, or
 transport-failed, stop. Diagnose with card 16; do not weaken the gate.
