@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.1.0...v0.1.1) (2026-07-31)
+
+
+### Build System
+
+* **deps:** bump the github-actions-minor-patch group across 1 directory with 2 updates ([#65](https://github.com/ildarbinanas-design/env-vault/issues/65)) ([2e6c8ca](https://github.com/ildarbinanas-design/env-vault/commit/2e6c8ca135e20e1f2840e9c688aea27bc5450ed8))
+
+
+### Continuous Integration
+
+* **release:** drop the append-only release-evidence ledger ([#71](https://github.com/ildarbinanas-design/env-vault/issues/71)) ([caa8724](https://github.com/ildarbinanas-design/env-vault/commit/caa87245113dcd164536a18277a988476521fe35))
+* **release:** drop the bespoke provenance/SBOM contour ([#74](https://github.com/ildarbinanas-design/env-vault/issues/74)) ([f24db42](https://github.com/ildarbinanas-design/env-vault/commit/f24db42bf2c5fb3306fb3d3e1446a2371e611a52))
+* **release:** drop the byte-exact release confirmation ceremony ([#72](https://github.com/ildarbinanas-design/env-vault/issues/72)) ([36bba6e](https://github.com/ildarbinanas-design/env-vault/commit/36bba6e9b87b78cf6be65c269a75d2268ce5946e))
+* **release:** drop the dead release-metrics tooling ([#75](https://github.com/ildarbinanas-design/env-vault/issues/75)) ([7c964aa](https://github.com/ildarbinanas-design/env-vault/commit/7c964aa2b603f0613a6763c0cb4b4b2eeaff0f6a))
+* **release:** drop the versioned release-contract dimension ([#73](https://github.com/ildarbinanas-design/env-vault/issues/73)) ([a10c0c4](https://github.com/ildarbinanas-design/env-vault/commit/a10c0c4a9c3f86b3da7d42fadef2fb199facea46))
+* **release:** replace release GitHub Apps with scoped tokens ([#70](https://github.com/ildarbinanas-design/env-vault/issues/70)) ([c8fb608](https://github.com/ildarbinanas-design/env-vault/commit/c8fb60845b2ef20a4215ff99ac8aeff79861c92f))
+
+
+### Documentation
+
+* **adr:** freeze release ceremony, require PersonalOS link ([#66](https://github.com/ildarbinanas-design/env-vault/issues/66)) ([f89419f](https://github.com/ildarbinanas-design/env-vault/commit/f89419f87213db9267dd7f45df0e8b7ff183c6e0))
+* **plan:** resolve item 13, add Actions/UX analysis workstream ([#68](https://github.com/ildarbinanas-design/env-vault/issues/68)) ([fab51b8](https://github.com/ildarbinanas-design/env-vault/commit/fab51b800c103e469c87a769ff9836e67815de37))
+* record delayed Actions billing verification ([#63](https://github.com/ildarbinanas-design/env-vault/issues/63)) ([b48fe6a](https://github.com/ildarbinanas-design/env-vault/commit/b48fe6a16c4201190d55254c550d53fbef3adc7b))
+* resolve governance-document audit (9/9 questions) ([#67](https://github.com/ildarbinanas-design/env-vault/issues/67)) ([68fe77f](https://github.com/ildarbinanas-design/env-vault/commit/68fe77f931a185e71165183bd9e94589376ae86c))
+* trim execution plan + DevSecOps provenance/SBOM backlog item ([#69](https://github.com/ildarbinanas-design/env-vault/issues/69)) ([34aa08b](https://github.com/ildarbinanas-design/env-vault/commit/34aa08bbbf1f431f9bb8d77a427096ce1dae3cec))
+
 ## [0.1.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.0.18...v0.1.0) (2026-07-20)
 
 
