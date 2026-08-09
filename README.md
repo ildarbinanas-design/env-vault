@@ -111,10 +111,21 @@ tar xzf "env-vault-${TARGET}.tar.gz"
 ./env-vault-${TARGET}/env-vault --version
 ```
 
-On Linux, use `sha256sum -c` if `shasum` is not available. With a manual
-download on macOS, the browser or curl-less tooling may quarantine the binary;
-`xattr -d com.apple.quarantine env-vault` removes the attribute. The Homebrew
-path above avoids this entirely.
+On Linux, use `sha256sum -c` if `shasum` is not available.
+
+**On macOS, manual download is not a supported install path.** Release
+binaries are not Developer ID signed and not notarized
+(see [ADR 0009](docs/adr/0009-no-code-signing-homebrew-only-macos-distribution.md)),
+so `spctl --assess` rejects them. Any download path that attaches the
+Gatekeeper quarantine attribute — a browser, or extraction from an archive
+that itself carries the attribute — produces a binary macOS terminates on
+launch. `xattr -d com.apple.quarantine env-vault` clears the attribute, but
+it is a manual local override after you have verified the release source and
+checksum; it is not a substitute for signing or notarization, and env-vault
+never removes quarantine automatically.
+
+Use the Homebrew path above on macOS. Homebrew does not attach the
+quarantine attribute, which is why that path works.
 
 ## Install From Source
 
