@@ -5,13 +5,6 @@
 - Verify real macOS Keychain manually.
 - Verify real Debian Secret Service manually.
 - Verify Linux `pass` manually with installed `pass` and an initialized password store.
-- Revoke the one-time GitHub token used for initial publication. **Status
-  unresolved (2026-07-30):** cannot be confirmed from repo state — this is
-  an account-level fact (github.com/settings/tokens), not something visible
-  in code or docs. Requires the owner to manually check for and revoke any
-  classic/fine-grained PAT created during the 2026-07-05/06 bootstrap window
-  (see ADR 0000), independent of the scoped release tokens documented in
-  `docs/release-external-settings.md`.
 
 ## P1
 
@@ -56,3 +49,15 @@ Gated by ADR 0008 (2026-07-30) — same rule as P1.
   2026-07-30:** `docs/e2e.md` — every E2E scenario creates a random sentinel
   value and a fail-closed "runner leak gate" (P5, mandatory for all
   scenarios) scans stdout/stderr/artifacts/summaries for it.
+- Revoke the one-time GitHub token used for initial publication. **Confirmed
+  by the owner 2026-08-09.** This is an account-level fact
+  (github.com/settings/tokens) and is not observable from repository state,
+  so the confirmation is the owner's, not a repository check. It covers any
+  classic/fine-grained PAT created during the 2026-07-05/06 bootstrap window
+  (see ADR 0000), independent of the scoped release tokens documented in
+  `docs/release-external-settings.md`.
+- macOS distribution trust. **Decided 2026-08-09,
+  [ADR 0009](docs/adr/0009-no-code-signing-homebrew-only-macos-distribution.md):**
+  Developer ID signing and notarization will not be implemented; the Homebrew
+  tap is the only supported macOS install path. Closes the credential-policy,
+  browser-download test matrix, and notarizable-packaging questions.
