@@ -179,6 +179,22 @@
       "go_test": "TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY",
       "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
       "critical": true
+    },
+    {
+      "id": "TRANSFER_ROUND_TRIP",
+      "feature": "transfer.export-import-round-trip",
+      "requirement": "export seals stored secret values into a mode 0600 container that discloses neither the values nor the secret names, and import restores them into an empty backend.",
+      "go_test": "TestE2E/TRANSFER_ROUND_TRIP",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
+    },
+    {
+      "id": "TRANSFER_REJECTS_TAMPERING",
+      "feature": "transfer.container-integrity",
+      "requirement": "import fails closed with BUNDLE_AUTH_FAILED on a wrong passphrase and on a rewritten authenticated header, reports BUNDLE_INVALID for a malformed container, and export refuses to replace an existing container without --force or to write anything during a dry run.",
+      "go_test": "TestE2E/TRANSFER_REJECTS_TAMPERING",
+      "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
+      "critical": true
     }
   ]
 }

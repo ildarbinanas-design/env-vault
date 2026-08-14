@@ -21,8 +21,9 @@ normalization, validation, and rendering code that interprets their reports.
 Generated reports are excluded. In the isolated reporting-tool file, only the
 two version pin values are canonicalized; the checksum pin and every other byte
 remain hashed.
-The checked-in durable baseline therefore rejects a semantic test change even
-when a stale report set is internally consistent.
+Matrix validation recomputes the suite hash from the exact checkout and
+compares it with the hash stamped into every report, so a stale report set is
+rejected even when it is internally consistent.
 
 ## Isolation and secret safety
 
@@ -164,67 +165,12 @@ skip instead of silently dropping the platform.
 | Bounded lock timeout and `CONFIG_LOCKED` | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
 | Killed active writer before replacement preserves the prior YAML | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
 | Lock release after process death permits recovery | `LOCK_TIMEOUT_CRASH_INTEGRITY` | `TestE2E/LOCK_TIMEOUT_CRASH_INTEGRITY` | P5 |
+| Exported container is mode `0600` and discloses neither values nor secret names | `TRANSFER_ROUND_TRIP` | `TestE2E/TRANSFER_ROUND_TRIP` | P5 |
+| Import restores stored values into an empty backend | `TRANSFER_ROUND_TRIP` | `TestE2E/TRANSFER_ROUND_TRIP` | P5 |
+| Wrong passphrase and rewritten authenticated header both fail closed with `BUNDLE_AUTH_FAILED` | `TRANSFER_REJECTS_TAMPERING` | `TestE2E/TRANSFER_REJECTS_TAMPERING` | P5 |
+| Malformed container reports `BUNDLE_INVALID`, and export neither replaces a container without `--force` nor writes during a dry run | `TRANSFER_REJECTS_TAMPERING` | `TestE2E/TRANSFER_REJECTS_TAMPERING` | P5 |
 | Unique sentinel per scenario and no output/artifact leakage | all scenarios | `TestE2E/*` plus runner leak gate | P5 |
 | Real user keyrings remain untouched | all scenarios | isolated triple-gated harness | P5 |
-
-## Durable checked-in baseline
-
-[`docs/e2e-baseline.json`](e2e-baseline.json) is the versioned compatibility
-floor used by every candidate matrix. It stores the semantic suite identity,
-exact accepted Go and gotestsum versions, provenance of the accepted matrix,
-per-platform normalized contract hashes, coverage floors, every critical
-scenario result, expected skips, and leak expectations. It contains no secret
-values and does not depend on workflow artifact retention.
-
-The one-time checked-in migration bundle under
-[`evidence/e2e-baseline-migration/`](../evidence/e2e-baseline-migration/)
-binds the successful legacy comparison bytes to the durable normalized facts
-and the reviewed independent-sentinel suite transition. This proves the
-replacement of the historical comparator. Normal CI reads only current reports
-and the checked-in baseline; it never downloads or reinterprets historical
-reports.
-
-Verify the migration proof entirely offline:
-
-```sh
-GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline verify-migration \
-  --repository-root . \
-  --contract release/contract.v2.json \
-  --baseline evidence/e2e-baseline-migration/migrated-baseline.json \
-  --migration evidence/e2e-baseline-migration/migration.json
-```
-
-The migrated snapshot remains beside its proof so the historical equivalence
-can always be replayed. The active baseline now comes from the accepted current
-five-platform matrix and therefore has no runtime dependency on that one-time
-migration.
-
-Updating the baseline is an explicit reviewed change, not an automatic
-tolerance adjustment. First produce a passing current five-platform
-`matrix-validation.json`; then run the deterministic update and inspect both
-the baseline and machine diff:
-
-```sh
-GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline update \
-  --repository-root . \
-  --contract release/contract.v2.json \
-  --proof reports-download/matrix-validation.json \
-  --baseline docs/e2e-baseline.json \
-  --diff-output baseline.diff.json
-
-git diff -- docs/e2e-baseline.json
-jq . baseline.diff.json
-```
-
-Commit an update only when its exact run tuple, tool versions, suite-hash
-change, per-platform contract changes, coverage-floor changes, scenario
-changes, and leak changes are intentional. CI must verify the updated baseline
-against another proof from the same exact matrix identity before it can become
-a release gate.
-
-The accepted independent-sentinel update and its exact run/attempt bindings
-are preserved under
-[`evidence/e2e-baseline-updates/`](../evidence/e2e-baseline-updates/).
 
 ## Running locally
 
@@ -238,8 +184,7 @@ running with `GOPROXY=off`. A missing or incompatible reporter therefore fails
 closed without a second network fallback or artifacts from another attempt.
 
 Build the checksum-pinned reporting tool outside the product module; it is not
-a production dependency. The durable baseline and candidates both require
-stable `v1.13.0`, whose `x/tools` graph builds with Go 1.26.5 while preserving
+a production dependency. Candidate matrices require stable `v1.13.0`, whose `x/tools` graph builds with Go 1.26.5 while preserving
 JSONL, JUnit, and test exit-code behavior. The same builder used by CI emits all
 five target binaries and their exact checksum sidecars:
 
@@ -329,13 +274,10 @@ are independently recomputed, and immutable report digests are rechecked.
 `e2e-gate` fails closed if a
 platform or required file is missing, malformed, leaked, skipped unexpectedly,
 does not have 100% critical scenario coverage, or falls below the conservative
-60% cross-platform statement-coverage floor. The durable baseline is the
-stronger non-regression gate: it permits no decrease from its reviewed
-per-platform floors and requires exact normalized contract, critical-scenario,
-expected-skip, leak, toolchain, and semantic-suite identities. Matrix
-validation recomputes the semantic suite hash from the exact checkout and
-rejects reports produced by a different runner/scenario implementation, even
-if every report in that stale set agrees with every other one.
+60% cross-platform statement-coverage floor. Matrix validation recomputes the
+semantic suite hash from the exact checkout and rejects reports produced by a
+different runner/scenario implementation, even if every report in that stale
+set agrees with every other one.
 
 Validate a downloaded five-platform set with:
 
@@ -350,29 +292,14 @@ GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
   --expected-reporter "v1.13.0"
 ```
 
-That command writes a sealed `matrix-validation.json`. Verify it against the
-checked-in baseline with the same exact coordinates:
+That command writes a sealed `matrix-validation.json`, which is uploaded as
+the `env-vault-e2e-matrix-proof` artifact and consumed by the promotion
+manifest.
 
-```sh
-GOTOOLCHAIN=go1.26.5 go run ./cmd/e2e-baseline verify \
-  --repository-root . \
-  --contract release/contract.v2.json \
-  --baseline docs/e2e-baseline.json \
-  --proof reports-download/matrix-validation.json \
-  --output baseline-verification \
-  --phase candidate \
-  --expected-commit "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
-  --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --expected-run-attempt "$GITHUB_RUN_ATTEMPT" \
-  --expected-repository "$GITHUB_REPOSITORY"
-```
-
-The verification writes versioned JSON and Markdown. For a strict
-`vMAJOR.MINOR.PATCH` candidate, every native job also records the three exact
-`CLI_VERSION_FORMS` outputs in its promotion proof. The promotion manifest is
-assembled only after the sealed matrix and durable baseline both pass, so a
-wrong binary version, stale suite, or lower coverage cannot be masked by
-another target.
+For a strict `vMAJOR.MINOR.PATCH` candidate, every native job also records the
+three exact `CLI_VERSION_FORMS` outputs in its promotion proof. The promotion
+manifest is assembled only after the sealed matrix passes, so a wrong binary
+version, stale suite, or lower coverage cannot be masked by another target.
 
 The current symlink contract rejects unsafe final config and lock targets. It
 does not claim protection from a hostile same-user process or a pre-existing

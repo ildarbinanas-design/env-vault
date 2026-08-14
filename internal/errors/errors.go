@@ -7,6 +7,8 @@ import (
 
 const (
 	CodeBackendUnavailable   = "BACKEND_UNAVAILABLE"
+	CodeBundleAuthFailed     = "BUNDLE_AUTH_FAILED"
+	CodeBundleInvalid        = "BUNDLE_INVALID"
 	CodeCommandNotExecutable = "COMMAND_NOT_EXECUTABLE"
 	CodeCommandNotFound      = "COMMAND_NOT_FOUND"
 	CodeConfigInvalid        = "CONFIG_INVALID"
@@ -16,7 +18,9 @@ const (
 	CodeProfileExists        = "PROFILE_EXISTS"
 	CodeProfileNotFound      = "PROFILE_NOT_FOUND"
 	CodeMissingSecret        = "MISSING_SECRET"
+	CodePassphraseInvalid    = "PASSPHRASE_INVALID"
 	CodeRuntimeError         = "RUNTIME_ERROR"
+	CodeSecretExists         = "SECRET_EXISTS"
 	CodeUsage                = "USAGE"
 )
 
@@ -70,6 +74,44 @@ func BackendUnavailable(command, message, remediation string, cause error) *AppE
 
 func MissingSecret(command, name string) *AppError {
 	return New(command, CodeMissingSecret, "Missing secret: "+name, "Run: env-vault secret set "+name, ExitMissingSecret)
+}
+
+// BundleInvalid reports a transfer container that is malformed, carries an
+// unknown schema or algorithm, or declares key-derivation parameters outside
+// the accepted bounds. It shares ExitConfigInvalid because both describe an
+// input artifact this build refuses to interpret.
+func BundleInvalid(command, message, remediation string, cause error) *AppError {
+	return Wrap(command, CodeBundleInvalid, message, remediation, ExitConfigInvalid, cause)
+}
+
+// BundleAuthFailed reports that authenticated decryption failed. The message
+// deliberately does not separate a wrong passphrase from a tampered container,
+// because the cryptography cannot distinguish them either.
+func BundleAuthFailed(command string, cause error) *AppError {
+	return Wrap(
+		command,
+		CodeBundleAuthFailed,
+		"Unable to decrypt the container",
+		"Check the passphrase; the container may also have been modified",
+		ExitConfigInvalid,
+		cause,
+	)
+}
+
+// PassphraseInvalid reports a passphrase the user must retype.
+func PassphraseInvalid(command, message, remediation string) *AppError {
+	return New(command, CodePassphraseInvalid, message, remediation, ExitUsage)
+}
+
+// SecretExists reports an import conflict the user resolves with a flag.
+func SecretExists(command, name string) *AppError {
+	return New(
+		command,
+		CodeSecretExists,
+		"Secret already exists: "+name,
+		"Re-run with --on-conflict overwrite or --on-conflict skip",
+		ExitUsage,
+	)
 }
 
 func (e *AppError) Error() string {

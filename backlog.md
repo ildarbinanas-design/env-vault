@@ -15,7 +15,6 @@ explicit PersonalOS consumer or a security requirement driving them.
 - Nexus binary publishing.
 - Shell completions.
 - Debian package.
-- Profile import/export without values.
 
 ## P2
 
@@ -35,6 +34,15 @@ Gated by ADR 0008 (2026-07-30) — same rule as P1.
 
 ## Completed
 
+- Secret import/export. **Delivered 2026-08-14,
+  [ADR 0010](docs/adr/0010-encrypted-secret-transfer-container.md):** the
+  original P1 scoping ("profile import/export without values") was dropped as
+  solving the wrong half — profile mappings hold no values and already travel
+  with the repository, while keychain values do not travel at all. `export`
+  and `import` therefore move secret values as AES-256-GCM ciphertext under an
+  Argon2id-derived passphrase, and carry no profile data. The owner's
+  authorization on that date is also the explicit ADR 0008 "does this serve
+  PersonalOS" decision for this item.
 - Public GitHub binary releases for Linux, macOS, and Windows.
 - Homebrew formula distribution with automatic tap updates and tap CI.
 - Default-branch manual releases with explicit semantic versions and retained tag-driven releases.

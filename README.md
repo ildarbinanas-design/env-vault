@@ -142,9 +142,9 @@ GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
 
 Pull-request and `main` CI call `reusable-quality.yml`. One graph performs
 source tests/vet/race/smoke, three native license checks, five native
-build/package/E2E jobs, and one complete-matrix gate. The matrix gate verifies
-the checked-in durable baseline; it does not depend on an expiring historical
-workflow artifact. The exact E2E reporter is built once for all five targets
+build/package/E2E jobs, and one complete-matrix gate. The matrix gate seals the
+five-platform proof from the current run; it does not depend on an expiring
+historical workflow artifact. The exact E2E reporter is built once for all five targets
 from an isolated checksum-pinned tool module, then each native job consumes
 only its source-SHA- and attempt-qualified reporter artifact with network
 fallback disabled.
@@ -221,6 +221,61 @@ A shell is used only when you explicitly provide one:
 ```sh
 env-vault exec dev -- bash -lc 'make test'
 ```
+
+## Moving To Another Machine
+
+`export` seals every stored secret value into one encrypted file; `import`
+restores them into the keychain on the other side.
+
+```sh
+env-vault export --out vault.evb
+env-vault import vault.evb
+```
+
+Profiles are not in the container, and do not need to be: `.env-vault.yaml`
+holds only `secret-name -> ENV_NAME` mappings and no values, so it belongs in
+your repository and travels with it. The keychain values are the only part that
+cannot follow you, and that is exactly what the container carries.
+
+Both commands ask for a passphrase at a hidden prompt — export asks twice,
+because a typo would produce a file nobody can open. There is deliberately no
+passphrase flag, environment variable, or file, for the same reason there is no
+`--value` flag.
+
+Useful options:
+
+```sh
+env-vault export --out vault.evb --force            # replace an existing container
+env-vault import vault.evb --on-conflict skip       # keep values already stored here
+env-vault import vault.evb --on-conflict overwrite  # replace them
+env-vault --dry-run export --out vault.evb          # list what would be written
+```
+
+`--on-conflict` defaults to `fail`, which refuses the import and writes nothing
+if any secret already exists here.
+
+Export covers the default keychain service. If you stored something with
+`secret set --service <name>`, name that service again on export — a keychain
+offers no way to enumerate the services an application has used, so env-vault
+cannot discover them for you:
+
+```sh
+env-vault export --out vault.evb --with-services team/ci
+env-vault export --out vault.evb --with-services team/ci,team/ops
+env-vault export --out vault.evb --with-services team/ci --with-services team/ops
+```
+
+The flag is `--with-services`, not `--service`, because it means something
+different from the `--service` on `secret set`: there the flag *replaces* the
+default service, here the default is always included and these are *added* to
+it.
+
+The container is AES-256-GCM encrypted under an Argon2id-derived key, and no
+secret name appears outside the ciphertext. **Read the
+[container limitations](docs/security.md#transfer-containers) before writing
+one:** its strength is your passphrase rather than the operating system, and
+there is no way to revoke a copy that has already been backed up, synced, or
+committed. Keep `*.evb` out of git and out of cloud-sync folders.
 
 ## JSON And Dry Run
 
@@ -299,6 +354,8 @@ Do not put tokens into `bashrc`, `zshrc`, shell history, or shell init snippets.
 - Child processes can leak env if they print or forward it.
 - OS process environment caveats still apply.
 - env-vault does not rotate tokens by itself.
+- An exported container is protected by its passphrase alone and cannot be
+  revoked once it has been copied elsewhere.
 
 ## Rotation
 
@@ -313,6 +370,10 @@ Remove stale mappings with:
 ```sh
 env-vault profile remove dev NPM_TOKEN
 ```
+
+Rotation does not reach exported containers. A container written before the
+rotation still decrypts to the old value, so destroy any container that carried
+a credential you have just rotated.
 
 ## Contributing
 
