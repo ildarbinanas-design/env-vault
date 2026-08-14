@@ -32,9 +32,6 @@ equivalents, and the incident matrix, see
   workflows read `release/contract.v2.json` from the exact immutable source
   commit and require it to agree with the reviewed control plane on naming,
   platforms, assets, the promotion-manifest schema, and workflow identities.
-- [`docs/e2e-baseline.json`](docs/e2e-baseline.json) is the durable E2E
-  compatibility baseline. CI verifies it from the current checkout; it does
-  not download an expiring historical comparator artifact.
 - `.release-please-manifest.json`, `release-please-config.json`,
   `CHANGELOG.md`, and the marked README version line are the reviewed version
   boundary.
@@ -223,8 +220,8 @@ The normal `ci` path has one reusable quality graph plus the caller's required
   smoke, and full race suite);
 - three native license jobs;
 - five native build/package/E2E jobs;
-- one `e2e-gate` that validates the matrix once, checks the durable baseline,
-  and seals release promotion evidence when the push is a release merge;
+- one `e2e-gate` that validates the matrix once and seals release promotion
+  evidence when the push is a release merge;
 - one top-level `quality-gate`, which remains `always()` so cancellation cannot
   become a merge bypass.
 

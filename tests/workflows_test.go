@@ -667,21 +667,15 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	if !containsAll(validate.Run, "e2e-runner validate-matrix", "--contract release/contract.v2.json", "--expected-run-attempt") {
 		t.Fatalf("E2E matrix validation does not bind the contract/current attempt")
 	}
-	baseline := namedStep(t, gate, "Verify sealed matrix against durable baseline")
-	if !containsAll(baseline.Run, "e2e-baseline verify", "docs/e2e-baseline.json", "matrix-validation.json") {
-		t.Fatalf("durable baseline verification missing")
-	}
-	baselineUpload := namedStep(t, gate, "Upload durable baseline verification")
-	wantBaselinePaths := []string{
+	proofUpload := namedStep(t, gate, "Upload sealed E2E matrix proof")
+	wantProofPaths := []string{
 		"reports-download/matrix-validation.json",
 		"reports-download/matrix-validation.md",
-		"baseline-verification/baseline-verification.json",
-		"baseline-verification/baseline-verification.md",
 	}
-	if baselineUpload.If != "always()" || baselineUpload.Uses != uploadArtifactAction ||
-		!slices.Equal(strings.Fields(baselineUpload.With["path"]), wantBaselinePaths) ||
-		baselineUpload.With["if-no-files-found"] != "error" {
-		t.Fatalf("durable baseline proof is not always uploaded exactly: if=%q uses=%q with=%v", baselineUpload.If, baselineUpload.Uses, baselineUpload.With)
+	if proofUpload.If != "always()" || proofUpload.Uses != uploadArtifactAction ||
+		!slices.Equal(strings.Fields(proofUpload.With["path"]), wantProofPaths) ||
+		proofUpload.With["if-no-files-found"] != "error" {
+		t.Fatalf("sealed matrix proof is not always uploaded exactly: if=%q uses=%q with=%v", proofUpload.If, proofUpload.Uses, proofUpload.With)
 	}
 	manifest := namedStep(t, gate, "Assemble exact promotion manifest")
 	if !containsAll(manifest.Run, "releasecheck promotion assemble", "--platform-proof", "--matrix-proof", "--run-attempt") {

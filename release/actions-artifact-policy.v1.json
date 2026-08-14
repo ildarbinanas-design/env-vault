@@ -132,20 +132,6 @@
       "retention_rationale": "Preserves the exact pre-tag exceptional-policy proof for release-planning audit; publisher health independently recomputes the policy state."
     },
     {
-      "id": "e2e-baseline",
-      "workflow": "reusable-quality.yml",
-      "job": "e2e-gate",
-      "step": "Upload durable baseline verification",
-      "class": "e2e-baseline",
-      "pattern_id": "e2e-baseline-verification-current",
-      "artifact_name": "env-vault-e2e-baseline-verification-attempt-${{ github.run_attempt }}",
-      "retention_days": 30,
-      "consumers": [
-        "operator.quality-audit"
-      ],
-      "retention_rationale": "Retains candidate-versus-baseline diagnostics across the release review window without serving as promotion authority."
-    },
-    {
       "id": "promotion-manifest",
       "workflow": "reusable-quality.yml",
       "job": "e2e-gate",
@@ -160,6 +146,20 @@
         "release-please.plan"
       ],
       "retention_rationale": "Covers publisher promotion and the admissible no-rebuild release-asset bootstrap repair boundary."
+    },
+    {
+      "id": "e2e-baseline",
+      "workflow": "reusable-quality.yml",
+      "job": "e2e-gate",
+      "step": "Upload sealed E2E matrix proof",
+      "class": "e2e-baseline",
+      "pattern_id": "e2e-baseline-verification-current",
+      "artifact_name": "env-vault-e2e-matrix-proof-attempt-${{ github.run_attempt }}",
+      "retention_days": 30,
+      "consumers": [
+        "operator.quality-audit"
+      ],
+      "retention_rationale": "Retains the sealed matrix proof across the release review window without serving as promotion authority."
     },
     {
       "id": "e2e-candidate",
@@ -360,15 +360,16 @@
       "workflow_paths": [
         ".github/workflows/ci.yml"
       ],
-      "name_regex": "^env-vault-e2e-baseline-verification-attempt-([1-9][0-9]*)$",
+      "name_regex": "^env-vault-e2e-(baseline-verification|matrix-proof)-attempt-([1-9][0-9]*)$",
       "attempt_resolution": "name_capture",
-      "attempt_capture": 1,
+      "attempt_capture": 2,
       "referenced_version_capture": 0,
       "referenced_source_sha_capture": 0,
       "examples": [
-        "env-vault-e2e-baseline-verification-attempt-1"
+        "env-vault-e2e-baseline-verification-attempt-1",
+        "env-vault-e2e-matrix-proof-attempt-1"
       ],
-      "dependency_repair_rationale": "Quality audit diagnostic; it is not promotion or repair authority."
+      "dependency_repair_rationale": "Quality audit diagnostic; it is not promotion or repair authority. The retired baseline-verification name stays matchable so artifacts uploaded before the durable baseline was removed remain classifiable."
     },
     {
       "id": "e2e-candidate-current-history",
