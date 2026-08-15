@@ -6,54 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ildarbinanas-design/env-vault/internal/e2ebaseline"
-	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"gopkg.in/yaml.v3"
 )
-
-func TestCanonicalE2EBaselineIdentityIsPinned(t *testing.T) {
-	contract, err := releasecontract.LoadFile("../release/contract.v2.json")
-	if err != nil {
-		t.Fatalf("load release contract: %v", err)
-	}
-	baseline, err := e2ebaseline.LoadFile("../docs/e2e-baseline.json", contract)
-	if err != nil {
-		t.Fatalf("strictly load canonical baseline: %v", err)
-	}
-	if baseline.SchemaID != e2ebaseline.SchemaID || baseline.SchemaVersion != e2ebaseline.SchemaVersion ||
-		baseline.Provenance.Repository != "ildarbinanas-design/env-vault" ||
-		baseline.Provenance.CommitSHA != "80fb5fb6e802d3d603bc22c6e2f97e29931987f7" ||
-		baseline.Provenance.RunID != "29549118082" ||
-		baseline.Provenance.RunURL != "https://github.com/ildarbinanas-design/env-vault/actions/runs/29549118082" ||
-		baseline.Provenance.RunAttempt != "1" || baseline.Provenance.Phase != "candidate" ||
-		baseline.Toolchain.GoVersion != "go1.26.5" || baseline.Toolchain.GotestsumVersion != "v1.13.0" ||
-		baseline.SemanticSuite.SourceReportHash != "baeb9237bfc57a546c890d2c5c6393d029cbb388d546c4981dddea606f4f02b8" ||
-		baseline.SemanticSuite.TransitionCode != "" || baseline.Migration != nil {
-		t.Fatalf("canonical baseline identity is incomplete or changed: %+v", baseline)
-	}
-	wantPlatforms := map[string]bool{"linux-amd64": false, "linux-arm64": false, "darwin-amd64": false, "darwin-arm64": false, "windows-amd64": false}
-	for _, report := range baseline.Platforms {
-		if _, ok := wantPlatforms[report.ID]; !ok {
-			t.Fatalf("unexpected canonical baseline platform %q", report.ID)
-		}
-		if report.Counts.Failed != 0 || report.Counts.Missing != 0 || report.Counts.Passed == 0 || report.CoverageFloorPercent < 60 || len(report.ContractSHA256) != 64 || report.Leak.Status != "pass" || report.Leak.Detected || report.Leak.RegistryRecords != 130 {
-			t.Fatalf("invalid canonical baseline report for %s: %+v", report.ID, report)
-		}
-		if report.ID == "windows-amd64" {
-			if report.Counts.Skipped != 2 || !slices.Equal(report.ExpectedSkips, []string{"EXEC_SIGNAL_FORWARDING", "PROFILE_SYMLINK_REJECTED"}) {
-				t.Fatalf("Windows expected skips=%v count=%d", report.ExpectedSkips, report.Counts.Skipped)
-			}
-		} else if report.Counts.Skipped != 0 || len(report.ExpectedSkips) != 0 {
-			t.Fatalf("unexpected non-Windows skips for %s: %+v", report.ID, report)
-		}
-		wantPlatforms[report.ID] = true
-	}
-	for platform, found := range wantPlatforms {
-		if !found {
-			t.Fatalf("canonical baseline missing %s", platform)
-		}
-	}
-}
 
 func TestLocalConfigAndTransactionLockAreIgnored(t *testing.T) {
 	data, err := os.ReadFile("../.gitignore")

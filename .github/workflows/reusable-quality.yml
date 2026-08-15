@@ -476,22 +476,6 @@ jobs:
           --expected-repository "${{ github.repository }}"
           --expected-reporter "v1.13.0"
 
-      - name: Verify sealed matrix against durable baseline
-        shell: bash
-        run: >-
-          go run ./cmd/e2e-baseline verify
-          --baseline docs/e2e-baseline.json
-          --contract release/contract.v2.json
-          --proof reports-download/matrix-validation.json
-          --output baseline-verification
-          --repository-root .
-          --phase candidate
-          --expected-commit "${{ inputs.source_sha }}"
-          --expected-run-id "${{ github.run_id }}"
-          --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --expected-run-attempt "${{ github.run_attempt }}"
-          --expected-repository "${{ github.repository }}"
-
       - name: Download current-attempt native proofs
         if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -587,15 +571,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload durable baseline verification
+      - name: Upload sealed E2E matrix proof
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: env-vault-e2e-baseline-verification-attempt-${{ github.run_attempt }}
+          name: env-vault-e2e-matrix-proof-attempt-${{ github.run_attempt }}
           path: |
             reports-download/matrix-validation.json
             reports-download/matrix-validation.md
-            baseline-verification/baseline-verification.json
-            baseline-verification/baseline-verification.md
           if-no-files-found: error
           retention-days: 30

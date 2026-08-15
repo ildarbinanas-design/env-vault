@@ -11,6 +11,55 @@ Secret input is limited to:
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
+## Transfer Containers
+
+`export` writes every stored secret value to a single encrypted file; `import`
+restores them into the keychain on another machine. The format is AES-256-GCM
+under a key derived with Argon2id (64 MiB, three passes, four lanes), with the
+header authenticated and the key-derivation parameters bounds-checked before
+any key is derived. Secret names live inside the ciphertext, so a container
+discloses nothing about its contents without the passphrase. See
+[ADR 0010](adr/0010-encrypted-secret-transfer-container.md).
+
+A container carries values only. Profile mappings stay in `.env-vault.yaml`,
+which holds no values and is meant to be committed, so it is already portable
+and duplicating it into the container would only widen what a leaked container
+discloses.
+
+Export covers the default keychain service plus any service named explicitly
+with `--with-services`. A keychain cannot enumerate the services an application
+has used, so a secret stored under a custom service is silently absent from a
+container unless that service is named again on export.
+
+The passphrase is read from a hidden terminal prompt only. There is no
+passphrase flag, environment variable, or file. Export asks twice and compares,
+because a mistyped passphrase produces a container nobody can open. The single
+exception is stdin input while the complete insecure test-backend gate is
+active, which exists so the E2E suite can round-trip without a terminal.
+
+Understand what a container costs you before writing one:
+
+- **Its strength is the passphrase, not the operating system.** A keychain
+  entry is protected by the login session, platform key storage, and OS rate
+  limiting. A container file can be attacked offline with no rate limit. Use a
+  long passphrase; the enforced 12-character minimum is a floor, not a target.
+- **There is no revocation.** Deleting a secret from the keychain destroys it.
+  A container that reached a backup, a cloud-sync folder, a git commit, or a
+  chat message survives every later rotation, and env-vault cannot know it
+  exists. After rotating a secret, destroy the containers that carried it.
+- **Keep containers out of version control and synced folders.** Add the
+  container path to `.gitignore` and prefer a location outside Dropbox,
+  iCloud, OneDrive, and Time Machine coverage.
+- **Memory wiping is best-effort.** Passphrases, derived keys, and decrypted
+  values are overwritten as soon as they are no longer needed, but Go's garbage
+  collector may have copied them, so this narrows the window rather than
+  closing it.
+
+Containers are written with mode `0600` through a synced temporary sibling and
+a same-directory replacement, and a symlink or non-regular file at the target
+is rejected rather than written through. `export` refuses to overwrite an
+existing file without `--force`.
+
 ## Config
 
 Config files store only profile mappings:

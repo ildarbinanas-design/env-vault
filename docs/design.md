@@ -8,6 +8,10 @@ env-vault is a Go CLI with a small package boundary:
 - `internal/config`: YAML config schema, paths, validation, mapping parser, and
   cross-platform profile transaction lock.
 - `internal/secretstore`: backend-neutral secret interface and non-secret fingerprinting.
+- `internal/bundle`: the encrypted transfer container. This is the only package
+  that performs cryptography, and it depends on no other env-vault package.
+- `internal/atomicfile`: symlink-safe `0600` publication of a file through a
+  synced temporary sibling.
 - `internal/secretstore/keyring`: production OS keychain backend using `github.com/99designs/keyring`.
 - `internal/secretstore/teststore`: explicitly gated insecure backend for tests only.
 - `internal/runner`: exec resolver, env collision checks, process launch, exit-code propagation, and signal forwarding.
@@ -93,6 +97,56 @@ every other command (see Output Schema) and never prints a secret value.
 10. Propagate the child exit code where possible.
 
 `env-vault exec ... -- bash -lc ...` is allowed because the user explicitly supplied the shell.
+
+## Transfer Container
+
+`export` seals stored secret values; `import` restores them. The format is
+documented in
+[ADR 0010](adr/0010-encrypted-secret-transfer-container.md).
+
+```json
+{
+  "schema": "env-vault.bundle.v1",
+  "version": 1,
+  "created_at": "2026-08-14T10:00:00Z",
+  "tool_version": "v0.1.0",
+  "kdf": {
+    "algorithm": "argon2id",
+    "salt": "<base64, 16 bytes>",
+    "time": 3,
+    "memory_kib": 65536,
+    "parallelism": 4,
+    "key_length": 32
+  },
+  "cipher": { "algorithm": "aes-256-gcm", "nonce": "<base64, 12 bytes>" },
+  "payload": "<base64 ciphertext with tag>"
+}
+```
+
+The header is the additional authenticated data. It carries no secret names:
+those are inside the ciphertext, so a container without its passphrase says
+nothing about what it holds. Declared key-derivation parameters are
+bounds-checked before a key is derived — `memory_kib` in [8192, 1048576],
+`time` in [1, 10], `parallelism` in [1, 8], `key_length` exactly 32, salt 16
+bytes, nonce 12 bytes, ciphertext at most 16 MiB, file at most 24 MiB — so a
+hostile container cannot force a large allocation ahead of authentication. Salt
+and nonce are drawn fresh per export.
+
+The plaintext is a JSON object holding one entry per secret, each with its
+keychain service, name, and base64 value. Entries are unique by
+`(service, name)`, which is how the backend addresses a secret.
+
+The container carries values only. Profile mappings are not included because
+`.env-vault.yaml` holds no values and is already portable through the
+repository.
+
+Neither command reads or writes a config file. Export covers
+`secretstore.DefaultService` plus any service named with `--with-services`,
+which accepts a comma-separated list and may be repeated; a keychain cannot
+enumerate services, so custom ones must be named. The flag is deliberately not
+called `--service`: on `secret set` that name replaces the default service,
+whereas here the default is always included and the listed services are added
+to it. Import applies `--on-conflict fail|skip|overwrite` per secret.
 
 ## Output Schema
 
@@ -215,15 +269,11 @@ only declared platform skips, valid report formats, and a clean sentinel leak
 scan. The full architecture and feature trace are documented in
 [`docs/e2e.md`](e2e.md).
 
-Every candidate matrix is also compared with the immutable Go 1.22.12 baseline
-identity in [`docs/e2e-baseline.json`](e2e-baseline.json). The gate requires the
-same semantic suite hash, critical scenarios, normalized public contracts and
-exit codes, platform set, and non-decreasing statement coverage. Before the
-cross-source comparison, baseline reports are revalidated (including derived
-coverage regeneration) against the canonical baseline checkout/toolchain while
-candidate reports are revalidated against the candidate checkout/toolchain; a
-production fix cannot make either coverage profile appear invalid merely
-because it belongs to a different source revision.
+The durable checked-in baseline that every candidate matrix was compared
+against was removed on 2026-08-14 (Phase 9 of
+[`docs/trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md)). Non-regression now
+rests on the per-run gate above plus the suite hash that matrix validation
+recomputes from the exact checkout, which still rejects a stale report set.
 
 Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
 runners with `CGO_ENABLED=1` because the macOS Keychain backend requires

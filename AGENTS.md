@@ -7,6 +7,13 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
 - Never print, log, store in config, store in tests, or store in evidence any secret value.
 - Do not implement or document a `secret get` command.
 - Do not add a `--value` flag or any equivalent secret-value command-line argument.
+- `export` writes stored secret values only as authenticated ciphertext in a
+  transfer container, under a passphrase read from a hidden prompt (ADR 0010).
+  A container carries values only and never profile mappings. The
+  passphrase itself obeys the same rule as a secret value: no flag, no
+  environment variable, no file. The single exception is reading it from stdin
+  when the complete insecure test-backend gate is already active. Plaintext
+  export of a secret value remains forbidden.
 - Secret input must use a hidden prompt or `--stdin` only.
 - The production backend target is the operating system keychain.
 - No production plaintext secret backend is allowed.
@@ -72,5 +79,6 @@ The MVP command surface is allowed to include:
 - `env-vault profile create/add/remove/show`
 - `env-vault exec`
 - `env-vault doctor`
+- `env-vault export` / `env-vault import`
 
 The hard security rules above remain mandatory for every change.

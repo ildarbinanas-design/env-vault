@@ -42,6 +42,8 @@ func TestE2E(t *testing.T) {
 		{"DOCTOR_BACKENDS", testDoctorBackends},
 		{"CONCURRENCY_PROFILE_MUTATIONS", testConcurrencyProfileMutations},
 		{"LOCK_TIMEOUT_CRASH_INTEGRITY", testLockTimeoutCrashIntegrity},
+		{"TRANSFER_ROUND_TRIP", testTransferRoundTrip},
+		{"TRANSFER_REJECTS_TAMPERING", testTransferRejectsTampering},
 	}
 	shuffleScenarioCases(t, tests)
 	for _, test := range tests {
@@ -829,5 +831,133 @@ func wantExact(t *testing.T, got, want, label string) {
 	t.Helper()
 	if got != want {
 		t.Fatalf("%s=%q, want %q", label, got, want)
+	}
+}
+
+// The container passphrase reaches the binary on stdin only because the
+// complete insecure test-backend gate is active for every scenario. Without
+// that gate the prompt requires a terminal, which is what keeps a passphrase
+// out of shell history in real use.
+const containerPassphrase = "e2e container passphrase"
+
+func testTransferRoundTrip(sc *scenario) {
+	secret := sc.sentinels[0]
+	container := filepath.Join(sc.root, "vault.evb")
+
+	wantExit(sc.t, sc.runWith(runOptions{stdin: []byte(secret + "\n")}, "--json", "secret", "set", "team/token", "--stdin"), 0)
+
+	export := sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")},
+		"--json", "export", "--out", container)
+	wantExit(sc.t, export, 0)
+	wantEmpty(sc.t, export.Stderr, "export stderr")
+	if got := parseEnvelope(sc.t, export); !got.OK || got.Command != "export" || got.Error != nil {
+		sc.t.Fatalf("unexpected export envelope: %#v", got)
+	}
+
+	// The container is the only new secret-bearing artifact this suite
+	// produces. scanFile fails closed if the sentinel survived encryption; the
+	// cleanup scan over the whole scenario root repeats that check.
+	data := sc.scanFile(container, "container")
+	if strings.Contains(string(data), "team/token") {
+		sc.t.Fatal("container discloses a secret name in the clear")
+	}
+	var header map[string]any
+	if err := json.Unmarshal(data, &header); err != nil {
+		sc.t.Fatalf("container is not JSON: %v", err)
+	}
+	if header["schema"] != "env-vault.bundle.v1" {
+		sc.t.Fatalf("container schema=%#v, want env-vault.bundle.v1", header["schema"])
+	}
+	for _, field := range []string{"secrets", "service"} {
+		if _, ok := header[field]; ok {
+			sc.t.Fatalf("container header carries %q, which belongs inside the ciphertext", field)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Lstat(container)
+		if err != nil {
+			sc.t.Fatalf("stat container: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			sc.t.Fatalf("container permissions=%#o, want 0600", perm)
+		}
+	}
+
+	// Drop the stored value so the import has to restore it rather than
+	// finding it already present.
+	wantExit(sc.t, sc.run("--json", "secret", "delete", "team/token", "--confirm", "team/token"), 0)
+	wantExit(sc.t, sc.run("--json", "secret", "check", "team/token"), 3)
+
+	imported := sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")}, "--json", "import", container)
+	wantExit(sc.t, imported, 0)
+	wantEmpty(sc.t, imported.Stderr, "import stderr")
+	if got := parseEnvelope(sc.t, imported); !got.OK || got.Command != "import" || got.Error != nil {
+		sc.t.Fatalf("unexpected import envelope: %#v", got)
+	}
+
+	wantExit(sc.t, sc.run("--json", "secret", "check", "team/token"), 0)
+}
+
+func testTransferRejectsTampering(sc *scenario) {
+	secret := sc.sentinels[0]
+	container := filepath.Join(sc.root, "tamper.evb")
+
+	wantExit(sc.t, sc.runWith(runOptions{stdin: []byte(secret + "\n")}, "--json", "secret", "set", "team/token", "--stdin"), 0)
+	wantExit(sc.t, sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")},
+		"--json", "export", "--out", container), 0)
+
+	wrongPassphrase := sc.runWith(runOptions{stdin: []byte("an entirely different passphrase\n")},
+		"--json", "import", container)
+	wantExit(sc.t, wrongPassphrase, 5)
+	if got := parseEnvelope(sc.t, wrongPassphrase); got.Error == nil || got.Error.Code != "BUNDLE_AUTH_FAILED" {
+		sc.t.Fatalf("unexpected wrong-passphrase envelope: %#v", got)
+	}
+
+	// created_at does not feed key derivation, so this case fails only if the
+	// header is genuinely covered by the authentication tag.
+	original := sc.scanFile(container, "container")
+	var document map[string]any
+	if err := json.Unmarshal(original, &document); err != nil {
+		sc.t.Fatalf("container is not JSON: %v", err)
+	}
+	document["created_at"] = "2020-01-01T00:00:00Z"
+	rewritten, err := json.Marshal(document)
+	if err != nil {
+		sc.t.Fatalf("encode tampered container: %v", err)
+	}
+	tampered := filepath.Join(sc.root, "tampered.evb")
+	if err := os.WriteFile(tampered, rewritten, 0o600); err != nil {
+		sc.t.Fatalf("write tampered container: %v", err)
+	}
+	tamperedImport := sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")}, "--json", "import", tampered)
+	wantExit(sc.t, tamperedImport, 5)
+	if got := parseEnvelope(sc.t, tamperedImport); got.Error == nil || got.Error.Code != "BUNDLE_AUTH_FAILED" {
+		sc.t.Fatalf("unexpected tampered-header envelope: %#v", got)
+	}
+
+	malformed := filepath.Join(sc.root, "malformed.evb")
+	if err := os.WriteFile(malformed, []byte("not a container at all"), 0o600); err != nil {
+		sc.t.Fatalf("write malformed container: %v", err)
+	}
+	malformedImport := sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")}, "--json", "import", malformed)
+	wantExit(sc.t, malformedImport, 5)
+	if got := parseEnvelope(sc.t, malformedImport); got.Error == nil || got.Error.Code != "BUNDLE_INVALID" {
+		sc.t.Fatalf("unexpected malformed-container envelope: %#v", got)
+	}
+
+	overwrite := sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")}, "--json", "export", "--out", container)
+	wantExit(sc.t, overwrite, 2)
+	if got := parseEnvelope(sc.t, overwrite); got.Error == nil || got.Error.Code != "USAGE" {
+		sc.t.Fatalf("unexpected overwrite-refusal envelope: %#v", got)
+	}
+	if after := sc.scanFile(container, "container"); string(after) != string(original) {
+		sc.t.Fatal("refused export still replaced the container")
+	}
+
+	planned := filepath.Join(sc.root, "planned.evb")
+	dryRun := sc.run("--json", "--dry-run", "export", "--out", planned)
+	wantExit(sc.t, dryRun, 0)
+	if _, err := os.Stat(planned); !os.IsNotExist(err) {
+		sc.t.Fatalf("dry run created %s (err=%v)", planned, err)
 	}
 }

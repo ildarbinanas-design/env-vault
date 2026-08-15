@@ -68,16 +68,27 @@ type App struct {
 	dryRunFlag bool
 	configPath string
 	redactor   redact.Redactor
+	// passphraseReader replaces the hidden container passphrase prompt in
+	// tests. It is unexported and never assigned outside this package, so it
+	// adds no flag, no environment variable, and no production code path.
+	passphraseReader func(prompt string) ([]byte, error)
 }
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	app := &App{
+	return newApp(stdin, stdout, stderr).run(args)
+}
+
+func newApp(stdin io.Reader, stdout, stderr io.Writer) *App {
+	return &App{
 		stdin:      stdin,
 		stdout:     stdout,
 		stderr:     stderr,
 		currentEnv: os.Environ(),
 		redactor:   redact.New(),
 	}
+}
+
+func (app *App) run(args []string) int {
 	root := app.rootCommand()
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
@@ -135,6 +146,8 @@ func (a *App) rootCommand() *cobra.Command {
 	root.AddCommand(a.profileCommand())
 	root.AddCommand(a.execCommand())
 	root.AddCommand(a.doctorCommand())
+	root.AddCommand(a.exportCommand())
+	root.AddCommand(a.importCommand())
 	return root
 }
 
@@ -739,6 +752,10 @@ func commandID(cmd *cobra.Command) string {
 		return "exec"
 	case "doctor":
 		return "doctor"
+	case "export":
+		return "export"
+	case "import":
+		return "import"
 	default:
 		return cmd.Name()
 	}
