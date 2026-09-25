@@ -71,7 +71,7 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 			if !ok || group.AppliesTo != "version-updates" || !slices.Equal(group.Patterns, []string{"*"}) || !slices.Equal(group.UpdateTypes, []string{"minor", "patch"}) {
 				t.Fatalf("Dependabot gomod group=%+v, want isolated minor/patch version updates", group)
 			}
-			for _, dependency := range []string{"github.com/gofrs/flock", "golang.org/x/term", "golang.org/x/sys"} {
+			for _, dependency := range []string{"github.com/gofrs/flock", "golang.org/x/crypto", "golang.org/x/term", "golang.org/x/sys"} {
 				if !slices.Contains(group.ExcludePatterns, dependency) {
 					t.Fatalf("Dependabot broad group must exclude toolchain-sensitive %s", dependency)
 				}
@@ -82,6 +82,68 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 	for ecosystem, found := range want {
 		if !found {
 			t.Fatalf("Dependabot missing %s updates", ecosystem)
+		}
+	}
+}
+
+func TestThirdPartyNoticesMatchDirectRequirements(t *testing.T) {
+	goMod, err := os.ReadFile("../go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	direct := make(map[string]string)
+	inRequire := false
+	for _, line := range strings.Split(string(goMod), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "require (":
+			inRequire = true
+			continue
+		case inRequire && line == ")":
+			inRequire = false
+			continue
+		case strings.HasPrefix(line, "require "):
+			line = strings.TrimPrefix(line, "require ")
+		case !inRequire:
+			continue
+		}
+		if line == "" || strings.HasSuffix(line, "// indirect") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			t.Fatalf("unsupported go.mod requirement %q", line)
+		}
+		direct[fields[0]] = fields[1]
+	}
+	if len(direct) == 0 {
+		t.Fatal("go.mod has no direct requirements")
+	}
+
+	notices, err := os.ReadFile("../THIRD_PARTY_NOTICES.md")
+	if err != nil {
+		t.Fatalf("read THIRD_PARTY_NOTICES.md: %v", err)
+	}
+	listed := make(map[string]string)
+	for _, line := range strings.Split(string(notices), "\n") {
+		cells := strings.Split(line, "|")
+		if len(cells) != 5 || !strings.HasPrefix(strings.TrimSpace(cells[1]), "`") {
+			continue
+		}
+		module := strings.Trim(strings.TrimSpace(cells[1]), "`")
+		if _, ok := listed[module]; ok {
+			t.Fatalf("THIRD_PARTY_NOTICES.md lists %s twice", module)
+		}
+		listed[module] = strings.Trim(strings.TrimSpace(cells[2]), "`")
+	}
+	for module, version := range direct {
+		if got, ok := listed[module]; !ok || got != version {
+			t.Fatalf("THIRD_PARTY_NOTICES.md %s=%q, want go.mod version %q", module, got, version)
+		}
+	}
+	for module := range listed {
+		if _, ok := direct[module]; !ok {
+			t.Fatalf("THIRD_PARTY_NOTICES.md lists %s, which is not a direct go.mod requirement", module)
 		}
 	}
 }

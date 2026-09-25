@@ -7,10 +7,11 @@ Direct runtime dependencies:
 | Module | Version | License |
 |---|---:|---|
 | `github.com/99designs/keyring` | `v1.2.2` | MIT |
-| `github.com/gofrs/flock` | `v0.13.0` | BSD-3-Clause |
+| `github.com/gofrs/flock` | `v0.13.1` | BSD-3-Clause |
 | `github.com/spf13/cobra` | `v1.10.2` | Apache-2.0 |
-| `golang.org/x/crypto` | `v0.55.0` | BSD-3-Clause |
-| `golang.org/x/term` | `v0.45.0` | BSD-3-Clause |
+| `golang.org/x/crypto` | `v0.57.0` | BSD-3-Clause |
+| `golang.org/x/sys` | `v0.48.0` | BSD-3-Clause |
+| `golang.org/x/term` | `v0.46.0` | BSD-3-Clause |
 | `gopkg.in/yaml.v3` | `v3.0.1` | MIT/Apache-2.0 style Go YAML license |
 
 CI runs `scripts/license-check.sh`, pinned to `go-licenses v2.0.1`, natively on
