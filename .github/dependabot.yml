@@ -12,6 +12,8 @@ updates:
     # Keep dependency requirements unchanged when they already admit an update.
     # Dependencies that commonly raise the minimum Go version stay out of the
     # broad group so their toolchain impact is reviewed in an isolated PR.
+    # golang.org/x/crypto is excluded too: each release requires the latest
+    # golang.org/x/sys and golang.org/x/term and would pull them back in.
     versioning-strategy: "increase-if-necessary"
     groups:
       go-modules-minor-patch:
@@ -20,6 +22,7 @@ updates:
           - "*"
         exclude-patterns:
           - "github.com/gofrs/flock"
+          - "golang.org/x/crypto"
           - "golang.org/x/term"
           - "golang.org/x/sys"
         update-types:

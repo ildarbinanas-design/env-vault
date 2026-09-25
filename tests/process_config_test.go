@@ -71,7 +71,7 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 			if !ok || group.AppliesTo != "version-updates" || !slices.Equal(group.Patterns, []string{"*"}) || !slices.Equal(group.UpdateTypes, []string{"minor", "patch"}) {
 				t.Fatalf("Dependabot gomod group=%+v, want isolated minor/patch version updates", group)
 			}
-			for _, dependency := range []string{"github.com/gofrs/flock", "golang.org/x/term", "golang.org/x/sys"} {
+			for _, dependency := range []string{"github.com/gofrs/flock", "golang.org/x/crypto", "golang.org/x/term", "golang.org/x/sys"} {
 				if !slices.Contains(group.ExcludePatterns, dependency) {
 					t.Fatalf("Dependabot broad group must exclude toolchain-sensitive %s", dependency)
 				}
