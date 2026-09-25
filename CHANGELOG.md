@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.2.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.2.0...v0.2.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **release:** accept GitHub's unattributed-changes ruleset parameter ([#85](https://github.com/ildarbinanas-design/env-vault/issues/85)) ([c9c9d53](https://github.com/ildarbinanas-design/env-vault/commit/c9c9d53cd168c8e7ca5515501a2ddaf35f7b279f))
+
+
+### Build System
+
+* **deps:** bump go-modules-minor-patch group (retry of [#81](https://github.com/ildarbinanas-design/env-vault/issues/81) on fresh base) ([5234501](https://github.com/ildarbinanas-design/env-vault/commit/523450175583d5ee1c9950f1626afa04c83f9bdc))
+
+
+### Documentation
+
+* sync third-party notices with go.mod; isolate x/crypto in Dependabot ([#84](https://github.com/ildarbinanas-design/env-vault/issues/84)) ([79ef830](https://github.com/ildarbinanas-design/env-vault/commit/79ef830d3d39b8c8464249ce22c520ee5b5e0284))
+
+
+### Tests
+
+* add unit tests for internal/errors package ([10715bb](https://github.com/ildarbinanas-design/env-vault/commit/10715bb962e9a0ccc774f827c0c0ece544a04b74))
+
 ## [0.2.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.1.0...v0.2.0) (2026-08-15)
 
 
