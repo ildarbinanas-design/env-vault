@@ -435,6 +435,11 @@ type pullRequestParameters struct {
 	RequiredReviewers                 *[]json.RawMessage `json:"required_reviewers"`
 	AutomaticCopilotCodeReviewEnabled *bool              `json:"automatic_copilot_code_review_enabled,omitempty"`
 	CopilotCodeReviewCount            *int               `json:"copilot_code_review_count,omitempty"`
+	// GitHub began returning this defaulted parameter between the 2026-08-15
+	// and 2026-09-14 planning runs. It can only require one extra approval on
+	// unattributed pull requests, so either value leaves the head-guarded
+	// release merge authorization unchanged.
+	RequireExtraApprovalForUnattributedChanges *bool `json:"require_extra_approval_for_unattributed_changes,omitempty"`
 }
 
 type requiredStatusChecksParameters struct {
