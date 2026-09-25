@@ -223,6 +223,30 @@ func TestPullRequestRequiredReviewersMustBePresentAndEmpty(t *testing.T) {
 	}
 }
 
+func TestPullRequestUnattributedChangesApprovalParameter(t *testing.T) {
+	for name, replacement := range map[string]string{
+		"true":  `,"required_reviewers":[],"require_extra_approval_for_unattributed_changes":true`,
+		"false": `,"required_reviewers":[],"require_extra_approval_for_unattributed_changes":false`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := validRawInputs()
+			raw.MainRuleset = []byte(strings.Replace(string(raw.MainRuleset), `,"required_reviewers":[]`, replacement, 1))
+			if _, err := Check(validContract(t), validTuple().Repository, raw); err != nil {
+				t.Fatalf("check rejected GitHub's unattributed-changes parameter: %v", err)
+			}
+			if _, err := Seal(validContract(t), validTuple(), raw); err != nil {
+				t.Fatalf("seal rejected GitHub's unattributed-changes parameter: %v", err)
+			}
+		})
+	}
+
+	raw := validRawInputs()
+	raw.MainRuleset = []byte(strings.Replace(string(raw.MainRuleset), `,"required_reviewers":[]`, `,"required_reviewers":[],"require_extra_approval_for_unknown_changes":true`, 1))
+	if _, err := Check(validContract(t), validTuple().Repository, raw); ErrorCode(err) != CodeInputInvalid {
+		t.Fatalf("unknown pull-request parameter error=%v code=%q", err, ErrorCode(err))
+	}
+}
+
 func TestStrictFieldIdentityForProofAndRawSettings(t *testing.T) {
 	proof, err := Seal(validContract(t), validTuple(), validRawInputs())
 	if err != nil {
