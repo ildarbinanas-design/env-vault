@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"sort"
 	"time"
@@ -25,10 +26,12 @@ type Store struct {
 	passCmd         string
 	passDir         string
 	openKeyring     func(keyring.Config) (keyring.Keyring, error)
+	notFoundCheck   *bool
 }
 
 // withTimeout runs call and gives up after backendTimeout. The abandoned call
-// keeps running until the process exits, which follows immediately.
+// keeps running in the background, and a backend helper such as pass or gpg
+// may still finish its work after the command has reported the timeout.
 func withTimeout[T any](call func() (T, error)) (T, error) {
 	type result struct {
 		value T
@@ -96,11 +99,17 @@ func (s Store) Get(_ context.Context, service, name string) ([]byte, error) {
 	}
 	item, err := withTimeout(func() (keyring.Item, error) { return kr.Get(name) })
 	if stderrors.Is(err, keyring.ErrKeyNotFound) {
+		if !s.notFoundMayHideRefusal() {
+			return nil, secretstore.ErrNotFound
+		}
 		// The macOS Keychain backend reports a denied prompt or a locked
 		// keychain as "not found". A record that is still listed was refused,
 		// not missing, and must not be treated as an absent optional secret.
 		keys, keysErr := withTimeout(kr.Keys)
-		if keysErr == nil && slices.Contains(keys, name) {
+		if keysErr != nil {
+			return nil, s.backendError(keysErr)
+		}
+		if slices.Contains(keys, name) {
 			return nil, s.backendError(secretstore.ErrUnreadable)
 		}
 		return nil, secretstore.ErrNotFound
@@ -175,6 +184,17 @@ func productionAllowedBackends() []keyring.BackendType {
 		keyring.WinCredBackend,
 		keyring.PassBackend,
 	}
+}
+
+// notFoundMayHideRefusal reports whether a "not found" from Get needs a
+// second look. Only the macOS Keychain backend folds a refused or locked read
+// into "not found"; on Linux an extra listing could open a Secret Service
+// unlock prompt for a secret that is simply absent.
+func (s Store) notFoundMayHideRefusal() bool {
+	if s.notFoundCheck != nil {
+		return *s.notFoundCheck
+	}
+	return runtime.GOOS == "darwin" && !slices.Equal(s.allowedBackends, []keyring.BackendType{keyring.PassBackend})
 }
 
 func (s Store) open(service string) (keyring.Keyring, error) {

@@ -39,9 +39,11 @@ func (k refusingKeyring) Keys() ([]string, error) {
 }
 
 func storeWith(kr keyring.Keyring) Store {
+	check := true
 	return Store{
 		unavailableErr: secretstore.ErrUnavailable,
 		openKeyring:    func(keyring.Config) (keyring.Keyring, error) { return kr, nil },
+		notFoundCheck:  &check,
 	}
 }
 
@@ -108,5 +110,25 @@ func TestOpenGivesUpAfterDeadline(t *testing.T) {
 	}
 	if _, err := store.List(context.Background(), secretstore.DefaultService); !errors.Is(err, secretstore.ErrTimeout) {
 		t.Fatalf("open error = %v, want timeout", err)
+	}
+}
+
+func TestGetSkipsTheListingWhereNotFoundIsReliable(t *testing.T) {
+	check := false
+	store := storeWith(refusingKeyring{keys: []string{"nexus-token"}})
+	store.notFoundCheck = &check
+	if _, err := store.Get(context.Background(), secretstore.DefaultService, "nexus-token"); !errors.Is(err, secretstore.ErrNotFound) {
+		t.Fatalf("error = %v, want not found without a second listing", err)
+	}
+}
+
+type failingListKeyring struct{ refusingKeyring }
+
+func (failingListKeyring) Keys() ([]string, error) { return nil, errors.New("keychain locked") }
+
+func TestGetReportsAFailedListingAsBackendError(t *testing.T) {
+	_, err := storeWith(failingListKeyring{}).Get(context.Background(), secretstore.DefaultService, "nexus-token")
+	if errors.Is(err, secretstore.ErrNotFound) || !errors.Is(err, secretstore.ErrUnavailable) {
+		t.Fatalf("error = %v, want backend error", err)
 	}
 }

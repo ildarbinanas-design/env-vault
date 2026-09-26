@@ -124,7 +124,9 @@ Tests and smoke checks generate ephemeral secret fixture values at runtime. Stab
   upgrade or a locked Secret Service collection, fails with
   `BACKEND_UNAVAILABLE` instead of blocking forever. A record the backend lists
   but refuses to return, for example after a denied Keychain prompt, also fails
-  with `BACKEND_UNAVAILABLE` and is never treated as a missing secret.
+  with `BACKEND_UNAVAILABLE` and is never treated as a missing secret. A
+  timed-out write may still complete afterwards when the backend helper, such
+  as `pass` or `gpg`, keeps running; check with `secret check` before retrying.
 - Any process or principal with write access through ownership, group mode, or
   ACLs can replace a parent directory, lock path, or temporary filename during
   a checked filesystem operation. This remains outside the cooperative
