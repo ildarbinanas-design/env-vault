@@ -1,6 +1,12 @@
 # env-vault Agent Rules
 
-env-vault is a standalone Go CLI project for safe local automation with OS-keychain-backed environment profiles.
+env-vault is the owner's personal Go CLI. It runs commands with secrets
+injected as environment variables and keeps the secrets in the operating system
+keychain, never in files or shell history. Judge every change against that
+goal: secret values must not leak, `exec` must work on macOS, Linux, and
+Windows, binaries must reach the owner intact through GitHub Releases and
+Homebrew, and everything else stays proportionate to a single-user tool
+(ADR 0008).
 
 ## Hard Security Rules
 
@@ -68,9 +74,102 @@ env-vault is a standalone Go CLI project for safe local automation with OS-keych
   its byte-exact `ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS …` confirmation, because
   that operation is irreversible and has no release gate behind it (ADR 0007).
 
+## Working Mode
+
+The owner decides how much agents may do without asking. Exactly one of the two
+modes below applies at a time; the same modes govern
+`ildarbinanas-design/homebrew-tap`.
+
+### Audit Autonomy Window
+
+The owner opened this window on 2026-09-26 for the full audit of env-vault,
+homebrew-tap, and their processes. It closes at the earlier of:
+
+- the merge of the pull requests that delete this subsection here and in
+  homebrew-tap's `AGENTS.md`, which the audit opens once its results are
+  applied; or
+- 2026-10-10T00:00:00Z. From then on `TestAuditAutonomyWindowClosesByDeadline`
+  fails every CI run until this subsection is deleted.
+
+While the window is open, agents may do without asking everything the Standing
+Delegation allows, and may also merge their own pull requests that change
+reserved paths, after every required check is green on the exact head and a
+fresh-context review of the final diff found nothing blocking. Still reserved
+for the owner:
+
+- releasing: merging the generated Release Please pull request, and creating
+  tags or releases by any other path;
+- deleting Actions artifacts, tags, or releases;
+- force-pushing or rewriting published history;
+- anything that weakens a Hard Security Rule, the deny rules in
+  `.claude/settings.json`, or a repository protection.
+
+Narrowing is always allowed: any agent may close the window early. Extending
+or widening it is reserved for the owner.
+
+### Standing Delegation
+
+This mode applies whenever the Audit Autonomy Window subsection is absent.
+
+Agents may, without asking:
+
+- read any repository and GitHub state of the owner;
+- create `claude/`-prefixed branches, commit and push to them, and delete the
+  branches they created once finished;
+- open, update, and comment on their own pull requests and reply to review
+  threads on them;
+- dispatch, re-run, and cancel workflow runs on their own `claude/` branches;
+- push a temporary verification workflow to a `claude/verify-*` branch when a
+  check needs another operating system or network access that the agent's own
+  environment lacks. The workflow triggers only on that branch (`push`,
+  `workflow_dispatch`), has `contents: read` (plus `actions: read` only for a
+  job that downloads an artifact), receives no secrets, never uses
+  `pull_request_target` or `workflow_run`, pins every action by full commit
+  SHA, sets `timeout-minutes` on every job, and prints only non-secret results.
+  The branch is deleted when the check is done;
+- merge their own pull request into `main` head-guarded (`gh pr merge <n>
+  --squash --match-head-commit <head-sha>` or the API equivalent) once every
+  required check is green on that exact head, a fresh-context review of the
+  final diff found nothing blocking, and the pull request changes no reserved
+  path.
+
+Reserved for the owner:
+
+- merging the generated Release Please pull request (the release
+  authorization, runbook card 9) and creating tags or releases by any other
+  path;
+- merging a pull request that changes a reserved path. In this repository:
+  `AGENTS.md`, `.claude/`, `.github/workflows/`, `release/`,
+  `scripts/release/`, `release-please-config.json`, and
+  `.release-please-manifest.json`. In homebrew-tap: `AGENTS.md`, `.claude/`,
+  `.github/workflows/`, and `Formula/` (the env-vault publisher still merges
+  its own formula pull requests). These paths decide what may be published and
+  who may change it, so an agent prepares the pull request and the owner
+  merges it;
+- repository, ruleset, environment, secret, Actions, GitHub App, security, and
+  account settings;
+- deleting Actions artifacts (the ceremony above);
+- force-pushes, history rewrites, and deleting branches, tags, or releases the
+  agent did not create;
+- anything that weakens a Hard Security Rule.
+
+### Asking the Owner
+
+- Settle whatever the code, the documentation, or a conventional default
+  settles, and state the default you took.
+- Ask only at a genuine fork: a decision that belongs to the owner and changes
+  what you do next. Use the structured question tool (`AskUserQuestion` in
+  Claude Code), put the recommended option first, and batch open forks into one
+  round instead of asking one at a time.
+- Collect reserved actions into one ordered owner checklist per task, each item
+  with the exact place and action.
+- When a permission rule, hook, or safety classifier blocks an action, do not
+  work around it: add it to the owner checklist and continue with the rest.
+- Report results with evidence: the command or run and what it returned.
+
 ## Project Scope
 
-This repository contains the public env-vault MVP at `github.com/ildarbinanas-design/env-vault`. Commits, pushes, tags, releases, and other publishing actions still require explicit approval.
+This repository contains the public env-vault MVP at `github.com/ildarbinanas-design/env-vault`. Commits, pushes, merges, tags, releases, and other publishing actions follow the Working Mode above. Pull request conventions and local checks are in `CONTRIBUTING.md`.
 
 The MVP command surface is allowed to include:
 
