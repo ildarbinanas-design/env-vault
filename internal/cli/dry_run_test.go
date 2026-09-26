@@ -200,3 +200,24 @@ func setupBrokenTestBackend(t *testing.T) {
 	t.Setenv(teststore.AllowEnv, "1")
 	t.Setenv(teststore.StoreEnv, dir)
 }
+
+// A value that also appears in visible text must not be substituted in place:
+// "[REDACTED]-token" next to the known name "<value>-token" discloses the value.
+func TestSecretSetOutputDoesNotRevealValueContainedInName(t *testing.T) {
+	setupTestBackend(t)
+	secretValue := strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(testutil.EphemeralValue(t)))
+	name := secretValue + "-token"
+	for mode, args := range [][]string{
+		{"secret", "set", name, "--stdin"},
+		{"--json", "secret", "set", name, "--stdin"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := Run(args, strings.NewReader(secretValue+"\n"), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("mode=%d code=%d", mode, code)
+		}
+		if strings.Contains(stdout.String(), "REDACTED") || !strings.Contains(stdout.String(), name) {
+			t.Fatalf("mode=%d output rewrote the secret name instead of printing it unchanged", mode)
+		}
+	}
+}
