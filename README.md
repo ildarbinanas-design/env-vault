@@ -21,7 +21,7 @@ On Linux, process environment variables may be visible to the same user through 
 - There is no `secret get` command.
 - There is no `--value` flag.
 - Secret input is accepted only through a hidden prompt or `--stdin`.
-- `--stdin` trims exactly one trailing newline byte.
+- `--stdin` trims exactly one trailing line ending (`\n` or `\r\n`).
 - Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
 - Secret and service identifiers may use safe slash-separated hierarchy, but absolute paths and empty, `.` or `..` components are rejected before backend access.
 - Config mutations reject symlink targets and use a synced mode-`0600` temporary sibling for same-directory replacement.

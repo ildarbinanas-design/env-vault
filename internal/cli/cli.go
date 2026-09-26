@@ -250,7 +250,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 			return a.renderer().Success("secret_set", data, nil)
 		},
 	}
-	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from stdin and trim exactly one trailing newline")
+	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from stdin and trim exactly one trailing line ending (\\n or \\r\\n)")
 	cmd.Flags().BoolVar(&verify, "verify", false, "read the stored value back and confirm it matches, without printing it")
 	cmd.Flags().StringVar(&service, "service", secretstore.DefaultService, "keychain service name")
 	return cmd
@@ -697,15 +697,26 @@ func (a *App) store(command string) (secretstore.Store, error) {
 	}
 }
 
+// trimLineEnding removes exactly one trailing line ending, "\n" or "\r\n".
+// Windows shells terminate piped lines with "\r\n"; keeping the "\r" would
+// store a value that differs from the one the user meant.
+func trimLineEnding(value []byte) []byte {
+	if len(value) > 0 && value[len(value)-1] == '\n' {
+		value = value[:len(value)-1]
+		if len(value) > 0 && value[len(value)-1] == '\r' {
+			value = value[:len(value)-1]
+		}
+	}
+	return value
+}
+
 func (a *App) readSecret(useStdin bool) ([]byte, error) {
 	if useStdin {
 		value, err := io.ReadAll(a.stdin)
 		if err != nil {
 			return nil, apperrors.Wrap("secret_set", apperrors.CodeRuntimeError, "Unable to read secret from stdin", "Retry with --stdin and a readable pipe", apperrors.ExitRuntimeError, err)
 		}
-		if len(value) > 0 && value[len(value)-1] == '\n' {
-			value = value[:len(value)-1]
-		}
+		value = trimLineEnding(value)
 		if len(value) == 0 {
 			return nil, apperrors.Usage("secret_set", "Secret input is empty", "Provide secret input through a hidden prompt or --stdin")
 		}
