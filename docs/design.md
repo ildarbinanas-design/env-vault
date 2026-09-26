@@ -107,10 +107,13 @@ every other command (see Output Schema) and never prints a secret value.
 9. On Unix, forward SIGTERM, SIGHUP, SIGINT, and SIGQUIT to the child. While
    env-vault and the child are both in the terminal's foreground process
    group, SIGINT and SIGQUIT are not forwarded: the terminal already delivered
-   them to the child, and forwarding would deliver each one twice.
-10. Propagate the child exit code. A child killed by SIGHUP, SIGINT, SIGTERM,
-    or SIGKILL ends env-vault with the same signal, so a calling shell loop
-    stops as it would without env-vault; other signals exit with 128+n.
+   them to the child, and forwarding would deliver each one twice. env-vault
+   cannot tell a keypress from `kill`, so a SIGINT or SIGQUIT sent only to
+   env-vault in that situation is not forwarded either.
+10. Propagate the child exit code. On Unix, a child killed by SIGHUP, SIGINT,
+    SIGTERM, or SIGKILL ends env-vault with the same signal, so a calling shell
+    loop stops as it would without env-vault. Other signals, a SIGHUP or SIGINT
+    inherited as ignored, and running as PID 1 exit with 128+n instead.
 
 `env-vault exec ... -- bash -lc ...` is allowed because the user explicitly supplied the shell.
 

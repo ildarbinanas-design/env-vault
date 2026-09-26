@@ -222,13 +222,18 @@ A shell is used only when you explicitly provide one:
 env-vault exec dev -- bash -lc 'make test'
 ```
 
-`exec` returns the child's exit code. If the child is killed by SIGHUP,
-SIGINT, SIGTERM, or SIGKILL, env-vault ends with the same signal; other
-signals exit with 128 plus the signal number. env-vault forwards SIGTERM,
-SIGHUP, SIGINT, and SIGQUIT to the child, except SIGINT and SIGQUIT that the
-terminal already delivered: while env-vault and the child share the terminal's
-foreground process group, Ctrl+C and Ctrl+\ reach the child directly, so
-forwarding would deliver them twice.
+`exec` returns the child's exit code. On Unix, if the child is killed by
+SIGHUP, SIGINT, SIGTERM, or SIGKILL, env-vault ends with the same signal, so a
+calling shell loop stops as it would without env-vault. It exits with 128 plus
+the signal number instead for other signals, for a SIGHUP or SIGINT it
+inherited as ignored (as under `nohup`), and when it runs as PID 1.
+
+On Unix, env-vault forwards SIGTERM, SIGHUP, SIGINT, and SIGQUIT to the child,
+except SIGINT and SIGQUIT while env-vault and the child are both in the
+terminal's foreground process group. There Ctrl+C and Ctrl+\ reach the child
+directly, and forwarding would deliver them twice. env-vault cannot tell who
+sent a signal, so in that situation a SIGINT or SIGQUIT sent to env-vault with
+`kill` is not forwarded either; send SIGTERM, or signal the process group.
 
 ## Overwriting A Secret
 

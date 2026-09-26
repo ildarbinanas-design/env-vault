@@ -149,7 +149,12 @@ func TestIgnoredAtStartSeesAnInheritedIgnoredSignal(t *testing.T) {
 		}
 		os.Exit(8)
 	}
-	for trap, want := range map[string]int{`trap '' HUP; `: 7, ``: 8} {
+	cases := map[string]int{`trap '' HUP; `: 7}
+	if !ignoredAtStart[syscall.SIGHUP] {
+		// Under nohup the helper inherits SIGHUP ignored even without a trap.
+		cases[``] = 8
+	}
+	for trap, want := range cases {
 		cmd := exec.Command("sh", "-c", trap+`exec "$0" -test.run='^TestIgnoredAtStartSeesAnInheritedIgnoredSignal$'`, os.Args[0])
 		cmd.Env = append(os.Environ(), "ENV_VAULT_RUNNER_IGNORED_AT_START=1")
 		err := cmd.Run()

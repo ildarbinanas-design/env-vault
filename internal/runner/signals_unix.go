@@ -11,12 +11,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ignoredAtStart records the signals env-vault inherited as ignored, as under
-// nohup. signal.Notify clears that state, so it is read at package start.
+// ignoredAtStart records whether env-vault inherited SIGHUP or SIGINT as
+// ignored, as under nohup. Go keeps only these two ignored, and
+// signal.Notify clears that state, so it is read at package start.
 var ignoredAtStart = map[syscall.Signal]bool{
-	syscall.SIGHUP:  signal.Ignored(syscall.SIGHUP),
-	syscall.SIGINT:  signal.Ignored(syscall.SIGINT),
-	syscall.SIGTERM: signal.Ignored(syscall.SIGTERM),
+	syscall.SIGHUP: signal.Ignored(syscall.SIGHUP),
+	syscall.SIGINT: signal.Ignored(syscall.SIGINT),
 }
 
 // terminalForegroundGroup is a variable so tests can stand in for a terminal.
@@ -62,10 +62,12 @@ func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 	go func() {
 		defer close(done)
 		for sig := range ch {
-			// When the terminal already delivered SIGINT or SIGQUIT to the
-			// child, forwarding would deliver it twice. Sent any other way,
-			// for example by a service manager or a script, or when the child
-			// left env-vault's process group, they are forwarded like the rest.
+			// While env-vault and the child share the terminal's foreground
+			// group, a SIGINT or SIGQUIT is taken to come from the terminal,
+			// which already delivered it to the child; forwarding would
+			// deliver it twice. A kill aimed only at env-vault is skipped
+			// too, since the sender cannot be told apart. Without a
+			// terminal, or when the child left the group, they are forwarded.
 			if (sig == os.Interrupt || sig == syscall.SIGQUIT) && terminalDelivered(process.Pid) {
 				continue
 			}
