@@ -12,91 +12,51 @@ permissions:
   contents: read
 
 env:
-  REL: v0.3.0
+  GOTOOLCHAIN: local
+  BASE_SHA: 8c6591f3a267b1133d446768b5f0b95e0cef42f8
+  PR_SHA: ce536d3c19bda1d9463e8b5ed857c54a6f7ceb99
 
 jobs:
-  macos-login-keychain:
-    runs-on: macos-15
-    timeout-minutes: 20
+  signals:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: "false"
-      - name: Install from tap
-        shell: bash
-        run: |
-          set +e +o pipefail
-          brew install ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/brew.log" 2>&1; echo "install exit=$?"
-          security default-keychain -d user; security list-keychains -d user
-      - name: Full scenario on the runner login keychain
-        shell: bash
-        run: bash .github/audit-verify/scenario.sh "$(brew --prefix)/bin/env-vault" 20
-
-  artifact-81:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: "10335640614"
-          run-id: "34812659832"
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          path: a81
-      - name: Structured error codes of the failing scenario only
-        shell: bash
-        run: |
-          grep -rhoE 'concurrent mutation [0-9]+ failed: exit=[0-9]+ timeout=(true|false)' a81 | sort | uniq -c
-          grep -rhoE '\\"code\\":\\"[A-Z_]+\\"' a81 | sort | uniq -c
-          grep -rhoE '\\"message\\":\\"[A-Za-z ]+' a81 | sort | uniq -c
-
-  tools:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.PR_SHA }}
+          path: pr
           persist-credentials: "false"
-          fetch-depth: 0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: base
+          persist-credentials: "false"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version-file: pr/go.mod
           cache: false
-      - name: govulncheck source summary (reachable findings per package)
+      - name: Unit tests of the PR head (race, 3 runs)
+        shell: bash
+        working-directory: pr
+        run: go test -race -count=3 ./internal/runner/... ./internal/cli/...
+      - name: Build main and the PR head
         shell: bash
         run: |
-          set +e +o pipefail
-          GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@latest
-          PATH="$(go env GOPATH)/bin:$PATH"
-          summarize() { jq -r 'select(.finding) | .finding | select(.trace[0].function != null) | "\(.osv)\t\(.trace[-1].package // "?")\t\(.fixed_version // "-")"' | sort -u; }
-          for target in ./cmd/env-vault ./...; do
-            for os in linux darwin windows; do
-              echo "== main $target GOOS=$os (reachable: osv, entry package, fixed)"; GOOS=$os govulncheck -format json "$target" 2>/dev/null | summarize
-            done
-          done
-          git worktree add -q "$RUNNER_TEMP/tag" "$REL"
-          (cd "$RUNNER_TEMP/tag" && echo "== $REL ./cmd/env-vault linux" && govulncheck -format json ./cmd/env-vault 2>/dev/null | summarize)
-          echo "== with go1.26.8 toolchain, main ./..."; GOTOOLCHAIN=go1.26.8 govulncheck -format json ./... 2>/dev/null | summarize
-      - name: Scorecard details for failing checks
-        shell: bash
-        env:
-          GITHUB_AUTH_TOKEN: ${{ github.token }}
-        run: |
-          set +e +o pipefail
-          GOTOOLCHAIN=auto go install github.com/ossf/scorecard/v5@latest
-          PATH="$(go env GOPATH)/bin:$PATH"
-          scorecard --repo=github.com/ildarbinanas-design/env-vault --checks=Dangerous-Workflow,Token-Permissions,Branch-Protection,Code-Review,Security-Policy --show-details --format=json > "$RUNNER_TEMP/sc.json" 2>/dev/null
-          jq -r '.checks[] | "## \(.name) \(.score)", (.details // [] | .[] | select(startswith("Warn")))' "$RUNNER_TEMP/sc.json"
-      - name: Homebrew 7 on Linux without pipes
+          set -euo pipefail
+          (cd base && go build -o "$RUNNER_TEMP/ev-main" ./cmd/env-vault)
+          (cd pr && go build -o "$RUNNER_TEMP/ev-pr" ./cmd/env-vault)
+      - name: Terminal Ctrl+C in a shell loop
         shell: bash
         run: |
-          set +e
-          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          brew --version > "$RUNNER_TEMP/v.txt" 2>&1; head -1 "$RUNNER_TEMP/v.txt"
-          brew install ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/i.log" 2>&1; rc=$?; echo "linux brew install exit=$rc"; tail -n 15 "$RUNNER_TEMP/i.log"
-          brew test ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/t.log" 2>&1; echo "linux brew test exit=$?"; tail -n 5 "$RUNNER_TEMP/t.log"
-          brew audit --strict --online --except=version ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/a.log" 2>&1; echo "linux brew audit --except=version exit=$?"; tail -n 8 "$RUNNER_TEMP/a.log"
-          "$(brew --prefix)/bin/env-vault" --version
+          python3 .github/audit-verify/pty_loop.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
+          python3 .github/audit-verify/pty_count.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
+      - name: Signals sent without a terminal
+        shell: bash
+        run: python3 .github/audit-verify/notty.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
