@@ -39,7 +39,11 @@ ENV_VAULT_TEST_STORE=<scenario os.TempDir descendant>
 ```
 
 The suite never selects Keychain, Credential Manager, Secret Service, KWallet,
-or `pass`, and it performs no network access. Each scenario creates a random
+or `pass`, and it performs no network access. The real stores are covered
+separately: after E2E, each native CI job runs `scripts/backend-smoke.sh`
+against the release binary, which stores, checks, lists, reads through `exec`,
+overwrites with `--verify`, and deletes one random value in Credential Manager,
+a throwaway macOS keychain, or `pass` with a throwaway GPG key. Each scenario creates a random
 sentinel value at runtime. The sentinel is never placed in argv and its value
 is never persisted in the repository. Tests scan stdout, stderr, normalized
 contracts, and saved fixture files; the runner also scans raw test JSONL,
