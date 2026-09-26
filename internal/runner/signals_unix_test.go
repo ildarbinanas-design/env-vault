@@ -30,9 +30,10 @@ func TestChildKilledBySignalReportsTheSignal(t *testing.T) {
 	}
 }
 
-// A terminal sends SIGINT and SIGQUIT to the whole foreground process group,
-// so forwarding them would deliver each twice. Other signals are forwarded.
-func TestForwardSignalsSkipsTerminalInterrupts(t *testing.T) {
+// startSignalLogger starts a child that appends the name of every trapped
+// signal to a log file and exits on SIGTERM.
+func startSignalLogger(t *testing.T) (*exec.Cmd, string) {
+	t.Helper()
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
 	log := filepath.Join(dir, "log")
@@ -44,21 +45,35 @@ while :; do sleep 0.05; done`, "sh", ready, log)
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, func() bool { _, err := os.Stat(ready); return err == nil }, "child readiness")
+	return child, log
+}
+
+func waitFor(t *testing.T, done func() bool, what string) {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
+	for !done() {
 		if time.Now().After(deadline) {
-			_ = child.Process.Kill()
-			t.Fatal("child never became ready")
+			t.Fatalf("timed out waiting for %s", what)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	ch := make(chan os.Signal, 4)
-	stop := forwardSignals(child.Process, ch)
-	ch <- os.Interrupt
-	ch <- syscall.SIGQUIT
+}
+
+func logged(log string) string {
+	data, _ := os.ReadFile(log)
+	return strings.TrimSpace(string(data))
+}
+
+func withTerminalForeground(t *testing.T, foreground bool) {
+	t.Helper()
+	old := inTerminalForeground
+	inTerminalForeground = func() bool { return foreground }
+	t.Cleanup(func() { inTerminalForeground = old })
+}
+
+func stopSignalLogger(t *testing.T, child *exec.Cmd, ch chan os.Signal, stop func()) {
+	t.Helper()
 	ch <- syscall.SIGTERM
 	waited := make(chan error, 1)
 	go func() { waited <- child.Wait() }()
@@ -69,12 +84,56 @@ while :; do sleep 0.05; done`, "sh", ready, log)
 		t.Fatal("child did not exit after SIGTERM")
 	}
 	stop()
-	data, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(string(data)); got != "term" {
+}
+
+// In a terminal's foreground group the terminal delivers SIGINT and SIGQUIT to
+// the child itself, so forwarding them would deliver each twice.
+func TestForwardSignalsSkipsInterruptsTheTerminalAlreadyDelivered(t *testing.T) {
+	withTerminalForeground(t, true)
+	child, log := startSignalLogger(t)
+	ch := make(chan os.Signal, 4)
+	stop := forwardSignals(child.Process, ch)
+	ch <- os.Interrupt
+	ch <- syscall.SIGQUIT
+	stopSignalLogger(t, child, ch, stop)
+	if got := logged(log); got != "term" {
 		t.Fatalf("child received %q, want only term", got)
+	}
+}
+
+// Without a terminal, SIGINT and SIGQUIT come from a service manager or a
+// script, and only env-vault receives them, so they must be forwarded.
+func TestForwardSignalsPassesInterruptsWithoutATerminal(t *testing.T) {
+	withTerminalForeground(t, false)
+	child, log := startSignalLogger(t)
+	ch := make(chan os.Signal, 4)
+	stop := forwardSignals(child.Process, ch)
+	ch <- os.Interrupt
+	waitFor(t, func() bool { return strings.Contains(logged(log), "int") }, "forwarded SIGINT")
+	ch <- syscall.SIGQUIT
+	waitFor(t, func() bool { return strings.Contains(logged(log), "quit") }, "forwarded SIGQUIT")
+	stopSignalLogger(t, child, ch, stop)
+	if got := logged(log); got != "int\nquit\nterm" {
+		t.Fatalf("child received %q, want int, quit, term", got)
+	}
+}
+
+func TestIgnoredAtStartSeesAnInheritedIgnoredSignal(t *testing.T) {
+	if os.Getenv("ENV_VAULT_RUNNER_IGNORED_AT_START") == "1" {
+		signalNotifications() // env-vault subscribes before it may exit by signal
+		if ignoredAtStart[syscall.SIGHUP] {
+			os.Exit(7)
+		}
+		os.Exit(8)
+	}
+	for trap, want := range map[string]int{`trap '' HUP; `: 7, ``: 8} {
+		cmd := exec.Command("sh", "-c", trap+`exec "$0" -test.run='^TestIgnoredAtStartSeesAnInheritedIgnoredSignal$'`, os.Args[0])
+		cmd.Env = append(os.Environ(), "ENV_VAULT_RUNNER_IGNORED_AT_START=1")
+		err := cmd.Run()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != want {
+			t.Fatalf("trap %q: helper err = %v, want exit %d", trap, err, want)
+		}
 	}
 }
 

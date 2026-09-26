@@ -224,9 +224,10 @@ env-vault exec dev -- bash -lc 'make test'
 
 `exec` returns the child's exit code. If the child is killed by SIGHUP,
 SIGINT, SIGTERM, or SIGKILL, env-vault ends with the same signal; other
-signals exit with 128 plus the signal number. Ctrl+C reaches the child once,
-from the terminal: env-vault does not forward SIGINT or SIGQUIT, so
-`kill -INT` sent to the env-vault process alone does not reach the child.
+signals exit with 128 plus the signal number. env-vault forwards SIGTERM,
+SIGHUP, SIGINT, and SIGQUIT to the child, except SIGINT and SIGQUIT while it
+runs in the foreground of a terminal: there Ctrl+C and Ctrl+\ already reach
+the child from the terminal, so forwarding would deliver them twice.
 
 ## Overwriting A Secret
 

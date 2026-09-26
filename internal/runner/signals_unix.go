@@ -7,7 +7,30 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
+
+// ignoredAtStart records the signals env-vault inherited as ignored, as under
+// nohup. signal.Notify clears that state, so it is read at package start.
+var ignoredAtStart = map[syscall.Signal]bool{
+	syscall.SIGHUP:  signal.Ignored(syscall.SIGHUP),
+	syscall.SIGINT:  signal.Ignored(syscall.SIGINT),
+	syscall.SIGTERM: signal.Ignored(syscall.SIGTERM),
+}
+
+// inTerminalForeground reports whether env-vault's process group is the
+// foreground group of its controlling terminal. A terminal delivers Ctrl+C
+// and Ctrl+\ to that whole group, so the child already has the signal.
+var inTerminalForeground = func() bool {
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return false
+	}
+	defer tty.Close()
+	foreground, err := unix.IoctlGetInt(int(tty.Fd()), unix.TIOCGPGRP)
+	return err == nil && foreground == syscall.Getpgrp()
+}
 
 func signalNotifications() chan os.Signal {
 	ch := make(chan os.Signal, 4)
@@ -25,11 +48,11 @@ func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 	go func() {
 		defer close(done)
 		for sig := range ch {
-			// A terminal delivers SIGINT and SIGQUIT to the whole foreground
-			// process group, so the child already has them. Forwarding would
-			// deliver each one twice. They are still caught here so that
-			// env-vault waits for the child instead of dying first.
-			if sig == os.Interrupt || sig == syscall.SIGQUIT {
+			// In a terminal's foreground group the terminal already delivered
+			// SIGINT and SIGQUIT to the child; forwarding would deliver each
+			// twice. Sent any other way, for example by a service manager or
+			// a script, they are forwarded like the rest.
+			if (sig == os.Interrupt || sig == syscall.SIGQUIT) && inTerminalForeground() {
 				continue
 			}
 			_ = process.Signal(sig)
@@ -65,7 +88,9 @@ func ExitBySignal(sig os.Signal) {
 		// Go turns other signals into a stack dump or ignores them.
 		return
 	}
-	if signal.Ignored(s) {
+	// An ignored signal cannot end the process, and PID 1 (a container
+	// without an init) does not receive default-action signals from itself.
+	if ignoredAtStart[s] || os.Getpid() == 1 {
 		return
 	}
 	signal.Reset(s)
