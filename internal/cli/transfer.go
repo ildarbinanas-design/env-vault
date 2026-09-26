@@ -85,7 +85,6 @@ func (a *App) exportCommand() *cobra.Command {
 						if err != nil {
 							return backendUnavailable("export", err)
 						}
-						a.redactor = a.redactor.With(string(value))
 						payload.Secrets = append(payload.Secrets, bundle.SecretEntry{
 							Service: service,
 							Name:    item.Name,
@@ -192,11 +191,6 @@ func (a *App) importCommand() *cobra.Command {
 					bundle.Wipe(entry.Value)
 				}
 			}()
-			// Register every decrypted value with the redactor before anything
-			// is rendered, so an unexpected value on an output path is scrubbed.
-			for _, entry := range payload.Secrets {
-				a.redactor = a.redactor.With(string(entry.Value))
-			}
 			if err := validateImportedPayload(payload); err != nil {
 				return err
 			}

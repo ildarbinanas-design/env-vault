@@ -9,7 +9,6 @@ import (
 	"time"
 
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
-	"github.com/ildarbinanas-design/env-vault/internal/redact"
 )
 
 type Options struct {
@@ -36,26 +35,19 @@ type Envelope struct {
 }
 
 type Renderer struct {
-	stdout   io.Writer
-	stderr   io.Writer
-	options  Options
-	redactor redact.Redactor
-	now      func() time.Time
+	stdout  io.Writer
+	stderr  io.Writer
+	options Options
+	now     func() time.Time
 }
 
-func New(stdout, stderr io.Writer, options Options, redactor redact.Redactor) Renderer {
+func New(stdout, stderr io.Writer, options Options) Renderer {
 	return Renderer{
-		stdout:   stdout,
-		stderr:   stderr,
-		options:  options,
-		redactor: redactor,
-		now:      time.Now,
+		stdout:  stdout,
+		stderr:  stderr,
+		options: options,
+		now:     time.Now,
 	}
-}
-
-func (r Renderer) WithRedactor(redactor redact.Redactor) Renderer {
-	r.redactor = redactor
-	return r
 }
 
 func (r Renderer) Success(command string, data any, warnings []string) error {
@@ -86,7 +78,7 @@ func (r Renderer) Error(command string, err *apperrors.AppError) error {
 	}
 	env := r.envelope(false, command, nil, nil, obj)
 	if fileErr := r.writeOutputFile(env); fileErr != nil && r.options.Verbose {
-		fmt.Fprintf(r.stderr, "OUTPUT_WRITE_FAILED: %s\n", r.redactor.String(fileErr.Error()))
+		fmt.Fprintf(r.stderr, "OUTPUT_WRITE_FAILED: %s\n", fileErr.Error())
 	}
 	if r.options.JSON || r.options.JSONL {
 		return writeMachine(r.stdout, env, r.options.JSONL)
@@ -97,25 +89,13 @@ func (r Renderer) Error(command string, err *apperrors.AppError) error {
 }
 
 func (r Renderer) envelope(ok bool, command string, data any, warnings []string, err *ErrorObject) Envelope {
-	redactedWarnings := make([]string, 0, len(warnings))
-	for _, warning := range warnings {
-		redactedWarnings = append(redactedWarnings, r.redactor.String(warning))
-	}
-	var redactedErr *ErrorObject
-	if err != nil {
-		redactedErr = &ErrorObject{
-			Code:        r.redactor.String(err.Code),
-			Message:     r.redactor.String(err.Message),
-			Remediation: r.redactor.String(err.Remediation),
-		}
-	}
 	return Envelope{
 		OK:        ok,
 		Command:   command,
 		Timestamp: r.now().UTC().Format(time.RFC3339),
-		Data:      r.redactor.Any(data),
-		Warnings:  redactedWarnings,
-		Error:     redactedErr,
+		Data:      data,
+		Warnings:  append([]string{}, warnings...),
+		Error:     err,
 	}
 }
 

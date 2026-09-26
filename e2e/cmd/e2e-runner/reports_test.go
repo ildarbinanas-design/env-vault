@@ -746,7 +746,7 @@ func writeValidReportDirectoryAt(t *testing.T, directory, goos, goarch string) {
 		"github.com/ildarbinanas-design/env-vault/internal/cli/cli.go:29.30,30.22 1 1\n"+
 		"github.com/ildarbinanas-design/env-vault/internal/config/config.go:41.20,46.2 1 1\n"+
 		"github.com/ildarbinanas-design/env-vault/internal/errors/errors.go:43.86,51.2 1 1\n"+
-		"github.com/ildarbinanas-design/env-vault/internal/output/output.go:46.83,54.2 1 0\n"))
+		"github.com/ildarbinanas-design/env-vault/internal/output/output.go:44.62,51.2 1 0\n"))
 	functionalCoverage, coverageTextResult := commandOutput("go", []string{"tool", "cover", "-func=" + profile}, repository, environment(nil), 30*time.Second)
 	if coverageTextResult.ExitCode != 0 {
 		t.Fatalf("generate coverage.txt fixture: %s", commandLabel(coverageTextResult))
