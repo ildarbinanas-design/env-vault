@@ -50,6 +50,10 @@ func (r CommandRunner) Run(ctx context.Context, argv []string, env []string) (in
 	if err := cmd.Wait(); err != nil {
 		var exitErr *exec.ExitError
 		if stderrors.As(err, &exitErr) {
+			if sig, ok := terminatingSignal(exitErr.ProcessState); ok {
+				code := 128 + int(sig)
+				return code, &apperrors.ExitStatus{Code: code, Signal: sig}
+			}
 			return exitErr.ExitCode(), nil
 		}
 		return apperrors.ExitRuntimeError, apperrors.Wrap("exec", apperrors.CodeRuntimeError, "Command failed", "Inspect the child process error", apperrors.ExitRuntimeError, err)

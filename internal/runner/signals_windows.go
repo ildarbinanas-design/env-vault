@@ -5,6 +5,7 @@ package runner
 import (
 	"os"
 	"os/signal"
+	"syscall"
 )
 
 func signalNotifications() chan os.Signal {
@@ -31,3 +32,12 @@ func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 		<-done
 	}
 }
+
+// terminatingSignal reports the signal that killed the child. Windows
+// processes do not die by signal.
+func terminatingSignal(*os.ProcessState) (syscall.Signal, bool) {
+	return 0, false
+}
+
+// ExitBySignal has nothing to re-raise on Windows.
+func ExitBySignal(os.Signal) {}

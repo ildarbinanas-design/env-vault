@@ -3,6 +3,7 @@ package apperrors
 import (
 	stderrors "errors"
 	"fmt"
+	"os"
 )
 
 const (
@@ -151,6 +152,9 @@ func From(err error) (*AppError, bool) {
 
 type ExitStatus struct {
 	Code int
+	// Signal is the signal that killed the child process, or nil when the
+	// child exited on its own. Code is then 128 plus the signal number.
+	Signal os.Signal
 }
 
 func (e *ExitStatus) Error() string {
