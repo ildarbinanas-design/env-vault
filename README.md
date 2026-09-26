@@ -374,8 +374,9 @@ macOS asks for Keychain access the first time a given env-vault binary reads a
 stored value: `exec`, `secret set --verify`, and `export`. Every Homebrew
 upgrade installs a new binary, so the prompt returns once per secret after each
 `brew upgrade env-vault`. A non-interactive `exec`, for example from a
-LaunchAgent in a logged-in session, waits on that prompt until someone answers
-it. After upgrading, run each profile once in a terminal and choose
+LaunchAgent in a logged-in session, waits on that prompt for up to two minutes
+and then fails with `BACKEND_UNAVAILABLE`; a denied prompt fails the same way.
+After upgrading, run each profile once in a terminal and choose
 **Always Allow**:
 
 ```sh
