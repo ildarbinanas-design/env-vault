@@ -19,10 +19,13 @@ var ignoredAtStart = map[syscall.Signal]bool{
 	syscall.SIGTERM: signal.Ignored(syscall.SIGTERM),
 }
 
-// inTerminalForeground reports whether env-vault's process group is the
+// inTerminalForeground is a variable so tests can stand in for a terminal.
+var inTerminalForeground = terminalForeground
+
+// terminalForeground reports whether env-vault's process group is the
 // foreground group of its controlling terminal. A terminal delivers Ctrl+C
 // and Ctrl+\ to that whole group, so the child already has the signal.
-var inTerminalForeground = func() bool {
+func terminalForeground() bool {
 	tty, err := os.Open("/dev/tty")
 	if err != nil {
 		return false
