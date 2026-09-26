@@ -1021,6 +1021,10 @@ func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
 	if !containsAll(reverify.Run, "releasecheck promotion verify", "--run-attempt", "--manifest dist/promotion-manifest.json", "--artifacts-root dist/assets") {
 		t.Fatalf("release mutation lacks immediate promotion re-verification")
 	}
+	create := namedStep(t, release, "Create or verify stable GitHub Release")
+	if !containsAll(create.Run, "source scripts/release/lib.sh", `for asset in "${RELEASE_ASSETS[@]}"`, `assets+=("dist/assets/$asset")`, `--notes-file release-notes.md \`, `"${assets[@]}"`) {
+		t.Fatalf("release creation must upload all ten verified assets in the create call, so the Release stays a draft until they are all present")
+	}
 	reconcile := namedStep(t, release, "No-clobber reconcile all ten release assets")
 	if reconcile.Run != `scripts/release/reconcile-release-assets.sh "$VERSION" dist/assets` {
 		t.Fatalf("release no-clobber reconciliation does not use the exact verified asset inventory: %q", reconcile.Run)
