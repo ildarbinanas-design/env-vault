@@ -169,11 +169,13 @@ Reserved for the owner:
 
 ### What Enforces This Section
 
-GitHub enforces only its rulesets: `main` changes only through a squash-merged
-pull request with the required checks, and `v*` tags cannot be updated or
-deleted. Everything reserved for the owner above is an instruction, not a
-control. Agents act under the owner's GitHub identity, so GitHub cannot tell an
-agent's merge from the owner's.
+GitHub enforces only its rulesets, for everyone including the owner: `main`
+changes only through a squash-merged pull request with the required checks and
+cannot be force-pushed or deleted, `release-evidence` cannot be force-pushed or
+deleted, and `v*` tags cannot be updated or deleted. Nothing else reserved for
+the owner above is enforced; it is an instruction, not a control. Agents act
+under the owner's GitHub identity, so GitHub cannot tell an agent's merge from
+the owner's.
 
 The deny rules in `.claude/settings.json` load only when a Claude Code session
 starts in this repository's root; a cloud session that clones several
