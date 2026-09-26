@@ -167,6 +167,20 @@ Reserved for the owner:
   work around it: add it to the owner checklist and continue with the rest.
 - Report results with evidence: the command or run and what it returned.
 
+### What Enforces This Section
+
+GitHub enforces only its rulesets: `main` changes only through a squash-merged
+pull request with the required checks, and `v*` tags cannot be updated or
+deleted. Everything reserved for the owner above is an instruction, not a
+control. Agents act under the owner's GitHub identity, so GitHub cannot tell an
+agent's merge from the owner's.
+
+The deny rules in `.claude/settings.json` load only when a Claude Code session
+starts in this repository's root; a cloud session that clones several
+repositories one level up does not load them. They match literal Bash command
+text only and do not cover GitHub MCP tools. Treat them as a guard against
+accidents, not as a boundary, and do not weaken them either.
+
 ## Project Scope
 
 This repository contains the public env-vault MVP at `github.com/ildarbinanas-design/env-vault`. Commits, pushes, merges, tags, releases, and other publishing actions follow the Working Mode above. Pull request conventions and local checks are in `CONTRIBUTING.md`.
