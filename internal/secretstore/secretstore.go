@@ -19,15 +19,28 @@ var (
 	ErrNotFound        = errors.New("secret not found")
 	ErrUnavailable     = errors.New("secret backend unavailable")
 	ErrPassUnavailable = errors.New("pass backend unavailable")
+	// ErrTimeout reports a backend call that did not return in time, usually a
+	// system prompt that nobody answered.
+	ErrTimeout = errors.New("secret backend did not respond in time")
+	// ErrUnreadable reports a record the backend lists but refused to return,
+	// for example after a denied macOS Keychain prompt or a locked keychain.
+	ErrUnreadable = errors.New("secret exists but the backend did not return it")
 )
 
 const (
-	DefaultBackendRemediation = "Run env-vault doctor or configure the OS keychain"
-	PassBackendRemediation    = "install pass or use another supported OS keychain backend."
+	DefaultBackendRemediation    = "Run env-vault doctor or configure the OS keychain"
+	PassBackendRemediation       = "install pass or use another supported OS keychain backend."
+	TimeoutBackendRemediation    = "Answer the system keychain prompt or unlock the keychain, then retry"
+	UnreadableBackendRemediation = "Allow env-vault in the system keychain prompt or unlock the keychain, then retry"
 )
 
 func BackendRemediation(err error) string {
-	if errors.Is(err, ErrPassUnavailable) {
+	switch {
+	case errors.Is(err, ErrTimeout):
+		return TimeoutBackendRemediation
+	case errors.Is(err, ErrUnreadable):
+		return UnreadableBackendRemediation
+	case errors.Is(err, ErrPassUnavailable):
 		return PassBackendRemediation
 	}
 	return DefaultBackendRemediation
