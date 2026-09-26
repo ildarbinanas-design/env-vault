@@ -193,10 +193,11 @@ for the exact run and commit identities.
    published Release never lacks an asset. This is what allows GitHub
    immutable releases to be enabled. Once they are, a published Release's
    assets cannot change, and `repair=release-assets` can only verify them.
-   Two rare failure modes remain. If the runner dies before gh can delete a
-   failed draft, the draft stays; drafts are invisible to the tag lookup, so a
-   repair creates and publishes a second one, and the owner deletes the stale
-   draft on the Releases page. If GitHub publishes the Release but the
+   Two rare failure modes remain. If gh cannot delete a failed draft (the
+   runner dies, the create response is lost, or the cleanup call fails), the
+   draft stays; drafts are invisible to the tag lookup, so a repair creates and
+   publishes a second one, and the owner deletes the stale draft on the
+   Releases page. If GitHub publishes the Release but the
    response is lost, gh deletes the Release it believes failed; with
    immutable releases the tag name cannot be reused, so recover by releasing
    the next patch version.
