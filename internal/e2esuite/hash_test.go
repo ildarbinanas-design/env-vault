@@ -106,7 +106,7 @@ func TestCanonicalRepositoryHashIsPinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expected = "36523c258f7a2bae388beafb5d9e70ebd0ef83fdacb828226b70929ef50c04ec"
+	const expected = "c13554220610fe299856af1982367ab32268ce1d2b713862377bd52ae3c77d4d"
 	if got != expected {
 		t.Fatalf("canonical semantic suite hash=%s, want %s", got, expected)
 	}

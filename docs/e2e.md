@@ -108,6 +108,7 @@ skip instead of silently dropping the platform.
 | Missing commands/arguments and unknown flags | `CLI_ARGUMENT_ERRORS` | `TestE2E/CLI_ARGUMENT_ERRORS` | P5 |
 | Stable usage exit code and human/machine stream separation | `CLI_ARGUMENT_ERRORS` | `TestE2E/CLI_ARGUMENT_ERRORS` | P5 |
 | Exact non-secret text contracts for secret and profile lifecycles | `TEXT_OUTPUT_CONTRACTS` | `TestE2E/TEXT_OUTPUT_CONTRACTS` | P5 |
+| Secret set reports created, then overwritten with the same record ID and a verified read-back | `TEXT_OUTPUT_CONTRACTS` | `TestE2E/TEXT_OUTPUT_CONTRACTS` | P5 |
 | Secret set through stdin | `SECRET_LIFECYCLE` | `TestE2E/SECRET_LIFECYCLE` | P5 |
 | Existing and missing secret checks | `SECRET_LIFECYCLE` | `TestE2E/SECRET_LIFECYCLE` | P5 |
 | Secret list metadata without values | `SECRET_LIFECYCLE` | `TestE2E/SECRET_LIFECYCLE` | P5 |

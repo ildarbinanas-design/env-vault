@@ -222,6 +222,24 @@ A shell is used only when you explicitly provide one:
 env-vault exec dev -- bash -lc 'make test'
 ```
 
+## Overwriting A Secret
+
+Running `secret set` for an existing name replaces its value and reports
+`secret overwritten` instead of `secret created`. The `record` shown by `set`,
+`check`, and `list` identifies the stored record — the service and name — and
+never the value, so it stays the same after an overwrite and cannot be used to
+guess a value. To confirm that the new value is what the keychain now holds,
+without printing it, add `--verify`:
+
+```sh
+env-vault secret set --verify nexus-token
+# secret overwritten: nexus-token (record: e4ce7c4d5e6625c5, verified)
+```
+
+`--verify` reads the value back and compares it in constant time; a mismatch
+fails with `SECRET_UNVERIFIED`. On macOS the read-back is a Keychain access to
+the item, so it can show the same access prompt as `exec`.
+
 ## Moving To Another Machine
 
 `export` seals every stored secret value into one encrypted file; `import`
@@ -289,8 +307,12 @@ env-vault --dry-run secret set nexus-token
 Successful JSON output follows this shape:
 
 ```json
-{"ok":true,"command":"secret_check","timestamp":"2026-07-06T00:00:00Z","data":{"name":"nexus-token","fingerprint":"example"},"warnings":[],"error":null}
+{"ok":true,"command":"secret_check","timestamp":"2026-07-06T00:00:00Z","data":{"fingerprint":"example","name":"nexus-token","record_id":"example","service":"env-vault"},"warnings":[],"error":null}
 ```
+
+`record_id` identifies the record by service and name. `fingerprint` carries
+the same value as a deprecated alias and will be removed in a later minor
+release; read `record_id` instead.
 
 Errors are structured with `code`, `message`, and `remediation`.
 

@@ -159,22 +159,27 @@ func testTextOutputContracts(sc *scenario) {
 		envName     = "TEXT_TOKEN"
 	)
 	secret := sc.sentinels[0]
-	fingerprint := sha256Text("env-vault\x00" + secretName)[:16]
+	recordID := sha256Text("env-vault\x00" + secretName)[:16]
 
 	set := sc.runWith(runOptions{stdin: []byte(secret + "\n")}, "secret", "set", secretName, "--stdin")
 	wantExit(sc.t, set, 0)
 	wantEmpty(sc.t, set.Stderr, "text secret set stderr")
-	wantExact(sc.t, set.Stdout, "secret stored: "+secretName+" (fingerprint: "+fingerprint+")\n", "text secret set stdout")
+	wantExact(sc.t, set.Stdout, "secret created: "+secretName+" (record: "+recordID+")\n", "text secret set stdout")
+
+	overwrite := sc.runWith(runOptions{stdin: []byte(secret + "\n")}, "secret", "set", secretName, "--stdin", "--verify")
+	wantExit(sc.t, overwrite, 0)
+	wantEmpty(sc.t, overwrite.Stderr, "text secret overwrite stderr")
+	wantExact(sc.t, overwrite.Stdout, "secret overwritten: "+secretName+" (record: "+recordID+", verified)\n", "text secret overwrite stdout")
 
 	check := sc.run("secret", "check", secretName)
 	wantExit(sc.t, check, 0)
 	wantEmpty(sc.t, check.Stderr, "text secret check stderr")
-	wantExact(sc.t, check.Stdout, "secret exists: "+secretName+" (fingerprint: "+fingerprint+")\n", "text secret check stdout")
+	wantExact(sc.t, check.Stdout, "secret exists: "+secretName+" (record: "+recordID+")\n", "text secret check stdout")
 
 	list := sc.run("secret", "list")
 	wantExit(sc.t, list, 0)
 	wantEmpty(sc.t, list.Stderr, "text secret list stderr")
-	wantExact(sc.t, list.Stdout, secretName+" "+fingerprint+"\n", "text secret list stdout")
+	wantExact(sc.t, list.Stdout, secretName+" "+recordID+"\n", "text secret list stdout")
 
 	config := filepath.Join(sc.root, "text", "profiles.yaml")
 	create := sc.run("--config", config, "profile", "create", profileName)
@@ -230,11 +235,12 @@ func testSecretLifecycle(sc *scenario) {
 	var listData struct {
 		Secrets []struct {
 			Name        string `json:"name"`
+			RecordID    string `json:"record_id"`
 			Fingerprint string `json:"fingerprint"`
 		} `json:"secrets"`
 	}
 	gotList := parseEnvelope(sc.t, list)
-	if err := json.Unmarshal(gotList.Data, &listData); err != nil || len(listData.Secrets) != 1 || listData.Secrets[0].Name != "team/token" || len(listData.Secrets[0].Fingerprint) != 16 {
+	if err := json.Unmarshal(gotList.Data, &listData); err != nil || len(listData.Secrets) != 1 || listData.Secrets[0].Name != "team/token" || len(listData.Secrets[0].RecordID) != 16 || listData.Secrets[0].Fingerprint != listData.Secrets[0].RecordID {
 		sc.t.Fatalf("unexpected secret list data: %#v err=%v", listData, err)
 	}
 

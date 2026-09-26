@@ -21,6 +21,7 @@ const (
 	CodePassphraseInvalid    = "PASSPHRASE_INVALID"
 	CodeRuntimeError         = "RUNTIME_ERROR"
 	CodeSecretExists         = "SECRET_EXISTS"
+	CodeSecretUnverified     = "SECRET_UNVERIFIED"
 	CodeUsage                = "USAGE"
 )
 
@@ -111,6 +112,18 @@ func SecretExists(command, name string) *AppError {
 		"Secret already exists: "+name,
 		"Re-run with --on-conflict overwrite or --on-conflict skip",
 		ExitUsage,
+	)
+}
+
+// SecretUnverified reports a write whose read-back did not match the input,
+// so the caller must not assume the new value is in effect.
+func SecretUnverified(command, name string) *AppError {
+	return New(
+		command,
+		CodeSecretUnverified,
+		"Stored secret could not be verified: "+name,
+		"Re-run secret set, then env-vault doctor if it persists",
+		ExitRuntimeError,
 	)
 }
 

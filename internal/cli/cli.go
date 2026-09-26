@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/subtle"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -195,6 +196,7 @@ func (a *App) secretCommand() *cobra.Command {
 
 func (a *App) secretSetCommand() *cobra.Command {
 	var useStdin bool
+	var verify bool
 	var service string
 	cmd := &cobra.Command{
 		Use:   "set <name>",
@@ -211,10 +213,12 @@ func (a *App) secretSetCommand() *cobra.Command {
 				return apperrors.Usage("secret_set", err.Error(), "Use a safe relative slash-separated service name")
 			}
 			name := args[0]
+			recordID := secretstore.RecordID(service, name)
 			data := map[string]any{
 				"name":        name,
 				"service":     service,
-				"fingerprint": secretstore.Fingerprint(service, name),
+				"record_id":   recordID,
+				"fingerprint": recordID,
 				"dry_run":     a.dryRun(cmd),
 			}
 			if a.dryRun(cmd) {
@@ -229,13 +233,29 @@ func (a *App) secretSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := store.Set(context.Background(), service, name, value); err != nil {
+			ctx := context.Background()
+			existed, err := store.Exists(ctx, service, name)
+			if err != nil {
 				return backendUnavailable("secret_set", err)
 			}
+			if err := store.Set(ctx, service, name, value); err != nil {
+				return backendUnavailable("secret_set", err)
+			}
+			data["action"] = actionCreated
+			if existed {
+				data["action"] = actionOverwritten
+			}
+			if verify {
+				if err := verifyStoredSecret(ctx, store, service, name, value); err != nil {
+					return err
+				}
+			}
+			data["verified"] = verify
 			return a.renderer().Success("secret_set", data, nil)
 		},
 	}
 	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from stdin and trim exactly one trailing newline")
+	cmd.Flags().BoolVar(&verify, "verify", false, "read the stored value back and confirm it matches, without printing it")
 	cmd.Flags().StringVar(&service, "service", secretstore.DefaultService, "keychain service name")
 	return cmd
 }
@@ -267,10 +287,12 @@ func (a *App) secretCheckCommand() *cobra.Command {
 			if !exists {
 				return missingSecretError("secret_check", service, args[0])
 			}
+			recordID := secretstore.RecordID(service, args[0])
 			return a.renderer().Success("secret_check", map[string]any{
 				"name":        args[0],
 				"service":     service,
-				"fingerprint": secretstore.Fingerprint(service, args[0]),
+				"record_id":   recordID,
+				"fingerprint": recordID,
 			}, nil)
 		},
 	}
@@ -299,10 +321,12 @@ func (a *App) secretDeleteCommand() *cobra.Command {
 			if confirm != name {
 				return apperrors.New("secret_delete", apperrors.CodeConfirmationRequired, "Delete confirmation does not match secret name", "Re-run with --confirm "+name, apperrors.ExitUsage)
 			}
+			recordID := secretstore.RecordID(service, name)
 			data := map[string]any{
 				"name":        name,
 				"service":     service,
-				"fingerprint": secretstore.Fingerprint(service, name),
+				"record_id":   recordID,
+				"fingerprint": recordID,
 				"dry_run":     a.dryRun(cmd),
 			}
 			if a.dryRun(cmd) {
@@ -343,7 +367,8 @@ func (a *App) secretListCommand() *cobra.Command {
 			for _, item := range items {
 				secrets = append(secrets, map[string]string{
 					"name":        item.Name,
-					"fingerprint": item.Fingerprint,
+					"record_id":   item.RecordID,
+					"fingerprint": item.RecordID,
 				})
 			}
 			return a.renderer().Success("secret_list", map[string]any{"service": secretstore.DefaultService, "secrets": secrets}, nil)
@@ -712,7 +737,8 @@ func execData(argv []string, resolved runner.ResolveResult, overrideEnv, cleanEn
 		secrets = append(secrets, map[string]string{
 			"name":        item.Name,
 			"env":         item.Env,
-			"fingerprint": item.Fingerprint,
+			"record_id":   item.RecordID,
+			"fingerprint": item.RecordID,
 		})
 	}
 	return map[string]any{
@@ -789,6 +815,24 @@ func missingSecretError(command, service, name string) *apperrors.AppError {
 
 func backendUnavailable(command string, err error) *apperrors.AppError {
 	return apperrors.BackendUnavailable(command, "Secret backend unavailable", secretstore.BackendRemediation(err), err)
+}
+
+// verifyStoredSecret reads the value just written and compares it in constant
+// time, so secret set --verify can prove the write took effect without
+// printing or digesting the value. The read-back copy is cleared before return.
+func verifyStoredSecret(ctx context.Context, store secretstore.Store, service, name string, want []byte) error {
+	got, err := store.Get(ctx, service, name)
+	defer clear(got)
+	if stderrors.Is(err, secretstore.ErrNotFound) {
+		return apperrors.SecretUnverified("secret_set", name)
+	}
+	if err != nil {
+		return backendUnavailable("secret_set", err)
+	}
+	if subtle.ConstantTimeCompare(got, want) != 1 {
+		return apperrors.SecretUnverified("secret_set", name)
+	}
+	return nil
 }
 
 func applyConfigMutation(ctx context.Context, path string, dryRun bool, mutate config.TransactionFunc) error {

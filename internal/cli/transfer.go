@@ -92,10 +92,12 @@ func (a *App) exportCommand() *cobra.Command {
 							Value:   value,
 						})
 					}
+					recordID := secretstore.RecordID(service, item.Name)
 					reported = append(reported, map[string]string{
 						"service":     service,
 						"name":        item.Name,
-						"fingerprint": secretstore.Fingerprint(service, item.Name),
+						"record_id":   recordID,
+						"fingerprint": recordID,
 					})
 				}
 			}
@@ -227,10 +229,12 @@ func (a *App) importCommand() *cobra.Command {
 					writes = append(writes, entry)
 				}
 				services[entry.Service] = struct{}{}
+				recordID := secretstore.RecordID(entry.Service, entry.Name)
 				reported = append(reported, map[string]string{
 					"service":     entry.Service,
 					"name":        entry.Name,
-					"fingerprint": secretstore.Fingerprint(entry.Service, entry.Name),
+					"record_id":   recordID,
+					"fingerprint": recordID,
 					"action":      action,
 				})
 			}
