@@ -3,7 +3,8 @@
 # Windows Credential Manager, a throwaway macOS keychain, or Linux pass with a
 # throwaway GPG key. The E2E suite runs on the gated test backend; this proves
 # that the production backends store, read, overwrite, and delete a value.
-# Values are random, never printed, and compared by SHA-256 only.
+# Values are random and never printed or passed in argv; the value a child
+# sees through exec is compared by SHA-256.
 set -euo pipefail
 
 usage() {
@@ -22,11 +23,12 @@ second="$(openssl rand -hex 24)"
 py=python3
 command -v python3 >/dev/null 2>&1 || py=python
 failures=0
+failed_labels=()
 cleanup_steps=()
 
 cleanup() {
   local step
-  for step in "${cleanup_steps[@]}"; do
+  for step in ${cleanup_steps[@]+"${cleanup_steps[@]}"}; do
     eval "$step" >/dev/null 2>&1 || true
   done
   [[ -n "$work" && -d "$work" ]] && rm -rf -- "$work"
@@ -36,6 +38,12 @@ trap cleanup EXIT
 fail() {
   echo "FAIL: $*"
   failures=$((failures + 1))
+}
+
+failed_step() {
+  failed_labels+=("$1")
+  shift
+  fail "$@"
 }
 
 sha256_of() {
@@ -70,7 +78,7 @@ expect() {
   if [[ $status -eq $want ]]; then
     echo "ok: $label (exit $status)"
   else
-    fail "$label exited $status, want $want"
+    failed_step "$label" "$label exited $status, want $want"
   fi
 }
 
@@ -82,7 +90,7 @@ set_value() {
   if [[ $status -eq 0 ]]; then
     echo "ok: $label"
   else
-    fail "$label exited $status"
+    failed_step "$label" "$label exited $status"
   fi
 }
 
@@ -95,7 +103,7 @@ expect_exec_value() {
   if [[ $status -eq 0 && "$got" == "$want" ]]; then
     echo "ok: $label delivered the stored value"
   else
-    fail "$label exited $status or delivered a different value"
+    failed_step "$label" "$label exited $status or delivered a different value"
   fi
 }
 
@@ -119,7 +127,7 @@ Expire-Date: 1d
 EOF
   gpg --batch --quiet --gen-key "$work/key" 2>/dev/null
   local fingerprint
-  fingerprint="$(gpg --list-keys --with-colons smoke@env-vault.invalid | awk -F: '/^fpr:/ { print $10; exit }')"
+  fingerprint="$(gpg --list-keys --with-colons smoke@env-vault.invalid 2>/dev/null | awk -F: '/^fpr:/ { print $10; exit }')"
   export PASSWORD_STORE_DIR="$work/store"
   pass init "$fingerprint" >/dev/null 2>&1
   export ENV_VAULT_BACKEND=pass
@@ -187,13 +195,24 @@ expect_exec_value exec-after-overwrite "$second"
 expect delete 0 "$bin" --json secret delete "$name" --confirm "$name"
 expect check-after-delete 3 "$bin" --json secret check "$name"
 
-for value in "$first" "$second"; do
-  if grep -rFq -- "$value" "$out"; then
-    fail "a stored value appeared in env-vault output"
-  fi
-done
+# The patterns come from a pipe, so the values never appear in argv.
+leaked=false
+if grep -rFq -f <(printf '%s\n' "$first" "$second") "$out"; then
+  leaked=true
+  fail "a stored value appeared in env-vault output"
+fi
 
 if [[ $failures -ne 0 ]]; then
+  # env-vault's structured errors carry codes and messages, never values;
+  # show them only when the scan above found no value in any output.
+  if [[ $leaked == false ]]; then
+    for label in ${failed_labels[@]+"${failed_labels[@]}"}; do
+      echo "--- $label"
+      head -c 600 "$out/$label.out" 2>/dev/null || true
+      head -c 600 "$out/$label.err" 2>/dev/null || true
+      echo
+    done
+  fi
   echo "backend smoke failed: $failures check(s)"
   exit 1
 fi
