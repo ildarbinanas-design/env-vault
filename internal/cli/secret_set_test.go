@@ -11,6 +11,7 @@ import (
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/output"
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
+	"github.com/ildarbinanas-design/env-vault/internal/secretstore/teststore"
 	"github.com/ildarbinanas-design/env-vault/internal/testutil"
 )
 
@@ -144,5 +145,39 @@ func TestVerifyStoredSecretRejectsWriteThatDidNotTakeEffect(t *testing.T) {
 
 	if err := verifyStoredSecret(context.Background(), droppingStore{value: written}, "env-vault", "nexus-token", written); err != nil {
 		t.Fatalf("matching read-back rejected: %v", err)
+	}
+}
+
+func TestSecretSetStdinTrimsOneLineEnding(t *testing.T) {
+	for name, suffix := range map[string]string{"lf": "\n", "crlf": "\r\n"} {
+		t.Run(name, func(t *testing.T) {
+			setupTestBackend(t)
+			secretValue := testutil.EphemeralValue(t)
+			var stdout, stderr bytes.Buffer
+			if code := Run([]string{"--json", "secret", "set", "nexus-token", "--stdin"}, strings.NewReader(secretValue+suffix), &stdout, &stderr); code != 0 {
+				t.Fatalf("code=%d", code)
+			}
+			store, err := teststore.NewFromEnv("secret_set")
+			if err != nil {
+				t.Fatalf("open test store: %v", err)
+			}
+			stored, err := store.Get(context.Background(), secretstore.DefaultService, "nexus-token")
+			if err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if string(stored) != secretValue {
+				t.Fatalf("stored value differs from input without its %s line ending (len %d, want %d)", name, len(stored), len(secretValue))
+			}
+		})
+	}
+}
+
+func TestTrimLineEndingRemovesExactlyOne(t *testing.T) {
+	for input, want := range map[string]string{
+		"v": "v", "v\n": "v", "v\r\n": "v", "v\n\n": "v\n", "v\r": "v\r", "v\r\r\n": "v\r", "\r\n": "",
+	} {
+		if got := string(trimLineEnding([]byte(input))); got != want {
+			t.Fatalf("trimLineEnding(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
