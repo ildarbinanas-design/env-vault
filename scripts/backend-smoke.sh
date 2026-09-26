@@ -163,6 +163,12 @@ case "$(uname -s)" in
     set_value create "$first"
     ;;
   Darwin)
+    # This swaps the user's default keychain and search list for a throwaway
+    # keychain until exit, so it runs only on a disposable CI runner.
+    [[ "${GITHUB_ACTIONS:-}" == "true" ]] || {
+      echo "the macOS smoke test replaces the default keychain; run it only in GitHub Actions" >&2
+      exit 2
+    }
     setup_macos_keychain
     # Creating, checking, listing, and deleting never read a value, so they
     # must not prompt even for an item env-vault itself created.
