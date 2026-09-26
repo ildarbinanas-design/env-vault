@@ -366,16 +366,17 @@ macOS uses the system Keychain through the selected Go backend.
 macOS asks for Keychain access the first time a given env-vault binary reads a
 stored value: `exec`, `secret set --verify`, and `export`. Every Homebrew
 upgrade installs a new binary, so the prompt returns once per secret after each
-`brew upgrade env-vault`, and a non-interactive `exec`, for example from a
-LaunchAgent, waits on that prompt until someone answers it. After upgrading,
-run each profile once in a terminal and choose **Always Allow**:
+`brew upgrade env-vault`. A non-interactive `exec`, for example from a
+LaunchAgent in a logged-in session, waits on that prompt until someone answers
+it. After upgrading, run each profile once in a terminal and choose
+**Always Allow**:
 
 ```sh
 env-vault exec dev -- true
 ```
 
-`secret set`, `secret check`, `secret list`, `secret delete`, and `doctor` do
-not read values and do not prompt.
+`secret check`, `secret list`, `profile add --check-secret`, `import` conflict
+checks, and `doctor` only list stored names and never read a value.
 
 Debian/Linux systems may require a Secret Service-compatible keyring daemon depending on desktop or headless setup. Linux also supports `pass` when the `pass` command is installed and the password store is initialized. Headless environments should use a CI secret manager or an explicit supported backend, not plaintext config.
 
