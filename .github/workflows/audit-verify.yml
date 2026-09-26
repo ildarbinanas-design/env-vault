@@ -15,125 +15,22 @@ env:
   REL: v0.3.0
 
 jobs:
-  macos:
-    name: macos-${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: amd64
+  macos-login-keychain:
+    runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: "false"
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Homebrew install, test, audit
+      - name: Install from tap
         shell: bash
         run: |
-          set +e +o pipefail -u
-          brew --version | head -1
-          echo "### Homebrew on macOS ${{ matrix.arch }} ($(brew --version | head -1))" >> "$GITHUB_STEP_SUMMARY"
-          brew tap ildarbinanas-design/tap 2>&1 | tail -3; echo "tap exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          brew install ildarbinanas-design/tap/env-vault 2>&1 | tail -15; echo "install exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          brew test ildarbinanas-design/tap/env-vault 2>&1 | tail -5; echo "test exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          for f in env-vault macos-user-settings; do
-            brew audit --strict --online "ildarbinanas-design/tap/$f" 2>&1 | tail -10; echo "audit --strict --online $f exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-            brew audit --strict --online --except=version "ildarbinanas-design/tap/$f" 2>&1 | tail -10; echo "audit --strict --online --except=version $f exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          done
-          env-vault --version | tee -a "$GITHUB_STEP_SUMMARY"
-          xattr -l "$(brew --prefix)/bin/env-vault" | grep -c quarantine | sed 's/^/quarantine attrs: /' | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Release archive checksum and byte identity with Homebrew binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          t=darwin-${{ matrix.arch }}; d="$RUNNER_TEMP/rel"; mkdir -p "$d"; cd "$d"
-          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-${t}.tar.gz"
-          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-${t}.tar.gz.sha256"
-          shasum -a 256 -c "env-vault-${t}.tar.gz.sha256" | tee -a "$GITHUB_STEP_SUMMARY"
-          tar xzf "env-vault-${t}.tar.gz"
-          a=$(shasum -a 256 "env-vault-${t}/env-vault" | cut -c1-64)
-          b=$(shasum -a 256 "$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$(brew --prefix)/bin/env-vault")" | cut -c1-64)
-          echo "release binary == brew binary: $([ "$a" = "$b" ] && echo yes || echo no)" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Keychain ACL experiments
-        shell: bash
-        run: bash .github/audit-verify/keychain.sh "$(brew --prefix)/bin/env-vault" "$GITHUB_WORKSPACE"
-      - name: Full scenario on login keychain
+          set +e +o pipefail
+          brew install ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/brew.log" 2>&1; echo "install exit=$?"
+          security default-keychain -d user; security list-keychains -d user
+      - name: Full scenario on the runner login keychain
         shell: bash
         run: bash .github/audit-verify/scenario.sh "$(brew --prefix)/bin/env-vault" 20
-
-  windows-scenario:
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: "false"
-      - name: Release archive checksum and WinCred scenario
-        shell: bash
-        env:
-          PY: python
-        run: |
-          set +e +o pipefail -u
-          d="$RUNNER_TEMP/rel"; mkdir -p "$d"; cd "$d"
-          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-windows-amd64.zip"
-          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-windows-amd64.zip.sha256"
-          sha256sum -c env-vault-windows-amd64.zip.sha256 | tee -a "$GITHUB_STEP_SUMMARY"
-          unzip -q env-vault-windows-amd64.zip
-          bin="$d/env-vault-windows-amd64/env-vault.exe"
-          bash "$GITHUB_WORKSPACE/.github/audit-verify/scenario.sh" "$bin" 30
-          echo "cmdkey targets containing env-vault (names only):"; cmdkey //list | grep -i 'target' | grep -i -c 'env-vault' || true
-
-  windows-e2e:
-    name: windows-e2e-${{ matrix.attempt }}
-    runs-on: windows-latest
-    timeout-minutes: 90
-    env:
-      GOTOOLCHAIN: local
-    strategy:
-      fail-fast: false
-      matrix:
-        attempt: [1, 2, 3, 4, 5]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: "false"
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Build reporters, artifact, and run candidate E2E
-        shell: bash
-        run: |
-          set -euo pipefail
-          r="$RUNNER_TEMP/reporters/windows-amd64"; mkdir -p "$r"
-          (cd tools/e2e-reporter && GOWORK=off GOFLAGS='' go mod download && GOWORK=off GOFLAGS='' GOPROXY=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-            go build -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w' -o "$r/gotestsum.exe" gotest.tools/gotestsum)
-          (cd "$r" && sha256sum gotestsum.exe > gotestsum.exe.sha256)
-          name=env-vault-windows-amd64; mkdir -p "dist/$name"
-          go build -trimpath -ldflags="-s -w -X github.com/ildarbinanas-design/env-vault/internal/cli.Version=v0.0.0-audit" -o "dist/$name/env-vault.exe" ./cmd/env-vault
-          cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$name/"
-          pwsh -NoProfile -Command '$ErrorActionPreference="Stop"; Compress-Archive -LiteralPath dist/env-vault-windows-amd64 -DestinationPath dist/env-vault-windows-amd64.zip; $h=(Get-FileHash -LiteralPath dist/env-vault-windows-amd64.zip -Algorithm SHA256).Hash.ToLowerInvariant(); [System.IO.File]::WriteAllText("dist/env-vault-windows-amd64.zip.sha256", "$h  env-vault-windows-amd64.zip`n", [System.Text.Encoding]::ASCII)'
-          reporter="$RUNNER_TEMP/reporters/windows-amd64/gotestsum.exe"
-          start=$(date +%s); rc=0
-          GOPROXY=off ENV_VAULT_E2E_GOOS=windows ENV_VAULT_E2E_GOARCH=amd64 ENV_VAULT_E2E_VERSION=v0.0.0-audit ENV_VAULT_E2E_COMMIT_SHA="$GITHUB_SHA" \
-            go run ./e2e/cmd/e2e-runner run --phase candidate --coverage-floor 60 --command-timeout 3m --test-timeout 5m \
-            --artifact dist/env-vault-windows-amd64.zip --checksum dist/env-vault-windows-amd64.zip.sha256 \
-            --reporter "$reporter" --reporter-checksum "$reporter.sha256" > "$RUNNER_TEMP/e2e.log" 2>&1 || rc=$?
-          echo "windows E2E attempt ${{ matrix.attempt }}: exit=$rc duration=$(( $(date +%s) - start ))s" | tee -a "$GITHUB_STEP_SUMMARY"
-          tail -n 40 "$RUNNER_TEMP/e2e.log" | grep -v -i -E 'sentinel|value' || true
-          if [ "$rc" -ne 0 ]; then
-            echo "failed test names:"; grep -rhoE '<testcase [^>]*name="[^"]*"[^>]*>[[:space:]]*<failure' reports 2>/dev/null | grep -oE 'name="[^"]*"' | sort -u | head -50 || true
-            grep -rhE '"Action":"fail"' reports 2>/dev/null | grep -oE '"Test":"[^"]*"' | sort -u | head -50 || true
-          fi
-          exit "$rc"
 
   artifact-81:
     runs-on: ubuntu-latest
@@ -142,56 +39,19 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Download PR #81 Windows E2E report artifact
-        id: dl
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: "10335640614"
           run-id: "34812659832"
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           path: a81
-      - name: List failing scenario names only
+      - name: Structured error codes of the failing scenario only
         shell: bash
-        env:
-          DL: ${{ steps.dl.outcome }}
         run: |
-          set -u
-          echo "download outcome: $DL" | tee -a "$GITHUB_STEP_SUMMARY"
-          [ -d a81 ] || exit 0
-          echo "files:"; find a81 -type f | sed 's|^a81/||' | sort
-          echo "junit failures:"; grep -rlE '<failure' a81 || true
-          for f in $(grep -rlE '<failure' a81 2>/dev/null); do
-            python3 - "$f" <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          for tc in ET.parse(sys.argv[1]).getroot().iter('testcase'):
-              if tc.find('failure') is not None or tc.find('error') is not None:
-                  print('FAILED:', tc.get('classname'), tc.get('name'))
-          PY
-          done
-          echo "jsonl fail actions:"; grep -rhE '"Action":"fail"' a81 2>/dev/null | grep -oE '"Test":"[^"]*"' | sort | uniq -c | head -60 || true
-          echo "masked failure text (tokens of 12+ alphanumerics replaced):"
-          python3 - a81 <<'PY2'
-          import sys, os, re, xml.etree.ElementTree as ET
-          mask = lambda t: re.sub(r'[A-Za-z0-9+/=_-]{12,}', '<masked>', t or '')
-          for root, _, files in os.walk(sys.argv[1]):
-              for f in files:
-                  p = os.path.join(root, f)
-                  if f.endswith('junit.xml'):
-                      for tc in ET.parse(p).getroot().iter('testcase'):
-                          for tag in ('failure', 'error'):
-                              e = tc.find(tag)
-                              if e is not None:
-                                  print('==', f, tc.get('name'), tag, mask(e.get('message')))
-                                  for line in (e.text or '').splitlines()[-60:]:
-                                      print('   ', mask(line)[:220])
-                  if f in ('command-output.txt', 'manifest.json', 'summary.md'):
-                      print('== file', p.split('/', 1)[1])
-                      for line in open(p, errors='replace').read().splitlines()[-40:]:
-                          print('   ', mask(line)[:220])
-          PY2
-          echo "runner summaries (status lines only):"; grep -rhiE '"(status|result|outcome|phase|failed_gate|gate)":"[^"]*"' a81 --include=*.json 2>/dev/null | grep -oiE '"(status|result|outcome|phase|failed_gate|gate)":"[^"]*"' | sort | uniq -c | head -40 || true
+          grep -rhoE 'concurrent mutation [0-9]+ failed: exit=[0-9]+ timeout=(true|false)' a81 | sort | uniq -c
+          grep -rhoE '\\"code\\":\\"[A-Z_]+\\"' a81 | sort | uniq -c
+          grep -rhoE '\\"message\\":\\"[A-Za-z ]+' a81 | sort | uniq -c
 
   tools:
     runs-on: ubuntu-latest
@@ -205,62 +65,38 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Install scanners
-        shell: bash
-        run: |
-          set +e
-          GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@latest; echo "install govulncheck=$?"
-          GOTOOLCHAIN=auto go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest; echo "install osv-scanner=$?"
-          GOTOOLCHAIN=auto go install github.com/ossf/scorecard/v5@latest; echo "install scorecard=$?"
-          ls "$(go env GOPATH)/bin"
-      - name: govulncheck source (main and release tag)
-        shell: bash
-        run: |
-          set +e +o pipefail -u
-          PATH="$(go env GOPATH)/bin:$PATH"
-          govulncheck -version | head -3
-          govulncheck ./... ; echo "govulncheck main exit=$?" | tee -a "$GITHUB_STEP_SUMMARY"
-          (cd tools/e2e-reporter && govulncheck ./... ; echo "govulncheck e2e-reporter exit=$?" | tee -a "$GITHUB_STEP_SUMMARY")
-          git worktree add -q "$RUNNER_TEMP/tag" "$REL"
-          (cd "$RUNNER_TEMP/tag" && govulncheck ./... ; echo "govulncheck $REL source exit=$?" | tee -a "$GITHUB_STEP_SUMMARY")
-      - name: govulncheck release binaries
-        shell: bash
-        run: |
-          set +e +o pipefail -u
-          PATH="$(go env GOPATH)/bin:$PATH"
-          d="$RUNNER_TEMP/rel"; mkdir -p "$d"; cd "$d"
-          for t in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
-            curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-${t}.tar.gz"
-            curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-${t}.tar.gz.sha256"
-            sha256sum -c "env-vault-${t}.tar.gz.sha256"; tar xzf "env-vault-${t}.tar.gz"
-            govulncheck -mode=binary "env-vault-${t}/env-vault"; echo "govulncheck binary $t exit=$?" | tee -a "$GITHUB_STEP_SUMMARY"
-          done
-          curl -fsSLO "https://github.com/${GITHUB_REPOSITORY}/releases/download/${REL}/env-vault-windows-amd64.zip"
-          unzip -q env-vault-windows-amd64.zip
-          govulncheck -mode=binary env-vault-windows-amd64/env-vault.exe; echo "govulncheck binary windows-amd64 exit=$?" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: osv-scanner
+      - name: govulncheck source summary (reachable findings per package)
         shell: bash
         run: |
           set +e +o pipefail
+          GOTOOLCHAIN=auto go install golang.org/x/vuln/cmd/govulncheck@latest
           PATH="$(go env GOPATH)/bin:$PATH"
-          osv-scanner scan source -r . ; echo "osv-scanner exit=$?" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: OpenSSF Scorecard (read-only job token)
+          summarize() { jq -r 'select(.finding) | .finding | select(.trace[0].function != null) | "\(.osv)\t\(.trace[-1].package // "?")\t\(.fixed_version // "-")"' | sort -u; }
+          for target in ./cmd/env-vault ./...; do
+            for os in linux darwin windows; do
+              echo "== main $target GOOS=$os (reachable: osv, entry package, fixed)"; GOOS=$os govulncheck -format json "$target" 2>/dev/null | summarize
+            done
+          done
+          git worktree add -q "$RUNNER_TEMP/tag" "$REL"
+          (cd "$RUNNER_TEMP/tag" && echo "== $REL ./cmd/env-vault linux" && govulncheck -format json ./cmd/env-vault 2>/dev/null | summarize)
+          echo "== with go1.26.8 toolchain, main ./..."; GOTOOLCHAIN=go1.26.8 govulncheck -format json ./... 2>/dev/null | summarize
+      - name: Scorecard details for failing checks
         shell: bash
         env:
           GITHUB_AUTH_TOKEN: ${{ github.token }}
         run: |
           set +e +o pipefail
+          GOTOOLCHAIN=auto go install github.com/ossf/scorecard/v5@latest
           PATH="$(go env GOPATH)/bin:$PATH"
-          for r in env-vault homebrew-tap; do
-            scorecard --repo="github.com/ildarbinanas-design/$r" --format=json > "$RUNNER_TEMP/sc-$r.json" 2> "$RUNNER_TEMP/sc-$r.err"; echo "scorecard $r exit=$?"
-            jq -r '"score \(.score)", (.checks[] | "\(.score)\t\(.name)\t\(.reason)")' "$RUNNER_TEMP/sc-$r.json" | tee -a "$GITHUB_STEP_SUMMARY" || tail -5 "$RUNNER_TEMP/sc-$r.err"
-          done
-      - name: Homebrew on Linux (install from tap and audit)
+          scorecard --repo=github.com/ildarbinanas-design/env-vault --checks=Dangerous-Workflow,Token-Permissions,Branch-Protection,Code-Review,Security-Policy --show-details --format=json > "$RUNNER_TEMP/sc.json" 2>/dev/null
+          jq -r '.checks[] | "## \(.name) \(.score)", (.details // [] | .[] | select(startswith("Warn")))' "$RUNNER_TEMP/sc.json"
+      - name: Homebrew 7 on Linux without pipes
         shell: bash
         run: |
-          set +e +o pipefail -u
+          set +e
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-          brew --version | head -1
-          brew install ildarbinanas-design/tap/env-vault 2>&1 | tail -8; echo "linux brew install exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          brew test ildarbinanas-design/tap/env-vault 2>&1 | tail -3; echo "linux brew test exit=${PIPESTATUS[0]}" | tee -a "$GITHUB_STEP_SUMMARY"
-          env-vault --version
+          brew --version > "$RUNNER_TEMP/v.txt" 2>&1; head -1 "$RUNNER_TEMP/v.txt"
+          brew install ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/i.log" 2>&1; rc=$?; echo "linux brew install exit=$rc"; tail -n 15 "$RUNNER_TEMP/i.log"
+          brew test ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/t.log" 2>&1; echo "linux brew test exit=$?"; tail -n 5 "$RUNNER_TEMP/t.log"
+          brew audit --strict --online --except=version ildarbinanas-design/tap/env-vault > "$RUNNER_TEMP/a.log" 2>&1; echo "linux brew audit --except=version exit=$?"; tail -n 8 "$RUNNER_TEMP/a.log"
+          "$(brew --prefix)/bin/env-vault" --version
