@@ -76,40 +76,10 @@ Homebrew, and everything else stays proportionate to a single-user tool
 
 ## Working Mode
 
-The owner decides how much agents may do without asking. Exactly one of the two
-modes below applies at a time; the same modes govern
-`ildarbinanas-design/homebrew-tap`.
-
-### Audit Autonomy Window
-
-The owner opened this window on 2026-09-26 for the full audit of env-vault,
-homebrew-tap, and their processes. It closes at the earlier of:
-
-- the merge of the pull requests that delete this subsection here and in
-  homebrew-tap's `AGENTS.md`, which the audit opens once its results are
-  applied; or
-- 2026-10-10T00:00:00Z. From then on `TestAuditAutonomyWindowClosesByDeadline`
-  fails every CI run until this subsection is deleted.
-
-While the window is open, agents may do without asking everything the Standing
-Delegation allows, and may also merge their own pull requests that change
-reserved paths, after every required check is green on the exact head and a
-fresh-context review of the final diff found nothing blocking. Still reserved
-for the owner:
-
-- releasing: merging the generated Release Please pull request, and creating
-  tags or releases by any other path;
-- deleting Actions artifacts, tags, or releases;
-- force-pushing or rewriting published history;
-- anything that weakens a Hard Security Rule, the deny rules in
-  `.claude/settings.json`, or a repository protection.
-
-Narrowing is always allowed: any agent may close the window early. Extending
-or widening it is reserved for the owner.
+The owner decides how much agents may do without asking. The Standing
+Delegation below applies here and in `ildarbinanas-design/homebrew-tap`.
 
 ### Standing Delegation
-
-This mode applies whenever the Audit Autonomy Window subsection is absent.
 
 Agents may, without asking:
 
