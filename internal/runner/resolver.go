@@ -22,9 +22,9 @@ type ResolveOptions struct {
 }
 
 type ResolvedSecret struct {
-	Name        string
-	Env         string
-	Fingerprint string
+	Name     string
+	Env      string
+	RecordID string
 }
 
 type ResolveResult struct {
@@ -84,11 +84,10 @@ func Resolve(ctx context.Context, store secretstore.Store, profileMappings, dire
 				return ResolveResult{}, backendUnavailable(opts.Command, err)
 			}
 		}
-		fingerprint := secretstore.Fingerprint(opts.Service, mapping.Name)
 		result.Secrets = append(result.Secrets, ResolvedSecret{
-			Name:        mapping.Name,
-			Env:         mapping.Env,
-			Fingerprint: fingerprint,
+			Name:     mapping.Name,
+			Env:      mapping.Env,
+			RecordID: secretstore.RecordID(opts.Service, mapping.Name),
 		})
 		if opts.DryRun {
 			continue

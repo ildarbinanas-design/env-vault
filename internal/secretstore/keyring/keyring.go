@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/99designs/keyring"
@@ -69,12 +70,22 @@ func (s Store) Get(_ context.Context, service, name string) ([]byte, error) {
 	return append([]byte(nil), item.Data...), nil
 }
 
-func (s Store) Exists(ctx context.Context, service, name string) (bool, error) {
-	_, err := s.Get(ctx, service, name)
-	if stderrors.Is(err, secretstore.ErrNotFound) {
-		return false, nil
+// Exists answers from the backend's key listing, the same metadata that List
+// reads. Get would decrypt the value only to discard it, and on macOS it asks
+// for Keychain access to the item just to report that the record exists.
+func (s Store) Exists(_ context.Context, service, name string) (bool, error) {
+	if err := secretstore.ValidateSecretName(name); err != nil {
+		return false, fmt.Errorf("invalid secret name: %w", err)
 	}
-	return err == nil, err
+	kr, err := s.open(service)
+	if err != nil {
+		return false, err
+	}
+	keys, err := kr.Keys()
+	if err != nil {
+		return false, s.backendError(err)
+	}
+	return slices.Contains(keys, name), nil
 }
 
 func (s Store) Delete(_ context.Context, service, name string) error {
@@ -106,9 +117,9 @@ func (s Store) List(_ context.Context, service string) ([]secretstore.Metadata, 
 	items := make([]secretstore.Metadata, 0, len(keys))
 	for _, name := range keys {
 		items = append(items, secretstore.Metadata{
-			Service:     service,
-			Name:        name,
-			Fingerprint: secretstore.Fingerprint(service, name),
+			Service:  service,
+			Name:     name,
+			RecordID: secretstore.RecordID(service, name),
 		})
 	}
 	return items, nil

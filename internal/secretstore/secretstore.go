@@ -34,9 +34,9 @@ func BackendRemediation(err error) string {
 }
 
 type Metadata struct {
-	Service     string
-	Name        string
-	Fingerprint string
+	Service  string
+	Name     string
+	RecordID string
 }
 
 type Store interface {
@@ -111,7 +111,12 @@ func hasWindowsAbsolutePrefix(value string) bool {
 	return first >= 'A' && first <= 'Z' || first >= 'a' && first <= 'z'
 }
 
-func Fingerprint(service, name string) string {
+// RecordID identifies the stored record for a service and secret name. It is
+// derived only from those public identifiers, never from the secret value, so
+// it stays the same when the value is overwritten and gives nothing to an
+// offline guess. Output reports it as record_id and, for compatibility, as the
+// deprecated alias fingerprint.
+func RecordID(service, name string) string {
 	sum := sha256.Sum256([]byte(service + "\x00" + name))
 	return hex.EncodeToString(sum[:])[:16]
 }

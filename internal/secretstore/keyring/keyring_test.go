@@ -135,3 +135,43 @@ func containsBackend(backends []keyring.BackendType, backend keyring.BackendType
 	}
 	return false
 }
+
+func TestExistsReadsKeyListingWithoutDecryptingValue(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pass backend is unavailable on Windows")
+	}
+	root := t.TempDir()
+	passDir := filepath.Join(root, "password-store")
+	entryDir := filepath.Join(passDir, "env-vault", "team", "registry")
+	if err := os.MkdirAll(entryDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entryDir, "token.gpg"), []byte("ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(root, "pass.log")
+	passPath := filepath.Join(root, "pass")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_PASS_LOG"
+exit 1
+`
+	if err := os.WriteFile(passPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_PASS_LOG", logPath)
+	store := Store{
+		allowedBackends: []keyring.BackendType{keyring.PassBackend},
+		passCmd:         passPath,
+		passDir:         passDir,
+	}
+
+	for name, want := range map[string]bool{"registry/token": true, "registry/missing": false} {
+		got, err := store.Exists(context.Background(), "team", name)
+		if err != nil || got != want {
+			t.Fatalf("Exists(%q)=%v,%v, want %v", name, got, err, want)
+		}
+	}
+	if data, err := os.ReadFile(logPath); !os.IsNotExist(err) {
+		t.Fatalf("Exists invoked pass (%q); it must not decrypt the value", data)
+	}
+}

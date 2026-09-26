@@ -26,11 +26,23 @@ The interface supports `Set`, `Get`, `Exists`, `Delete`, and `List`. Commands ne
 
 Production storage uses `github.com/99designs/keyring` with an explicit allowlist: macOS Keychain, Secret Service, KWallet, Windows Credential Manager, and `pass`. `pass` is kept after the platform keychain backends so discovery still prefers the native OS stores first. `keyring.FileBackend`, plaintext/env-file storage, and Passwork are not production backends.
 
-The public metadata fingerprint is not derived from secret values:
+The public record ID identifies a stored record and is not derived from the
+secret value:
 
 ```text
 sha256(service + "\x00" + secretName), truncated to 16 hex chars
 ```
+
+It is therefore identical before and after an overwrite and gives nothing to
+an offline guess of a low-entropy value. JSON reports it as `record_id` and,
+until a later minor release, as the deprecated alias `fingerprint`.
+`secret set` reports `created` or `overwritten`; `--verify` reads the value
+back and compares it in constant time, failing with `SECRET_UNVERIFIED` on a
+mismatch. `Exists` answers from the backend key listing that `List` uses, so
+`secret check` never decrypts a value. A value-derived digest, a keyed MAC, and
+backend modification times were rejected for #77: the first allows offline
+guessing and all of them either read every value for metadata commands or are
+not available on every production backend.
 
 ## Config Schema
 

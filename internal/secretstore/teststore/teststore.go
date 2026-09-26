@@ -121,9 +121,9 @@ func (s *Store) List(_ context.Context, service string) ([]secretstore.Metadata,
 	items := make([]secretstore.Metadata, 0, len(names))
 	for _, name := range names {
 		items = append(items, secretstore.Metadata{
-			Service:     service,
-			Name:        name,
-			Fingerprint: secretstore.Fingerprint(service, name),
+			Service:  service,
+			Name:     name,
+			RecordID: secretstore.RecordID(service, name),
 		})
 	}
 	return items, nil

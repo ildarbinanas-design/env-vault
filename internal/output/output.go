@@ -137,16 +137,29 @@ func (r Renderer) writeHumanSuccess(env Envelope) error {
 		}
 	case "secret_set":
 		name, _ := stringFromData(env.Data, "name")
-		fp, _ := stringFromData(env.Data, "fingerprint")
-		_, err := fmt.Fprintf(r.stdout, "secret stored: %s (fingerprint: %s)\n", name, fp)
+		recordID, _ := stringFromData(env.Data, "record_id")
+		if dryRun, ok := boolFromData(env.Data, "dry_run"); ok && dryRun {
+			_, err := fmt.Fprintf(r.stdout, "dry run: secret %s would be stored (record: %s)\n", name, recordID)
+			return err
+		}
+		action, _ := stringFromData(env.Data, "action")
+		detail := "record: " + recordID
+		if verified, ok := boolFromData(env.Data, "verified"); ok && verified {
+			detail += ", verified"
+		}
+		_, err := fmt.Fprintf(r.stdout, "secret %s: %s (%s)\n", action, name, detail)
 		return err
 	case "secret_check":
 		name, _ := stringFromData(env.Data, "name")
-		fp, _ := stringFromData(env.Data, "fingerprint")
-		_, err := fmt.Fprintf(r.stdout, "secret exists: %s (fingerprint: %s)\n", name, fp)
+		recordID, _ := stringFromData(env.Data, "record_id")
+		_, err := fmt.Fprintf(r.stdout, "secret exists: %s (record: %s)\n", name, recordID)
 		return err
 	case "secret_delete":
 		name, _ := stringFromData(env.Data, "name")
+		if dryRun, ok := boolFromData(env.Data, "dry_run"); ok && dryRun {
+			_, err := fmt.Fprintf(r.stdout, "dry run: secret %s would be deleted\n", name)
+			return err
+		}
 		_, err := fmt.Fprintf(r.stdout, "secret deleted: %s\n", name)
 		return err
 	case "secret_list":
@@ -229,7 +242,7 @@ func writeSecretList(w io.Writer, data any) error {
 		return err
 	}
 	for _, item := range items {
-		if _, err := fmt.Fprintf(w, "%s %s\n", item["name"], item["fingerprint"]); err != nil {
+		if _, err := fmt.Fprintf(w, "%s %s\n", item["name"], item["record_id"]); err != nil {
 			return err
 		}
 	}
