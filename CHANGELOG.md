@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.0...v0.3.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* **output:** stop rewriting output around stored secret values ([#90](https://github.com/ildarbinanas-design/env-vault/issues/90)) ([590f8ca](https://github.com/ildarbinanas-design/env-vault/commit/590f8ca90bd9590f50b59cbf5d2e3a58ba6247cb))
+* **secretstore:** fail clearly on refused or unanswered keychain calls ([#94](https://github.com/ildarbinanas-design/env-vault/issues/94)) ([8c6591f](https://github.com/ildarbinanas-design/env-vault/commit/8c6591f3a267b1133d446768b5f0b95e0cef42f8))
+* **secret:** trim a CRLF line ending from --stdin input ([#91](https://github.com/ildarbinanas-design/env-vault/issues/91)) ([5eb9ed6](https://github.com/ildarbinanas-design/env-vault/commit/5eb9ed69e7657be06244aa23a7931084dab0a45d))
+
+
+### Documentation
+
+* **readme:** explain the macOS Keychain prompt after an upgrade ([#92](https://github.com/ildarbinanas-design/env-vault/issues/92)) ([94ee5cd](https://github.com/ildarbinanas-design/env-vault/commit/94ee5cd761fcacf1a3660fed149a3cd876fa315f))
+
 ## [0.3.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.2.1...v0.3.0) (2026-09-26)
 
 
