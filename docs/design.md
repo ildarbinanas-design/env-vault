@@ -104,8 +104,12 @@ every other command (see Output Schema) and never prints a secret value.
 6. Build the child environment from inherited env or `--clean-env`.
 7. Spawn the command directly without a shell.
 8. Inherit child stdin/stdout/stderr by default.
-9. Best-effort forward process signals.
-10. Propagate the child exit code where possible.
+9. On Unix, forward SIGTERM and SIGHUP to the child. SIGINT and SIGQUIT are
+   not forwarded: a terminal already delivers them to the child through the
+   foreground process group, and forwarding would deliver each one twice.
+10. Propagate the child exit code. A child killed by SIGHUP, SIGINT, SIGTERM,
+    or SIGKILL ends env-vault with the same signal, so a calling shell loop
+    stops as it would without env-vault; other signals exit with 128+n.
 
 `env-vault exec ... -- bash -lc ...` is allowed because the user explicitly supplied the shell.
 
