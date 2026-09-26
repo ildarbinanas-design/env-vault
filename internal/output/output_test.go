@@ -7,13 +7,12 @@ import (
 	"testing"
 
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
-	"github.com/ildarbinanas-design/env-vault/internal/redact"
 )
 
 func TestJSONSuccess(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	renderer := New(&stdout, &stderr, Options{JSON: true}, redact.New())
+	renderer := New(&stdout, &stderr, Options{JSON: true})
 	if err := renderer.Success("secret_set", map[string]any{"name": "nexus-token"}, nil); err != nil {
 		t.Fatalf("success: %v", err)
 	}
@@ -32,7 +31,7 @@ func TestJSONSuccess(t *testing.T) {
 func TestJSONError(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	renderer := New(&stdout, &stderr, Options{JSON: true}, redact.New())
+	renderer := New(&stdout, &stderr, Options{JSON: true})
 	appErr := apperrors.New("exec", apperrors.CodeMissingSecret, "Missing secret: nexus-token", "Run: env-vault secret set nexus-token", apperrors.ExitMissingSecret)
 	if err := renderer.Error("exec", appErr); err != nil {
 		t.Fatalf("error: %v", err)
@@ -52,7 +51,7 @@ func TestJSONError(t *testing.T) {
 func TestJSONLEvent(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
-	renderer := New(&stdout, &bytes.Buffer{}, Options{JSONL: true}, redact.New())
+	renderer := New(&stdout, &bytes.Buffer{}, Options{JSONL: true})
 	if err := renderer.Success("doctor", map[string]any{"backend": "test"}, []string{"warning"}); err != nil {
 		t.Fatalf("success: %v", err)
 	}
@@ -64,7 +63,7 @@ func TestJSONLEvent(t *testing.T) {
 func TestQuietSuppressesHumanSuccess(t *testing.T) {
 	t.Parallel()
 	var stdout bytes.Buffer
-	renderer := New(&stdout, &bytes.Buffer{}, Options{Quiet: true}, redact.New())
+	renderer := New(&stdout, &bytes.Buffer{}, Options{Quiet: true})
 	if err := renderer.Success("version", map[string]any{"version": "test"}, nil); err != nil {
 		t.Fatalf("success: %v", err)
 	}

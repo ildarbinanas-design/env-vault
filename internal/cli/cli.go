@@ -16,7 +16,6 @@ import (
 	"github.com/ildarbinanas-design/env-vault/internal/config"
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/output"
-	"github.com/ildarbinanas-design/env-vault/internal/redact"
 	"github.com/ildarbinanas-design/env-vault/internal/runner"
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
 	keyringstore "github.com/ildarbinanas-design/env-vault/internal/secretstore/keyring"
@@ -68,7 +67,6 @@ type App struct {
 	output     output.Options
 	dryRunFlag bool
 	configPath string
-	redactor   redact.Redactor
 	// passphraseReader replaces the hidden container passphrase prompt in
 	// tests. It is unexported and never assigned outside this package, so it
 	// adds no flag, no environment variable, and no production code path.
@@ -85,7 +83,6 @@ func newApp(stdin io.Reader, stdout, stderr io.Writer) *App {
 		stdout:     stdout,
 		stderr:     stderr,
 		currentEnv: os.Environ(),
-		redactor:   redact.New(),
 	}
 }
 
@@ -153,7 +150,7 @@ func (a *App) rootCommand() *cobra.Command {
 }
 
 func (a *App) renderer() output.Renderer {
-	return output.New(a.stdout, a.stderr, a.output, a.redactor)
+	return output.New(a.stdout, a.stderr, a.output)
 }
 
 func (a *App) dryRun(cmd *cobra.Command) bool {
@@ -228,7 +225,6 @@ func (a *App) secretSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a.redactor = a.redactor.With(string(value))
 			store, err := a.store("secret_set")
 			if err != nil {
 				return err
