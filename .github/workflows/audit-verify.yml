@@ -14,7 +14,7 @@ permissions:
 env:
   GOTOOLCHAIN: local
   BASE_SHA: 8c6591f3a267b1133d446768b5f0b95e0cef42f8
-  PR_SHA: ce536d3c19bda1d9463e8b5ed857c54a6f7ceb99
+  PR_SHA: f5635ee8e8a7f2266ca691423d67d3de9792e5db
 
 jobs:
   signals:
@@ -57,6 +57,7 @@ jobs:
         run: |
           python3 .github/audit-verify/pty_loop.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
           python3 .github/audit-verify/pty_count.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
+          python3 .github/audit-verify/pty_setsid.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
       - name: Signals sent without a terminal
         shell: bash
         run: python3 .github/audit-verify/notty.py "$RUNNER_TEMP/ev-main" "$RUNNER_TEMP/ev-pr"
