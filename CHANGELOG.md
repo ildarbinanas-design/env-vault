@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.2.1...v0.3.0) (2026-09-26)
+
+
+### Features
+
+* **secret:** report record IDs, overwrites and verified writes ([#87](https://github.com/ildarbinanas-design/env-vault/issues/87)) ([ed8e40f](https://github.com/ildarbinanas-design/env-vault/commit/ed8e40f69781385e1e637b622f7da13cb915a065)), closes [#77](https://github.com/ildarbinanas-design/env-vault/issues/77)
+
 ## [0.2.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.2.0...v0.2.1) (2026-09-25)
 
 
