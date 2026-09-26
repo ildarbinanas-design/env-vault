@@ -193,6 +193,13 @@ for the exact run and commit identities.
    published Release never lacks an asset. This is what allows GitHub
    immutable releases to be enabled. Once they are, a published Release's
    assets cannot change, and `repair=release-assets` can only verify them.
+   Two rare failure modes remain. If the runner dies before gh can delete a
+   failed draft, the draft stays; drafts are invisible to the tag lookup, so a
+   repair creates and publishes a second one, and the owner deletes the stale
+   draft on the Releases page. If GitHub publishes the Release but the
+   response is lost, gh deletes the Release it believes failed; with
+   immutable releases the tag name cannot be reused, so recover by releasing
+   the next patch version.
 8. `homebrew` creates or reuses the deterministic tap PR, requires CI on its
    exact head, squash-merges with a head guard, and requires post-merge tap CI
    on the exact release merge SHA. The current tap SHA is observed separately
