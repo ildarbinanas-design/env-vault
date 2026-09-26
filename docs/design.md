@@ -16,7 +16,6 @@ env-vault is a Go CLI with a small package boundary:
 - `internal/secretstore/teststore`: explicitly gated insecure backend for tests only.
 - `internal/runner`: exec resolver, env collision checks, process launch, exit-code propagation, and signal forwarding.
 - `internal/output`: human, JSON, JSONL, and `--output` envelope rendering.
-- `internal/redact`: last-resort string redaction for diagnostics.
 - `internal/errors`: structured error contract.
 - `internal/platform`: config path and platform helpers.
 
