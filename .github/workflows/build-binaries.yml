@@ -628,11 +628,26 @@ jobs:
               --path CHANGELOG.md \
               --ref "$SOURCE_SHA"
             scripts/release/extract-changelog-section.sh "$VERSION" source-CHANGELOG.md > release-notes.md
+            # Pass all ten verified assets to the create call. The GitHub CLI
+            # then keeps the Release a draft until every upload finishes and
+            # deletes the draft if one fails, so a published Release always has
+            # every asset and can be immutable.
+            # shellcheck source=scripts/release/lib.sh
+            source scripts/release/lib.sh
+            assets=()
+            for asset in "${RELEASE_ASSETS[@]}"; do
+              [[ -f "dist/assets/$asset" && ! -L "dist/assets/$asset" ]] || {
+                echo "verified release asset is missing: $asset" >&2
+                exit 1
+              }
+              assets+=("dist/assets/$asset")
+            done
             gh release create "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --title "$VERSION" \
-              --notes-file release-notes.md
+              --notes-file release-notes.md \
+              "${assets[@]}"
           else
             echo "failed to query existing release ${VERSION}" >&2
             exit "$release_status"
