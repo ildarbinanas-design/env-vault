@@ -119,6 +119,12 @@ Tests and smoke checks generate ephemeral secret fixture values at runtime. Stab
 - A child process receives secret values through environment variables and can leak them if it prints or forwards its environment.
 - On Linux, process environment variables may be visible to the same user through `/proc` in some environments.
 - OS keychain availability depends on the platform session and keyring daemon.
+  Every backend call gives up after two minutes, so a system prompt that nobody
+  answers, such as a macOS Keychain prompt shown to a LaunchAgent after an
+  upgrade or a locked Secret Service collection, fails with
+  `BACKEND_UNAVAILABLE` instead of blocking forever. A record the backend lists
+  but refuses to return, for example after a denied Keychain prompt, also fails
+  with `BACKEND_UNAVAILABLE` and is never treated as a missing secret.
 - Any process or principal with write access through ownership, group mode, or
   ACLs can replace a parent directory, lock path, or temporary filename during
   a checked filesystem operation. This remains outside the cooperative
