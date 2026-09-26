@@ -1,4 +1,6 @@
 # Go build outputs
+/env-vault
+/env-vault.exe
 bin/
 dist/
 coverage.out

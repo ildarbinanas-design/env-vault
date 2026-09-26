@@ -19,20 +19,31 @@ var ignoredAtStart = map[syscall.Signal]bool{
 	syscall.SIGTERM: signal.Ignored(syscall.SIGTERM),
 }
 
-// inTerminalForeground is a variable so tests can stand in for a terminal.
-var inTerminalForeground = terminalForeground
+// terminalForegroundGroup is a variable so tests can stand in for a terminal.
+var terminalForegroundGroup = foregroundGroupOfTerminal
 
-// terminalForeground reports whether env-vault's process group is the
-// foreground group of its controlling terminal. A terminal delivers Ctrl+C
-// and Ctrl+\ to that whole group, so the child already has the signal.
-func terminalForeground() bool {
+// foregroundGroupOfTerminal returns the foreground process group of
+// env-vault's controlling terminal, if it has one.
+func foregroundGroupOfTerminal() (int, bool) {
 	tty, err := os.Open("/dev/tty")
 	if err != nil {
-		return false
+		return 0, false
 	}
 	defer tty.Close()
-	foreground, err := unix.IoctlGetInt(int(tty.Fd()), unix.TIOCGPGRP)
-	return err == nil && foreground == syscall.Getpgrp()
+	group, err := unix.IoctlGetInt(int(tty.Fd()), unix.TIOCGPGRP)
+	return group, err == nil
+}
+
+// terminalDelivered reports whether the terminal already sent Ctrl+C or
+// Ctrl+\ to the child. A terminal signals its whole foreground process group,
+// so that holds only when env-vault and the child are both in that group.
+func terminalDelivered(child int) bool {
+	group, ok := terminalForegroundGroup()
+	if !ok || group != syscall.Getpgrp() {
+		return false
+	}
+	childGroup, err := syscall.Getpgid(child)
+	return err == nil && childGroup == group
 }
 
 func signalNotifications() chan os.Signal {
@@ -51,11 +62,11 @@ func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 	go func() {
 		defer close(done)
 		for sig := range ch {
-			// In a terminal's foreground group the terminal already delivered
-			// SIGINT and SIGQUIT to the child; forwarding would deliver each
-			// twice. Sent any other way, for example by a service manager or
-			// a script, they are forwarded like the rest.
-			if (sig == os.Interrupt || sig == syscall.SIGQUIT) && inTerminalForeground() {
+			// When the terminal already delivered SIGINT or SIGQUIT to the
+			// child, forwarding would deliver it twice. Sent any other way,
+			// for example by a service manager or a script, or when the child
+			// left env-vault's process group, they are forwarded like the rest.
+			if (sig == os.Interrupt || sig == syscall.SIGQUIT) && terminalDelivered(process.Pid) {
 				continue
 			}
 			_ = process.Signal(sig)

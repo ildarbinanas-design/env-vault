@@ -31,8 +31,9 @@ func TestChildKilledBySignalReportsTheSignal(t *testing.T) {
 }
 
 // startSignalLogger starts a child that appends the name of every trapped
-// signal to a log file and exits on SIGTERM.
-func startSignalLogger(t *testing.T) (*exec.Cmd, string) {
+// signal to a log file and exits on SIGTERM. With ownGroup the child runs in a
+// new process group, as after setsid.
+func startSignalLogger(t *testing.T, ownGroup bool) (*exec.Cmd, string) {
 	t.Helper()
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
@@ -42,6 +43,9 @@ trap 'echo quit >> "$2"' QUIT
 trap 'echo term >> "$2"; exit 0' TERM
 : > "$1"
 while :; do sleep 0.05; done`, "sh", ready, log)
+	if ownGroup {
+		child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -65,11 +69,13 @@ func logged(log string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// withTerminalForeground stands in for a controlling terminal whose
+// foreground group is the test's own process group, or for no terminal.
 func withTerminalForeground(t *testing.T, foreground bool) {
 	t.Helper()
-	old := inTerminalForeground
-	inTerminalForeground = func() bool { return foreground }
-	t.Cleanup(func() { inTerminalForeground = old })
+	old := terminalForegroundGroup
+	terminalForegroundGroup = func() (int, bool) { return syscall.Getpgrp(), foreground }
+	t.Cleanup(func() { terminalForegroundGroup = old })
 }
 
 func stopSignalLogger(t *testing.T, child *exec.Cmd, ch chan os.Signal, stop func()) {
@@ -90,7 +96,7 @@ func stopSignalLogger(t *testing.T, child *exec.Cmd, ch chan os.Signal, stop fun
 // the child itself, so forwarding them would deliver each twice.
 func TestForwardSignalsSkipsInterruptsTheTerminalAlreadyDelivered(t *testing.T) {
 	withTerminalForeground(t, true)
-	child, log := startSignalLogger(t)
+	child, log := startSignalLogger(t, false)
 	ch := make(chan os.Signal, 4)
 	stop := forwardSignals(child.Process, ch)
 	ch <- os.Interrupt
@@ -105,7 +111,24 @@ func TestForwardSignalsSkipsInterruptsTheTerminalAlreadyDelivered(t *testing.T) 
 // script, and only env-vault receives them, so they must be forwarded.
 func TestForwardSignalsPassesInterruptsWithoutATerminal(t *testing.T) {
 	withTerminalForeground(t, false)
-	child, log := startSignalLogger(t)
+	child, log := startSignalLogger(t, false)
+	ch := make(chan os.Signal, 4)
+	stop := forwardSignals(child.Process, ch)
+	ch <- os.Interrupt
+	waitFor(t, func() bool { return strings.Contains(logged(log), "int") }, "forwarded SIGINT")
+	ch <- syscall.SIGQUIT
+	waitFor(t, func() bool { return strings.Contains(logged(log), "quit") }, "forwarded SIGQUIT")
+	stopSignalLogger(t, child, ch, stop)
+	if got := logged(log); got != "int\nquit\nterm" {
+		t.Fatalf("child received %q, want int, quit, term", got)
+	}
+}
+
+// A child that left env-vault's process group, for example with setsid, is
+// not in the terminal's foreground group, so only forwarding reaches it.
+func TestForwardSignalsPassesInterruptsToAChildInAnotherGroup(t *testing.T) {
+	withTerminalForeground(t, true)
+	child, log := startSignalLogger(t, true)
 	ch := make(chan os.Signal, 4)
 	stop := forwardSignals(child.Process, ch)
 	ch <- os.Interrupt
