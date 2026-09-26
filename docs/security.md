@@ -7,7 +7,7 @@ env-vault does not print secret values. It does not store secret values in confi
 Secret input is limited to:
 
 - a hidden interactive prompt;
-- `--stdin`, which trims exactly one trailing newline byte.
+- `--stdin`, which trims exactly one trailing line ending (`\n` or `\r\n`).
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
