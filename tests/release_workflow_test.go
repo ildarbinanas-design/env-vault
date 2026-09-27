@@ -68,8 +68,8 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	}
 	assertPermissions(t, "release", wf.Permissions, map[string]string{"contents": "read"})
 	if wf.Concurrency.Group != "release-${{ github.ref }}" || wf.Concurrency.Queue != "max" ||
-		wf.Concurrency.CancelInProgress.Expression != "${{ github.event_name == 'pull_request' }}" {
-		t.Fatalf("release concurrency=%+v, want queued runs on main that are never cancelled", wf.Concurrency)
+		wf.Concurrency.CancelInProgress.Value || wf.Concurrency.CancelInProgress.Expression != "" {
+		t.Fatalf("release concurrency=%+v, want queued runs that are never cancelled", wf.Concurrency)
 	}
 	for _, forbidden := range []string{"--clobber", "-X ", "-X=", "pull_request_target"} {
 		if strings.Contains(raw, forbidden) {
@@ -243,6 +243,17 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	}
 	if step := namedStep(t, pack, "Package deterministically"); step.Run != `scripts/release/package-release.sh "$RUNNER_TEMP/downloads" "$RUNNER_TEMP/archives"` {
 		t.Fatalf("package step=%q", step.Run)
+	}
+	// Every flag the release verifies with must be checked on pull requests.
+	flags := namedStep(t, pack, "Check the attestation verifier's flags")
+	checked := regexp.MustCompile(`for flag in ([^;]*);`).FindStringSubmatch(flags.Run)
+	if checked == nil || !containsAll(flags.Run, `help="$(gh attestation verify --help)"`, `grep -qe "$flag" <<< "$help"`) {
+		t.Fatalf("pull requests must check the gh attestation flags: %s", flags.Run)
+	}
+	for _, verify := range strictVerification {
+		if flag := strings.Fields(verify)[0]; !slices.Contains(strings.Fields(checked[1]), flag) {
+			t.Fatalf("pull requests do not check that gh offers %s", flag)
+		}
 	}
 
 	publish := wf.Jobs["publish"]

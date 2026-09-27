@@ -25,9 +25,9 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  # Runs on main are never cancelled, because a release may already have its
-  # tag and draft. Pull request runs replace each other.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Runs are never cancelled, because a release may already have its tag and
+  # draft. They queue instead of replacing each other.
+  cancel-in-progress: false
   queue: max
 
 jobs:
@@ -236,6 +236,19 @@ jobs:
       - name: Package deterministically
         shell: bash
         run: scripts/release/package-release.sh "$RUNNER_TEMP/downloads" "$RUNNER_TEMP/archives"
+
+      # A release runs these checks only after its tag exists, so a pull
+      # request confirms first that the runner's gh still has every flag the
+      # publish and verify jobs use (ADR 0012).
+      - name: Check the attestation verifier's flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh --version | sed -n 1p
+          help="$(gh attestation verify --help)"
+          for flag in --repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners; do
+            grep -qe "$flag" <<< "$help" || { echo "gh attestation verify has no $flag" >&2; exit 1; }
+          done
 
       - name: Upload the archives
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
