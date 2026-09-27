@@ -41,6 +41,8 @@ var (
 	consumerPattern = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 
 	supportedRetentionDays = []int{7, 14, 30, 90}
+	// replacementReleaseWorkflow is the ADR 0011 pipeline, outside this policy.
+	replacementReleaseWorkflow = "release.yml"
 	// uploadingWorkflows are the current workflows that upload artifacts; each
 	// must own at least one policy site. Retired workflows (release-evidence.yml)
 	// are absent here but keep their name patterns, so artifacts they already
@@ -376,6 +378,12 @@ func scanWorkflowDirectory(directory string) ([]workflowSite, error) {
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("workflow file %q must not be a symlink", name)
+		}
+		// ADR 0011: release.yml is the replacement release pipeline. It bounds
+		// its artifacts with retention-days instead of this policy, which
+		// migration step 6 removes.
+		if name == replacementReleaseWorkflow {
+			continue
 		}
 		fileSites, err := scanWorkflowFile(filepath.Join(directory, name), name)
 		if err != nil {

@@ -1,0 +1,170 @@
+name: release
+
+# ADR 0011, migration step 2: build and package every release target without
+# publishing anything. Step 3 adds the release trigger on main, attestations,
+# publication and the Homebrew tap update.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release/package-archives.sh
+      - scripts/backend-smoke.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build-${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-amd64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cgo: "0"
+            binary: env-vault
+          - id: linux-arm64
+            runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            cgo: "0"
+            binary: env-vault
+          - id: darwin-amd64
+            runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            cgo: "1"
+            binary: env-vault
+          - id: darwin-arm64
+            runner: macos-15
+            goos: darwin
+            goarch: arm64
+            cgo: "1"
+            binary: env-vault
+          - id: windows-amd64
+            runner: windows-latest
+            goos: windows
+            goarch: amd64
+            cgo: "0"
+            binary: env-vault.exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history with tags, so Go stamps the tag's version into the binary.
+          fetch-depth: "0"
+          persist-credentials: "false"
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: "false"
+
+      - name: Build and check the build information
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+          TARGET: ${{ matrix.id }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          # Build outside the checkout: an untracked file in it would mark the
+          # build information as modified.
+          temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
+          binary="$temp/release/$TARGET/$BINARY"
+          mkdir -p "$(dirname "$binary")"
+          go build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/env-vault
+          info="$(go version -m "$binary")"
+          printf '%s\n' "$info"
+          modified="$(awk '$1 == "build" && $2 ~ /^vcs\.modified=/ { print substr($2, 14); exit }' <<< "$info")"
+          [[ -n "$modified" ]] || { echo "build information has no VCS stamp" >&2; exit 1; }
+          [[ "$modified" == "false" ]] || { echo "build information reports a modified tree" >&2; exit 1; }
+          module_version="$(awk '$1 == "mod" { print $3; exit }' <<< "$info")"
+          reported="$("$binary" --version | awk '{ print $1; exit }')"
+          [[ -n "$module_version" && "$reported" == "$module_version" ]] ||
+            { echo "--version reports '$reported', build information has '$module_version'" >&2; exit 1; }
+
+      - name: Smoke-test the real OS secret store
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          TARGET: ${{ matrix.id }}
+          BINARY: ${{ matrix.binary }}
+          # Without a session bus the keyring library would start one per call.
+          DBUS_SESSION_BUS_ADDRESS: ${{ matrix.goos == 'linux' && 'disabled:' || '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$GOOS" == "linux" ]] && ! command -v pass >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends pass
+          fi
+          temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
+          scripts/backend-smoke.sh "$temp/release/$TARGET/$BINARY"
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.id }}
+          path: ${{ runner.temp }}/release/${{ matrix.id }}/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: package
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: "false"
+
+      - name: Download the binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/binaries
+
+      - name: Package deterministically
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          scripts/release/package-archives.sh "$RUNNER_TEMP/binaries" "$RUNNER_TEMP/archives"
+          # A second run from the same inputs must give the same bytes.
+          scripts/release/package-archives.sh "$RUNNER_TEMP/binaries" "$RUNNER_TEMP/archives-again"
+          diff -r "$RUNNER_TEMP/archives" "$RUNNER_TEMP/archives-again"
+          cd "$RUNNER_TEMP/archives"
+          sha256sum -c ./*.sha256
+          # The archive bytes depend on these tools, so record them for a rebuild.
+          {
+            echo '```'
+            tar --version | sed -n 1p
+            gzip --version | sed -n 1p
+            python3 -c 'import sys, zlib; print("Python", sys.version.split()[0], "zlib", zlib.ZLIB_RUNTIME_VERSION)'
+            echo
+            cat ./*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-archives
+          path: ${{ runner.temp }}/archives/
+          if-no-files-found: error
+          retention-days: 7
