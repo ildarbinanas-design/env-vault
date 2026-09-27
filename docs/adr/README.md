@@ -19,13 +19,13 @@ Nygard's ADRs, with the Considered options section from MADR.
 | [0008](0008-freeze-release-ceremony-require-personalos-link.md) | Freeze release-engineering investment; require an explicit PersonalOS link | Accepted, amended by 0011 |
 | [0009](0009-no-code-signing-homebrew-only-macos-distribution.md) | No code signing or notarization; Homebrew tap is the supported macOS install path | Accepted |
 | [0010](0010-encrypted-secret-transfer-container.md) | Encrypted Secret Transfer Container | Accepted |
-| [0011](0011-minimal-release-pipeline.md) | Minimal release pipeline for an equal-maintainer team | Accepted |
+| [0011](0011-minimal-release-pipeline.md) | Minimal release pipeline for an equal-maintainer team | Accepted, amended by 0012 |
+| [0012](0012-attestation-verification-pins-release-workflow.md) | Attestation verification pins the release workflow and main | Accepted |
 
-In force: 0001, 0008 as amended by 0011, 0009, 0010 and 0011. Until step 3
-of ADR 0011 merges, releases still run on the pipeline that 0002 and
-0004–0007 describe, and AGENTS.md still enforces its contract v2 and GitHub
-transport rules. AGENTS.md also keeps the ADR 0007 artifact deletion
-ceremony until step 6.
+In force: 0001, 0008 as amended by 0011, 0009, 0010, and 0011 as amended by
+0012. Since step 3 of ADR 0011, releases run on `release.yml`. The code of
+the old pipeline stays until step 6, and until then AGENTS.md keeps the
+ADR 0007 artifact deletion ceremony.
 
 ## Rules
 

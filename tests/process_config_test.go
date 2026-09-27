@@ -34,6 +34,10 @@ type dependabotConfig struct {
 		Schedule           struct {
 			Interval string `yaml:"interval"`
 		} `yaml:"schedule"`
+		CommitMessage struct {
+			Prefix  string `yaml:"prefix"`
+			Include string `yaml:"include"`
+		} `yaml:"commit-message"`
 		Groups map[string]struct {
 			AppliesTo       string   `yaml:"applies-to"`
 			Patterns        []string `yaml:"patterns"`
@@ -62,6 +66,12 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 		}
 		if update.Directory != "/" || update.Schedule.Interval != "weekly" || len(update.Groups) == 0 {
 			t.Fatalf("Dependabot %s directory=%q interval=%q groups=%v", update.PackageEcosystem, update.Directory, update.Schedule.Interval, update.Groups)
+		}
+		// ADR 0011: Go module updates are fixes and create a release; Actions
+		// updates are CI changes and do not.
+		wantPrefix := map[string]string{"gomod": "fix", "github-actions": "ci"}[update.PackageEcosystem]
+		if update.CommitMessage.Prefix != wantPrefix || update.CommitMessage.Include != "scope" {
+			t.Fatalf("Dependabot %s commit message=%+v, want %s(deps)", update.PackageEcosystem, update.CommitMessage, wantPrefix)
 		}
 		if update.PackageEcosystem == "gomod" {
 			if update.VersioningStrategy != "increase-if-necessary" {

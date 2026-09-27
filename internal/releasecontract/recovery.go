@@ -45,7 +45,8 @@ type releasePleasePackage struct {
 	PackageName             string                       `json:"package-name"`
 	Component               string                       `json:"component"`
 	ChangelogPath           string                       `json:"changelog-path"`
-	SkipGitHubRelease       *bool                        `json:"skip-github-release"`
+	Draft                   *bool                        `json:"draft"`
+	ForceTagCreation        *bool                        `json:"force-tag-creation"`
 	IncludeVInTag           *bool                        `json:"include-v-in-tag"`
 	IncludeComponentInTag   *bool                        `json:"include-component-in-tag"`
 	PullRequestTitlePattern string                       `json:"pull-request-title-pattern"`
@@ -198,35 +199,43 @@ func validateCanonicalReleasePleaseConfig(contract Contract, config releasePleas
 	if pkg.ReleaseType != "go" || pkg.PackageName != contract.Naming.Product || pkg.Component != policy.Component || pkg.ChangelogPath != "CHANGELOG.md" {
 		return errors.New("root package release identity is invalid")
 	}
-	if pkg.SkipGitHubRelease == nil || !*pkg.SkipGitHubRelease || pkg.IncludeVInTag == nil || !*pkg.IncludeVInTag || pkg.IncludeComponentInTag == nil || *pkg.IncludeComponentInTag {
+	// ADR 0011: Release Please tags the merge commit and opens a draft
+	// release, which release.yml publishes after it builds and attests it.
+	// The strict decoder rejects skip-github-release as an unknown field.
+	if pkg.Draft == nil || !*pkg.Draft || pkg.ForceTagCreation == nil || !*pkg.ForceTagCreation ||
+		pkg.IncludeVInTag == nil || !*pkg.IncludeVInTag || pkg.IncludeComponentInTag == nil || *pkg.IncludeComponentInTag {
 		return errors.New("root package tag and publication controls are invalid or missing")
 	}
 	if pkg.PullRequestTitlePattern != "chore${scope}: release "+contract.Naming.Product+" "+contract.VersionPolicy.TagPrefix+"${version}" {
 		return errors.New("pull-request-title-pattern is invalid")
 	}
-	if pkg.PullRequestHeader != "Merging this unchanged reviewed pull request authorizes publication once its merge commit passes "+contract.Repositories.Source.DefaultBranch+" CI." {
+	if pkg.PullRequestHeader != "Merging this pull request releases "+contract.Naming.Product+": the release workflow tags the merge commit, then builds, attests and publishes it." {
 		return errors.New("pull-request-header is invalid")
 	}
 	if pkg.PullRequestFooter != "This PR was generated with Release Please." {
 		return errors.New("pull-request-footer is invalid")
 	}
-	wantSections := []releasePleaseChangeSection{
-		{Type: "feat", Section: "Features"},
-		{Type: "fix", Section: "Bug Fixes"},
-		{Type: "build", Section: "Build System"},
-		{Type: "ci", Section: "Continuous Integration"},
-		{Type: "docs", Section: "Documentation"},
-		{Type: "test", Section: "Tests"},
-		{Type: "refactor", Section: "Refactoring"},
-		{Type: "perf", Section: "Performance"},
-		{Type: "revert", Section: "Reverts"},
+	// ADR 0011: only product changes are visible and create a release.
+	wantSections := []struct {
+		releasePleaseChangeSection
+		hidden bool
+	}{
+		{releasePleaseChangeSection{Type: "feat", Section: "Features"}, false},
+		{releasePleaseChangeSection{Type: "fix", Section: "Bug Fixes"}, false},
+		{releasePleaseChangeSection{Type: "build", Section: "Build System"}, true},
+		{releasePleaseChangeSection{Type: "ci", Section: "Continuous Integration"}, true},
+		{releasePleaseChangeSection{Type: "docs", Section: "Documentation"}, true},
+		{releasePleaseChangeSection{Type: "test", Section: "Tests"}, true},
+		{releasePleaseChangeSection{Type: "refactor", Section: "Refactoring"}, true},
+		{releasePleaseChangeSection{Type: "perf", Section: "Performance"}, false},
+		{releasePleaseChangeSection{Type: "revert", Section: "Reverts"}, false},
 	}
 	if len(pkg.ChangelogSections) != len(wantSections) {
 		return errors.New("changelog-sections must contain the canonical ordered set")
 	}
 	for index, want := range wantSections {
 		got := pkg.ChangelogSections[index]
-		if got.Type != want.Type || got.Section != want.Section || got.Hidden == nil || *got.Hidden {
+		if got.Type != want.Type || got.Section != want.Section || got.Hidden == nil || *got.Hidden != want.hidden {
 			return fmt.Errorf("changelog section %d is invalid or incomplete", index)
 		}
 	}

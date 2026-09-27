@@ -50,6 +50,11 @@ func TestGitHubTransportBoundaryRegistryIsExactAndComplete(t *testing.T) {
 			if entry.IsDir() || (filepath.Ext(path) != ".sh" && filepath.Ext(path) != ".yml" && filepath.Ext(path) != ".yaml") {
 				return nil
 			}
+			// ADR 0011: release.yml replaces the pipeline this registry governs
+			// (ADR 0002) and uses gh directly. Step 6 removes the registry.
+			if filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(root, ".github", "workflows", "release.yml")) {
+				return nil
+			}
 			file, err := os.Open(path)
 			if err != nil {
 				return err
@@ -116,17 +121,15 @@ func TestGitHubTransportBoundaryRegistryIsExactAndComplete(t *testing.T) {
 			t.Fatalf("unknown registry category %q", entry.Category)
 		}
 	}
-	if observed != registeredCount || directMutations != 3 || typedMutationAdapters != 1 || directMutations+typedMutationAdapters != 4 || graphqlObservations != 1 {
+	if observed != registeredCount || directMutations != 2 || typedMutationAdapters != 1 || directMutations+typedMutationAdapters != 3 || graphqlObservations != 1 {
 		t.Fatalf("boundary counts observed=%d registered=%d direct_mutations=%d typed_mutation_adapters=%d graphql=%d", observed, registeredCount, directMutations, typedMutationAdapters, graphqlObservations)
 	}
 
-	workflowData := readFile(t, "../.github/workflows/release-please.yml") +
-		readFile(t, "../.github/workflows/build-binaries.yml")
 	scriptData := readFile(t, "../scripts/release/verify-release-proposal.sh") +
 		readFile(t, "../scripts/release/verify-release-authorization.sh") +
 		readFile(t, "../scripts/release/wait-tap-ci.sh")
-	if got := strings.Count(workflowData+scriptData, "actions identity"); got < 12 {
-		t.Fatalf("operational typed Actions identity call sites=%d, want at least 12", got)
+	if got := strings.Count(scriptData, "actions identity"); got < 3 {
+		t.Fatalf("operational typed Actions identity call sites=%d, want at least 3", got)
 	}
 	if dynamic := `gh "${args[@]}"`; !commandPattern.MatchString(dynamic) || registryMatches(registry.Entries, "scripts/release/example.sh", dynamic) != 0 {
 		t.Fatal("dynamic gh dispatch would escape the fail-closed registry detector")

@@ -9,6 +9,10 @@ updates:
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # ADR 0011: a dependency update ships in a release, so it is a fix.
+    commit-message:
+      prefix: "fix"
+      include: "scope"
     # Keep dependency requirements unchanged when they already admit an update.
     # Dependencies that commonly raise the minimum Go version stay out of the
     # broad group so their toolchain impact is reviewed in an isolated PR.
@@ -37,6 +41,10 @@ updates:
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # ADR 0011: an Actions update changes only CI, so it creates no release.
+    commit-message:
+      prefix: "ci"
+      include: "scope"
     groups:
       github-actions-minor-patch:
         patterns:

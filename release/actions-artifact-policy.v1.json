@@ -25,39 +25,6 @@
       "retention_rationale": "Keeps the exact no-rebuild bootstrap handoff available to the queued Homebrew bridge and its bounded repair review."
     },
     {
-      "id": "operational-contract",
-      "workflow": "build-binaries.yml",
-      "job": "metadata",
-      "step": "Upload typed operational release projection",
-      "class": "operational-contract",
-      "pattern_id": "operational-contract-current",
-      "artifact_name": "env-vault-release-contract-${{ github.sha }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 7,
-      "consumers": [
-        "build-binaries.health",
-        "build-binaries.homebrew",
-        "build-binaries.promotion",
-        "build-binaries.release"
-      ],
-      "retention_rationale": "Retains the digest-bound operational projection consumed across promotion, release, Homebrew, and health jobs in the exact publisher attempt."
-    },
-    {
-      "id": "publisher-bundle",
-      "workflow": "build-binaries.yml",
-      "job": "promotion",
-      "step": "Upload publisher-local verified bundle",
-      "class": "publisher-bundle",
-      "pattern_id": "publisher-bundle-current",
-      "artifact_name": "env-vault-publisher-bundle-${{ needs.metadata.outputs.source_sha }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "bootstrap-release-assets.bootstrap",
-        "build-binaries.release",
-        "operator.repair-audit"
-      ],
-      "retention_rationale": "Covers same-attempt publication and the admissible no-rebuild release-asset bootstrap repair window."
-    },
-    {
       "id": "legacy-diagnostic",
       "workflow": "legacy-rebuild.yml",
       "job": "diagnostic",
@@ -87,81 +54,6 @@
       "retention_rationale": "Preserves the exact Homebrew publication tuple for operator dispatch and bounded repair audit; health independently re-verifies live state."
     },
     {
-      "id": "attempt-classification",
-      "workflow": "release-please.yml",
-      "job": "inspect",
-      "step": "Upload machine-readable attempt classification",
-      "class": "attempt-classification",
-      "pattern_id": "attempt-classification-current",
-      "artifact_name": "env-vault-attempt-classification-ci-${{ github.event.workflow_run.id }}-attempt-${{ github.event.workflow_run.run_attempt }}-planning-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 30,
-      "consumers": [
-        "operator.release-planning-audit",
-        "operator.rerun-audit"
-      ],
-      "retention_rationale": "Retains fail-closed release-planning diagnostics across the operator review and rerun decision window."
-    },
-    {
-      "id": "release-settings",
-      "workflow": "release-please.yml",
-      "job": "plan",
-      "step": "Upload exact pre-tag repository settings proof",
-      "class": "release-settings",
-      "pattern_id": "release-settings-current",
-      "artifact_name": "env-vault-release-settings-${{ steps.classify.outputs.source_sha }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 90,
-      "consumers": [
-        "build-binaries.health",
-        "build-binaries.metadata",
-        "operator.release-audit"
-      ],
-      "retention_rationale": "Preserves the exact pre-tag repository-protection observation through publisher health and evidence append."
-    },
-    {
-      "id": "abandoned-release-policy",
-      "workflow": "release-please.yml",
-      "job": "plan",
-      "step": "Upload the exact pre-tag abandoned-release proof",
-      "class": "abandoned-release-policy",
-      "pattern_id": "abandoned-release-policy-current",
-      "artifact_name": "env-vault-abandoned-release-policy-${{ steps.classify.outputs.source_sha }}-planning-${{ github.run_id }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 90,
-      "consumers": [
-        "operator.release-planning-audit"
-      ],
-      "retention_rationale": "Preserves the exact pre-tag exceptional-policy proof for release-planning audit; publisher health independently recomputes the policy state."
-    },
-    {
-      "id": "promotion-manifest",
-      "workflow": "reusable-quality.yml",
-      "job": "e2e-gate",
-      "step": "Upload exact promotion manifest",
-      "class": "promotion-manifest",
-      "pattern_id": "promotion-manifest-current",
-      "artifact_name": "env-vault-promotion-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "bootstrap-release-assets.bootstrap",
-        "build-binaries.promotion",
-        "release-please.plan"
-      ],
-      "retention_rationale": "Covers publisher promotion and the admissible no-rebuild release-asset bootstrap repair boundary."
-    },
-    {
-      "id": "e2e-baseline",
-      "workflow": "reusable-quality.yml",
-      "job": "e2e-gate",
-      "step": "Upload sealed E2E matrix proof",
-      "class": "e2e-baseline",
-      "pattern_id": "e2e-baseline-verification-current",
-      "artifact_name": "env-vault-e2e-matrix-proof-attempt-${{ github.run_attempt }}",
-      "retention_days": 30,
-      "consumers": [
-        "operator.quality-audit"
-      ],
-      "retention_rationale": "Retains the sealed matrix proof across the release review window without serving as promotion authority."
-    },
-    {
       "id": "e2e-candidate",
       "workflow": "reusable-quality.yml",
       "job": "native",
@@ -171,59 +63,9 @@
       "artifact_name": "env-vault-e2e-candidate-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
       "retention_days": 30,
       "consumers": [
-        "operator.quality-audit",
-        "reusable-quality.e2e-gate"
+        "operator.quality-audit"
       ],
-      "retention_rationale": "Retains all-platform E2E diagnostics across the release review window after the same-attempt gate consumes them."
-    },
-    {
-      "id": "promotion-platform",
-      "workflow": "reusable-quality.yml",
-      "job": "native",
-      "step": "Upload current-attempt native proof",
-      "class": "promotion-platform",
-      "pattern_id": "promotion-platform-current",
-      "artifact_name": "env-vault-promotion-platform-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "bootstrap-release-assets.bootstrap",
-        "build-binaries.promotion",
-        "release-please.inspect",
-        "release-please.plan",
-        "reusable-quality.e2e-gate"
-      ],
-      "retention_rationale": "Covers same-attempt manifest assembly, publisher promotion, and admissible no-rebuild repair verification."
-    },
-    {
-      "id": "native-release",
-      "workflow": "reusable-quality.yml",
-      "job": "native",
-      "step": "Upload current-attempt native release artifact",
-      "class": "native-release",
-      "pattern_id": "native-release-current",
-      "artifact_name": "env-vault-release-${{ matrix.id }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "bootstrap-release-assets.bootstrap",
-        "build-binaries.promotion",
-        "release-please.inspect",
-        "release-please.plan"
-      ],
-      "retention_rationale": "Covers exact-source publisher consumption and the admissible no-rebuild release-asset bootstrap repair window."
-    },
-    {
-      "id": "e2e-reporter-darwin-amd64",
-      "workflow": "reusable-quality.yml",
-      "job": "resolve",
-      "step": "Upload darwin-amd64 current-attempt E2E reporter",
-      "class": "e2e-reporter",
-      "pattern_id": "e2e-reporter-current",
-      "artifact_name": "env-vault-tooling-gotestsum-darwin-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "reusable-quality.native"
-      ],
-      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
+      "retention_rationale": "Retains the per-operating-system E2E diagnostics across the release review window."
     },
     {
       "id": "e2e-reporter-darwin-arm64",
@@ -247,20 +89,6 @@
       "class": "e2e-reporter",
       "pattern_id": "e2e-reporter-current",
       "artifact_name": "env-vault-tooling-gotestsum-linux-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
-      "retention_days": 14,
-      "consumers": [
-        "reusable-quality.native"
-      ],
-      "retention_rationale": "Covers the queued native matrix and same-attempt offline E2E execution for this platform."
-    },
-    {
-      "id": "e2e-reporter-linux-arm64",
-      "workflow": "reusable-quality.yml",
-      "job": "resolve",
-      "step": "Upload linux-arm64 current-attempt E2E reporter",
-      "class": "e2e-reporter",
-      "pattern_id": "e2e-reporter-current",
-      "artifact_name": "env-vault-tooling-gotestsum-linux-arm64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}",
       "retention_days": 14,
       "consumers": [
         "reusable-quality.native"

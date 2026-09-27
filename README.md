@@ -43,14 +43,10 @@ downloads do not receive the Gatekeeper quarantine attribute, so no
 `xattr -d com.apple.quarantine` step is needed on macOS. The formula lives in
 [ildarbinanas-design/homebrew-tap](https://github.com/ildarbinanas-design/homebrew-tap)
 and is generated and proposed through a pull request by the release workflow.
-The tap runs style, installation, and exact-version checks separately. The
-release workflow opens or reuses a version-specific tap pull request, waits for
-`test-formula.yml` on
-the exact pull-request head, squash-merges that exact head, and then waits for
-the workflow's successful `push` run on the resulting release merge commit.
-Health also records the current tap head separately, proving that it still
-contains that merge and the exact formula even if unrelated tap commits arrive
-later. The release is healthy only after that post-merge check succeeds. See
+The workflow builds the formula from the published release and opens the tap
+pull request with auto-merge. The tap's `test` check runs style, audit,
+installation, and version checks, and compares every url and sha256 with the
+published checksums; the pull request merges only after it passes. See
 [RELEASING.md](RELEASING.md). Upgrade with `brew upgrade env-vault`.
 
 ### Migrating a manual or `go install` installation to Homebrew
@@ -114,6 +110,22 @@ tar xzf "env-vault-${TARGET}.tar.gz"
 
 On Linux, use `sha256sum -c` if `shasum` is not available.
 
+The checksum only shows that the download is complete. To check that a file
+was built by this repository's release workflow from `main`
+([ADR 0012](docs/adr/0012-attestation-verification-pins-release-workflow.md)),
+verify its attestation. This works for an archive and for an installed binary,
+including one installed by Homebrew:
+
+```sh
+gh attestation verify "$(command -v env-vault)" \
+  --repo ildarbinanas-design/env-vault \
+  --signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml \
+  --source-ref refs/heads/main
+```
+
+Releases up to v0.3.4 were built by the previous pipeline and do not verify
+with this command.
+
 **On macOS, manual download is not a supported install path.** Release
 binaries are not Developer ID signed and not notarized
 (see [ADR 0009](docs/adr/0009-no-code-signing-homebrew-only-macos-distribution.md)),
@@ -141,59 +153,47 @@ GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
 
 ## GitHub Builds
 
-Pull-request and `main` CI call `reusable-quality.yml`. One graph performs
-source tests/vet/race/smoke, three native license checks, five native
-build/package/E2E jobs, and one complete-matrix gate. The matrix gate seals the
-five-platform proof from the current run; it does not depend on an expiring
-historical workflow artifact. The exact E2E reporter is built once for all five targets
-from an isolated checksum-pinned tool module, then each native job consumes
-only its source-SHA- and attempt-qualified reporter artifact with network
-fallback disabled.
+Pull-request and `main` CI call `reusable-quality.yml`: source tests, vet, the
+race suite and smoke tests, three native license checks, and a native job for
+each of the five targets that builds the binary and smoke-tests it against the
+platform's real secret store. One target per operating system (linux-amd64,
+darwin-arm64, windows-amd64) also runs the full E2E suite against the packaged
+archive. The E2E reporter is built once from an isolated checksum-pinned tool
+module, and each E2E job consumes only its source-SHA- and attempt-qualified
+reporter artifact with network fallback disabled.
 
-For an exact release merge, a bounded native probe verifies `--version`,
-`version`, and JSON version output on every native target with a scrubbed
-environment. The file-only checker binds those saved results and seals the five
-archives, five checksum sidecars, contract/coverage/leak results, and semantic
-suite identity in one promotion manifest. Release planning verifies that exact
-attempt before creating the immutable tag. The six-job `build-binaries`
-publisher then promotes those checked bytes,
-publishes Homebrew through exact PR-head and post-merge CI gates,
-and performs release health checks. It does not rebuild the product or repeat
-source quality.
-
-GitHub API transport, observation, and mutations use `gh`; the repository's
-`releasecheck` tool is offline and validates saved JSON, manifests, and
-artifacts. An incomplete attempt deterministically requests a full
-`rerun_all_jobs`, never a failed-jobs-only artifact mixture. Manual publisher
-dispatch can only resume `release-assets`, `homebrew`, or `health` for an exact
-existing tag. `v0.0.1`–`v0.0.7` rebuilds are diagnostic-only and can never be
-published; `v0.0.8` through `v0.0.11` remain failed tags without Releases.
+Releases follow [ADR 0011](docs/adr/0011-minimal-release-pipeline.md).
+`release.yml` runs on every push to `main`, where Release Please maintains the
+generated release pull request. Pull request titles follow Conventional
+Commits because the squash title drives the version and changelog; only
+`feat`, `fix`, `perf`, and `revert` changes create a release. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the accepted types.
 
 The only routine human release checkpoint is reviewing the generated release
 pull request and squash-merging it with a server-side head guard
-(`--match-head-commit`); that merge is the release authorization. Planning,
-publisher, Homebrew, and health then run
-automatically. Planning and publication share one non-cancelling global
-concurrency group.
+(`--match-head-commit`); that merge is the release authorization. The run for
+the merge commit then:
 
-Pull request titles follow Conventional Commits because the squash title is
-the input to version and changelog generation. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the accepted types and [RELEASING.md](RELEASING.md) for the complete
-planning, publication, and repair contracts.
+- tags the merge commit and opens a draft release;
+- builds the five targets from the tagged commit, checks that `--version`
+  reports the tag, and smoke-tests the real secret store;
+- packages five deterministic archives with SHA-256 files, attests the archives
+  and the binaries, and publishes the release, which is immutable;
+- verifies the published checksums and attestations;
+- opens the Homebrew tap pull request with auto-merge.
+
+A failed release is resumed by re-running the failed job of the same run. See
+[RELEASING.md](RELEASING.md).
 
 Supported targets are Linux amd64/arm64, macOS 15+ amd64/arm64, and Windows amd64.
 Each release contains exactly five archives and five matching SHA-256 files.
-Provenance/SBOM attestations are no longer generated: the bespoke supply-chain
-contour was removed in the 2026-07 release-pipeline trim, and a
-DevSecOps-standard replacement is deferred to
-`docs/release-refactor-backlog.md` item 14 until a real consumer or security
-requirement appears.
+There is no separate SBOM: `go version -m` lists every module with its hash.
 
 macOS 15+ release artifacts are built on macOS runners with `CGO_ENABLED=1`;
 the macOS Keychain backend requires darwin artifacts with CGO enabled. Linux
 and Windows release targets keep `CGO_ENABLED=0`.
 
-Every native CI runner executes the same public CLI scenarios against the
+Every E2E runner executes the same public CLI scenarios against the
 unpacked release-like artifact. The suite also builds a separate
 coverage-instrumented subprocess binary, performs shuffled full and locking
 burn-ins, scans all retained evidence for runtime-generated sentinel values,

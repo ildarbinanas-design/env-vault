@@ -3,7 +3,6 @@
   "schema_version": 1,
   "owner": "release-engineering",
   "entries": [
-    {"path":".github/workflows/release-please.yml","needle":"gh api --method POST","count":1,"category":"direct-mutation","rationale":"Immutable tag creation is a single-attempt mutation after exact authorization and current-head checks."},
     {"path":"scripts/release/mark-release-pr-tagged.sh","needle":"gh api --method POST","count":1,"category":"direct-mutation","rationale":"Lifecycle label addition is an explicit mutation followed by read-back verification."},
     {"path":"scripts/release/mark-release-pr-tagged.sh","needle":"gh api --method DELETE","count":1,"category":"direct-mutation","rationale":"Lifecycle label removal is an explicit mutation followed by read-back verification."},
     {"path":"internal/githubtransport/mutation.go","needle":"func (c *Client) MutateOnce","count":1,"category":"typed-mutation-adapter","rationale":"The v2 evidence ledger uses one closed, payload-typed, single-attempt Git-data mutation boundary; automatic reference creation and ambiguous outcomes are reconciled only by fresh reads."},
@@ -15,7 +14,6 @@
     {"path":"scripts/release/download-release-assets.sh","needle":"gh release download","count":1,"category":"high-level-observation","rationale":"The dedicated release downloader fetches an already validated exact ten-asset inventory into a private staging directory for offline checks."},
     {"path":"scripts/release/bootstrap-release-asset-pair.sh","needle":"gh release upload","count":1,"category":"high-level-mutation","rationale":"The reviewed empty-Release bootstrap uploads each member of one exact archive/checksum pair once and reconciles every outcome by fresh identity, inventory, and byte observations."},
     {"path":"scripts/release/bootstrap-release-asset-pair.sh","needle":"gh release download","count":1,"category":"high-level-observation","rationale":"Every bootstrap pair member and the final pair are downloaded after exact Release-state validation and compared byte-for-byte with the source-bound publisher bundle."},
-    {"path":".github/workflows/build-binaries.yml","needle":"gh release create","count":1,"category":"high-level-mutation","rationale":"Stable GitHub Release creation uses the dedicated command after exact tag and absence checks."},
     {"path":"scripts/release/rerun-classified-attempt.sh","needle":"gh run rerun","count":1,"category":"high-level-mutation","rationale":"A full-run rerun is issued only from a signed-off offline classification; failed-jobs-only reruns are prohibited."},
     {"path":"scripts/release/publish-homebrew-pr.sh","needle":"gh pr list","count":1,"category":"high-level-observation","rationale":"Deterministic tap PR discovery is followed by exact branch/head/body/file verification."},
     {"path":"scripts/release/publish-homebrew-pr.sh","needle":"gh pr view","count":2,"category":"high-level-observation","rationale":"Tap PR files and body are read through the dedicated command and compared to the deterministic formula contract."},

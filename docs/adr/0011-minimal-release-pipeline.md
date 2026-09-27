@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR 0012](0012-attestation-verification-pins-release-workflow.md)
+(2026-09-27).
 
 Supersedes [ADR 0002](0002-release-github-transport.md),
 [ADR 0004](0004-empty-release-asset-bootstrap.md),

@@ -16,11 +16,12 @@ type(optional-scope): concise description
 Accepted types are:
 
 - `feat` for user-visible capability;
-- `fix` for a user-visible or release-path correction;
+- `fix` for a user-visible correction, including a dependency update;
 - `perf` for a measurable performance improvement;
 - `refactor` for behavior-preserving production restructuring;
 - `docs`, `test`, `build`, `ci`, and `chore` for their corresponding
-  maintenance changes;
+  maintenance changes, including release pipeline fixes (`ci:` or `build:`,
+  never `fix(release)`);
 - `revert` for a reverted change.
 
 Use `!` after the type or scope and explain `BREAKING CHANGE:` in the pull
@@ -30,21 +31,21 @@ Release Please. Examples:
 
 ```text
 feat(profile): support profile descriptions
-fix(release): preserve the exact release source SHA
+fix(exec): report a missing profile before running the command
 docs: explain test-backend isolation
 feat(exec)!: change child environment precedence
 ```
 
 The checked-in Release Please configuration is the source of truth for the
-exact version calculation and changelog sections. Features request a minor
-version, an explicit breaking change requests a major version, and every other
-visible configured type requests a patch. This deliberately lets a build,
-toolchain, CI, documentation, or test-contract change produce a reviewed
-release even when the Go source behavior did not change. `chore` is accepted as
-a title type but is intentionally absent from the visible changelog sections,
-so a chore-only change does not request a release. Never select a version by
-creating or moving a tag; the generated release pull request is the review
-boundary for any exceptional version choice.
+exact version calculation and changelog sections. Only product changes are
+visible and request a release (ADR 0011): `feat` requests a minor version, an
+explicit breaking change a major version (`bump-minor-pre-major` is not set, so
+also below 1.0.0), and `fix`, `perf`, and `revert` a patch. `docs`, `ci`,
+`build`, `test`, `refactor`, and `chore` are hidden, so a change to the
+pipeline or the documentation creates no release and no macOS Keychain prompt
+after `brew upgrade`. Never select a version by creating or moving a tag; the
+generated release pull request is the review boundary for any exceptional
+version choice.
 
 Do not rebase-merge a pull request. The protected branch uses the reviewed pull
 request title as the deterministic squash subject so release planning sees the
@@ -67,10 +68,9 @@ Release Please owns the version entry and generated release section in
 release tag or GitHub Release to compensate for a missing changelog entry.
 
 Merging the generated release pull request is an explicit authorization to
-publish its exact manifest version after the merge commit passes `ci` on
-`main`. The release-planning workflow may then create the exact tag at that
-green SHA; `build-binaries` remains the only public GitHub Release and asset
-publisher.
+publish its exact manifest version. The `release.yml` run for the merge commit
+then tags it, builds, attests, and publishes the release, and opens the
+Homebrew tap pull request; see `RELEASING.md`.
 
 ## Local checks
 

@@ -1,5 +1,11 @@
 # Release operator runbook
 
+> **Superseded.** Since migration step 3 of
+> [ADR 0011](adr/0011-minimal-release-pipeline.md), releases run on
+> `.github/workflows/release.yml`; see [`RELEASING.md`](../RELEASING.md).
+> This document describes the previous pipeline, and migration step 6
+> removes it.
+
 This is the end-to-end operator procedure for an `env-vault` release. It is a
 companion to [`RELEASING.md`](../RELEASING.md), which defines the release
 contract and repair policy, and

@@ -26,50 +26,32 @@ Homebrew, and everything else stays proportionate to a single-user tool
 - A test or insecure backend is allowed only behind an explicit environment gate and must be impossible to enable accidentally.
 - Structured errors are mandatory for implemented commands.
 - Mandatory tests are required once behavior beyond the local version placeholder is implemented.
-- The release audit trail is the GitHub Releases page plus ordinary git and pull
-  request history. There is no append-only evidence ledger: the publisher's
-  `health` job verifies live release, Homebrew, blocked-tag, and
-  abandoned-release state and fails the release, it does not assemble a durable
-  record. The published `release-evidence` branch and the durable evidence
-  artifacts already in Actions storage are frozen history: never rewrite,
-  extend, or retrofit them.
-- `release/contract.v2.json` is the only current operational release contract.
-  Runtime mutation code must consume a digest-bound releasecheck version plus
-  operational-projection pair and call
-  `release_require_typed_contract_projection` before GitHub access. Static
-  Actions fields that cannot consume the projection must have exact contract
-  parity tests.
-- There is exactly one contract generation. The v1 archive, its closed
-  historical registry, and the source-routing machinery were removed on
-  2026-07-30: every live and repair path reads `release/contract.v2.json`,
-  either from the checkout or from the exact immutable source commit. A
-  contract that does not decode as `env-vault.release-contract.v2` version 2
-  fails closed; releases published before that generation are historical
-  records, not inputs.
-- GitHub transport and mutations use `gh` or the GitHub API. Repository
-  checkers consume saved files offline, hold no credentials, and fail closed on
-  unknown, incomplete, invalid, or unsupported input.
-- Release REST reads must go through `scripts/release/releasetransport.sh` (or
-  its `gh-api-read.sh` GET adapter). Actions authority uses attempt-qualified
-  typed identity; run `.name`, job `workflow_name`, and `.pull_requests` are
-  diagnostic only. Direct/high-level `gh` exceptions must remain enumerated in
-  `release/github-transport-boundary.v1.json`; mutations are never blindly
-  retried after an ambiguous transport result. Non-paginated reads do not
-  interpret informational RFC `Link` metadata; paginated reads follow only one
-  unanchored, trusted, invariant-preserving `rel="next"` and ignore other
-  well-formed relation contexts.
+- Releases follow ADR 0011. On every push to `main`,
+  `.github/workflows/release.yml` lets Release Please maintain the release pull
+  request. The run for a merged release pull request tags the merge commit,
+  builds the five targets from it, attests the archives and binaries, publishes
+  the draft release, verifies the published release, and opens the Homebrew tap
+  pull request with auto-merge. No workflow runs on a tag.
 - Merging the generated Release Please pull request is the release
-  authorization. The byte-exact `ПОДТВЕРЖДАЮ RELEASE …` confirmation comment and
-  its authorize-and-merge wrapper were removed on 2026-07-30 at the owner's
-  instruction. Merge it head-guarded — `gh pr merge <n> --squash
+  authorization. Merge it head-guarded — `gh pr merge <n> --squash
   --match-head-commit <head-sha>` — so a head that moved during review can never
-  be published silently. The merge authorizes only the resulting exact merge
-  source, immutable tag, and fail-closed publisher; it is not approval for any
-  changed head, version, or ref. `scripts/release/verify-release-authorization.sh`
-  still fails closed unless exactly one generated release pull request with the
-  contract's title, header, labels, and base merged to that exact source commit,
-  the manifest version agrees at source and at the default branch, and that
-  commit has a typed successful default-branch CI attempt.
+  be published silently. The merge authorizes only the resulting merge commit
+  and its tag; it is not approval for any changed head, version, or ref.
+- A release file is genuine only if `gh attestation verify` passes with the
+  release workflow and `main` pinned (ADR 0012):
+  `--signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml
+  --source-ref refs/heads/main`. `-R` alone accepts attestations from any
+  branch.
+- Release mutations are never blindly retried after an ambiguous result. A
+  failed release is resumed by re-running the failed job of the same run.
+- The release audit trail is the GitHub Releases page, the attestations, and
+  ordinary git and pull request history. The published `release-evidence`
+  branch and the durable evidence artifacts already in Actions storage are
+  frozen history: never rewrite, extend, or retrofit them.
+- Until migration step 6 (issue #107) removes them, `release/contract.v2.json`,
+  the release Go packages, the `scripts/release/` helpers that `release.yml`
+  does not call, and the bootstrap, bridge, and legacy workflows are dormant
+  code of the old pipeline. Do not extend them.
 - Deleting Actions artifacts is a separate, still-mandatory ceremony: it keeps
   its byte-exact `ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS …` confirmation, because
   that operation is irreversible and has no release gate behind it (ADR 0007).
@@ -106,14 +88,15 @@ Agents may, without asking:
 Reserved for the owner:
 
 - merging the generated Release Please pull request (the release
-  authorization, runbook card 9) and creating tags or releases by any other
+  authorization, see `RELEASING.md`) and creating tags or releases by any other
   path;
 - merging a pull request that changes a reserved path. In this repository:
   `AGENTS.md`, `.claude/`, `.github/workflows/`, `release/`,
   `scripts/release/`, `release-please-config.json`, and
   `.release-please-manifest.json`. In homebrew-tap: `AGENTS.md`, `.claude/`,
-  `.github/workflows/`, and `Formula/` (the env-vault publisher still merges
-  its own formula pull requests). These paths decide what may be published and
+  `.github/workflows/`, and `Formula/` (the env-vault release workflow's
+  formula pull request merges by auto-merge after the tap's `test` check). These
+  paths decide what may be published and
   who may change it, so an agent prepares the pull request and the owner
   merges it;
 - repository, ruleset, environment, secret, Actions, GitHub App, security, and

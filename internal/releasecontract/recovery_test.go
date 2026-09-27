@@ -70,6 +70,16 @@ func TestCheckReleasePleaseRecoveryRejectsAdversarialCompleteConfig(t *testing.T
 		"release as package":   []byte(strings.Replace(string(config), `"release-type": "go",`, "\"release-type\": \"go\",\n      \"release-as\": \"0.0.14\",", 1)),
 		"missing stable field": []byte(strings.Replace(string(config), separateLine+"\n", "", 1)),
 		"null false control":   []byte(strings.Replace(string(config), `"include-component-in-tag": false`, `"include-component-in-tag": null`, 1)),
+		"direct publication":   []byte(strings.Replace(string(config), `"draft": true,`, `"draft": true,`+"\n      \"skip-github-release\": true,", 1)),
+		"published directly":   []byte(strings.Replace(string(config), `"draft": true`, `"draft": false`, 1)),
+		"no forced tag":        []byte(strings.Replace(string(config), `"force-tag-creation": true`, `"force-tag-creation": false`, 1)),
+		"visible docs":         []byte(strings.Replace(string(config), "\"Documentation\",\n          \"hidden\": true", "\"Documentation\",\n          \"hidden\": false", 1)),
+		"hidden fixes":         []byte(strings.Replace(string(config), "\"Bug Fixes\",\n          \"hidden\": false", "\"Bug Fixes\",\n          \"hidden\": true", 1)),
+	}
+	for name, candidate := range tests {
+		if string(candidate) == string(config) {
+			t.Fatalf("mutation %q did not change the config", name)
+		}
 	}
 	for name, candidate := range tests {
 		t.Run(name, func(t *testing.T) {
