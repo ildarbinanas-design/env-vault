@@ -618,7 +618,12 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 		"Upload current-attempt native release artifact",
 		"Download exact current-attempt E2E reporter",
 		"Run E2E and finalize reports",
+		"Smoke-test the real OS secret store",
 	)
+	if smoke := namedStep(t, native, "Smoke-test the real OS secret store"); !containsAll(smoke.Run, `scripts/backend-smoke.sh "$BINARY_PATH"`) ||
+		smoke.Env["BINARY_PATH"] != "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}/${{ matrix.binary }}" || smoke.If != "" || smoke.ContinueOnError {
+		t.Fatalf("native job must smoke-test the release binary against the real secret store: %+v", smoke)
+	}
 	for _, job := range wf.Jobs {
 		for _, step := range job.Steps {
 			if strings.Contains(step.Run, "go install gotest.tools/gotestsum") || strings.Contains(step.Run, "go run gotest.tools/gotestsum") {

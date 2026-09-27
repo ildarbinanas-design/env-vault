@@ -364,6 +364,23 @@ jobs:
             --reporter "$reporter" \
             --reporter-checksum "$reporter.sha256"
 
+      # E2E runs on the gated test backend; this runs the release binary
+      # against the platform's real secret store.
+      - name: Smoke-test the real OS secret store
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          BINARY_PATH: dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}/${{ matrix.binary }}
+          # Without a session bus the keyring library would start one per call.
+          DBUS_SESSION_BUS_ADDRESS: ${{ matrix.goos == 'linux' && 'disabled:' || '' }}
+        run: |
+          set -euo pipefail
+          if [[ "$GOOS" == "linux" ]] && ! command -v pass >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends pass
+          fi
+          scripts/backend-smoke.sh "$BINARY_PATH"
+
       - name: Verify three literal versions and seal native proof
         if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
         shell: bash
