@@ -7,10 +7,11 @@
 # built binary inside: env-vault, or env-vault.exe for Windows. README.md,
 # LICENSE and THIRD_PARTY_NOTICES.md come from the current directory, which
 # must be the repository root. SOURCE_DATE_EPOCH, the release commit time,
-# fixes every timestamp. Entries are sorted, owners are 0:0, modes are fixed,
-# and gzip stores no name or time, so the same inputs always give the same
-# archive bytes. The archive layout matches the releases before ADR 0011:
-# one top-level directory named env-vault-<target>.
+# fixes every timestamp. Zip stores times in two-second steps, so zip entries
+# round an odd time down by one second. Entries are sorted, owners are 0:0,
+# modes are fixed, and gzip stores no name or time, so the same inputs always
+# give the same archive bytes. The archive layout matches the releases before
+# ADR 0011: one top-level directory named env-vault-<target>.
 set -euo pipefail
 export LC_ALL=C TZ=UTC
 umask 022

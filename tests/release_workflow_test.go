@@ -66,7 +66,12 @@ func TestReleaseWorkflowBuildsAndPackagesWithoutPublishing(t *testing.T) {
 	if len(matrix.Include) != len(platforms) {
 		t.Fatalf("build matrix has %d targets, contract has %d", len(matrix.Include), len(platforms))
 	}
+	seen := map[string]bool{}
 	for _, target := range matrix.Include {
+		if seen[target["id"]] {
+			t.Fatalf("build matrix repeats target %q", target["id"])
+		}
+		seen[target["id"]] = true
 		platform, ok := platforms[target["id"]]
 		if !ok {
 			t.Fatalf("build matrix target %q is not a contract platform", target["id"])
@@ -80,17 +85,28 @@ func TestReleaseWorkflowBuildsAndPackagesWithoutPublishing(t *testing.T) {
 		}
 	}
 
-	if checkout := build.Steps[0]; checkout.Uses != checkoutAction {
-		t.Fatalf("build job starts with %q, want the pinned checkout", checkout.Uses)
-	} else if checkout.With["fetch-depth"] != "0" {
+	for _, name := range []string{"build", "package"} {
+		if checkout := wf.Jobs[name].Steps[0]; checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != "false" {
+			t.Fatalf("%s job must start with the pinned checkout and must not persist credentials", name)
+		}
+	}
+	if build.Steps[0].With["fetch-depth"] != "0" {
 		t.Fatal("build checkout must fetch tags so Go stamps the release version")
+	}
+	if setup := build.Steps[1]; setup.Uses != setupGoAction || setup.With["go-version-file"] != "go.mod" || setup.With["cache"] != "false" {
+		t.Fatal("build job must set up Go from go.mod without a module cache")
 	}
 	buildStep := namedStep(t, build, "Build and check the build information")
 	if !containsAll(buildStep.Run,
+		`binary="$temp/release/$TARGET/$BINARY"`,
 		`go build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/env-vault`,
-		`$2 == "vcs.modified=false"`,
-		`"$binary" --version`) {
-		t.Fatalf("build step must build outside the checkout and compare --version with Go build information: %s", buildStep.Run)
+		`[[ -n "$modified" ]] || { echo "build information has no VCS stamp" >&2; exit 1; }`,
+		`[[ "$modified" == "false" ]] || { echo "build information reports a modified tree" >&2; exit 1; }`,
+		`module_version="$(awk '$1 == "mod" { print $3; exit }' <<< "$info")"`,
+		`reported="$("$binary" --version | awk '{ print $1; exit }')"`,
+		`[[ -n "$module_version" && "$reported" == "$module_version" ]] ||`,
+		`{ echo "--version reports '$reported', build information has '$module_version'" >&2; exit 1; }`) {
+		t.Fatalf("build step must build outside the checkout, reject a modified tree and compare --version with Go build information: %s", buildStep.Run)
 	}
 	if strings.Contains(buildStep.Run, "-X ") || strings.Contains(buildStep.Run, "-X=") {
 		t.Fatal("the release version must come from Go build information, not -ldflags -X")
@@ -148,7 +164,8 @@ func TestPackageArchivesIsDeterministicAndKeepsTheLayout(t *testing.T) {
 		}
 	}
 
-	const epoch = int64(1790000000)
+	// An odd epoch shows the two-second rounding of zip timestamps.
+	const epoch = int64(1790000001)
 	run := func(output string) ([]byte, error) {
 		cmd := exec.Command("bash", "scripts/release/package-archives.sh", binaries, output)
 		cmd.Dir = ".."
@@ -220,9 +237,10 @@ func archiveEntries(t *testing.T, name string, archive []byte, epoch int64) map[
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+		// Zip stores times in two-second steps, so an odd epoch rounds down.
 		for _, file := range reader.File {
-			if file.Modified.Unix() != epoch {
-				t.Fatalf("%s: %s modified %v, want %d", name, file.Name, file.Modified, epoch)
+			if file.Modified.Unix() != epoch&^1 {
+				t.Fatalf("%s: %s modified %v, want %d", name, file.Name, file.Modified, epoch&^1)
 			}
 			entries[file.Name] = int64(file.Mode().Perm())
 			checkBinary(file.Name, func() []byte {

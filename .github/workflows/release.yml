@@ -90,8 +90,9 @@ jobs:
           go build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/env-vault
           info="$(go version -m "$binary")"
           printf '%s\n' "$info"
-          awk '$1 == "build" && $2 == "vcs.modified=false" { found = 1 } END { exit !found }' <<< "$info" ||
-            { echo "build information reports a modified tree" >&2; exit 1; }
+          modified="$(awk '$1 == "build" && $2 ~ /^vcs\.modified=/ { print substr($2, 14); exit }' <<< "$info")"
+          [[ -n "$modified" ]] || { echo "build information has no VCS stamp" >&2; exit 1; }
+          [[ "$modified" == "false" ]] || { echo "build information reports a modified tree" >&2; exit 1; }
           module_version="$(awk '$1 == "mod" { print $3; exit }' <<< "$info")"
           reported="$("$binary" --version | awk '{ print $1; exit }')"
           [[ -n "$module_version" && "$reported" == "$module_version" ]] ||
@@ -149,7 +150,16 @@ jobs:
           diff -r "$RUNNER_TEMP/archives" "$RUNNER_TEMP/archives-again"
           cd "$RUNNER_TEMP/archives"
           sha256sum -c ./*.sha256
-          { echo '```'; cat ./*.sha256; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # The archive bytes depend on these tools, so record them for a rebuild.
+          {
+            echo '```'
+            tar --version | sed -n 1p
+            gzip --version | sed -n 1p
+            python3 -c 'import sys, zlib; print("Python", sys.version.split()[0], "zlib", zlib.ZLIB_RUNTIME_VERSION)'
+            echo
+            cat ./*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the archives
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
