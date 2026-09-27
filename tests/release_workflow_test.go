@@ -238,7 +238,7 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	}
 
 	pack := wf.Jobs["package"]
-	if pack.If != "github.event_name != 'push'" || !slices.Equal([]string(pack.Needs), []string{"build"}) {
+	if pack.If != "${{ !cancelled() && github.event_name != 'push' && needs.build.result == 'success' }}" || !slices.Equal([]string(pack.Needs), []string{"build"}) {
 		t.Fatalf("package runs on %q after %v, want pull requests and manual runs after build", pack.If, pack.Needs)
 	}
 	if step := namedStep(t, pack, "Package deterministically"); step.Run != `scripts/release/package-release.sh "$RUNNER_TEMP/downloads" "$RUNNER_TEMP/archives"` {

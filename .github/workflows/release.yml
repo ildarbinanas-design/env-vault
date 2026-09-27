@@ -215,11 +215,13 @@ jobs:
           temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
           scripts/backend-smoke.sh "$temp/release/$TARGET/$BINARY"
 
-  # Pull requests and manual runs stop after packaging.
+  # Pull requests and manual runs stop after packaging. release-please is
+  # skipped on them, and a skipped job anywhere up the chain skips every later
+  # job without a status function, so this job checks build itself.
   package:
     name: package
     needs: [build]
-    if: github.event_name != 'push'
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
