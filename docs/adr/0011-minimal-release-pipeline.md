@@ -59,9 +59,10 @@ freeze for this rewrite only.
 
 1. **release-please** maintains the release pull request, using
    `RELEASE_PLANNING_TOKEN`. After that pull request merges, it creates the
-   tag and a draft GitHub Release. The expected settings are `draft: true`
-   and `force-tag-creation: true`, without `skip-github-release`; step 2
-   confirms them.
+   tag and a draft GitHub Release. This needs `draft: true` and
+   `force-tag-creation: true`, without `skip-github-release`. Release Please
+   17.6.0 provides both options, and the first release on the new pipeline
+   (step 5) exercises them.
 2. **build** runs only when a release was created. It:
    - checks out the release commit that Release Please reports, with tags
      fetched;
@@ -169,9 +170,11 @@ The guarantees that stay, in a different form:
 | The tap changes only through a pull request with CI | Head-guarded merge by script after waiting for CI | Auto-merge after the tap's `test` check; tap CI pins url and sha256 |
 | A failed release can be resumed | Three repair modes, bootstrap and bridge workflows | Re-run the failed job of the same run |
 
-A re-run uses the original workflow file. A deterministic defect found after
-tagging therefore abandons that version, because tags cannot be deleted. This
-is what happened to v0.3.3.
+A re-run uses the original workflow file and code, so re-running cannot fix a
+deterministic defect. If the tag already exists, that version is abandoned,
+because tags cannot be deleted. v0.3.3 was abandoned for the same reason
+before its tag was created: re-running would have replayed the defective
+check.
 
 What is intentionally lost:
 
@@ -180,10 +183,11 @@ What is intentionally lost:
 - E2E on the exact published bytes;
 - Actions artifact accounting and its deletion ceremony (ADR 0007). Deleting
   artifacts stays reserved for the owner;
-- strict parsing of GitHub API responses.
+- strict parsing and exact-value checks of GitHub API data.
 
-These parts caused #85 and the v0.3.3 abandonment. The v0.2.1 lag came from the
-tap's CI, which stays and now runs weekly.
+The ruleset verification and the strict API checks caused #85 and the v0.3.3
+abandonment. None of the lost parts ever caught an external problem. The v0.2.1
+lag came from the tap's CI, which stays and now runs weekly.
 
 Expected size: about 600 lines of workflow YAML, no release Go, and about 200
 lines of shell. A release is one merge.
@@ -228,19 +232,19 @@ Each step is one pull request.
    - Required check names do not change, so the `main` ruleset needs no edit.
 
    A single revert undoes this step, because the `release` environment keeps
-   its `v*` rule until step 5.
+   its `v*` rule until step 5. After step 4 merges, revert step 4 first,
+   because the restored old pipeline rejects the new `--version` format. It
+   fails at the CI check on the release commit, before any tag is created.
 4. **`--version` with the commit**, as a `feat:` commit so that the release
    becomes v0.4.0. A `feat!:` commit would give v1.0.0, because
-   `bump-minor-pre-major` is not set. This step also updates the E2E version
-   check.
+   `bump-minor-pre-major` is not set.
 
-   It comes only after the switch, for two reasons:
-   - The old pipeline requires the release commit's binary to print exactly
-     `vX.Y.Z` and strictly decodes `version --json`
-     (`internal/releasepromotion/version_evidence.go`).
-   - E2E compares `--version` with the injected version on every CI run.
-
-   The new format would break the next release on the old pipeline.
+   This step comes only after the switch. The old pipeline requires the release
+   commit's binary to print exactly `vX.Y.Z` and strictly decodes `version
+   --json` (`internal/releasepromotion/version_evidence.go`), so the new format
+   would break the next release on the old pipeline. The step also updates the
+   E2E version check, which compares `--version` with the injected version on
+   every CI run.
 5. **Release v0.4.0.** The owner merges the release pull request. Then:
    - check that the release is immutable;
    - check that `gh attestation verify` passes for an archive and for the
