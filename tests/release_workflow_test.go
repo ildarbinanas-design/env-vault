@@ -100,6 +100,7 @@ func TestReleaseWorkflowBuildsAndPackagesWithoutPublishing(t *testing.T) {
 	if !containsAll(buildStep.Run,
 		`binary="$temp/release/$TARGET/$BINARY"`,
 		`go build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/env-vault`,
+		`modified="$(awk '$1 == "build" && $2 ~ /^vcs\.modified=/ { print substr($2, 14); exit }' <<< "$info")"`,
 		`[[ -n "$modified" ]] || { echo "build information has no VCS stamp" >&2; exit 1; }`,
 		`[[ "$modified" == "false" ]] || { echo "build information reports a modified tree" >&2; exit 1; }`,
 		`module_version="$(awk '$1 == "mod" { print $3; exit }' <<< "$info")"`,
