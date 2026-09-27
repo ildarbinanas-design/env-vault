@@ -235,6 +235,11 @@ directly, and forwarding would deliver them twice. env-vault cannot tell who
 sent a signal, so in that situation a SIGINT or SIGQUIT sent to env-vault with
 `kill` is not forwarded either; send SIGTERM, or signal the process group.
 
+A SIGHUP or SIGINT that env-vault inherited as ignored, as under `nohup` or in
+a script's background job, stays ignored: env-vault neither catches nor
+forwards it, and the child inherits the same ignore. The job then survives a
+closed terminal or an interrupted script, as it would without env-vault.
+
 ## Overwriting A Secret
 
 Running `secret set` for an existing name replaces its value and reports

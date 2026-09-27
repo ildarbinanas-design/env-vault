@@ -48,7 +48,16 @@ func terminalDelivered(child int) bool {
 
 func signalNotifications() chan os.Signal {
 	ch := make(chan os.Signal, 4)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+	signals := []os.Signal{syscall.SIGTERM, syscall.SIGQUIT}
+	// A SIGHUP or SIGINT inherited as ignored stays ignored: subscribing would
+	// install a handler, and the child would start with the default action
+	// instead of the ignore that nohup or the shell set up for it.
+	for _, s := range []syscall.Signal{syscall.SIGHUP, syscall.SIGINT} {
+		if !ignoredAtStart[s] {
+			signals = append(signals, s)
+		}
+	}
+	signal.Notify(ch, signals...)
 	return ch
 }
 

@@ -165,6 +165,34 @@ func TestIgnoredAtStartSeesAnInheritedIgnoredSignal(t *testing.T) {
 	}
 }
 
+// TestChildKeepsASignalIgnoredAtStart runs env-vault's runner in a helper that
+// inherited SIGHUP or SIGINT as ignored, as under nohup or in a script's
+// background job, and has the child send that signal to itself.
+func TestChildKeepsASignalIgnoredAtStart(t *testing.T) {
+	if name := os.Getenv("ENV_VAULT_RUNNER_CHILD_SIGNAL"); name != "" {
+		code, _ := (CommandRunner{}).Run(context.Background(),
+			[]string{"sh", "-c", "kill -" + name + " $$; exit 9"}, []string{"PATH=/bin:/usr/bin"})
+		os.Exit(code)
+	}
+	for name, sig := range map[string]syscall.Signal{"HUP": syscall.SIGHUP, "INT": syscall.SIGINT} {
+		cases := map[string]int{"trap '' " + name + "; ": 9}
+		if !ignoredAtStart[sig] {
+			// Without the ignore the child dies by its own signal, which shows
+			// the signal does reach it.
+			cases[""] = 128 + int(sig)
+		}
+		for trap, want := range cases {
+			cmd := exec.Command("sh", "-c", trap+`exec "$0" -test.run='^TestChildKeepsASignalIgnoredAtStart$'`, os.Args[0])
+			cmd.Env = append(os.Environ(), "ENV_VAULT_RUNNER_CHILD_SIGNAL="+name)
+			err := cmd.Run()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != want {
+				t.Fatalf("%s, trap %q: helper err = %v, want exit %d", name, trap, err, want)
+			}
+		}
+	}
+}
+
 func TestExitBySignalEndsTheProcessWithThatSignal(t *testing.T) {
 	if os.Getenv("ENV_VAULT_RUNNER_EXIT_BY_SIGNAL") == "1" {
 		ExitBySignal(syscall.SIGTERM)

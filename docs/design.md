@@ -109,7 +109,9 @@ every other command (see Output Schema) and never prints a secret value.
    group, SIGINT and SIGQUIT are not forwarded: the terminal already delivered
    them to the child, and forwarding would deliver each one twice. env-vault
    cannot tell a keypress from `kill`, so a SIGINT or SIGQUIT sent only to
-   env-vault in that situation is not forwarded either.
+   env-vault in that situation is not forwarded either. A SIGHUP or SIGINT
+   inherited as ignored (as under `nohup`) is not subscribed to, so it stays
+   ignored for env-vault and the child alike.
 10. Propagate the child exit code. On Unix, a child killed by SIGHUP, SIGINT,
     SIGTERM, or SIGKILL ends env-vault with the same signal, so a calling shell
     loop stops as it would without env-vault. Other signals, a SIGHUP or SIGINT
