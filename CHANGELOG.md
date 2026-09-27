@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.2...v0.3.3) (2026-09-27)
+
+
+### Bug Fixes
+
+* **exec:** keep SIGHUP and SIGINT ignored for the child under nohup ([#101](https://github.com/ildarbinanas-design/env-vault/issues/101)) ([a0ca4ba](https://github.com/ildarbinanas-design/env-vault/commit/a0ca4ba144cebcd54ccc5ea879585e46de44f8b6))
+
 ## [0.3.2](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.1...v0.3.2) (2026-09-27)
 
 
