@@ -1,0 +1,213 @@
+# ADR 0011: Minimal release pipeline for an equal-maintainer team
+
+## Status
+
+Accepted. The migration below is in progress; until its switch step lands,
+releases still run on the existing pipeline.
+
+## Date
+
+2026-09-27
+
+## Context
+
+The release machinery has outgrown the product it ships. On `main` at
+v0.3.4 it consists of about 16,000 lines of non-test release Go
+(`cmd/release*`, `cmd/actionsartifact*`, and the `internal/release*`,
+`githubtransport`, `actionsartifact`, `canonicalgzip`, `e2ebaseline` and
+`e2esuite` packages), 4,210 lines of workflow YAML in nine workflows, and 3,658
+lines of shell in `scripts/release/`. The product itself is about 4,300 lines
+of non-test Go.
+
+The machinery failed on its own, not on external threats:
+
+- Release planning stopped for 11 days in September 2026 because a strict
+  decoder rejected a new, harmless ruleset field (#85).
+- v0.2.1 was published without its Homebrew formula for about 8.5 hours
+  after a Homebrew audit rule changed.
+- v0.3.3 was abandoned on 2026-09-27. `verify-abandoned-release-policy.sh`
+  pinned the login of a GitHub App that was then deleted, and planning
+  stopped before tagging (#102, #103).
+
+The 2026-09-26 audit found that none of the release checks ever caught an
+external integrity problem, and that the real trust gaps sit elsewhere:
+
+- The publisher runs on any pushed `v*` tag and executes code from that tag
+  (W3-01).
+- Releases since v0.2.0 carry no build attestations, and releases before
+  2026-09-27 are mutable (W3-02, W7-06).
+- Release binaries record a pseudo-version such as
+  `v0.0.0-20260927101651-1fd6638295fb`, because CI checks out without tags,
+  so a rebuild from an ordinary clone does not match (W8-03).
+
+The owner decided on 2026-09-26 to rewrite the pipeline as a separate project
+for an equal-maintainer team, with the least code and the fewest release steps
+that follow current practice. The forks were settled on 2026-09-27. ADR 0008
+froze further release-engineering investment; this decision lifts that freeze
+for this rewrite only.
+
+## Decision
+
+### One workflow on `main`
+
+`.github/workflows/release.yml` runs on every push to `main`:
+
+1. **release-please** maintains the release pull request with
+   `RELEASE_PLANNING_TOKEN`. After that pull request is merged, it creates the
+   tag and a draft GitHub Release.
+2. **build** runs only when a release was created. It builds the five native
+   targets from a checkout of the tag with tags present, checks that
+   `--version` reports the tag, runs the backend smoke test, and uploads the
+   raw binaries.
+3. **publish** runs in the `release` environment. It:
+   - packages all five archives deterministically on Linux and writes the
+     `.sha256` sidecars;
+   - attests the five archives and the five binaries with
+     `actions/attest-build-provenance`;
+   - uploads everything to the draft and then publishes it. Immutable releases
+     are enabled, so the published release cannot change.
+4. **tap** generates the formula, opens a pull request in homebrew-tap with
+   `HOMEBREW_TAP_TOKEN`, and enables auto-merge. The tap ruleset still requires
+   its `test` check before the merge.
+5. **verify** downloads the published assets, checks their sidecars, and runs
+   `gh attestation verify` on each archive.
+
+No workflow runs on a tag push, so a tag created by hand publishes nothing.
+This closes W3-01 without restricting who may create tags. The release pull
+request must pass the required checks and be up to date with `main` before it
+can merge, so the release commit's tree is the tree CI tested.
+
+### Only product changes create releases
+
+Only the `feat`, `fix`, `perf` and `revert` sections remain visible in the
+changelog. `docs`, `ci`, `build`, `test`, `refactor` and `chore` are hidden, so
+a change to the pipeline or the documentation creates no release and no macOS
+Keychain prompt after `brew upgrade` (W7-01).
+
+- Dependabot uses the prefix `fix(deps)` for Go modules, so a dependency
+  update still creates a release, and `ci(deps)` for GitHub Actions, which
+  does not.
+- Pipeline fixes use `ci:` or `build:`, never `fix(release)`.
+
+### Linking a binary to its source
+
+- `env-vault --version` prints one line: the version, the short commit and
+  the commit date, for example `v0.4.0 (1fd6638, 2026-09-27)`.
+- `env-vault --json version` adds the full commit, the commit time, whether
+  the tree was modified, the Go version and the platform.
+- Every value comes from the build information Go embeds
+  (`runtime/debug.ReadBuildInfo`): the main module version, which Go stamps
+  from the tag when the checkout has it, and `vcs.revision`, `vcs.time` and
+  `vcs.modified`.
+- The build no longer injects the version with `-ldflags -X` and records no
+  build timestamp.
+- The printed commit is a diagnostic aid, not proof: a tampered binary can
+  print anything. Proof is the attestation, which binds the file's digest to
+  this repository, the workflow and the commit:
+
+  ```sh
+  gh attestation verify "$(command -v env-vault)" -R ildarbinanas-design/env-vault
+  ```
+
+  Homebrew installs the binary from the archive unchanged, so this works for
+  a Homebrew installation too.
+- Linux and Windows binaries are reproducible from the tag, and so are all
+  five archives, because packaging is deterministic. Darwin binaries use cgo
+  and can be rebuilt only on macOS.
+- No separate SBOM: `go version -m` lists every module with its hash, and
+  `govulncheck -mode=binary` works from that.
+
+### Credentials and authority
+
+- `RELEASE_PLANNING_TOKEN` stays a fine-grained PAT scoped to this
+  repository, in the `release-planning` environment. A release pull request
+  opened with `GITHUB_TOKEN` would not trigger the required checks.
+- `HOMEBREW_TAP_TOKEN` stays a fine-grained PAT scoped to homebrew-tap, in the
+  `release` environment.
+- After the switch the `release` environment admits only `main`. The owner
+  removes the `v*` tag rule then.
+- Either maintainer may release by merging the release pull request.
+- Agent authority does not change: an agent merges a release pull request
+  only on the owner's explicit instruction, and the reserved paths stay
+  reserved.
+
+## Consequences
+
+The guarantees that stay, in a different form:
+
+| Guarantee | Before | After |
+|---|---|---|
+| Only reviewed `main` is released | Release PR plus checks run from the tag's code | Build in the `main` workflow after the release PR merges; no tag-triggered code |
+| The published bytes are the tested bytes | Promotion manifest re-verified in three jobs | Build, `--version`, smoke and packaging in one run; digests signed by the attestation |
+| Integrity is verifiable | `.sha256` beside each archive | `.sha256`, attestations for archives and binaries, immutable releases |
+| Assets cannot be replaced | Uploads without `--clobber` | Draft, upload, publish; the published release is immutable |
+| The tap changes only through a pull request with CI | Head-guarded merge by script after waiting for CI | Auto-merge after the tap's `test` check; tap CI pins url and sha256 |
+| A failed release can be resumed | Three repair modes, bootstrap and bridge workflows | Re-run the failed job of the same run |
+
+What is intentionally lost:
+
+- the per-release verification of repository rulesets;
+- the attempt-qualified promotion manifest;
+- Actions artifact accounting and its deletion ceremony (ADR 0007). Deleting
+  artifacts stays reserved for the owner;
+- strict parsing of GitHub API responses.
+
+These parts caused the failures listed above and never caught an external
+problem.
+
+Expected size: about 600 lines of workflow YAML, no release Go, and about 200
+lines of shell. A release is one merge.
+
+Risks:
+
+- If the tap's `test` check fails, the tap pull request stays open. The owner
+  receives the failure email, and the weekly tap CI keeps checking the
+  formula.
+- `RELEASE_PLANNING_TOKEN` expires every 90 days; the next renewal is due
+  before 2026-12-26.
+- The first release on the new pipeline must carry a product change (v0.4.0,
+  the new `--version`), so that it exercises the whole chain.
+
+## Migration
+
+Each step is one pull request.
+
+1. This ADR.
+2. Add `release.yml` beside the existing pipeline, with a manual trigger only
+   and no publication or attestation. It builds from a commit, checks
+   `--version`, runs the smoke test and packages deterministically.
+   `tests/workflows_test.go` stops forbidding attestations.
+3. **Switch** in one pull request, reverted with a single revert if needed:
+   - `release.yml` runs on push to `main`;
+   - `release-please.yml` and `build-binaries.yml` are removed;
+   - CI drops the parts that only fed the old publisher: the promotion
+     manifest, the release version probe and the sealed E2E proof. E2E runs
+     once per operating system, and build and smoke still cover all five
+     targets;
+   - the Release Please configuration hides the non-product sections, and
+     Dependabot gets its prefixes;
+   - the formula generator uses `assert_match "v#{version}"`;
+   - AGENTS.md and RELEASING.md describe the new flow;
+   - required check names do not change, so the `main` ruleset needs no edit.
+4. **`--version` with the commit.** This comes only after the switch: the old
+   CI compares `--version` output with the exact string `vX.Y.Z` on every push
+   to `main` (`internal/releasepromotion/version_evidence.go`), so the new
+   format would break the old pipeline.
+5. **Release v0.4.0.** The owner merges the release pull request. Then verify:
+   - the release is immutable;
+   - `gh attestation verify` passes for an archive and for the installed
+     binary;
+   - the tap auto-merge completed;
+   - `env-vault --version` reports the commit.
+6. **Remove the old machinery.** Delete the release Go packages and commands,
+   `scripts/release/` except what the new workflow needs, `release/*.json`,
+   the bootstrap, bridge and legacy workflows, and their tests. Shorten
+   RELEASING.md to one page. Remove the release runbook, architecture and
+   refactor documents and `evidence/`; git history keeps them. Drop the
+   AGENTS.md rules about contract v2, the GitHub transport, the evidence
+   ledger and the artifact deletion ceremony. Mark ADR 0002 and 0004–0007
+   superseded by this ADR.
+
+ADR 0003 is already superseded. ADR 0008 keeps its product-scope rule: new
+product features still need a PersonalOS consumer. ADR 0009 is unchanged: the
+new pipeline adds provenance attestations, not code signing.
