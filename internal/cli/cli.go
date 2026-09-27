@@ -74,7 +74,18 @@ type App struct {
 }
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return newApp(stdin, stdout, stderr).run(args)
+	code, _ := newApp(stdin, stdout, stderr).runStatus(args)
+	return code
+}
+
+// RunAndExit runs the command and exits the process. When exec's child was
+// killed by a signal, env-vault ends with that same signal where possible.
+func RunAndExit(args []string, stdin io.Reader, stdout, stderr io.Writer) {
+	code, sig := newApp(stdin, stdout, stderr).runStatus(args)
+	if sig != nil {
+		runner.ExitBySignal(sig)
+	}
+	os.Exit(code)
 }
 
 func newApp(stdin io.Reader, stdout, stderr io.Writer) *App {
@@ -87,20 +98,25 @@ func newApp(stdin io.Reader, stdout, stderr io.Writer) *App {
 }
 
 func (app *App) run(args []string) int {
+	code, _ := app.runStatus(args)
+	return code
+}
+
+func (app *App) runStatus(args []string) (int, os.Signal) {
 	root := app.rootCommand()
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		if exitStatus, ok := apperrors.ExitStatusFrom(err); ok {
-			return exitStatus.Code
+			return exitStatus.Code, exitStatus.Signal
 		}
 		appErr, ok := apperrors.From(err)
 		if !ok {
 			appErr = apperrors.Wrap("root", apperrors.CodeRuntimeError, "Unexpected runtime error", "Retry with --verbose or run env-vault doctor", apperrors.ExitRuntimeError, err)
 		}
 		_ = app.renderer().Error(appErr.Command, appErr)
-		return appErr.ExitCode
+		return appErr.ExitCode, nil
 	}
-	return apperrors.ExitSuccess
+	return apperrors.ExitSuccess, nil
 }
 
 func (a *App) rootCommand() *cobra.Command {
