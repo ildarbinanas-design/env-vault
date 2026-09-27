@@ -103,6 +103,11 @@ reason_code=$(jq -er '.reason_code' <<< "$policy")
 historical_base_branch=main
 historical_head_branch=release-please--branches--main--components--env-vault
 historical_author='env-vault-release-planning[bot]'
+# The env-vault-release-planning App was deleted on 2026-09-27. GitHub then
+# reports every pull request its bot opened as authored by the "ghost"
+# placeholder account, so PR #31 may show either login. The number, merge
+# source, head, title, branches, and labels still pin the exact PR.
+deleted_author='ghost'
 historical_title="chore(main): release env-vault ${abandoned_version}"
 
 "$SCRIPT_DIR/gh-api-read.sh" "$snapshot_dir/pr.json" "repos/$repository/pulls/$pr_number"
@@ -114,13 +119,15 @@ jq -e \
   --arg boundary "$boundary_sha" \
   --arg title "$historical_title" \
   --arg author "$historical_author" \
+  --arg deleted_author "$deleted_author" \
   --arg pending "$pending_label" \
   --arg abandoned "$abandoned_label" \
   --arg tagged "$tagged_label" \
   --argjson pr "$pr_number" '
     .number == $pr and .state == "closed" and .merged == true and .draft == false and
     (.merged_at | type == "string" and try fromdateiso8601 != null) and
-    .merge_commit_sha == $boundary and .title == $title and .user.login == $author and
+    .merge_commit_sha == $boundary and .title == $title and
+    (.user.login == $author or .user.login == $deleted_author) and
     .base.ref == $base and .base.repo.full_name == $repository and
     .head.ref == $branch and .head.repo.full_name == $repository and .head.sha == $head and
     ([.labels[].name] | index($abandoned) != null) and
@@ -165,6 +172,8 @@ require_absence tag "$SCRIPT_DIR/resolve-tag-sha.sh"
 require_absence release "$SCRIPT_DIR/get-release-state.sh"
 
 observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+observed_author=$(jq -er '.user.login' "$snapshot_dir/pr.json") ||
+  release_die "abandoned release PR author is missing"
 jq -n \
   --arg state abandoned \
   --arg version "$abandoned_version" \
@@ -172,7 +181,7 @@ jq -n \
   --arg head "$pr_head_sha" \
   --arg merged_at "$(jq -er '.merged_at' "$snapshot_dir/pr.json")" \
   --arg title "$historical_title" \
-  --arg author "$historical_author" \
+  --arg author "$observed_author" \
   --arg base "$historical_base_branch" \
   --arg repository "$repository" \
   --arg reason "$reason_code" \
