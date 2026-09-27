@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for local MVP
+Accepted. It was first accepted for the local MVP and still applies.
 
 ## Date
 

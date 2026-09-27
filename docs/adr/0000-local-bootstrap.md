@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted; superseded for public module path by the selected repository owner.
+Superseded. The public module path is `github.com/ildarbinanas-design/env-vault`
+(see `go.mod`). No ADR records that choice.
 
 ## Date
 

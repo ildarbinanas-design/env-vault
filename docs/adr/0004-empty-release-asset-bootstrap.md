@@ -1,6 +1,6 @@
 # ADR 0004: Source-bound bootstrap for an empty immutable Release
 
-- Status: accepted
+- Status: superseded by [ADR 0011](0011-minimal-release-pipeline.md) (2026-09-27)
 - Date: 2026-07-18
 - Scope: valid empty GitHub Release reconciliation and immutable-tag recovery
 

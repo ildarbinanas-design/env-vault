@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. Amended by [ADR 0011](0011-minimal-release-pipeline.md) (2026-09-27),
+which lifts the release-engineering freeze for the release pipeline rewrite
+only.
 
 ## Date
 
@@ -40,15 +42,15 @@ own trajectory, disconnected from that goal.
   "does this serve PersonalOS" check before being picked up — see backlog
   update in the same commit as this ADR.
 
-### Exceptions (added 2026-07-30, after `docs/refactor-decision-log.md` review)
+### Exceptions (added 2026-07-30, after [`docs/refactor-decision-log.md`](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/docs/refactor-decision-log.md) review)
 
 - **Structural necessity to keep an existing invariant alive is not "new
   scope"** and does not require a PersonalOS consumer or security
   justification. The concrete example given here was
-  `docs/release-refactor-backlog.md` item 11 (evidence-ledger
+  [`docs/release-refactor-backlog.md`](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/docs/release-refactor-backlog.md) item 11 (evidence-ledger
   checkpoint/Merkle design), exempt because the bounded 64-commit validation
   window would otherwise hard-fail a future release on append. **That example
-  lapsed on 2026-07-30:** Phase 3 of `docs/trim-plan-2026-07-30.md` removed the
+  lapsed on 2026-07-30:** Phase 3 of [`docs/trim-plan-2026-07-30.md`](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/docs/trim-plan-2026-07-30.md) removed the
   evidence ledger and its window, so item 11 is moot and the exception now has
   no open instance. The principle stands for a future invariant that genuinely
   needs maintenance.
@@ -57,7 +59,7 @@ own trajectory, disconnected from that goal.
   credential/secret exposure (e.g. tracked in `SECURITY.md` or an incident
   record) — not a general "this reduces attack surface" or "this is more
   secure by design" argument. General hardening arguments do not, by
-  themselves, unfreeze a P1/P2 item or a `release-refactor-backlog.md` item.
+  themselves, unfreeze a P1/P2 item or a [`release-refactor-backlog.md`](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/docs/release-refactor-backlog.md) item.
 
 ## Consequences
 

@@ -1,6 +1,6 @@
 # ADR 0002: Strict GitHub transport for release authority
 
-- Status: accepted
+- Status: superseded by [ADR 0011](0011-minimal-release-pipeline.md) (2026-09-27)
 - Date: 2026-07-17
 - Scope: release-only GitHub reads, workflow/run/job/attempt identity, typed v2
   evidence Git-data mutation, and bounded Actions artifact deletion transport
