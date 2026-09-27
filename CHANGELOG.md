@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.2](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.1...v0.3.2) (2026-09-27)
+
+
+### Bug Fixes
+
+* **release:** publish releases from a draft after all assets upload ([#96](https://github.com/ildarbinanas-design/env-vault/issues/96)) ([d4aa425](https://github.com/ildarbinanas-design/env-vault/commit/d4aa425bf70b6e9c4f11cacb3066e66138207e60))
+
+
+### Continuous Integration
+
+* smoke-test the real OS secret stores in the native jobs ([#98](https://github.com/ildarbinanas-design/env-vault/issues/98)) ([0ae0e12](https://github.com/ildarbinanas-design/env-vault/commit/0ae0e122118711c5d36e40fc09b00aaa26e78541))
+
+
+### Documentation
+
+* **agents:** state what actually enforces the working mode ([#97](https://github.com/ildarbinanas-design/env-vault/issues/97)) ([dfd2d3f](https://github.com/ildarbinanas-design/env-vault/commit/dfd2d3fa4e7bb8c15ea7503645f6b28fa5d2bf27))
+
 ## [0.3.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.0...v0.3.1) (2026-09-27)
 
 
