@@ -290,6 +290,11 @@ func TestReleaseContractOwnsWorkflowAndNativeInventory(t *testing.T) {
 
 	actualFiles := make([]string, 0)
 	for _, path := range workflowPaths(t) {
+		// ADR 0011: release.yml replaces the contract-owned pipeline and is not
+		// part of contract v2, which migration step 6 removes.
+		if filepath.Base(path) == releaseWorkflowFile {
+			continue
+		}
 		actualFiles = append(actualFiles, filepath.Base(path))
 	}
 	contractFiles := make([]string, 0, len(contract.Workflows))
