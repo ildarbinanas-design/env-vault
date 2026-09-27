@@ -36,6 +36,7 @@ func TestVerifyAbandonedReleasePolicy(t *testing.T) {
 		TagExists                   bool     `json:"tag_exists"`
 		GitHubReleaseExists         bool     `json:"github_release_exists"`
 		ReasonCode                  string   `json:"reason_code"`
+		PullRequestAuthor           string   `json:"pull_request_author"`
 	}
 	data, err := os.ReadFile(outputPath)
 	if err != nil {
@@ -48,6 +49,7 @@ func TestVerifyAbandonedReleasePolicy(t *testing.T) {
 		observation.SourceSHA != recoveryBoundarySHA || !observation.BoundaryIsAncestorOfRelease ||
 		observation.TagExists || observation.GitHubReleaseExists ||
 		observation.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" ||
+		observation.PullRequestAuthor != "env-vault-release-planning[bot]" ||
 		!slices.Equal(observation.Labels, []string{"autorelease: abandoned"}) {
 		t.Fatalf("abandoned-release observation is not exact: %+v", observation)
 	}
@@ -55,6 +57,37 @@ func TestVerifyAbandonedReleasePolicy(t *testing.T) {
 	if output, err := runReleaseAutomationScriptEnv(t, fixture, env,
 		"verify-abandoned-release-policy.sh", "v0.0.14", sourceSHA, outputPath); err == nil {
 		t.Fatalf("abandoned-release proof clobbered an existing output: %s", output)
+	}
+}
+
+// The env-vault-release-planning App was deleted on 2026-09-27, and GitHub now
+// reports PR #31 as authored by the "ghost" placeholder account.
+func TestVerifyAbandonedReleasePolicyAcceptsTheDeletedAppGhost(t *testing.T) {
+	releasecheck := credentialRejectingReleasecheck(t, buildReleasecheck(t))
+	fixture, env, state, _ := newRecoveryOperatorFixture(t, releasecheck)
+	if err := os.WriteFile(state, []byte(`[{"name":"autorelease: abandoned"}]`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env = append(env, "FAKE_PR_AUTHOR=ghost")
+	sourceSHA := strings.TrimSpace(runRecoveryGit(t, fixture, "rev-parse", "HEAD"))
+	outputPath := filepath.Join(fixture, "abandoned-release.json")
+	output, err := runReleaseAutomationScriptEnv(t, fixture, env,
+		"verify-abandoned-release-policy.sh", "v0.0.14", sourceSHA, outputPath)
+	if err != nil {
+		t.Fatalf("verify abandoned release policy with the ghost author: %v\n%s", err, output)
+	}
+	var observation struct {
+		PullRequestAuthor string `json:"pull_request_author"`
+	}
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &observation); err != nil {
+		t.Fatal(err)
+	}
+	if observation.PullRequestAuthor != "ghost" {
+		t.Fatalf("observed PR author = %q, want ghost", observation.PullRequestAuthor)
 	}
 }
 

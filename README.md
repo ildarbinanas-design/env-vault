@@ -98,7 +98,8 @@ verify its checksum, and unpack (substitute the version, OS, and architecture):
 Current version: `v0.3.3`. <!-- x-release-please-version -->
 
 The line above is managed by Release Please. `v0.0.8` through `v0.0.11` are
-preserved failed immutable tags and intentionally have no GitHub Release; use the
+preserved failed immutable tags and intentionally have no GitHub Release, and
+`v0.3.3` was never tagged or published (its changes ship in `v0.3.4`); use the
 [`latest` Release](https://github.com/ildarbinanas-design/env-vault/releases/latest)
 until the next version has completed automated publication and health checks.
 

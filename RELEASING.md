@@ -457,6 +457,17 @@ changing the tag or any artifact bytes. No asset, attestation, or Homebrew
 mutation occurred. All four are blocked from steady-state publication and from
 the legacy diagnostic selector.
 
+`v0.3.3` is permanently abandoned. Release PR #102 was squash-merged as
+`e85c160c794bb15af032a5f404af1923836935cf` on 2026-09-27, but its planning run
+stopped before creating the tag. Earlier that day the `env-vault-release-planning`
+App had been deleted, so GitHub began reporting PR #31 as authored by `ghost`,
+and the abandoned-`v0.0.12` verifier still required the App's bot login.
+Planning and the publisher run the scripts of the commit they release, so
+`e85c160` cannot be published. PR #102 carries `autorelease: abandoned` instead
+of `autorelease: pending`, tag `v0.3.3` and a GitHub Release for it must never
+exist, and `v0.3.4` ships its changes. The verifier now accepts either login
+for PR #31.
+
 Historical published releases are immutable. If one needs correction, publish
 a higher patch version; never rebuild historical bytes for publication or
 lower the tap.
