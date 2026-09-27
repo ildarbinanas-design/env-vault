@@ -2,8 +2,14 @@
 
 ## Status
 
-Accepted. The migration below is in progress. Until its switch step lands,
-releases still run on the existing pipeline.
+Accepted.
+
+Supersedes [ADR 0002](0002-release-github-transport.md),
+[ADR 0004](0004-empty-release-asset-bootstrap.md),
+[ADR 0005](0005-informational-link-and-homebrew-bridge.md),
+[ADR 0006](0006-versioned-operational-release-contract.md) and
+[ADR 0007](0007-actions-artifact-lifecycle.md). Amends
+[ADR 0008](0008-freeze-release-ceremony-require-personalos-link.md).
 
 ## Date
 
@@ -157,6 +163,65 @@ macOS Keychain prompt after `brew upgrade` (W7-01).
   on an explicit instruction from the owner, `ildarbinanas-design`, and
   head-guarded as today. The reserved paths stay reserved.
 
+## Considered options
+
+The owner settled these forks on 2026-09-26 and 2026-09-27.
+
+**How far to go (2026-09-26).**
+
+- Targeted fixes: take the live settings check out of the release path, hide
+  the non-product changelog sections, and delete the legacy, bootstrap and
+  bridge workflows and dead code. The contract and the publisher stay.
+- Tolerant decoders only: keep the settings check, but accept harmless new
+  GitHub fields and keep the value checks.
+- A rewrite to a minimal pipeline. Chosen. At the time the release Go code
+  was 3.75 times the size of the product, and the settings check had stopped
+  releases for 11 days (see Context).
+
+**Release integrity (2026-09-26).**
+
+- Tag creation limited to the owner, plus immutable releases. Chosen.
+- The same, plus attestations.
+- Tag restriction only.
+
+Limiting tag creation later proved impossible on the old pipeline, because the
+per-release settings check would have stopped releases, as in #85. The rewrite
+instead runs no workflow on a tag, and it adds attestations (see Decision).
+
+**`--version` output (2026-09-27).**
+
+- One line with the short commit and date. Chosen.
+- Several lines, in the GNU style.
+- A bare version, with the details in `env-vault version`.
+
+**Which changes create a release (2026-09-27).**
+
+- Product changes only. Chosen.
+- Every conventional commit, as before.
+
+**Which token opens the release pull request (2026-09-27).**
+
+- The existing fine-grained PAT. Chosen. It needs renewal every 90 days.
+  `GITHUB_TOKEN` cannot replace it, because a pull request it opens does not
+  trigger the required checks.
+- A GitHub App. It does not expire, but it has to be created again, granted
+  permissions, and its private key kept in secrets. The previous App was
+  deleted on 2026-09-27.
+
+**How the tap is updated (2026-09-27).**
+
+- Auto-merge after the tap's `test` check. Chosen. The release finishes
+  before the formula updates, and a tap CI failure arrives by email.
+- The workflow waits for the tap's CI and merges, as before. That is about 80
+  more lines of YAML, and the release holds a runner while the tap's CI runs.
+
+The rest of the Decision came with the proposal that the owner accepted as
+this ADR, without a separate fork. That includes Go build information instead
+of `-ldflags -X`, the attestations and the absence of a separate SBOM.
+
+Not evaluated: off-the-shelf release tools such as GoReleaser (an open item in
+`backlog.md`), and the SLSA Build Level 3 generator.
+
 ## Consequences
 
 The guarantees that stay, in a different form:
@@ -202,67 +267,46 @@ Risks:
 - The first release on the new pipeline must carry a product change, so that it
   exercises the whole chain: v0.4.0, with the new `--version`.
 
+Other ADRs: ADR 0003 was superseded earlier. ADR 0008 keeps its product-scope
+rule: new product features still need a PersonalOS consumer. ADR 0009 is
+unchanged: the new pipeline adds provenance attestations, not code signing.
+
 ## Migration
 
 Each step is one pull request.
+[Issue #107](https://github.com/ildarbinanas-design/env-vault/issues/107)
+lists what each step changes and tracks progress. Until step 3 merges,
+releases run on the existing pipeline.
 
-1. **This ADR.** Under the current configuration a `docs` commit is visible, so
-   Release Please opens a v0.3.5 release pull request after this merge. Leave
-   it unmerged until it reads v0.4.0. Once step 3 hides the non-product
-   sections, Release Please leaves it untouched, and step 4 retitles it.
-2. **Add `release.yml` beside the existing pipeline**, with a manual trigger
-   only and no publication or attestation. It builds from a commit, checks
-   `--version`, runs the smoke test and packages deterministically.
-   `tests/workflows_test.go` stops forbidding attestations and admits
-   `release.yml` next to the contract's workflow inventory.
-3. **Switch**, in one pull request:
-   - `release.yml` runs on push to `main`.
-   - `release-please.yml` and `build-binaries.yml` are removed.
-   - CI drops the parts that only fed the old publisher: the promotion manifest,
-     the release version probe and the sealed E2E proof. E2E runs once per
-     operating system, and build and smoke still cover all five targets.
-   - The Release Please configuration hides the non-product sections and
-     replaces `skip-github-release`. The recovery validator and the workflow
-     tests that pin the old configuration change with it.
-   - Dependabot gets its prefixes.
-   - The formula generator uses `assert_match "v#{version}"`.
-   - AGENTS.md drops the contract v2 and GitHub transport rules, which the new
-     workflow does not follow. AGENTS.md and RELEASING.md describe the new
-     flow.
+1. This ADR.
+2. `release.yml` beside the existing pipeline, building and packaging without
+   publishing.
+3. The switch.
+   - `release.yml` runs on push to `main`, and `release-please.yml` and
+     `build-binaries.yml` are removed.
+   - The Release Please configuration hides the non-product sections.
+   - CI runs E2E once per operating system. Build and smoke still cover all
+     five targets.
    - Required check names do not change, so the `main` ruleset needs no edit.
+4. `--version` with the commit.
+5. The v0.4.0 release, verified end to end.
+6. Removal of the old machinery.
 
-   A single revert undoes this step, because the `release` environment keeps
-   its `v*` rule until step 5. After step 4 merges, revert step 4 first,
-   because the restored old pipeline rejects the new `--version` format. It
-   fails at the CI check on the release commit, before any tag is created.
-4. **`--version` with the commit**, as a `feat:` commit so that the release
-   becomes v0.4.0. A `feat!:` commit would give v1.0.0, because
-   `bump-minor-pre-major` is not set.
+The order and the rollback are part of this decision:
 
-   This step comes only after the switch. The old pipeline requires the release
-   commit's binary to print exactly `vX.Y.Z` and strictly decodes `version
-   --json` (`internal/releasepromotion/version_evidence.go`), so the new format
-   would break the next release on the old pipeline. The step also updates the
-   E2E version check, which compares `--version` with the injected version on
-   every CI run.
-5. **Release v0.4.0.** The owner merges the release pull request. Then:
-   - check that the release is immutable;
-   - check that `gh attestation verify` passes for an archive and for the
-     installed binary;
-   - check that the tap auto-merge completed;
-   - check that `env-vault --version` reports the commit;
-   - the owner removes the `v*` rule from the `release` environment.
-6. **Remove the old machinery.**
-   - Delete the release Go packages and commands, `scripts/release/` except what
-     the new workflow needs, `release/*.json`, and the bootstrap, bridge and
-     legacy workflows together with their tests.
-   - Shorten RELEASING.md to one page.
-   - Remove the release runbook, the architecture and refactor documents, and
-     `evidence/`. Git history keeps them.
-   - Drop the AGENTS.md rules about the evidence ledger and the artifact
-     deletion ceremony.
-   - Mark ADR 0002 and 0004–0007 superseded by this ADR.
-
-ADR 0003 is already superseded. ADR 0008 keeps its product-scope rule: new
-product features still need a PersonalOS consumer. ADR 0009 is unchanged: the
-new pipeline adds provenance attestations, not code signing.
+- `--version` changes only after the switch. The old pipeline requires the
+  release commit's binary to print exactly `vX.Y.Z` and strictly decodes
+  `version --json` (`internal/releasepromotion/version_evidence.go`), so the
+  new format would break the next release on the old pipeline.
+- Step 4 is a `feat:` commit, so that the first release on the new pipeline
+  is v0.4.0. A `feat!:` commit would give v1.0.0, because
+  `bump-minor-pre-major` is not set.
+- The release pull request that Release Please opens after step 1 (v0.3.5)
+  stays unmerged until it reads v0.4.0. Once step 3 hides the non-product
+  sections, Release Please leaves it untouched, and step 4 retitles it.
+- A single revert undoes step 3, because the `release` environment keeps its
+  `v*` rule until step 5. After step 4 merges, revert step 4 first: the
+  restored old pipeline rejects the new `--version` format. It fails at the
+  CI check on the release commit, before any tag is created.
+- The owner removes the `v*` rule from the `release` environment once the
+  v0.4.0 release is verified.

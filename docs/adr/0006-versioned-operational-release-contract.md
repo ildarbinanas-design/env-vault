@@ -1,12 +1,14 @@
 # ADR 0006: Versioned operational release contract and closed historical routing
 
-- Status: partially superseded by `docs/trim-plan-2026-07-30.md` Phase 2
-  (2026-07-30). The operational contract, its typed projection, and the
-  digest-bound checker pair remain in force. The **versioned** dimension this
-  ADR introduced — dual v1/v2 generations, the closed historical registry,
-  `contract route-source`/`historical-source`, and the archived v1 bytes — was
-  removed: there is one generation, `release/contract.v2.json`. Kept for
-  history; the generation-routing sections are no longer active design.
+- Status: superseded by [ADR 0011](0011-minimal-release-pipeline.md)
+  (2026-09-27). On 2026-07-30, Phase 2 of the
+  [trim plan](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/docs/trim-plan-2026-07-30.md)
+  had already removed the **versioned** dimension this ADR introduced: dual
+  v1/v2 generations, the closed historical registry,
+  `contract route-source`/`historical-source`, and the archived v1 bytes.
+  ADR 0011 replaces the rest: the operational contract
+  `release/contract.v2.json`, its typed projection, and the digest-bound
+  checker pair. Kept for history.
 - Date: 2026-07-18
 - Scope: release parameters, workflow identities, historical source contracts,
   typed runtime projections, and contract evolution

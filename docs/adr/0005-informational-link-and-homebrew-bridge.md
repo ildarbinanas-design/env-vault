@@ -1,6 +1,6 @@
 # ADR 0005: Informational Link metadata and a protected-main Homebrew bridge
 
-- Status: accepted
+- Status: superseded by [ADR 0011](0011-minimal-release-pipeline.md) (2026-09-27)
 - Date: 2026-07-18
 - Scope: typed REST pagination and immutable-tag Homebrew-only recovery
 

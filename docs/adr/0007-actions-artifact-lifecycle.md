@@ -1,6 +1,6 @@
 # ADR 0007: Typed Actions artifact lifecycle and bounded cleanup
 
-- Status: accepted
+- Status: superseded by [ADR 0011](0011-minimal-release-pipeline.md) (2026-09-27)
 - Date: 2026-07-20
 - Scope: Actions artifact retention, inventory, keep/delete authority, bounded
   deletion, and verification

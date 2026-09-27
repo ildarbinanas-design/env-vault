@@ -1,6 +1,8 @@
 # ADR 0003: Compact content-addressed release evidence and automatic ledger genesis
 
-- Status: superseded by `docs/trim-plan-2026-07-30.md` Phase 3 (2026-07-30).
+- Status: superseded by
+  [`docs/trim-plan-2026-07-30.md`](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/docs/trim-plan-2026-07-30.md)
+  Phase 3 (2026-07-30).
   The evidence ledger, its compact bundle format, and automatic genesis were
   removed; the release audit trail is now the GitHub Releases page plus git and
   pull-request history. The published `release-evidence` branch and the durable
