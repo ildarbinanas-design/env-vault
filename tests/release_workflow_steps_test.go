@@ -222,17 +222,19 @@ exit 2
 `
 	names := releaseAssetNames()
 	for _, tc := range []struct {
-		name      string
-		draft     bool
-		uploaded  int  // assets an earlier attempt uploaded
-		different bool // the first uploaded asset has other bytes
-		failure   string
-		uploads   int // files the step must upload
-		publishes bool
+		name       string
+		draft      bool
+		uploaded   int  // assets an earlier attempt uploaded
+		different  bool // the first uploaded asset has other bytes
+		unexpected bool // the draft also holds a file the release does not build
+		failure    string
+		uploads    int // files the step must upload
+		publishes  bool
 	}{
 		{name: "empty draft", draft: true, uploads: 10, publishes: true},
 		{name: "re-run after a partial upload", draft: true, uploaded: 3, uploads: 7, publishes: true},
 		{name: "uploaded asset with other bytes", draft: true, uploaded: 3, different: true, failure: "already exists with different bytes"},
+		{name: "draft with an unexpected asset", draft: true, uploaded: 3, unexpected: true, failure: "has an unexpected asset env-vault-darwin-arm64-fixed.tar.gz"},
 		{name: "re-run after publishing", uploaded: 10},
 		{name: "published without an asset", uploaded: 9, failure: "is published without env-vault-windows-amd64.zip.sha256"},
 		{name: "published asset with other bytes", uploaded: 10, different: true, failure: "already exists with different bytes"},
@@ -263,6 +265,11 @@ exit 2
 			}
 			if err := os.WriteFile(filepath.Join(state, "draft"), []byte(strconv.FormatBool(tc.draft)+"\n"), 0o644); err != nil {
 				t.Fatal(err)
+			}
+			if tc.unexpected {
+				if err := os.WriteFile(filepath.Join(assets, "env-vault-darwin-arm64-fixed.tar.gz"), []byte("by hand"), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			out, ok := runReleaseStep(t, script, temp, fakeGH, map[string]string{
@@ -346,6 +353,16 @@ if [[ "$1" == api ]]; then
       [[ "$ref" == "refs/heads/env-vault-$RELEASE_TAG" && "$sha" == base-commit && ! -f "$state/branch.rb" ]] || exit 2
       cp "$state/main.rb" "$state/branch.rb"
       ;;
+    "GET repos/$TAP_REPOSITORY/compare/main...env-vault-$RELEASE_TAG")
+      ahead=0 files="[]"
+      if ! cmp -s "$state/main.rb" "$state/branch.rb"; then ahead=1 files="[{\"filename\":\"$FORMULA_PATH\"}]"; fi
+      if [[ -f "$state/extra" ]]; then
+        ahead=$((ahead + 1))
+        files="$(jq -c --arg extra "$(cat "$state/extra")" '. + [{filename: $extra}]' <<< "$files")"
+      fi
+      if [[ -f "$state/ahead" ]]; then ahead="$(cat "$state/ahead")"; fi
+      printf '{"ahead_by":%d,"files":%s}\n' "$ahead" "$files"
+      ;;
     "GET $formula?ref=base-commit") content "$state/main.rb" ;;
     "GET $formula?ref=env-vault-$RELEASE_TAG") content "$state/branch.rb" ;;
     "PUT $formula")
@@ -369,6 +386,8 @@ esac
 		main      string // the formula on the tap's main
 		branch    string // the formula on the release branch, or "" without a branch
 		pr        string // the pull request state, or "" without a pull request
+		extra     string // another file the release branch changes
+		ahead     string // the release branch's commits ahead of main, if not derived
 		failure   string
 		mutations []string // the gh calls that change the tap, in order
 	}{
@@ -377,6 +396,9 @@ esac
 		{name: "re-run before the formula commit", main: previous, branch: previous, mutations: []string{"api --method PUT", "pr create", "pr merge"}},
 		{name: "re-run with an open pull request", main: previous, branch: released, pr: "OPEN", mutations: []string{"pr merge"}},
 		{name: "branch with another formula", main: previous, branch: "formula by hand\n", failure: "exists with a different formula"},
+		{name: "branch made in advance with other changes", main: previous, branch: previous, extra: ".github/workflows/test-formula.yml", failure: "changes more than the formula"},
+		{name: "re-run with other changes on the branch", main: previous, branch: released, pr: "OPEN", extra: ".github/workflows/test-formula.yml", failure: "changes more than the formula"},
+		{name: "branch with a second formula commit", main: previous, branch: released, pr: "OPEN", ahead: "2", failure: "changes more than the formula"},
 		{name: "closed pull request", main: previous, branch: released, pr: "CLOSED", failure: "is CLOSED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -392,6 +414,12 @@ esac
 			}
 			if tc.pr != "" {
 				files[filepath.Join(state, "pr")] = tc.pr + "\n"
+			}
+			if tc.extra != "" {
+				files[filepath.Join(state, "extra")] = tc.extra
+			}
+			if tc.ahead != "" {
+				files[filepath.Join(state, "ahead")] = tc.ahead
 			}
 			for path, contents := range files {
 				if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
@@ -430,6 +458,225 @@ esac
 				if got := readFile(t, filepath.Join(state, "branch.rb")); got != released {
 					t.Fatalf("tap branch formula=%q, want the released formula", got)
 				}
+			}
+		})
+	}
+}
+
+// fakeAttestationVerify answers gh attestation verify: it requires exactly the
+// ADR 0012 flags, fails for the files listed in $FAKE_GH_STATE/unattested and
+// records every file it verified.
+const fakeAttestationVerify = `if [[ "$1 $2" == "attestation verify" ]]; then
+  file="$3"
+  shift 3
+  expected=(--repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+    --source-ref refs/heads/main --source-digest "$RELEASE_SHA" --deny-self-hosted-runners)
+  [[ "$*" == "${expected[*]}" ]] || { echo "unexpected verification flags: $*" >&2; exit 3; }
+  if grep -qxF "$(basename "$file")" "$FAKE_GH_STATE/unattested" 2>/dev/null; then
+    echo "no matching attestation" >&2
+    exit 1
+  fi
+  basename "$file" >> "$FAKE_GH_STATE/verified"
+  exit 0
+fi
+`
+
+const releaseTestSHA = "1fd6638295fb616189e66da7cc110cf4831a3d94"
+
+// writeReleaseFiles writes the five archives with their checksum sidecars.
+func writeReleaseFiles(t *testing.T, directory string) {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range releaseAssetNames() {
+		if strings.HasSuffix(name, ".sha256") {
+			continue
+		}
+		path := filepath.Join(directory, name)
+		if err := os.WriteFile(path, []byte("bytes of "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("sha256sum", path).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := strings.Fields(string(out))[0]
+		if err := os.WriteFile(path+".sha256", []byte(digest+"  "+name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func verifiedFiles(t *testing.T, state string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(state, "verified"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	files := strings.Fields(string(data))
+	slices.Sort(files)
+	return files
+}
+
+func releaseArchiveNames() []string {
+	var archives []string
+	for _, name := range releaseAssetNames() {
+		if !strings.HasSuffix(name, ".sha256") {
+			archives = append(archives, name)
+		}
+	}
+	slices.Sort(archives)
+	return archives
+}
+
+func TestReleasePublishVerifiesEveryArchiveAndBinary(t *testing.T) {
+	requireReleaseStepTools(t)
+	script := releaseStepScript(t, "publish", "Verify the attestations")
+	for _, tc := range []struct {
+		name       string
+		unattested string
+	}{
+		{name: "all attested"},
+		{name: "unattested binary", unattested: "env-vault-windows-amd64.exe"},
+		{name: "unattested archive", unattested: "env-vault-darwin-arm64.tar.gz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			temp := t.TempDir()
+			state := t.TempDir()
+			writeReleaseFiles(t, filepath.Join(temp, "archives"))
+			subjects := filepath.Join(temp, "subjects")
+			if err := os.MkdirAll(subjects, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var want []string
+			for _, target := range []string{"linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"} {
+				binary := "env-vault-" + target
+				if strings.HasPrefix(target, "windows-") {
+					binary += ".exe"
+				}
+				if err := os.WriteFile(filepath.Join(subjects, binary), []byte(binary), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				want = append(want, binary)
+			}
+			want = append(want, releaseArchiveNames()...)
+			slices.Sort(want)
+			if tc.unattested != "" {
+				if err := os.WriteFile(filepath.Join(state, "unattested"), []byte(tc.unattested+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			out, ok := runReleaseStep(t, script, temp, fakeAttestationVerify+"echo \"unexpected gh $*\" >&2\nexit 2\n", map[string]string{
+				"RUNNER_TEMP": temp, "RELEASE_SHA": releaseTestSHA, "FAKE_GH_STATE": state,
+			})
+			if tc.unattested != "" {
+				if ok || !strings.Contains(out, "no matching attestation") {
+					t.Fatalf("publish accepted the unattested %s:\n%s", tc.unattested, out)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("attestation check failed:\n%s", out)
+			}
+			if got := verifiedFiles(t, state); !slices.Equal(got, want) {
+				t.Fatalf("verified %v, want every archive and binary %v", got, want)
+			}
+		})
+	}
+}
+
+func TestReleaseVerifyStepChecksThePublishedRelease(t *testing.T) {
+	requireReleaseStepTools(t)
+	script := releaseStepScript(t, "verify", "Verify the published release")
+	const fakeGH = fakeAttestationVerify + `state="$FAKE_GH_STATE"
+case "$1" in
+  api)
+    case "$2" in
+      "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG") cat "$state/release.json" ;;
+      "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG")
+        [[ "$3 $4" == "--jq .sha" ]] || exit 2
+        cat "$state/tagged"
+        ;;
+      *) echo "unexpected gh api $2" >&2; exit 2 ;;
+    esac
+    ;;
+  release)
+    [[ "$2 $3 $4 $5 $6" == "download $RELEASE_TAG --repo $GITHUB_REPOSITORY --dir" ]] || exit 2
+    mkdir -p "$7"
+    cp "$state/assets/"* "$7/"
+    ;;
+  *) echo "unexpected gh $*" >&2; exit 2 ;;
+esac
+`
+	for _, tc := range []struct {
+		name    string
+		release string
+		tagged  string
+		change  func(t *testing.T, assets string)
+		failure string
+	}{
+		{name: "published immutable release"},
+		{name: "draft", release: `{"draft":true,"immutable":false}`, failure: "is not published as an immutable release"},
+		{name: "mutable release", release: `{"draft":false,"immutable":false}`, failure: "is not published as an immutable release"},
+		{name: "tag on another commit", tagged: "0000000000000000000000000000000000000000", failure: "not " + releaseTestSHA},
+		{name: "missing checksum", change: func(t *testing.T, assets string) {
+			if err := os.Remove(filepath.Join(assets, "env-vault-linux-arm64.tar.gz.sha256")); err != nil {
+				t.Fatal(err)
+			}
+		}, failure: "differ from the expected ten"},
+		{name: "extra asset", change: func(t *testing.T, assets string) {
+			if err := os.WriteFile(filepath.Join(assets, "env-vault-darwin-arm64-fixed.tar.gz"), []byte("by hand"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, failure: "differ from the expected ten"},
+		{name: "archive that does not match its checksum", change: func(t *testing.T, assets string) {
+			if err := os.WriteFile(filepath.Join(assets, "env-vault-darwin-amd64.tar.gz"), []byte("other bytes"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, failure: "FAILED"},
+		{name: "unattested archive", change: func(t *testing.T, assets string) {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(assets), "unattested"), []byte("env-vault-windows-amd64.zip\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, failure: "no matching attestation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			temp := t.TempDir()
+			state := t.TempDir()
+			assets := filepath.Join(state, "assets")
+			writeReleaseFiles(t, assets)
+			if tc.change != nil {
+				tc.change(t, assets)
+			}
+			release, tagged := tc.release, tc.tagged
+			if release == "" {
+				release = `{"draft":false,"immutable":true}`
+			}
+			if tagged == "" {
+				tagged = releaseTestSHA
+			}
+			for name, contents := range map[string]string{"release.json": release + "\n", "tagged": tagged + "\n"} {
+				if err := os.WriteFile(filepath.Join(state, name), []byte(contents), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			out, ok := runReleaseStep(t, script, temp, fakeGH, map[string]string{
+				"RUNNER_TEMP": temp, "RELEASE_TAG": "v0.4.0", "RELEASE_SHA": releaseTestSHA, "FAKE_GH_STATE": state,
+			})
+			if tc.failure != "" {
+				if ok || !strings.Contains(out, tc.failure) {
+					t.Fatalf("verify succeeded=%v, want a failure containing %q:\n%s", ok, tc.failure, out)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("verify failed:\n%s", out)
+			}
+			if got, want := verifiedFiles(t, state), releaseArchiveNames(); !slices.Equal(got, want) {
+				t.Fatalf("verified %v, want every archive %v", got, want)
 			}
 		})
 	}
