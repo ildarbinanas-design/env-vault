@@ -87,9 +87,10 @@ rebuilt only on macOS.
   the owner deletes that asset from the draft, which can still change, and
   re-runs the failed job. After the release is published, a re-run of
   `publish` only confirms that the published files are these files.
-- `tap` re-runs reuse the branch and the pull request of an earlier attempt.
-  If the tap's `test` check fails, the pull request stays open. Fix the cause
-  and let auto-merge finish.
+- `tap` re-runs reuse the branch and the pull request of an earlier attempt,
+  but only a branch that changes nothing except the formula. A re-run never
+  moves the tap back to an older version. If the tap's `test` check fails, the
+  pull request stays open. Fix the cause and let auto-merge finish.
 - A tag cannot be moved or deleted. If a tagged version cannot be finished,
   abandon it: label its release pull request `autorelease: abandoned`, fix the
   defect, and release the next version.

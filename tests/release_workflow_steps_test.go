@@ -361,6 +361,7 @@ if [[ "$1" == api ]]; then
         files="$(jq -c --arg extra "$(cat "$state/extra")" '. + [{filename: $extra}]' <<< "$files")"
       fi
       if [[ -f "$state/ahead" ]]; then ahead="$(cat "$state/ahead")"; fi
+      if [[ -f "$state/compare.json" ]]; then cat "$state/compare.json"; exit 0; fi
       printf '{"ahead_by":%d,"files":%s}\n' "$ahead" "$files"
       ;;
     "GET $formula?ref=base-commit") content "$state/main.rb" ;;
@@ -380,7 +381,10 @@ case "$1 $2" in
   *) echo "unexpected gh $*" >&2; exit 2 ;;
 esac
 `
-	const released, previous = "formula for v0.4.0\n", "formula for v0.3.4\n"
+	formula := func(version, extra string) string {
+		return "class EnvVault < Formula\n  version \"" + version + "\"\n" + extra + "end\n"
+	}
+	released, previous := formula("0.4.0", ""), formula("0.3.4", "")
 	for _, tc := range []struct {
 		name      string
 		main      string // the formula on the tap's main
@@ -388,17 +392,25 @@ esac
 		pr        string // the pull request state, or "" without a pull request
 		extra     string // another file the release branch changes
 		ahead     string // the release branch's commits ahead of main, if not derived
+		compare   string // the whole compare response, if not derived
 		failure   string
 		mutations []string // the gh calls that change the tap, in order
 	}{
 		{name: "tap already current", main: released},
+		{name: "tap already newer", main: formula("0.10.0", "")},
+		{name: "tap formula without a version", main: "class EnvVault < Formula\nend\n", failure: "has no version line"},
+		{name: "same version with another formula", main: formula("0.4.0", "  # edited\n"), mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "new release", main: previous, mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "re-run before the formula commit", main: previous, branch: previous, mutations: []string{"api --method PUT", "pr create", "pr merge"}},
 		{name: "re-run with an open pull request", main: previous, branch: released, pr: "OPEN", mutations: []string{"pr merge"}},
-		{name: "branch with another formula", main: previous, branch: "formula by hand\n", failure: "exists with a different formula"},
+		{name: "branch with another formula", main: previous, branch: formula("0.4.0", "  # by hand\n"), failure: "exists with a different formula"},
 		{name: "branch made in advance with other changes", main: previous, branch: previous, extra: ".github/workflows/test-formula.yml", failure: "changes more than the formula"},
 		{name: "re-run with other changes on the branch", main: previous, branch: released, pr: "OPEN", extra: ".github/workflows/test-formula.yml", failure: "changes more than the formula"},
-		{name: "branch with a second formula commit", main: previous, branch: released, pr: "OPEN", ahead: "2", failure: "changes more than the formula"},
+		{name: "branch updated with a merge commit", main: previous, branch: released, pr: "OPEN", ahead: "2", mutations: []string{"pr merge"}},
+		{name: "branch that renames another file onto the formula", main: previous, branch: released, pr: "OPEN",
+			compare: `{"ahead_by":1,"files":[{"filename":"Formula/env-vault.rb","previous_filename":".github/workflows/test-formula.yml"}]}`,
+			failure: "changes more than the formula"},
+		{name: "compare response without files", main: previous, branch: released, pr: "OPEN", compare: `{"ahead_by":1}`, failure: "changes more than the formula"},
 		{name: "closed pull request", main: previous, branch: released, pr: "CLOSED", failure: "is CLOSED"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -420,6 +432,9 @@ esac
 			}
 			if tc.ahead != "" {
 				files[filepath.Join(state, "ahead")] = tc.ahead
+			}
+			if tc.compare != "" {
+				files[filepath.Join(state, "compare.json")] = tc.compare + "\n"
 			}
 			for path, contents := range files {
 				if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {

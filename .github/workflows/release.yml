@@ -342,8 +342,12 @@ jobs:
           while IFS= read -r name; do
             [[ -z "$name" ]] || uploaded["$name"]=1
           done <<< "$names"
+          declare -A built=()
+          for file in "$RUNNER_TEMP"/archives/*; do
+            built["$(basename "$file")"]=1
+          done
           for name in "${!uploaded[@]}"; do
-            [[ -f "$RUNNER_TEMP/archives/$name" ]] ||
+            [[ -n "${built[$name]:-}" ]] ||
               { echo "release $RELEASE_TAG has an unexpected asset $name" >&2; exit 1; }
           done
           existing="$RUNNER_TEMP/existing"
@@ -462,14 +466,22 @@ jobs:
             echo "the tap already has the $RELEASE_TAG formula"
             exit 0
           fi
+          # A late re-run of an older release must not move the tap back.
+          tapped="$(sed -n 's/^  version "\([0-9][0-9.]*\)"$/\1/p' "$current")"
+          [[ -n "$tapped" ]] || { echo "the tap's formula has no version line" >&2; exit 1; }
+          if [[ "$(printf '%s\n' "$tapped" "${RELEASE_TAG#v}" | sort -V | tail -n 1)" != "${RELEASE_TAG#v}" ]]; then
+            echo "the tap already has the newer version $tapped"
+            exit 0
+          fi
           # A re-run finds the branch from an earlier attempt, with or without
           # its formula commit. Anyone who can write to the tap could have
-          # created it, so it may change nothing but the formula. A new branch
-          # is read at its base commit.
+          # created it, so the squash merge may change nothing but the formula.
+          # A new branch is read at its base commit.
           ref="$branch"
           if gh api "repos/$TAP_REPOSITORY/branches/$branch" > /dev/null 2>&1; then
             gh api "repos/$TAP_REPOSITORY/compare/main...$branch" |
-              jq -e --arg formula "$FORMULA_PATH" '.ahead_by <= 1 and ([(.files // [])[].filename] - [$formula] == [])' > /dev/null ||
+              jq -e --arg formula "$FORMULA_PATH" \
+                '.files | arrays | [.[] | .filename, (.previous_filename // empty)] - [$formula] == []' > /dev/null ||
               { echo "tap branch $branch changes more than the formula" >&2; exit 1; }
           else
             ref="$(gh api "repos/$TAP_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
