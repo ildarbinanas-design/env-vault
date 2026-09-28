@@ -71,10 +71,37 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		wf.Concurrency.CancelInProgress.Value || wf.Concurrency.CancelInProgress.Expression != "" {
 		t.Fatalf("release concurrency=%+v, want queued runs that are never cancelled", wf.Concurrency)
 	}
-	for _, forbidden := range []string{"--clobber", "-X ", "-X=", "pull_request_target"} {
+	for _, forbidden := range []string{"--clobber", "-X ", "-X=", "pull_request_target", "always()", "continue-on-error", "--admin", "or true"} {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("release workflow contains %q", forbidden)
 		}
+	}
+	// Every error message ends its step.
+	if messages := regexp.MustCompile(`>&2;`).FindAllStringIndex(raw, -1); len(messages) != len(regexp.MustCompile(`>&2; exit 1(; \}| ;;)`).FindAllStringIndex(raw, -1)) {
+		t.Fatal("release workflow prints an error without failing its step")
+	}
+	for name, want := range map[string]map[string]string{
+		"build": {
+			"GOTOOLCHAIN": "local",
+			"RELEASE":     "${{ needs.release-please.outputs.release == 'true' }}",
+			"RELEASE_TAG": "${{ needs.release-please.outputs.tag }}",
+			"RELEASE_SHA": "${{ needs.release-please.outputs.sha }}",
+		},
+		"publish": {"RELEASE_TAG": "${{ needs.release-please.outputs.tag }}", "RELEASE_SHA": "${{ needs.release-please.outputs.sha }}"},
+		"verify":  {"RELEASE_TAG": "${{ needs.release-please.outputs.tag }}", "RELEASE_SHA": "${{ needs.release-please.outputs.sha }}"},
+		"tap": {
+			"RELEASE_TAG":    "${{ needs.release-please.outputs.tag }}",
+			"TAP_REPOSITORY": "ildarbinanas-design/homebrew-tap",
+			"FORMULA_PATH":   "Formula/env-vault.rb",
+		},
+	} {
+		if !mapsEqual(wf.Jobs[name].Env, want) {
+			t.Fatalf("%s env=%v, want %v", name, wf.Jobs[name].Env, want)
+		}
+	}
+	// Only the tap's pull request lookup may treat a failure as an answer.
+	if strings.Count(raw, "|| true") != 1 || !strings.Contains(raw, `--json state --jq .state 2>/dev/null || true)"`) {
+		t.Fatal("release workflow ignores a failure outside the tap's pull request lookup")
 	}
 
 	jobNames := make([]string, 0, len(wf.Jobs))
@@ -140,10 +167,17 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	}
 	find := namedStep(t, planning, "Find a draft release for this commit")
 	if !containsAll(find.Run,
+		`previous="$(git show HEAD^:.release-please-manifest.json | jq -er '."."')"`,
+		`refs="$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")"`,
+		`release=false`,
 		`[[ "$tagged" == "$GITHUB_SHA" ]]`,
 		`gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft`,
+		`elif [[ "$version" != "$previous" ]]; then`,
 		`printf 'sha=%s\n' "$GITHUB_SHA"`) {
-		t.Fatalf("only the run for the tagged commit may build the release: %s", find.Run)
+		t.Fatalf("only the run for the tagged commit may build the release, and a release commit without its tag must fail: %s", find.Run)
+	}
+	if checkout := planning.Steps[1]; checkout.Uses != checkoutAction || checkout.With["fetch-depth"] != "2" {
+		t.Fatalf("release-please must check out the commit with its parent to see a version change: %v", checkout.With)
 	}
 	if !mapsEqual(planning.Outputs, map[string]string{
 		"release": "${{ steps.find.outputs.release }}",
@@ -189,8 +223,15 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"build", "package", "publish", "tap"} {
-		if checkout := wf.Jobs[name].Steps[0]; checkout.Uses != checkoutAction || checkout.With["persist-credentials"] != "false" {
-			t.Fatalf("%s job must start with the pinned checkout and must not persist credentials", name)
+		if checkout := wf.Jobs[name].Steps[0]; checkout.Uses != checkoutAction {
+			t.Fatalf("%s job must start with the pinned checkout", name)
+		}
+	}
+	for name, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			if strings.HasPrefix(step.Uses, "actions/checkout@") && (step.Uses != checkoutAction || step.With["persist-credentials"] != "false") {
+				t.Fatalf("%s checks out with %q and persist-credentials=%q", name, step.Uses, step.With["persist-credentials"])
+			}
 		}
 	}
 	if build.Steps[0].With["fetch-depth"] != "0" {
@@ -226,12 +267,13 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		`reported="$("$binary" --version | awk '{ print $1; exit }')"`,
 		`[[ -n "$module_version" && "$reported" == "$module_version" ]] ||`,
 		`{ echo "--version reports '$reported', build information has '$module_version'" >&2; exit 1; }`,
+		`if [[ "$RELEASE" == "true" ]]; then`,
 		`[[ "$module_version" == "$RELEASE_TAG" ]] ||`) {
 		t.Fatalf("build step must build outside the checkout, reject a modified tree and compare --version with Go build information and the tag: %s", buildStep.Run)
 	}
 	assertStepOrder(t, build, "Check that the tag points to this commit", "Build and check the build information", "Upload the binary", "Smoke-test the real OS secret store")
-	if upload := namedStep(t, build, "Upload the binary"); upload.Uses != uploadArtifactAction || upload.With["name"] != "binary-${{ matrix.id }}" {
-		t.Fatalf("build uploads %q as %q", upload.Uses, upload.With["name"])
+	if upload := namedStep(t, build, "Upload the binary"); upload.Uses != uploadArtifactAction || upload.With["name"] != "binary-${{ matrix.id }}" || upload.With["overwrite"] != "true" {
+		t.Fatalf("build uploads %q as %q with overwrite=%q", upload.Uses, upload.With["name"], upload.With["overwrite"])
 	}
 	if smoke := namedStep(t, build, "Smoke-test the real OS secret store"); !strings.Contains(smoke.Run, "scripts/backend-smoke.sh") {
 		t.Fatal("build job must smoke-test the real OS secret store")
@@ -280,7 +322,8 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		t.Fatalf("publish must verify every attestation with the ADR 0012 flags: %s", verify.Run)
 	}
 	if upload := namedStep(t, publish, "Upload to the draft release and publish it"); !containsAll(upload.Run,
-		`[[ "$draft" == "true" ]]`,
+		`if [[ "$draft" != "true" ]]; then`,
+		`(( ${#pending[@]} == 0 )) ||`,
 		`cmp -s "$file" "$existing/$name"`,
 		`gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "${pending[@]}"`,
 		`gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false`) {
@@ -288,8 +331,8 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	}
 
 	verify := wf.Jobs["verify"]
-	if !slices.Equal([]string(verify.Needs), []string{"release-please", "publish"}) {
-		t.Fatalf("verify needs=%v", verify.Needs)
+	if !slices.Equal([]string(verify.Needs), []string{"release-please", "publish"}) || verify.If != "" {
+		t.Fatalf("verify needs=%v if=%q, want it only after every earlier job succeeded", verify.Needs, verify.If)
 	}
 	if step := namedStep(t, verify, "Verify the published release"); !containsAll(step.Run, append([]string{
 		`.draft == false and .immutable == true`,
@@ -301,8 +344,8 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	}
 
 	tap := wf.Jobs["tap"]
-	if !slices.Equal([]string(tap.Needs), []string{"release-please", "verify"}) || tap.Env["TAP_REPOSITORY"] != "ildarbinanas-design/homebrew-tap" {
-		t.Fatalf("tap needs=%v env=%v", tap.Needs, tap.Env)
+	if !slices.Equal([]string(tap.Needs), []string{"release-please", "verify"}) || tap.If != "" || tap.Env["TAP_REPOSITORY"] != "ildarbinanas-design/homebrew-tap" {
+		t.Fatalf("tap needs=%v if=%q env=%v, want it only after a verified release", tap.Needs, tap.If, tap.Env)
 	}
 	if step := namedStep(t, tap, "Generate the formula from the published release"); !strings.Contains(step.Run, `scripts/release/homebrew-formula.sh "$RELEASE_TAG" "$assets" "$RUNNER_TEMP/env-vault.rb"`) {
 		t.Fatalf("tap must generate the formula from the published release: %s", step.Run)

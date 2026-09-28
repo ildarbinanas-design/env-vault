@@ -40,10 +40,11 @@ Homebrew, and everything else stays proportionate to a single-user tool
 - A release file is genuine only if `gh attestation verify` passes with the
   release workflow and `main` pinned (ADR 0012):
   `--signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml
-  --source-ref refs/heads/main`. `-R` alone accepts attestations from any
-  branch.
+  --source-ref refs/heads/main --deny-self-hosted-runners`. `-R` alone accepts
+  attestations from any branch.
 - Release mutations are never blindly retried after an ambiguous result. A
-  failed release is resumed by re-running the failed job of the same run.
+  failed release is resumed with "Re-run failed jobs" on the same run, never
+  "Re-run all jobs" (see `RELEASING.md`).
 - The release audit trail is the GitHub Releases page, the attestations, and
   ordinary git and pull request history. The published `release-evidence`
   branch and the durable evidence artifacts already in Actions storage are

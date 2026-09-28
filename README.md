@@ -120,7 +120,8 @@ including one installed by Homebrew:
 gh attestation verify "$(command -v env-vault)" \
   --repo ildarbinanas-design/env-vault \
   --signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml \
-  --source-ref refs/heads/main
+  --source-ref refs/heads/main \
+  --deny-self-hosted-runners
 ```
 
 Releases up to v0.3.4 were built by the previous pipeline and do not verify

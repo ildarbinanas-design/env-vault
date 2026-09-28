@@ -41,7 +41,8 @@ User documentation gives this command:
 gh attestation verify "$(command -v env-vault)" \
   --repo ildarbinanas-design/env-vault \
   --signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml \
-  --source-ref refs/heads/main
+  --source-ref refs/heads/main \
+  --deny-self-hosted-runners
 ```
 
 ## Considered options

@@ -54,11 +54,15 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The parent shows whether this commit changed the version.
+          fetch-depth: "2"
           persist-credentials: "false"
 
       # Runs are not strictly ordered, so the run that created the draft may
       # belong to another commit. Only the run for the tagged commit builds, so
-      # its attestations name exactly the released commit.
+      # its attestations name exactly the released commit. The run for the
+      # commit that changed the version fails unless the tag points to it, so a
+      # release never stops silently.
       - id: find
         name: Find a draft release for this commit
         shell: bash
@@ -68,8 +72,14 @@ jobs:
           set -euo pipefail
           version="$(jq -er '."."' .release-please-manifest.json)"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "manifest version '$version' is invalid" >&2; exit 1; }
+          previous="$(git show HEAD^:.release-please-manifest.json | jq -er '."."')"
           tag="v$version"
-          tagged="$(git ls-remote origin "refs/tags/$tag" | awk '{ print $1 }')"
+          # An annotated tag is listed a second time, peeled to its commit.
+          refs="$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")"
+          tagged="$(awk -v plain="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+            $2 == plain { commit = $1 }
+            $2 == peeled { peeled_commit = $1 }
+            END { print (peeled_commit != "" ? peeled_commit : commit) }' <<< "$refs")"
           release=false
           if [[ "$tagged" == "$GITHUB_SHA" ]]; then
             draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" ||
@@ -79,6 +89,9 @@ jobs:
             else
               echo "release $tag is already published"
             fi
+          elif [[ "$version" != "$previous" ]]; then
+            echo "this commit releases $tag, but the tag points to '${tagged:-nothing}' (see RELEASING.md)" >&2
+            exit 1
           fi
           {
             printf 'release=%s\n' "$release"
@@ -197,6 +210,8 @@ jobs:
           path: ${{ runner.temp }}/release/${{ matrix.id }}/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 7
+          # A re-run of this job replaces the binary of its failed attempt.
+          overwrite: "true"
 
       - name: Smoke-test the real OS secret store
         shell: bash
@@ -320,7 +335,6 @@ jobs:
         run: |
           set -euo pipefail
           draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
-          [[ "$draft" == "true" ]] || { echo "release $RELEASE_TAG is not a draft" >&2; exit 1; }
           # A re-run may find assets from an earlier attempt: keep them only if
           # their bytes are identical, and never replace them.
           names="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
@@ -340,6 +354,14 @@ jobs:
               pending+=("$file")
             fi
           done
+          # An earlier attempt may have published the release but failed after
+          # that. The release then must already hold exactly these files.
+          if [[ "$draft" != "true" ]]; then
+            (( ${#pending[@]} == 0 )) ||
+              { echo "release $RELEASE_TAG is published without ${pending[*]##*/}" >&2; exit 1; }
+            echo "release $RELEASE_TAG is already published with these files"
+            exit 0
+          fi
           if (( ${#pending[@]} > 0 )); then
             gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "${pending[@]}"
           fi
@@ -436,16 +458,21 @@ jobs:
             echo "the tap already has the $RELEASE_TAG formula"
             exit 0
           fi
-          if gh api "repos/$TAP_REPOSITORY/branches/$branch" > /dev/null 2>&1; then
-            # A re-run finds the branch from an earlier attempt.
-            gh api "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH?ref=$branch" --jq .content | base64 -d > "$current"
-            cmp -s "$formula" "$current" ||
-              { echo "tap branch $branch exists with a different formula" >&2; exit 1; }
-          else
-            base="$(gh api "repos/$TAP_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
-            blob="$(gh api "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH?ref=$base" --jq .sha)"
+          # A re-run finds the branch from an earlier attempt, with or without
+          # its formula commit. A new branch is read at its base commit.
+          ref="$branch"
+          if ! gh api "repos/$TAP_REPOSITORY/branches/$branch" > /dev/null 2>&1; then
+            ref="$(gh api "repos/$TAP_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
             gh api --method POST "repos/$TAP_REPOSITORY/git/refs" \
-              -f "ref=refs/heads/$branch" -f "sha=$base" > /dev/null
+              -f "ref=refs/heads/$branch" -f "sha=$ref" > /dev/null
+          fi
+          on_branch="$RUNNER_TEMP/branch.json"
+          gh api "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH?ref=$ref" > "$on_branch"
+          jq -er .content "$on_branch" | base64 -d > "$RUNNER_TEMP/branch.rb"
+          if ! cmp -s "$formula" "$RUNNER_TEMP/branch.rb"; then
+            cmp -s "$current" "$RUNNER_TEMP/branch.rb" ||
+              { echo "tap branch $branch exists with a different formula" >&2; exit 1; }
+            blob="$(jq -er .sha "$on_branch")"
             gh api --method PUT "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH" \
               -f "message=env-vault $RELEASE_TAG" -f "branch=$branch" -f "sha=$blob" \
               -f "content=$(base64 -w0 "$formula")" > /dev/null

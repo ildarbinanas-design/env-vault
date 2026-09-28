@@ -284,9 +284,11 @@ if a scenario skips unexpectedly, if critical scenario coverage is below 100%,
 or if statement coverage falls below the conservative 60% floor.
 
 CI no longer seals a five-platform matrix proof or feeds a promotion manifest
-(ADR 0011). `validate-matrix` still checks a downloaded set of reports locally.
-It recomputes the semantic suite hash from the exact checkout and rejects
-reports produced by a different runner or scenario implementation:
+(ADR 0011). `validate-matrix` stays for local use until migration step 6
+removes it. It requires reports for all five contract platforms, so it cannot
+check a CI run, which produces three. It recomputes the semantic suite hash from
+the exact checkout and rejects reports produced by a different runner or
+scenario implementation:
 
 ```sh
 GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \

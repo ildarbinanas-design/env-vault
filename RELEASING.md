@@ -25,11 +25,13 @@ does all of it. No workflow runs on a tag.
      --squash --match-head-commit <full-head-sha>
    ```
 
-   Merging it is reserved for the owner (see `AGENTS.md`).
+   Either maintainer may merge it. An agent merges it only on the owner's
+   explicit instruction (see `AGENTS.md`).
 4. The `release.yml` run for the merge commit then works through these jobs:
    - **release-please** tags the merge commit and opens a draft release. Only
      the run for the tagged commit builds, so the attestations name exactly
-     that commit.
+     that commit. The run for the merge commit fails if the tag is missing or
+     points to another commit, so a release never stops silently.
    - **build** stops unless the tag points to the checked-out commit. It builds
      the five targets, checks that the build information is unmodified and
      that `--version` reports the tag, uploads each binary, and smoke-tests the
@@ -56,7 +58,8 @@ shasum -a 256 -c "env-vault-$TARGET.tar.gz.sha256"
 gh attestation verify "env-vault-$TARGET.tar.gz" \
   --repo ildarbinanas-design/env-vault \
   --signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml \
-  --source-ref refs/heads/main
+  --source-ref refs/heads/main \
+  --deny-self-hosted-runners
 ```
 
 An installed binary verifies the same way: pass `"$(command -v env-vault)"`
@@ -71,15 +74,25 @@ rebuilt only on macOS.
 
 ## When a release fails
 
-- Re-run the failed job of the same run. A re-run uses the same workflow file
-  and commit, so it cannot fix a defect in them.
+- Use **Re-run failed jobs** on the same run. A re-run uses the same workflow
+  file and commit, so it cannot fix a defect in them. Do not use **Re-run all
+  jobs** once the release is published: that run finds the published release,
+  skips `verify` and `tap`, and ends green.
+- If the merge commit's run fails because its tag is missing, Release Please
+  did not create it: re-run the failed job. If the tag points to another
+  commit, for example because it was created by hand before the merge, the
+  version cannot be released.
 - `publish` never replaces an uploaded asset. On a re-run it keeps assets whose
-  bytes match and stops on any difference.
+  bytes match and stops on any difference. If an asset in the draft is broken,
+  the owner deletes that asset from the draft, which can still change, and
+  re-runs the failed job. After the release is published, a re-run of
+  `publish` only confirms that the published files are these files.
+- `tap` re-runs reuse the branch and the pull request of an earlier attempt.
+  If the tap's `test` check fails, the pull request stays open. Fix the cause
+  and let auto-merge finish.
 - A tag cannot be moved or deleted. If a tagged version cannot be finished,
   abandon it: label its release pull request `autorelease: abandoned`, fix the
   defect, and release the next version.
-- If the tap's `test` check fails, the tap pull request stays open. Fix the
-  cause and let auto-merge finish.
 
 ## Configuration
 
