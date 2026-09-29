@@ -25,6 +25,10 @@ On Linux, process environment variables may be visible to the same user through 
   pipe or a file and refuses a terminal, which would show the value as it is
   typed; there, omit `--stdin` and use the hidden prompt.
 - Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
+- Windows Credential Manager stores at most 2560 bytes per secret, and names
+  that differ only in case are one secret there. env-vault refuses a larger
+  value with `SECRET_TOO_LARGE`; `import` checks every value before it writes
+  the first one.
 - Secret and service identifiers may use safe slash-separated hierarchy, but absolute paths and empty, `.` or `..` components are rejected before backend access.
 - Config mutations reject symlink targets and use a synced mode-`0600` temporary sibling for same-directory replacement.
 - Environment target names are compared case-insensitively so a profile remains unambiguous when moved to Windows.

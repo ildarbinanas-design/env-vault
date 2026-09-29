@@ -213,6 +213,9 @@ func (a *App) secretSetCommand() *cobra.Command {
 				return backendUnavailable("secret_set", err)
 			}
 			if err := store.Set(ctx, service, name, value); err != nil {
+				if stderrors.Is(err, secretstore.ErrValueTooLarge) {
+					return apperrors.New("secret_set", apperrors.CodeSecretTooLarge, "Secret value is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+				}
 				return backendUnavailable("secret_set", err)
 			}
 			data["action"] = actionCreated

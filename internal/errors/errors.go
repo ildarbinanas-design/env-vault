@@ -23,6 +23,7 @@ const (
 	CodePassphraseInvalid    = "PASSPHRASE_INVALID"
 	CodeRuntimeError         = "RUNTIME_ERROR"
 	CodeSecretExists         = "SECRET_EXISTS"
+	CodeSecretTooLarge       = "SECRET_TOO_LARGE"
 	CodeSecretUnverified     = "SECRET_UNVERIFIED"
 	CodeUsage                = "USAGE"
 )

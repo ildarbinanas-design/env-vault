@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/99designs/keyring"
@@ -20,6 +21,10 @@ import (
 // command forever.
 var backendTimeout = 2 * time.Minute
 
+// winCredMaxValueBytes is CRED_MAX_CREDENTIAL_BLOB_SIZE, the largest value
+// Windows Credential Manager stores.
+const winCredMaxValueBytes = 2560
+
 type Store struct {
 	allowedBackends []keyring.BackendType
 	unavailableErr  error
@@ -27,6 +32,7 @@ type Store struct {
 	passDir         string
 	openKeyring     func(keyring.Config) (keyring.Keyring, error)
 	notFoundCheck   *bool
+	winCredCheck    *bool
 }
 
 // withTimeout runs call and gives up after backendTimeout. The abandoned call
@@ -70,6 +76,11 @@ func NewPass() Store {
 func (s Store) Set(_ context.Context, service, name string, value []byte) error {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return fmt.Errorf("invalid secret name: %w", err)
+	}
+	// Windows Credential Manager refuses a larger value, and the refusal would
+	// otherwise read as an unavailable backend.
+	if limit := s.MaxValueBytes(); limit > 0 && len(value) > limit {
+		return fmt.Errorf("%w: Windows Credential Manager stores at most %d bytes", secretstore.ErrValueTooLarge, limit)
 	}
 	kr, err := s.open(service)
 	if err != nil {
@@ -135,6 +146,11 @@ func (s Store) Exists(_ context.Context, service, name string) (bool, error) {
 	if err != nil {
 		return false, s.backendError(err)
 	}
+	// Windows Credential Manager matches names without regard to case, so
+	// "TOKEN" and "token" are one record there.
+	if s.usesWinCred() {
+		return slices.ContainsFunc(keys, func(key string) bool { return strings.EqualFold(key, name) }), nil
+	}
 	return slices.Contains(keys, name), nil
 }
 
@@ -195,6 +211,28 @@ func (s Store) notFoundMayHideRefusal() bool {
 		return *s.notFoundCheck
 	}
 	return runtime.GOOS == "darwin" && !slices.Equal(s.allowedBackends, []keyring.BackendType{keyring.PassBackend})
+}
+
+// MaxValueBytes returns the largest value the backend stores, or 0 when
+// env-vault knows of no limit. It implements secretstore.ValueLimiter.
+func (s Store) MaxValueBytes() int {
+	if s.usesWinCred() {
+		return winCredMaxValueBytes
+	}
+	return 0
+}
+
+// usesWinCred reports whether the store writes to Windows Credential Manager.
+// On Windows it is the first production backend that opens, and only the
+// explicit pass store leaves it out.
+func (s Store) usesWinCred() bool {
+	if s.winCredCheck != nil {
+		return *s.winCredCheck
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	return len(s.allowedBackends) == 0 || slices.Contains(s.allowedBackends, keyring.WinCredBackend)
 }
 
 func (s Store) open(service string) (keyring.Keyring, error) {
