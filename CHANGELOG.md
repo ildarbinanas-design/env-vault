@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.4...v0.4.0) (2026-09-29)
+
+
+### Features
+
+* **cli:** print the commit and date in --version ([#111](https://github.com/ildarbinanas-design/env-vault/issues/111)) ([d76b6de](https://github.com/ildarbinanas-design/env-vault/commit/d76b6de1bd4132d89b3428a30af694243a70f071))
+
 ## [0.3.4](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.3...v0.3.4) (2026-09-27)
 
 
