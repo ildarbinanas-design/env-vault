@@ -435,13 +435,29 @@ func TestReleasePleaseConfigDraftsReleasesAndTracksVersionedDocs(t *testing.T) {
 	}
 	// Every key must be one of these, so a setting such as last-release-sha,
 	// bootstrap-sha, release-as or skip-github-release cannot slip in.
-	decoder := json.NewDecoder(strings.NewReader(readFile(t, "../release-please-config.json")))
+	data := readFile(t, "../release-please-config.json")
+	decoder := json.NewDecoder(strings.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
 		t.Fatalf("parse release-please-config.json: %v", err)
 	}
-	if decoder.More() {
-		t.Fatal("release-please-config.json holds more than one JSON value")
+	// Go matches keys to the tags above without regard to case, but Release
+	// Please does not: it would ignore "Draft" and use its default. Encoding
+	// the parsed config again must give back exactly the file. Unlike the
+	// decoder, Unmarshal also rejects anything after the first JSON value.
+	var file, parsed any
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("encode release config: %v", err)
+	}
+	if err := json.Unmarshal([]byte(data), &file); err != nil {
+		t.Fatalf("parse release-please-config.json: %v", err)
+	}
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatalf("parse encoded release config: %v", err)
+	}
+	if !reflect.DeepEqual(file, parsed) {
+		t.Fatalf("release-please-config.json differs from the checked config, for example in a key's case:\nfile   %v\nparsed %v", file, parsed)
 	}
 	isTrue := func(value *bool) bool { return value != nil && *value }
 	isFalse := func(value *bool) bool { return value != nil && !*value }
