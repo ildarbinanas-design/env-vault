@@ -108,6 +108,7 @@ esac
 		{name: "re-run after publishing", release: true, tag: "head", draft: "false", assets: "10", want: "false"},
 		{name: "published before the run built it", release: true, tag: "head", draft: "false", assets: "0", failure: "was published with 0 files instead of 10"},
 		{name: "published with some files", release: true, tag: "head", draft: "false", assets: "9", failure: "was published with 9 files instead of 10"},
+		{name: "published with an extra file", release: true, tag: "head", draft: "false", assets: "11", failure: "was published with 11 files instead of 10"},
 		{name: "published release with unreadable files", release: true, tag: "head", draft: "false", failure: "its files cannot be read"},
 		{name: "unreadable release", release: true, tag: "head", failure: "its release cannot be read"},
 		{name: "release commit without its tag", release: true, failure: "but the tag points to 'nothing'"},

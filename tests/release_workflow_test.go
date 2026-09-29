@@ -172,6 +172,7 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		`release=false`,
 		`[[ "$tagged" == "$GITHUB_SHA" ]]`,
 		`gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft`,
+		`gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length'`,
 		`elif [[ "$version" != "$previous" ]]; then`,
 		`printf 'sha=%s\n' "$GITHUB_SHA"`) {
 		t.Fatalf("only the run for the tagged commit may build the release, and a release commit without its tag must fail: %s", find.Run)

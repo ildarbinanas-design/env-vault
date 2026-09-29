@@ -41,7 +41,9 @@ does all of it. No workflow runs on a tag.
      uploads the ten files to the draft and publishes it. Releases are
      immutable, so the published release can no longer change. Never publish
      the draft by hand: a release published before its run built it stays
-     without files, and the run for its commit fails at **release-please**.
+     without files, the run for its commit fails at **release-please** or
+     **publish**, and the version has to be abandoned (see
+     [When a release fails](#when-a-release-fails)).
    - **verify** checks that the release is published and immutable and that
      the tag points to the release commit. It downloads the ten assets and
      checks their checksums and attestations.
