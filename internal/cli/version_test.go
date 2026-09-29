@@ -2,71 +2,146 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
 
-func TestVersionFlagMatchesVersionCommand(t *testing.T) {
-	oldVersion := Version
-	Version = "v-test"
-	t.Cleanup(func() { Version = oldVersion })
+const testCommit = "1fd6638295fb616189e66da7cc110cf4831a3d94"
 
-	var flagOut, flagErr bytes.Buffer
-	if code := Run([]string{"--version"}, strings.NewReader(""), &flagOut, &flagErr); code != 0 {
-		t.Fatalf("--version code=%d stderr=%s", code, flagErr.String())
+// stubBuildInfo makes the version command read info instead of the test
+// binary's own build information.
+func stubBuildInfo(t *testing.T, info *debug.BuildInfo) {
+	t.Helper()
+	old := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return info, info != nil }
+	t.Cleanup(func() { readBuildInfo = old })
+}
+
+func releaseBuildInfo(version string, modified bool) *debug.BuildInfo {
+	info := &debug.BuildInfo{Main: debug.Module{Path: "github.com/ildarbinanas-design/env-vault", Version: version}}
+	info.Settings = []debug.BuildSetting{
+		{Key: "vcs", Value: "git"},
+		{Key: "vcs.revision", Value: testCommit},
+		{Key: "vcs.time", Value: "2026-09-27T10:16:51Z"},
+		{Key: "vcs.modified", Value: map[bool]string{true: "true", false: "false"}[modified]},
 	}
-	var cmdOut, cmdErr bytes.Buffer
-	if code := Run([]string{"version"}, strings.NewReader(""), &cmdOut, &cmdErr); code != 0 {
-		t.Fatalf("version code=%d stderr=%s", code, cmdErr.String())
+	return info
+}
+
+func runVersion(t *testing.T, args ...string) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	if code := Run(args, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("%v code=%d stderr=%s", args, code, stderr.String())
 	}
-	const want = "v-test\n"
-	if flagOut.String() != want {
-		t.Fatalf("--version output=%q, want exact value %q", flagOut.String(), want)
+	if stderr.Len() != 0 {
+		t.Fatalf("%v wrote to stderr: %q", args, stderr.String())
 	}
-	if cmdOut.String() != want {
-		t.Fatalf("version output=%q, want exact value %q", cmdOut.String(), want)
+	return stdout.String()
+}
+
+func versionData(t *testing.T, args ...string) map[string]any {
+	t.Helper()
+	var envelope struct {
+		OK      bool           `json:"ok"`
+		Command string         `json:"command"`
+		Data    map[string]any `json:"data"`
 	}
-	if flagErr.String() != "" || cmdErr.String() != "" {
-		t.Fatalf("unexpected stderr: --version=%q version=%q", flagErr.String(), cmdErr.String())
+	output := runVersion(t, args...)
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatalf("decode %v output %q: %v", args, output, err)
+	}
+	if !envelope.OK || envelope.Command != "version" {
+		t.Fatalf("%v envelope=%+v", args, envelope)
+	}
+	return envelope.Data
+}
+
+func TestVersionPrintsTheVersionCommitAndDate(t *testing.T) {
+	stubBuildInfo(t, releaseBuildInfo("v0.4.0", false))
+
+	const want = "v0.4.0 (1fd6638, 2026-09-27)\n"
+	if got := runVersion(t, "--version"); got != want {
+		t.Fatalf("--version output=%q, want %q", got, want)
+	}
+	if got := runVersion(t, "version"); got != want {
+		t.Fatalf("version output=%q, want %q", got, want)
 	}
 }
 
-func TestVersionFlagJSON(t *testing.T) {
-	oldVersion := Version
-	Version = "v-test"
-	t.Cleanup(func() { Version = oldVersion })
+func TestVersionJSONCarriesTheBuildInformation(t *testing.T) {
+	stubBuildInfo(t, releaseBuildInfo("v0.4.0", false))
 
-	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"--json", "--version"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
-		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	want := map[string]any{
+		"version":     "v0.4.0",
+		"commit":      testCommit,
+		"commit_time": "2026-09-27T10:16:51Z",
+		"modified":    false,
+		"go":          runtime.Version(),
+		"platform":    runtime.GOOS + "/" + runtime.GOARCH,
 	}
-	for _, want := range []string{`"version":"v-test"`, `"command":"version"`} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing %s: %s", want, stdout.String())
+	for _, args := range [][]string{{"--json", "--version"}, {"--json", "version"}} {
+		got := versionData(t, args...)
+		if len(got) != len(want) {
+			t.Fatalf("%v data=%v, want exactly %v", args, got, want)
+		}
+		for key, value := range want {
+			if got[key] != value {
+				t.Fatalf("%v data[%q]=%v, want %v", args, key, got[key], value)
+			}
 		}
 	}
 }
 
-func TestResolveVersionPrefersLdflags(t *testing.T) {
-	oldVersion := Version
-	Version = "v9.9.9"
-	t.Cleanup(func() { Version = oldVersion })
+func TestVersionOfAModifiedTreeReportsIt(t *testing.T) {
+	stubBuildInfo(t, releaseBuildInfo("v0.4.1-0.20260928101010-1fd6638295fb+dirty", true))
 
-	if got := resolveVersion(); got != "v9.9.9" {
-		t.Fatalf("resolveVersion()=%q, want ldflags value v9.9.9", got)
+	if got, want := runVersion(t, "--version"), "v0.4.1-0.20260928101010-1fd6638295fb+dirty (1fd6638, 2026-09-27)\n"; got != want {
+		t.Fatalf("--version output=%q, want %q", got, want)
+	}
+	if got := versionData(t, "--json", "version")["modified"]; got != true {
+		t.Fatalf("modified=%v, want true", got)
 	}
 }
 
-func TestResolveVersionSourceBuildIsNeverEmpty(t *testing.T) {
-	oldVersion := Version
-	Version = "dev"
-	t.Cleanup(func() { Version = oldVersion })
+func TestVersionWithoutVCSInformationHasNoCommit(t *testing.T) {
+	stubBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: "v0.4.0"}})
 
-	got := resolveVersion()
-	if got == "" || got == "(devel)" {
-		t.Fatalf("resolveVersion()=%q, want a usable fallback", got)
+	if got, want := runVersion(t, "--version"), "v0.4.0\n"; got != want {
+		t.Fatalf("--version output=%q, want %q", got, want)
 	}
-	if !strings.HasPrefix(got, "dev") && !strings.HasPrefix(got, "v") {
-		t.Fatalf("resolveVersion()=%q, want dev* or v* form", got)
+	data := versionData(t, "--json", "version")
+	for _, key := range []string{"commit", "commit_time", "modified"} {
+		if value, ok := data[key]; ok {
+			t.Fatalf("data[%q]=%v, want no commit fields without VCS information", key, value)
+		}
+	}
+}
+
+func TestVersionOfADevelopmentBuildIsDev(t *testing.T) {
+	for name, info := range map[string]*debug.BuildInfo{
+		"no build information": nil,
+		"devel module version": {Main: debug.Module{Version: "(devel)"}},
+		"empty module version": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubBuildInfo(t, info)
+			if got := runVersion(t, "--version"); got != "dev\n" {
+				t.Fatalf("--version output=%q, want %q", got, "dev\n")
+			}
+		})
+	}
+}
+
+func TestVersionOfThisTestBinaryIsUsable(t *testing.T) {
+	build := currentBuild()
+	if build.Version == "" || build.Version == "(devel)" {
+		t.Fatalf("version=%q, want a usable value", build.Version)
+	}
+	if build.Go != runtime.Version() {
+		t.Fatalf("go=%q, want %q", build.Go, runtime.Version())
 	}
 }

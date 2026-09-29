@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -18,9 +19,7 @@ import (
 )
 
 func TestVersionCommandUsesBuildVersion(t *testing.T) {
-	oldVersion := Version
-	Version = "v-test"
-	t.Cleanup(func() { Version = oldVersion })
+	stubBuildInfo(t, &debug.BuildInfo{Main: debug.Module{Version: "v-test"}})
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--json", "version"}, strings.NewReader(""), &stdout, &stderr)

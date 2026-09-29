@@ -111,8 +111,8 @@ func writeMachine(w io.Writer, env Envelope, jsonl bool) error {
 func (r Renderer) writeHumanSuccess(env Envelope) error {
 	switch env.Command {
 	case "version":
-		if value, ok := stringFromData(env.Data, "version"); ok {
-			_, err := fmt.Fprintln(r.stdout, value)
+		if line, ok := versionLine(env.Data); ok {
+			_, err := fmt.Fprintln(r.stdout, line)
 			return err
 		}
 	case "secret_set":
@@ -190,6 +190,27 @@ func (r Renderer) writeOutputFile(env Envelope) error {
 		return err
 	}
 	return os.Chmod(r.options.OutputPath, 0o600)
+}
+
+// versionLine renders the version, the short commit and the commit date on one
+// line, for example "v0.4.0 (1fd6638, 2026-09-27)".
+func versionLine(data any) (string, bool) {
+	version, ok := stringFromData(data, "version")
+	if !ok {
+		return "", false
+	}
+	commit, _ := stringFromData(data, "commit")
+	if commit == "" {
+		return version, true
+	}
+	if len(commit) > 7 {
+		commit = commit[:7]
+	}
+	commitTime, _ := stringFromData(data, "commit_time")
+	if parsed, err := time.Parse(time.RFC3339, commitTime); err == nil {
+		return fmt.Sprintf("%s (%s, %s)", version, commit, parsed.UTC().Format(time.DateOnly)), true
+	}
+	return fmt.Sprintf("%s (%s)", version, commit), true
 }
 
 func stringFromData(data any, key string) (string, bool) {

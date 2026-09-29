@@ -98,26 +98,42 @@ func testCLIHelpSubcommands(sc *scenario) {
 }
 
 func testCLIVersionForms(sc *scenario) {
+	build := sc.suite.build
 	flag := sc.run("--version")
 	command := sc.run("version")
 	wantExit(sc.t, flag, 0)
 	wantExit(sc.t, command, 0)
 	wantEmpty(sc.t, flag.Stderr, "--version stderr")
 	wantEmpty(sc.t, command.Stderr, "version stderr")
-	if strings.TrimSpace(flag.Stdout) == "" || flag.Stdout != command.Stdout {
-		sc.t.Fatalf("version forms differ: flag=%q command=%q", flag.Stdout, command.Stdout)
+	if want := build.line() + "\n"; flag.Stdout != want || command.Stdout != want {
+		sc.t.Fatalf("version forms: flag=%q command=%q, want %q from the binary's build information", flag.Stdout, command.Stdout, want)
 	}
-	if sc.suite.version != "" && strings.TrimSpace(flag.Stdout) != sc.suite.version {
-		sc.t.Fatalf("version output=%q, want exact %q from %s", strings.TrimSpace(flag.Stdout), sc.suite.version, versionEnv)
+	// In CI the binary under test must name the commit CI checked out.
+	if commit := os.Getenv(commitEnv); commit != "" && build.commit != commit {
+		sc.t.Fatalf("binary commit=%q, want %q from %s", build.commit, commit, commitEnv)
 	}
-	jsonResult := sc.run("--json", "--version")
-	wantExit(sc.t, jsonResult, 0)
-	got := parseEnvelope(sc.t, jsonResult)
-	if !got.OK || got.Command != "version" || got.Error != nil {
-		sc.t.Fatalf("unexpected JSON version envelope: %#v", got)
+	want := map[string]any{"version": build.version, "go": build.goVersion, "platform": build.platform}
+	if build.commit != "" {
+		want["commit"] = build.commit
+		want["commit_time"] = build.commitTime
+		want["modified"] = build.modified
 	}
-	if version, ok := parseDataMap(sc.t, got)["version"].(string); !ok || version != strings.TrimSpace(flag.Stdout) {
-		sc.t.Fatalf("JSON/text version mismatch")
+	for _, args := range [][]string{{"--json", "--version"}, {"--json", "version"}} {
+		result := sc.run(args...)
+		wantExit(sc.t, result, 0)
+		got := parseEnvelope(sc.t, result)
+		if !got.OK || got.Command != "version" || got.Error != nil {
+			sc.t.Fatalf("unexpected JSON version envelope: %#v", got)
+		}
+		data := parseDataMap(sc.t, got)
+		if len(data) != len(want) {
+			sc.t.Fatalf("%v data=%v, want exactly %v", args, data, want)
+		}
+		for key, value := range want {
+			if data[key] != value {
+				sc.t.Fatalf("%v data[%q]=%v, want %v", args, key, data[key], value)
+			}
+		}
 	}
 }
 
