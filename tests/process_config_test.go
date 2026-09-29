@@ -28,10 +28,9 @@ func TestLocalConfigAndTransactionLockAreIgnored(t *testing.T) {
 type dependabotConfig struct {
 	Version int `yaml:"version"`
 	Updates []struct {
-		PackageEcosystem   string `yaml:"package-ecosystem"`
-		Directory          string `yaml:"directory"`
-		VersioningStrategy string `yaml:"versioning-strategy"`
-		Schedule           struct {
+		PackageEcosystem string `yaml:"package-ecosystem"`
+		Directory        string `yaml:"directory"`
+		Schedule         struct {
 			Interval string `yaml:"interval"`
 		} `yaml:"schedule"`
 		CommitMessage struct {
@@ -59,6 +58,20 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 	if config.Version != 2 {
 		t.Fatalf("Dependabot version=%d, want 2", config.Version)
 	}
+	// Dependabot rejects the whole file when an ecosystem sets an option it
+	// does not support, and then opens no version updates at all. It rejected
+	// versioning-strategy for Go modules, whatever its value.
+	var raw struct {
+		Updates []map[string]any `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse Dependabot config: %v", err)
+	}
+	for _, update := range raw.Updates {
+		if _, ok := update["versioning-strategy"]; ok {
+			t.Fatalf("Dependabot %v sets versioning-strategy, which Dependabot rejects for it", update["package-ecosystem"])
+		}
+	}
 	want := map[string]bool{"gomod": false, "github-actions": false}
 	for _, update := range config.Updates {
 		if _, ok := want[update.PackageEcosystem]; !ok {
@@ -72,12 +85,6 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 		wantPrefix := map[string]string{"gomod": "fix", "github-actions": "ci"}[update.PackageEcosystem]
 		if update.CommitMessage.Prefix != wantPrefix || update.CommitMessage.Include != "scope" {
 			t.Fatalf("Dependabot %s commit message=%+v, want %s(deps)", update.PackageEcosystem, update.CommitMessage, wantPrefix)
-		}
-		// Dependabot rejects the whole file when an ecosystem sets an option
-		// it does not support, and then opens no version updates at all. It
-		// rejected versioning-strategy for Go modules.
-		if update.VersioningStrategy != "" {
-			t.Fatalf("Dependabot %s sets versioning-strategy=%q, which Dependabot rejects for it", update.PackageEcosystem, update.VersioningStrategy)
 		}
 		if update.PackageEcosystem == "gomod" {
 			group, ok := update.Groups["go-modules-minor-patch"]
