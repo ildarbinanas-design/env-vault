@@ -95,9 +95,12 @@ rebuilt only on macOS.
   but only a branch that changes nothing except the formula. A re-run never
   moves the tap back to an older version. If the tap's `test` check fails, the
   pull request stays open. Fix the cause and let auto-merge finish.
+- A draft published by hand before its run uploaded the files can never get
+  them, so every re-run fails again at **release-please** or **publish**.
+  Abandon that version as described next.
 - A tag cannot be moved or deleted. If a tagged version cannot be finished,
   abandon it: label its release pull request `autorelease: abandoned`, fix the
-  defect, and release the next version.
+  defect if there is one, and release the next version.
 
 ## Configuration
 
