@@ -64,7 +64,7 @@ while IFS= read -r line; do :; done
 		passCmd:         passPath,
 		passDir:         passDir,
 	}
-	if err := store.Set(context.Background(), "team/dev", "registry/token", []byte(testutil.EphemeralValue(t))); err != nil {
+	if err := store.Set(context.Background(), "team", "dev/registry/token", []byte(testutil.EphemeralValue(t))); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 	data, err := os.ReadFile(logPath)

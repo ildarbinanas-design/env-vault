@@ -32,6 +32,13 @@ On Linux, process environment variables may be visible to the same user through 
   env-vault refuses a larger value with `SECRET_TOO_LARGE`; `import` checks
   every value it will write before it writes the first one.
 - Secret and service identifiers may use safe slash-separated hierarchy, but absolute paths and empty, `.` or `..` components are rejected before backend access.
+- The Linux `pass` backend is the exception for service names: it keeps the
+  service and the secret name in one path, so the service `team/ci` with the
+  secret `tok` and the service `team` with the secret `ci/tok` would be one
+  entry. With `pass`, a service name cannot contain a slash, and a service with
+  a slash never falls back to `pass`. The secret `tok` stored earlier under the
+  service `team/ci` stays in the store and is reachable as the service `team`
+  with the secret `ci/tok`.
 - Config mutations reject symlink targets and use a synced mode-`0600` temporary sibling for same-directory replacement.
 - Environment target names are compared case-insensitively so a profile remains unambiguous when moved to Windows.
 - The `file`/plaintext keyring backend is not production-enabled.

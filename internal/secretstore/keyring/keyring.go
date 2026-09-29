@@ -247,6 +247,17 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 	if openKeyring == nil {
 		openKeyring = keyring.Open
 	}
+	// pass cannot keep a service name with a slash apart from secret names,
+	// so such a service never falls back to it. An empty list must never
+	// reach keyring.Open, which would then try every backend it knows.
+	var withoutPass bool
+	if secretstore.ValidatePassServiceName(service) != nil && slices.Contains(allowed, keyring.PassBackend) {
+		allowed = slices.DeleteFunc(allowed, func(backend keyring.BackendType) bool { return backend == keyring.PassBackend })
+		if len(allowed) == 0 {
+			return nil, fmt.Errorf("invalid service name: %w", secretstore.ErrPassServiceSlash)
+		}
+		withoutPass = true
+	}
 	cfg := keyring.Config{
 		ServiceName:            service,
 		AllowedBackends:        allowed,
@@ -262,6 +273,14 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 		PassPrefix: "env-vault/" + service,
 	}
 	kr, err := withTimeout(func() (keyring.Keyring, error) { return openKeyring(cfg) })
+	if withoutPass && stderrors.Is(err, keyring.ErrNoAvailImpl) {
+		// Tell a missing backend apart from one that is only pass.
+		passCfg := cfg
+		passCfg.AllowedBackends = []keyring.BackendType{keyring.PassBackend}
+		if _, passErr := withTimeout(func() (keyring.Keyring, error) { return openKeyring(passCfg) }); passErr == nil {
+			return nil, s.backendError(secretstore.ErrPassServiceSlash)
+		}
+	}
 	if stderrors.Is(err, keyring.ErrNoAvailImpl) || stderrors.Is(err, secretstore.ErrTimeout) {
 		return nil, s.backendError(err)
 	}

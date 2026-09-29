@@ -27,6 +27,9 @@ var (
 	ErrUnreadable = errors.New("secret exists but the backend did not return it")
 	// ErrValueTooLarge reports a value larger than the backend can store.
 	ErrValueTooLarge = errors.New("secret value is larger than the backend stores")
+	// ErrPassServiceSlash reports a service name the pass backend cannot keep
+	// apart from secret names; see ValidatePassServiceName.
+	ErrPassServiceSlash = errors.New("the pass backend keeps the service and the secret name in one path, so a service name cannot contain a slash there")
 )
 
 const (
@@ -35,6 +38,7 @@ const (
 	TimeoutBackendRemediation    = "Answer the system keychain prompt or unlock the keychain, then retry"
 	UnreadableBackendRemediation = "Allow env-vault in the system keychain prompt or unlock the keychain, then retry"
 	ValueTooLargeRemediation     = "Windows Credential Manager stores at most 2560 bytes per secret; store a shorter value"
+	PassServiceRemediation       = "Use a service name without a slash with the pass backend"
 )
 
 func BackendRemediation(err error) string {
@@ -43,6 +47,8 @@ func BackendRemediation(err error) string {
 		return TimeoutBackendRemediation
 	case errors.Is(err, ErrUnreadable):
 		return UnreadableBackendRemediation
+	case errors.Is(err, ErrPassServiceSlash):
+		return PassServiceRemediation
 	case errors.Is(err, ErrPassUnavailable):
 		return PassBackendRemediation
 	}
@@ -106,6 +112,18 @@ func ValidateServiceName(service string) error {
 	}
 	if err := validateSlashPath("service name", service); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ValidatePassServiceName rejects a service name that the pass backend cannot
+// keep apart from secret names. pass stores a secret at
+// env-vault/<service>/<name>, and both parts may contain slashes, so the
+// service "team/ci" with the secret "tok" and the service "team" with the
+// secret "ci/tok" would be one entry.
+func ValidatePassServiceName(service string) error {
+	if strings.Contains(service, "/") {
+		return ErrPassServiceSlash
 	}
 	return nil
 }
