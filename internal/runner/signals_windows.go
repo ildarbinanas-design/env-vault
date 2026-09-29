@@ -33,6 +33,12 @@ func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 	}
 }
 
+// SignalName describes sig. A child on Windows never dies by signal, so this
+// is never part of a COMMAND_FAILED record there.
+func SignalName(sig os.Signal) string {
+	return sig.String()
+}
+
 // terminatingSignal reports the signal that killed the child. Windows
 // processes do not die by signal.
 func terminatingSignal(*os.ProcessState) (syscall.Signal, bool) {

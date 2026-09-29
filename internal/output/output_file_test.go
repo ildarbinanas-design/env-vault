@@ -19,6 +19,10 @@ func TestOutputFileReplacesTargetWithPrivateMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"ok":true,"command":"old"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	renderer := New(&bytes.Buffer{}, &bytes.Buffer{}, Options{Quiet: true, OutputPath: path})
 	if err := renderer.Success("secret_check", map[string]any{"name": "nexus-token"}, nil); err != nil {
 		t.Fatalf("success: %v", err)
@@ -29,6 +33,11 @@ func TestOutputFileReplacesTargetWithPrivateMode(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A reader of the old file never sees a truncated one: the file is
+	// replaced, not rewritten in place.
+	if os.SameFile(before, info) {
+		t.Fatal("the output file was rewritten in place instead of replaced")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("output file mode=%v, want 0600", info.Mode().Perm())
@@ -78,13 +87,18 @@ func TestCommandFailedWritesOnlyTheOutputFile(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "meta.json")
 	var stdout, stderr bytes.Buffer
-	New(&stdout, &stderr, Options{JSON: true, OutputPath: path}).CommandFailed("exec", map[string]any{"exit_code": 7}, 7)
+	New(&stdout, &stderr, Options{JSON: true, OutputPath: path}).CommandFailed("exec", map[string]any{"exit_code": 7}, 7, "")
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q, want both empty", stdout.String(), stderr.String())
 	}
 	env := readOutputFile(t, path)
 	if env.OK || env.Command != "exec" || env.Error == nil || env.Error.Code != apperrors.CodeCommandFailed || env.Error.Message != "Command exited with status 7" {
 		t.Fatalf("output file envelope: %#v", env)
+	}
+
+	New(&stdout, &stderr, Options{OutputPath: path}).CommandFailed("exec", nil, 143, "SIGTERM")
+	if env := readOutputFile(t, path); env.Error == nil || env.Error.Message != "Command was killed by SIGTERM (status 143)" {
+		t.Fatalf("output file envelope for a signal: %#v", env)
 	}
 }
 
@@ -94,7 +108,7 @@ func TestCommandFailedReportsAnUnwritableFileOnlyWhenVerbose(t *testing.T) {
 	dir := t.TempDir()
 	for _, verbose := range []bool{false, true} {
 		var stdout, stderr bytes.Buffer
-		New(&stdout, &stderr, Options{OutputPath: dir, Verbose: verbose}).CommandFailed("exec", nil, 3)
+		New(&stdout, &stderr, Options{OutputPath: dir, Verbose: verbose}).CommandFailed("exec", nil, 3, "")
 		if stdout.Len() != 0 {
 			t.Fatalf("verbose=%v stdout=%q", verbose, stdout.String())
 		}

@@ -610,10 +610,12 @@ func (a *App) execCommand() *cobra.Command {
 			if status, ok := apperrors.ExitStatusFrom(err); ok {
 				// The command was killed by a signal.
 				data["exit_code"] = status.Code
+				signalName := ""
 				if status.Signal != nil {
-					data["signal"] = status.Signal.String()
+					signalName = runner.SignalName(status.Signal)
+					data["signal"] = signalName
 				}
-				a.renderer().CommandFailed("exec", data, status.Code)
+				a.renderer().CommandFailed("exec", data, status.Code, signalName)
 				return err
 			}
 			if err != nil {
@@ -621,7 +623,7 @@ func (a *App) execCommand() *cobra.Command {
 			}
 			if exitCode != 0 {
 				data["exit_code"] = exitCode
-				a.renderer().CommandFailed("exec", data, exitCode)
+				a.renderer().CommandFailed("exec", data, exitCode, "")
 				return apperrors.NewExitStatus(exitCode)
 			}
 			return a.renderer().Success("exec", data, nil)

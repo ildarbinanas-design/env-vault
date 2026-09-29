@@ -89,13 +89,18 @@ func (r Renderer) Error(command string, err *apperrors.AppError) error {
 }
 
 // CommandFailed records in the --output file that the command exec ran exited
-// with a non-zero status. It writes nothing to stdout or stderr: there a caller
-// sees only the command's own output, and env-vault exits with its status. As
-// for errors, a failure to write the file is reported only with --verbose.
-func (r Renderer) CommandFailed(command string, data any, exitCode int) {
+// with a non-zero status, or was killed by the named signal. It writes nothing
+// to stdout or stderr: there a caller sees only the command's own output, and
+// env-vault exits with its status. As for errors, a failure to write the file
+// is reported only with --verbose.
+func (r Renderer) CommandFailed(command string, data any, exitCode int, signalName string) {
+	message := fmt.Sprintf("Command exited with status %d", exitCode)
+	if signalName != "" {
+		message = fmt.Sprintf("Command was killed by %s (status %d)", signalName, exitCode)
+	}
 	obj := &ErrorObject{
 		Code:        apperrors.CodeCommandFailed,
-		Message:     fmt.Sprintf("Command exited with status %d", exitCode),
+		Message:     message,
 		Remediation: "Inspect the command's output",
 	}
 	env := r.envelope(false, command, data, nil, obj)
