@@ -19,10 +19,7 @@ func TestOutputFileReplacesTargetWithPrivateMode(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"ok":true,"command":"old"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := statOpenFile(t, path)
 	renderer := New(&bytes.Buffer{}, &bytes.Buffer{}, Options{Quiet: true, OutputPath: path})
 	if err := renderer.Success("secret_check", map[string]any{"name": "nexus-token"}, nil); err != nil {
 		t.Fatalf("success: %v", err)
@@ -116,6 +113,23 @@ func TestCommandFailedReportsAnUnwritableFileOnlyWhenVerbose(t *testing.T) {
 			t.Fatalf("verbose=%v stderr=%q", verbose, stderr.String())
 		}
 	}
+}
+
+// statOpenFile describes the file at path through a handle that is closed
+// before it returns. On Windows, os.Stat reads the file's identity only when
+// os.SameFile asks, by path, and would then describe the replacement instead.
+func statOpenFile(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
 }
 
 func readOutputFile(t *testing.T, path string) Envelope {

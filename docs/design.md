@@ -117,7 +117,9 @@ every other command (see Output Schema) and never prints a secret value.
     loop stops as it would without env-vault. Other signals, a SIGHUP or SIGINT
     inherited as ignored, and running as PID 1 exit with 128+n instead. A
     failed child is recorded in the `--output` file as `COMMAND_FAILED` (see
-    Output Schema); stdout and stderr carry only the child's own output.
+    Output Schema); stdout and stderr carry only the child's own output,
+    except that `--verbose` reports `OUTPUT_WRITE_FAILED` if the file cannot
+    be written. The previous record then stays.
 
 `env-vault exec ... -- bash -lc ...` is allowed because the user explicitly supplied the shell.
 
