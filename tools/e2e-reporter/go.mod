@@ -1,6 +1,6 @@
 module github.com/ildarbinanas-design/env-vault/tools/e2e-reporter
 
-go 1.26.5
+go 1.26.8
 
 require (
 	github.com/bitfield/gotestdox v0.2.2 // indirect

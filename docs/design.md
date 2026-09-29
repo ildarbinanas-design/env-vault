@@ -205,7 +205,7 @@ The public module path is:
 github.com/ildarbinanas-design/env-vault
 ```
 
-The module requires the exact stable Go 1.26.5 patch. That version was selected
+The module requires the exact stable Go 1.26.8 patch. That version was selected
 from the official [Go release history](https://go.dev/doc/devel/release), and
 the migration follows the [Go 1.26 release notes](https://go.dev/doc/go1.26).
 CI reads the version from `go.mod`, so the compiler recorded in every artifact

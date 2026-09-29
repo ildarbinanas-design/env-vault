@@ -1,6 +1,6 @@
 module github.com/ildarbinanas-design/env-vault
 
-go 1.26.5
+go 1.26.8
 
 require (
 	github.com/99designs/keyring v1.2.2
