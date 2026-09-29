@@ -87,6 +87,12 @@ jobs:
             if [[ "$draft" == "true" ]]; then
               release=true
             else
+              # Releases are immutable, so a release published before its run
+              # built it stays without files (see RELEASING.md).
+              assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')" ||
+                { echo "release $tag is published, but its files cannot be read" >&2; exit 1; }
+              [[ "$assets" == "10" ]] ||
+                { echo "release $tag was published with $assets files instead of 10 (see RELEASING.md)" >&2; exit 1; }
               echo "release $tag is already published"
             fi
           elif [[ "$version" != "$previous" ]]; then
