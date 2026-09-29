@@ -133,17 +133,21 @@ func TestVerifyStoredSecretRejectsWriteThatDidNotTakeEffect(t *testing.T) {
 		{"backend failure", droppingStore{err: backendErr}, apperrors.CodeBackendUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := verifyStoredSecret(context.Background(), tc.store, "env-vault", "nexus-token", written)
+			err := verifyStoredSecret(context.Background(), tc.store, "env-vault", "nexus-token", written, actionOverwritten)
 			appErr, ok := apperrors.From(err)
 			if !ok || appErr.Code != tc.code {
 				t.Fatalf("err=%v, want code %s", err, tc.code)
+			}
+			// The write already took effect; the error must say so.
+			if !strings.Contains(appErr.Message, "nexus-token was overwritten, but reading it back") {
+				t.Fatalf("message=%q, want it to say the value was overwritten", appErr.Message)
 			}
 			testutil.AssertNotContains(t, "verify error", appErr.Error(), string(written))
 			testutil.AssertNotContains(t, "verify error", appErr.Error(), string(previous))
 		})
 	}
 
-	if err := verifyStoredSecret(context.Background(), droppingStore{value: written}, "env-vault", "nexus-token", written); err != nil {
+	if err := verifyStoredSecret(context.Background(), droppingStore{value: written}, "env-vault", "nexus-token", written, actionCreated); err != nil {
 		t.Fatalf("matching read-back rejected: %v", err)
 	}
 }

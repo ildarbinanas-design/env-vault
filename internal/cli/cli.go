@@ -222,12 +222,13 @@ func (a *App) secretSetCommand() *cobra.Command {
 				}
 				return backendUnavailable("secret_set", err)
 			}
-			data["action"] = actionCreated
+			action := actionCreated
 			if existed {
-				data["action"] = actionOverwritten
+				action = actionOverwritten
 			}
+			data["action"] = action
 			if verify {
-				if err := verifyStoredSecret(ctx, store, service, name, value); err != nil {
+				if err := verifyStoredSecret(ctx, store, service, name, value, action); err != nil {
 					return err
 				}
 			}
@@ -853,17 +854,18 @@ func backendUnavailable(command string, err error) *apperrors.AppError {
 // verifyStoredSecret reads the value just written and compares it in constant
 // time, so secret set --verify can prove the write took effect without
 // printing or digesting the value. The read-back copy is cleared before return.
-func verifyStoredSecret(ctx context.Context, store secretstore.Store, service, name string, want []byte) error {
+// Every failure says what the write did, because it already took effect.
+func verifyStoredSecret(ctx context.Context, store secretstore.Store, service, name string, want []byte, action string) error {
 	got, err := store.Get(ctx, service, name)
 	defer clear(got)
 	if stderrors.Is(err, secretstore.ErrNotFound) {
-		return apperrors.SecretUnverified("secret_set", name)
+		return apperrors.SecretUnverified("secret_set", name, action)
 	}
 	if err != nil {
-		return backendUnavailable("secret_set", err)
+		return apperrors.BackendUnavailable("secret_set", "Secret "+name+" was "+action+", but reading it back failed", secretstore.BackendRemediation(err), err)
 	}
 	if subtle.ConstantTimeCompare(got, want) != 1 {
-		return apperrors.SecretUnverified("secret_set", name)
+		return apperrors.SecretUnverified("secret_set", name, action)
 	}
 	return nil
 }
