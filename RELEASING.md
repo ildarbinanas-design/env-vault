@@ -39,7 +39,9 @@ does all of it. No workflow runs on a tag.
    - **publish** packages the five archives deterministically, attests the
      archives and the binaries, and verifies those attestations. It then
      uploads the ten files to the draft and publishes it. Releases are
-     immutable, so the published release can no longer change.
+     immutable, so the published release can no longer change. Never publish
+     the draft by hand: a release published before its run built it stays
+     without files, and the run for its commit fails at **release-please**.
    - **verify** checks that the release is published and immutable and that
      the tag points to the release commit. It downloads the ten assets and
      checks their checksums and attestations.

@@ -82,6 +82,11 @@ func TestReleaseFindStepBuildsOnlyTheTaggedReleaseCommit(t *testing.T) {
 	requireReleaseStepTools(t)
 	script := releaseStepScript(t, "release-please", "Find a draft release for this commit")
 	const fakeGH = `[[ "$1 $2" == "release view" ]] || { echo "unexpected gh $*" >&2; exit 2; }
+if [[ " $* " == *" --json assets "* ]]; then
+  [[ -n "${FAKE_ASSETS:-}" ]] || { echo "release not found" >&2; exit 1; }
+  echo "$FAKE_ASSETS"
+  exit 0
+fi
 case "${FAKE_DRAFT:-}" in
   true | false) echo "$FAKE_DRAFT" ;;
   *) echo "release not found" >&2; exit 1 ;;
@@ -92,6 +97,7 @@ esac
 		release bool   // the last commit changes the version
 		tag     string // where the version's tag is: "", "head", "annotated" or "parent"
 		draft   string // what gh reports as isDraft, or "" when the release cannot be read
+		assets  string // how many files gh reports, or "" when they cannot be read
 		want    string // the release output, or "" when the step must fail
 		failure string
 	}{
@@ -99,7 +105,10 @@ esac
 		{name: "ordinary commit after a release", tag: "parent", want: "false"},
 		{name: "release commit with its draft", release: true, tag: "head", draft: "true", want: "true"},
 		{name: "annotated tag on the release commit", release: true, tag: "annotated", draft: "true", want: "true"},
-		{name: "re-run after publishing", release: true, tag: "head", draft: "false", want: "false"},
+		{name: "re-run after publishing", release: true, tag: "head", draft: "false", assets: "10", want: "false"},
+		{name: "published before the run built it", release: true, tag: "head", draft: "false", assets: "0", failure: "was published with 0 files instead of 10"},
+		{name: "published with some files", release: true, tag: "head", draft: "false", assets: "9", failure: "was published with 9 files instead of 10"},
+		{name: "published release with unreadable files", release: true, tag: "head", draft: "false", failure: "its files cannot be read"},
 		{name: "unreadable release", release: true, tag: "head", failure: "its release cannot be read"},
 		{name: "release commit without its tag", release: true, failure: "but the tag points to 'nothing'"},
 		{name: "tag made by hand on another commit", release: true, tag: "parent", draft: "true", failure: "but the tag points to"},
@@ -146,7 +155,7 @@ esac
 			output := filepath.Join(dir, "output")
 			head := stepGit(t, work, "rev-parse", "HEAD")
 			out, ok := runReleaseStep(t, script, work, fakeGH, map[string]string{
-				"GITHUB_SHA": head, "GITHUB_OUTPUT": output, "FAKE_DRAFT": tc.draft,
+				"GITHUB_SHA": head, "GITHUB_OUTPUT": output, "FAKE_DRAFT": tc.draft, "FAKE_ASSETS": tc.assets,
 			})
 			if tc.want == "" {
 				if ok || !strings.Contains(out, tc.failure) {
