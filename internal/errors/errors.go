@@ -10,6 +10,7 @@ const (
 	CodeBackendUnavailable   = "BACKEND_UNAVAILABLE"
 	CodeBundleAuthFailed     = "BUNDLE_AUTH_FAILED"
 	CodeBundleInvalid        = "BUNDLE_INVALID"
+	CodeCommandFailed        = "COMMAND_FAILED"
 	CodeCommandNotExecutable = "COMMAND_NOT_EXECUTABLE"
 	CodeCommandNotFound      = "COMMAND_NOT_FOUND"
 	CodeConfigInvalid        = "CONFIG_INVALID"

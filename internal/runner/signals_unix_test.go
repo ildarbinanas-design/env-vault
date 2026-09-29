@@ -210,3 +210,16 @@ func TestExitBySignalEndsTheProcessWithThatSignal(t *testing.T) {
 		t.Fatalf("helper status = %v, want killed by SIGTERM", exitErr.ProcessState)
 	}
 }
+
+func TestSignalNameUsesTheConventionalName(t *testing.T) {
+	for sig, want := range map[os.Signal]string{
+		syscall.SIGTERM:     "SIGTERM",
+		syscall.SIGKILL:     "SIGKILL",
+		syscall.SIGUSR1:     "SIGUSR1",
+		syscall.Signal(200): syscall.Signal(200).String(),
+	} {
+		if got := SignalName(sig); got != want {
+			t.Errorf("SignalName(%d)=%q, want %q", sig, got, want)
+		}
+	}
+}

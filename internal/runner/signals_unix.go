@@ -89,6 +89,17 @@ func forwardSignals(process *os.Process, ch chan os.Signal) func() {
 	}
 }
 
+// SignalName returns the conventional name of sig, such as "SIGTERM", or
+// Go's description of it when the name is unknown.
+func SignalName(sig os.Signal) string {
+	if s, ok := sig.(syscall.Signal); ok {
+		if name := unix.SignalName(s); name != "" {
+			return name
+		}
+	}
+	return sig.String()
+}
+
 // terminatingSignal reports the signal that killed the child, if any.
 func terminatingSignal(state *os.ProcessState) (syscall.Signal, bool) {
 	status, ok := state.Sys().(syscall.WaitStatus)

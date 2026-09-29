@@ -115,7 +115,11 @@ every other command (see Output Schema) and never prints a secret value.
 10. Propagate the child exit code. On Unix, a child killed by SIGHUP, SIGINT,
     SIGTERM, or SIGKILL ends env-vault with the same signal, so a calling shell
     loop stops as it would without env-vault. Other signals, a SIGHUP or SIGINT
-    inherited as ignored, and running as PID 1 exit with 128+n instead.
+    inherited as ignored, and running as PID 1 exit with 128+n instead. A
+    failed child is recorded in the `--output` file as `COMMAND_FAILED` (see
+    Output Schema); stdout and stderr carry only the child's own output,
+    except that `--verbose` reports `OUTPUT_WRITE_FAILED` if the file cannot
+    be written. The previous record then stays.
 
 `env-vault exec ... -- bash -lc ...` is allowed because the user explicitly supplied the shell.
 
@@ -184,6 +188,14 @@ Error:
 ```
 
 Human errors use the same fields: `code`, `message`, and `remediation`.
+
+A command that `exec` ran and that failed is recorded only in the `--output`
+file. Unlike other errors, it keeps the exec metadata in `data`, with the
+status in `exit_code` and, for a signal, its name in `signal`:
+
+```json
+{"ok":false,"command":"exec","timestamp":"RFC3339","data":{"argv":["make","test"],"clean_env":false,"dry_run":false,"exit_code":143,"override_env":false,"secret_count":1,"secrets":[{"env":"NEXUS_TOKEN","fingerprint":"<record id>","name":"nexus-token","record_id":"<record id>"}],"signal":"SIGTERM"},"warnings":[],"error":{"code":"COMMAND_FAILED","message":"Command was killed by SIGTERM (status 143)","remediation":"Inspect the command's output"}}
+```
 
 ## Dry Run
 

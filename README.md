@@ -357,6 +357,23 @@ Errors are structured with `code`, `message`, and `remediation`.
 
 For `exec`, child stdout and stderr are inherited by default and may break machine-readable stdout. Prefer `--quiet --output file` for exec metadata without an additional envelope on stdout.
 
+If the command exits with a non-zero status, env-vault exits with the same
+status. If a signal kills it, env-vault ends by the same signal where it can,
+and otherwise exits with 128 plus the signal number. The `--output` file then
+records `"ok":false` with the error code `COMMAND_FAILED`, the status in
+`data.exit_code` (128 plus the signal number for a signal) and, for a signal,
+its name in `data.signal`, such as `SIGTERM`. env-vault prints nothing of its
+own to stdout or stderr, except that `--verbose` reports `OUTPUT_WRITE_FAILED`
+on stderr when the file cannot be written; the previous record then stays.
+
+`--output` names a regular file or a new one; missing directories are created
+with mode `0700`. env-vault writes a new file with mode `0600` next to it and
+renames it into place, so a reader never sees a partial record. The directory
+must therefore be writable, and the file belongs to whoever ran env-vault. A symlink, a device such as `/dev/stdout`, or a pipe at
+that path is refused instead of written through. On Windows, a replacement
+blocked by a program that holds the file open, such as a virus scanner, is
+retried for up to a second.
+
 ## Doctor
 
 ```sh

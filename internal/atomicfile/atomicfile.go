@@ -93,11 +93,8 @@ func Write(path string, data []byte) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary file: %w", err)
 	}
-	if err := ValidateTarget(path); err != nil {
+	if err := replace(temporaryPath, path); err != nil {
 		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("replace target: %w", err)
 	}
 	committed = true
 	return nil

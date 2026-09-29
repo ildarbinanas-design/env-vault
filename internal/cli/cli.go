@@ -607,10 +607,23 @@ func (a *App) execCommand() *cobra.Command {
 				return a.renderer().Success("exec", data, nil)
 			}
 			exitCode, err := commandRunner.Run(context.Background(), argv, resolved.Env)
+			if status, ok := apperrors.ExitStatusFrom(err); ok {
+				// The command was killed by a signal.
+				data["exit_code"] = status.Code
+				signalName := ""
+				if status.Signal != nil {
+					signalName = runner.SignalName(status.Signal)
+					data["signal"] = signalName
+				}
+				a.renderer().CommandFailed("exec", data, status.Code, signalName)
+				return err
+			}
 			if err != nil {
 				return err
 			}
 			if exitCode != 0 {
+				data["exit_code"] = exitCode
+				a.renderer().CommandFailed("exec", data, exitCode, "")
 				return apperrors.NewExitStatus(exitCode)
 			}
 			return a.renderer().Success("exec", data, nil)
