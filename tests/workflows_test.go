@@ -390,7 +390,7 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		t.Fatalf("reusable quality expands to %d jobs, want 11", expandedJobs)
 	}
 
-	for _, command := range []string{"go test ./...", "go vet ./...", "go test -race ./..."} {
+	for _, command := range []string{"go test ./...", "go vet ./...", "scripts/vuln-check.sh", "go test -race ./..."} {
 		if !jobRunsExact(wf.Jobs["source-quality"], command) {
 			t.Fatalf("source-quality missing %q", command)
 		}

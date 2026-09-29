@@ -96,6 +96,9 @@ jobs:
       - name: Vet source
         run: go vet ./...
 
+      - name: Check reachable vulnerabilities
+        run: scripts/vuln-check.sh
+
       - name: Run source smoke tests
         run: scripts/smoke.sh
 

@@ -172,10 +172,11 @@ anything; the attestation check above proves where a binary came from.
 
 ## GitHub Builds
 
-Pull-request and `main` CI call `reusable-quality.yml`: source tests, vet, the
-race suite and smoke tests, three native license checks, and a native job for
-each of the five targets that builds the binary and smoke-tests it against the
-platform's real secret store. One target per operating system (linux-amd64,
+Pull-request and `main` CI call `reusable-quality.yml`: source tests, vet, a
+govulncheck scan for reachable known vulnerabilities, the race suite and smoke
+tests, three native license checks, and a native job for each of the five
+targets that builds the binary and smoke-tests it against the platform's real
+secret store. One target per operating system (linux-amd64,
 darwin-arm64, windows-amd64) also runs the full E2E suite against the packaged
 archive. The E2E reporter is built once from an isolated checksum-pinned tool
 module, and each E2E job consumes only its source-SHA- and attempt-qualified
