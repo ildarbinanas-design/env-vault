@@ -185,8 +185,9 @@ while IFS=$'\t' read -r platform_id goos goarch; do
   built=$((built + 1))
 done < <(jq -r '.include[] | [.id, .goos, .goarch] | @tsv' "$matrix_path")
 
-[[ $built -eq 5 ]] || {
-  echo "reporter bundle contains $built platforms, want 5" >&2
+requested="$(jq '.include | length' "$matrix_path")"
+[[ $built -eq $requested ]] || {
+  echo "reporter bundle contains $built platforms, want $requested" >&2
   exit 1
 }
 

@@ -398,7 +398,12 @@ esac
 	}{
 		{name: "tap already current", main: released},
 		{name: "tap already newer", main: formula("0.10.0", "")},
-		{name: "tap formula without a version", main: "class EnvVault < Formula\nend\n", failure: "has no version line"},
+		{name: "tap formula without a version", main: "class EnvVault < Formula\nend\n", failure: "has no single version line"},
+		{name: "tap formula with two version lines", main: formula("0.3.4", "  version \"0.3.5\"\n"), failure: "has no single version line"},
+		// A version nested in a block is not the formula's version.
+		{name: "only a nested version", main: "class EnvVault < Formula\n  resource \"x\" do\n    version \"0.10.0\"\n  end\nend\n", failure: "has no single version line"},
+		{name: "nested version newer than the formula's", main: formula("0.3.4", "  resource \"x\" do\n    version \"0.10.0\"\n  end\n"),
+			mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "same version with another formula", main: formula("0.4.0", "  # edited\n"), mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "new release", main: previous, mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "re-run before the formula commit", main: previous, branch: previous, mutations: []string{"api --method PUT", "pr create", "pr merge"}},

@@ -264,7 +264,7 @@ publishing and receive neither token. Release automation uses no GitHub App.
 
 The release audit trail is the GitHub Releases page, the attestations, and git
 and pull-request history. The append-only evidence ledger that earlier releases
-published was retired on 2026-07-30. Its `release-evidence` branch and durable
-artifacts stay frozen and replayable at tag `pre-trim-2026-07-30`. Required
+published was retired on 2026-07-30; its `release-evidence` branch stays frozen,
+and the code that replayed it is at tag `pre-trim-2026-07-30`. Required
 external settings and credential rotation procedures are documented in
 `docs/release-external-settings.md`.

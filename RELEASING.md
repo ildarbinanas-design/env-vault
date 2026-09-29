@@ -104,9 +104,10 @@ rebuilt only on macOS.
   fine-grained token for this repository that expires every 90 days. The next
   renewal is due before 2026-12-26.
 - The `release` environment holds `HOMEBREW_TAP_TOKEN`, a fine-grained token
-  for `ildarbinanas-design/homebrew-tap`. Until migration step 5 it also admits
-  `v*` tags, so that the switch can still be reverted; after that it admits
-  only `main`.
+  for `ildarbinanas-design/homebrew-tap`. Both environments admit only `main`.
+- [`docs/release-external-settings.md`](docs/release-external-settings.md)
+  lists every external setting, the token permissions, and how to check and
+  rotate them.
 - Immutable releases are enabled for the repository. The `main` ruleset
   requires the `quality-gate`, `pr-title`, `Dependency review`,
   `Analyze (go)`, and `Analyze (actions)` checks.
@@ -124,6 +125,5 @@ rebuilt only on macOS.
 Releases up to v0.3.4 went through the previous pipeline: release planning,
 the tag-triggered publisher, and the repair workflows. Its procedures are in
 [`RELEASING.md` at v0.3.4](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/RELEASING.md).
-The bootstrap, bridge, and legacy workflows and their code stay dormant until
-migration step 6 ([#107](https://github.com/ildarbinanas-design/env-vault/issues/107))
-removes them.
+Migration step 6 ([#107](https://github.com/ildarbinanas-design/env-vault/issues/107))
+removed its workflows and code; git history keeps them.

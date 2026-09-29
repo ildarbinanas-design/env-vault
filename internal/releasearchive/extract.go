@@ -1,5 +1,5 @@
-// Package releasearchive safely extracts the fixed set of env-vault release
-// archives for release-time inspection.
+// Package releasearchive safely extracts one env-vault release archive. The
+// E2E runner uses it to unpack the archive that CI builds.
 package releasearchive
 
 import (
@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 const (
@@ -72,39 +70,11 @@ type extractionState struct {
 	limits     extractionLimits
 }
 
-// ExtractAll extracts exactly the five supported release archives from
-// inputDir. The input directory may also contain their .sha256 sidecars, but
-// no other entries. outputDir must either not exist or be an empty directory.
-func ExtractAll(inputDir, outputDir string, contract releasecontract.Contract) error {
-	if err := contract.Validate(); err != nil {
-		return fmt.Errorf("release contract: %w", err)
-	}
-	archives := archiveSpecs(contract)
-	if err := validateInputDirectory(inputDir, archives); err != nil {
-		return err
-	}
-	if err := prepareOutputDirectory(outputDir); err != nil {
-		return err
-	}
-
-	state := newExtractionState(defaultLimits)
-	for _, spec := range archives {
-		archivePath := filepath.Join(inputDir, spec.name)
-		if err := extractArchive(spec, archivePath, outputDir, state); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ExtractArchive extracts one supported release archive. Its basename must be
 // one of the five fixed release archive names. outputDir must either not exist
 // or be an empty directory.
-func ExtractArchive(archivePath, outputDir string, contract releasecontract.Contract) error {
-	if err := contract.Validate(); err != nil {
-		return fmt.Errorf("release contract: %w", err)
-	}
-	spec, ok := archiveSpecByName(filepath.Base(archivePath), archiveSpecs(contract))
+func ExtractArchive(archivePath, outputDir string) error {
+	spec, ok := archiveSpecByName(filepath.Base(archivePath), archiveSpecs())
 	if !ok {
 		return fmt.Errorf("unsupported release archive name %q", filepath.Base(archivePath))
 	}
@@ -124,14 +94,18 @@ func newExtractionState(limits extractionLimits) *extractionState {
 	}
 }
 
-func archiveSpecs(contract releasecontract.Contract) []archiveSpec {
-	archives := make([]archiveSpec, 0, len(contract.Platforms))
-	for _, platform := range contract.Platforms {
-		format := formatTarGz
-		if platform.ArchiveFormat == "zip" {
-			format = formatZip
+// releaseTargets are the five platforms that release.yml builds.
+var releaseTargets = []string{"linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"}
+
+func archiveSpecs() []archiveSpec {
+	archives := make([]archiveSpec, 0, len(releaseTargets))
+	for _, id := range releaseTargets {
+		spec := archiveSpec{name: "env-vault-" + id + ".tar.gz", root: "env-vault-" + id, format: formatTarGz}
+		if strings.HasPrefix(id, "windows-") {
+			spec.name = "env-vault-" + id + ".zip"
+			spec.format = formatZip
 		}
-		archives = append(archives, archiveSpec{name: platform.Archive, root: "env-vault-" + platform.ID, format: format})
+		archives = append(archives, spec)
 	}
 	return archives
 }
@@ -143,41 +117,6 @@ func archiveSpecByName(name string, archives []archiveSpec) (archiveSpec, bool) 
 		}
 	}
 	return archiveSpec{}, false
-}
-
-func validateInputDirectory(inputDir string, archives []archiveSpec) error {
-	info, err := os.Lstat(inputDir)
-	if err != nil {
-		return fmt.Errorf("input directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("input directory must be a real directory: %s", inputDir)
-	}
-
-	allowed := make(map[string]bool, len(archives)*2)
-	for _, spec := range archives {
-		allowed[spec.name] = true
-		allowed[spec.name+".sha256"] = true
-	}
-
-	entries, err := os.ReadDir(inputDir)
-	if err != nil {
-		return fmt.Errorf("read input directory: %w", err)
-	}
-	for _, entry := range entries {
-		if !allowed[entry.Name()] {
-			return fmt.Errorf("unexpected input entry %q", entry.Name())
-		}
-		if err := requireRegularFile(filepath.Join(inputDir, entry.Name())); err != nil {
-			return fmt.Errorf("input entry %s: %w", entry.Name(), err)
-		}
-	}
-	for _, spec := range archives {
-		if err := requireRegularFile(filepath.Join(inputDir, spec.name)); err != nil {
-			return fmt.Errorf("required archive %s: %w", spec.name, err)
-		}
-	}
-	return nil
 }
 
 func prepareOutputDirectory(outputDir string) error {

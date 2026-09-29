@@ -46,16 +46,8 @@ Homebrew, and everything else stays proportionate to a single-user tool
   failed release is resumed with "Re-run failed jobs" on the same run, never
   "Re-run all jobs" (see `RELEASING.md`).
 - The release audit trail is the GitHub Releases page, the attestations, and
-  ordinary git and pull request history. The published `release-evidence`
-  branch and the durable evidence artifacts already in Actions storage are
-  frozen history: never rewrite, extend, or retrofit them.
-- Until migration step 6 (issue #107) removes them, `release/contract.v2.json`,
-  the release Go packages, the `scripts/release/` helpers that `release.yml`
-  does not call, and the bootstrap, bridge, and legacy workflows are dormant
-  code of the old pipeline. Do not extend them.
-- Deleting Actions artifacts is a separate, still-mandatory ceremony: it keeps
-  its byte-exact `ПОДТВЕРЖДАЮ DELETE ACTIONS ARTIFACTS …` confirmation, because
-  that operation is irreversible and has no release gate behind it (ADR 0007).
+  ordinary git and pull request history. The `release-evidence` branch of the
+  old pipeline is frozen history: never rewrite or extend it.
 
 ## Working Mode
 
@@ -102,7 +94,7 @@ Reserved for the owner:
   merges it;
 - repository, ruleset, environment, secret, Actions, GitHub App, security, and
   account settings;
-- deleting Actions artifacts (the ceremony above);
+- deleting Actions artifacts;
 - force-pushes, history rewrites, and deleting branches, tags, or releases the
   agent did not create;
 - anything that weakens a Hard Security Rule.

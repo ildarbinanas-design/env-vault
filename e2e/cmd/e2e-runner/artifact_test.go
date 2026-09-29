@@ -102,11 +102,7 @@ func TestVerifyAndExtractValidNativeArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repositoryRoot, err := findRepoRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary, evidence, err := verifyAndExtractArtifact(repositoryRoot, archive, "", filepath.Join(directory, "output"))
+	binary, evidence, err := verifyAndExtractArtifact(archive, "", filepath.Join(directory, "output"))
 	if err != nil {
 		t.Fatalf("verify and extract valid native artifact: %v", err)
 	}

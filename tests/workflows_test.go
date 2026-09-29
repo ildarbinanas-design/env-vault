@@ -3,8 +3,8 @@ package tests
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,7 +21,6 @@ const (
 	setupGoAction        = "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16"
 	uploadArtifactAction = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 	downloadAction       = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-	createAppTokenAction = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
 	releasePleaseAction  = "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7"
 )
 
@@ -34,11 +32,6 @@ type workflow struct {
 	Concurrency workflowConcurrency    `yaml:"concurrency"`
 	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
-
-// retiredContractWorkflows are contract v2 workflows whose files ADR 0011
-// step 3 removed when release.yml took over. Contract v2 still lists them
-// until step 6 deletes it.
-var retiredContractWorkflows = map[string]bool{"planning": true, "publisher": true}
 
 type workflowConcurrency struct {
 	Group            string       `yaml:"group"`
@@ -100,23 +93,9 @@ type workflowStep struct {
 	With            map[string]string `yaml:"with"`
 }
 
-type workflowRunTrigger struct {
-	Workflows []string `yaml:"workflows"`
-	Types     []string `yaml:"types"`
-	Branches  []string `yaml:"branches"`
-}
-
 type pushTrigger struct {
 	Branches []string `yaml:"branches"`
 	Tags     []string `yaml:"tags"`
-}
-
-type pullRequestTrigger struct {
-	Types []string `yaml:"types"`
-}
-
-type dispatchTrigger struct {
-	Inputs map[string]workflowInput `yaml:"inputs"`
 }
 
 type callTrigger struct {
@@ -152,111 +131,24 @@ func (list *stringList) UnmarshalYAML(node *yaml.Node) error {
 	}
 }
 
-type releaseContract struct {
-	SchemaID      string `json:"schema_id"`
-	SchemaVersion int    `json:"schema_version"`
-	Repositories  struct {
-		Source      contractRepository `json:"source"`
-		HomebrewTap contractRepository `json:"homebrew_tap"`
-	} `json:"repositories"`
-	Concurrency struct {
-		Release struct {
-			Group            string   `json:"group"`
-			CancelInProgress bool     `json:"cancel_in_progress"`
-			Queue            string   `json:"queue"`
-			Workflows        []string `json:"workflows"`
-		} `json:"release"`
-		CI struct {
-			CancelInProgress bool `json:"cancel_in_progress"`
-		} `json:"ci"`
-	} `json:"concurrency"`
-	Platforms     []contractPlatform `json:"platforms"`
-	Assets        []string           `json:"assets"`
-	Workflows     []contractWorkflow `json:"workflows"`
-	Apps          []contractApp      `json:"apps"`
-	VersionPolicy struct {
-		TagPrefix     string `json:"tag_prefix"`
-		ReleasePlease struct {
-			TargetBranch string `json:"target_branch"`
-		} `json:"release_please"`
-		ReleasePleaseRecovery struct {
-			State                     string `json:"state"`
-			AbandonedVersion          string `json:"abandoned_version"`
-			AbandonedSourceSHA        string `json:"abandoned_source_sha"`
-			GeneratedReleasePRNumber  int    `json:"generated_release_pr_number"`
-			GeneratedReleasePRHeadSHA string `json:"generated_release_pr_head_sha"`
-			ResumeVersion             string `json:"resume_version"`
-			PendingLabel              string `json:"pending_label"`
-			AbandonedLabel            string `json:"abandoned_label"`
-			TaggedLabel               string `json:"tagged_label"`
-			TagMustNotExist           bool   `json:"tag_must_not_exist"`
-			GitHubReleaseMustNotExist bool   `json:"github_release_must_not_exist"`
-			ReasonCode                string `json:"reason_code"`
-			CompletedReleaseSourceSHA string `json:"completed_release_source_sha"`
-		} `json:"release_please_recovery"`
-		BlockedVersions []struct {
-			Version                   string `json:"version"`
-			TagSHA                    string `json:"tag_sha"`
-			TagMustRemain             bool   `json:"tag_must_remain"`
-			GitHubReleaseMustNotExist bool   `json:"github_release_must_not_exist"`
-		} `json:"blocked_versions"`
-		LegacyRebuild struct {
-			GoVersion           string `json:"go_version"`
-			PublicationEligible bool   `json:"publication_eligible"`
-			Versions            []struct {
-				Version string `json:"version"`
-				TagSHA  string `json:"tag_sha"`
-			} `json:"versions"`
-		} `json:"legacy_rebuild"`
-	} `json:"version_policy"`
-}
-
-type contractPlatform struct {
-	ID       string `json:"id"`
-	Runner   string `json:"runner"`
-	GOOS     string `json:"goos"`
-	GOARCH   string `json:"goarch"`
-	CGO      string `json:"cgo"`
-	Archive  string `json:"archive"`
-	Checksum string `json:"checksum"`
-	Binary   string `json:"binary"`
-}
-
-type contractWorkflow struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	File   string   `json:"file"`
-	Events []string `json:"events"`
-	Jobs   []string `json:"jobs"`
-}
-
-type contractApp struct {
-	ID            string `json:"id"`
-	RepositoryID  string `json:"repository_id"`
-	Environment   string `json:"environment"`
-	AuditWorkflow string `json:"audit_workflow"`
-}
-
-type contractRepository struct {
-	FullName      string `json:"full_name"`
-	DefaultBranch string `json:"default_branch"`
-}
-
 func TestWorkflowFilesParseAndPinReviewedActions(t *testing.T) {
 	expected := map[string]string{
 		"actions/checkout":                 checkoutAction,
 		"actions/setup-go":                 setupGoAction,
 		"actions/upload-artifact":          uploadArtifactAction,
 		"actions/download-artifact":        downloadAction,
-		"actions/create-github-app-token":  createAppTokenAction,
 		"actions/dependency-review-action": "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
 		"googleapis/release-please-action": releasePleaseAction,
 		"actions/attest":                   attestAction,
 	}
 
 	paths := workflowPaths(t)
-	if len(paths) < 8 {
-		t.Fatalf("workflow count=%d, want at least 8", len(paths))
+	names := make([]string, 0, len(paths))
+	for _, path := range paths {
+		names = append(names, filepath.Base(path))
+	}
+	if want := []string{"ci.yml", "dependency-review.yml", "pr-title.yml", "release.yml", "reusable-quality.yml"}; !slices.Equal(names, want) {
+		t.Fatalf("workflows=%v, want %v", names, want)
 	}
 	for _, path := range paths {
 		wf := readWorkflow(t, path)
@@ -274,221 +166,6 @@ func TestWorkflowFilesParseAndPinReviewedActions(t *testing.T) {
 			}
 		}
 	}
-}
-
-func TestReleaseContractOwnsWorkflowAndNativeInventory(t *testing.T) {
-	contract := readReleaseContract(t)
-	if contract.SchemaID != "env-vault.release-contract.v2" || contract.SchemaVersion != 2 {
-		t.Fatalf("contract schema=%s/%d", contract.SchemaID, contract.SchemaVersion)
-	}
-
-	wantPlatforms := map[string]contractPlatform{
-		"linux-amd64":   {ID: "linux-amd64", Runner: "ubuntu-latest", GOOS: "linux", GOARCH: "amd64", CGO: "0", Archive: "env-vault-linux-amd64.tar.gz", Checksum: "env-vault-linux-amd64.tar.gz.sha256", Binary: "env-vault"},
-		"linux-arm64":   {ID: "linux-arm64", Runner: "ubuntu-24.04-arm", GOOS: "linux", GOARCH: "arm64", CGO: "0", Archive: "env-vault-linux-arm64.tar.gz", Checksum: "env-vault-linux-arm64.tar.gz.sha256", Binary: "env-vault"},
-		"darwin-amd64":  {ID: "darwin-amd64", Runner: "macos-15-intel", GOOS: "darwin", GOARCH: "amd64", CGO: "1", Archive: "env-vault-darwin-amd64.tar.gz", Checksum: "env-vault-darwin-amd64.tar.gz.sha256", Binary: "env-vault"},
-		"darwin-arm64":  {ID: "darwin-arm64", Runner: "macos-15", GOOS: "darwin", GOARCH: "arm64", CGO: "1", Archive: "env-vault-darwin-arm64.tar.gz", Checksum: "env-vault-darwin-arm64.tar.gz.sha256", Binary: "env-vault"},
-		"windows-amd64": {ID: "windows-amd64", Runner: "windows-latest", GOOS: "windows", GOARCH: "amd64", CGO: "0", Archive: "env-vault-windows-amd64.zip", Checksum: "env-vault-windows-amd64.zip.sha256", Binary: "env-vault.exe"},
-	}
-	gotPlatforms := make(map[string]contractPlatform, len(contract.Platforms))
-	for _, platform := range contract.Platforms {
-		if _, exists := gotPlatforms[platform.ID]; exists {
-			t.Fatalf("duplicate contract platform %q", platform.ID)
-		}
-		gotPlatforms[platform.ID] = platform
-	}
-	if !reflect.DeepEqual(gotPlatforms, wantPlatforms) {
-		t.Fatalf("contract platforms=%#v, want %#v", gotPlatforms, wantPlatforms)
-	}
-
-	wantAssets := make([]string, 0, 10)
-	for _, platform := range contract.Platforms {
-		wantAssets = append(wantAssets, platform.Archive, platform.Checksum)
-	}
-	sort.Strings(wantAssets)
-	gotAssets := append([]string(nil), contract.Assets...)
-	sort.Strings(gotAssets)
-	if !slices.Equal(gotAssets, wantAssets) {
-		t.Fatalf("contract assets=%v, want exact platform archive/checksum inventory %v", gotAssets, wantAssets)
-	}
-
-	actualFiles := make([]string, 0)
-	for _, path := range workflowPaths(t) {
-		// ADR 0011: release.yml replaces the contract-owned pipeline and is not
-		// part of contract v2, which migration step 6 removes.
-		if filepath.Base(path) == releaseWorkflowFile {
-			continue
-		}
-		actualFiles = append(actualFiles, filepath.Base(path))
-	}
-	contractFiles := make([]string, 0, len(contract.Workflows))
-	seenIDs := map[string]bool{}
-	for _, identity := range contract.Workflows {
-		if identity.ID == "" || identity.Name == "" || identity.File == "" || len(identity.Events) == 0 || len(identity.Jobs) == 0 || seenIDs[identity.ID] {
-			t.Fatalf("invalid or duplicate workflow identity: %+v", identity)
-		}
-		seenIDs[identity.ID] = true
-		if retiredContractWorkflows[identity.ID] {
-			if _, err := os.Stat(filepath.Join("..", ".github", "workflows", identity.File)); !os.IsNotExist(err) {
-				t.Fatalf("retired contract workflow %s is present again: %v", identity.File, err)
-			}
-			continue
-		}
-		contractFiles = append(contractFiles, identity.File)
-		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
-		if wf.Name != identity.Name {
-			t.Fatalf("contract workflow %s name=%q, YAML name=%q", identity.File, identity.Name, wf.Name)
-		}
-		actualEvents := make([]string, 0, len(wf.On))
-		for event := range wf.On {
-			actualEvents = append(actualEvents, event)
-		}
-		sort.Strings(actualEvents)
-		wantEvents := append([]string(nil), identity.Events...)
-		sort.Strings(wantEvents)
-		if !slices.Equal(actualEvents, wantEvents) {
-			t.Fatalf("contract workflow %s events=%v, YAML events=%v", identity.File, identity.Events, actualEvents)
-		}
-		actualJobs := make([]string, 0, len(wf.Jobs))
-		for job := range wf.Jobs {
-			actualJobs = append(actualJobs, job)
-		}
-		sort.Strings(actualJobs)
-		wantJobs := append([]string(nil), identity.Jobs...)
-		sort.Strings(wantJobs)
-		if !slices.Equal(actualJobs, wantJobs) {
-			t.Fatalf("contract workflow %s jobs=%v, YAML jobs=%v", identity.File, identity.Jobs, actualJobs)
-		}
-	}
-	sort.Strings(actualFiles)
-	sort.Strings(contractFiles)
-	if !slices.Equal(actualFiles, contractFiles) {
-		t.Fatalf("workflow files differ from release contract: YAML=%v contract=%v", actualFiles, contractFiles)
-	}
-}
-
-func TestContractOwnsStaticWorkflowBootstrapIdentities(t *testing.T) {
-	contract := readReleaseContract(t)
-	if contract.Repositories.Source.DefaultBranch != "main" || contract.Concurrency.Release.Group != "env-vault-release" ||
-		contract.Concurrency.Release.CancelInProgress || contract.Concurrency.Release.Queue != "max" ||
-		!contract.Concurrency.CI.CancelInProgress {
-		t.Fatalf("contract workflow bootstrap=%+v repositories=%+v", contract.Concurrency, contract.Repositories)
-	}
-	for _, id := range contract.Concurrency.Release.Workflows {
-		var identity contractWorkflow
-		for _, workflow := range contract.Workflows {
-			if workflow.ID == id {
-				identity = workflow
-				break
-			}
-		}
-		if identity.ID == "" {
-			t.Fatalf("release concurrency references unknown workflow %q", id)
-		}
-		if retiredContractWorkflows[id] {
-			continue
-		}
-		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
-		if wf.Concurrency.Group != contract.Concurrency.Release.Group ||
-			wf.Concurrency.CancelInProgress.Value != contract.Concurrency.Release.CancelInProgress ||
-			wf.Concurrency.Queue != contract.Concurrency.Release.Queue {
-			t.Fatalf("workflow %s concurrency=%+v contract=%+v", identity.File, wf.Concurrency, contract.Concurrency.Release)
-		}
-	}
-	var actualReleaseParticipants []string
-	for _, identity := range contract.Workflows {
-		if retiredContractWorkflows[identity.ID] {
-			continue
-		}
-		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
-		if wf.Concurrency.Group == contract.Concurrency.Release.Group {
-			actualReleaseParticipants = append(actualReleaseParticipants, identity.ID)
-		}
-	}
-	var wantReleaseParticipants []string
-	for _, id := range contract.Concurrency.Release.Workflows {
-		if !retiredContractWorkflows[id] {
-			wantReleaseParticipants = append(wantReleaseParticipants, id)
-		}
-	}
-	sort.Strings(actualReleaseParticipants)
-	sort.Strings(wantReleaseParticipants)
-	if !slices.Equal(actualReleaseParticipants, wantReleaseParticipants) {
-		t.Fatalf("shared release concurrency membership differs: YAML=%v contract=%v", actualReleaseParticipants, wantReleaseParticipants)
-	}
-	ci := readWorkflow(t, "../.github/workflows/ci.yml")
-	if ci.Concurrency.CancelInProgress.Value != contract.Concurrency.CI.CancelInProgress {
-		t.Fatalf("CI cancellation=%v contract=%v", ci.Concurrency.CancelInProgress.Value, contract.Concurrency.CI.CancelInProgress)
-	}
-}
-
-func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *testing.T) {
-	contract := readReleaseContract(t)
-	workflows := make(map[string]contractWorkflow, len(contract.Workflows))
-	for _, identity := range contract.Workflows {
-		workflows[identity.ID] = identity
-	}
-	requireWorkflow := func(id string) (contractWorkflow, workflow) {
-		t.Helper()
-		identity, ok := workflows[id]
-		if !ok {
-			t.Fatalf("contract workflow %q is missing", id)
-		}
-		return identity, readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
-	}
-
-	_, ci := requireWorkflow("ci")
-	ciPush := decodeTrigger[pushTrigger](t, ci, "push")
-	if !slices.Equal(ciPush.Branches, []string{contract.Repositories.Source.DefaultBranch}) {
-		t.Fatalf("CI static branch trigger=%v, contract default=%q", ciPush.Branches, contract.Repositories.Source.DefaultBranch)
-	}
-	if contract.VersionPolicy.ReleasePlease.TargetBranch != contract.Repositories.Source.DefaultBranch {
-		t.Fatalf("Release Please target=%q differs from source default=%q", contract.VersionPolicy.ReleasePlease.TargetBranch, contract.Repositories.Source.DefaultBranch)
-	}
-
-	// Release automation authenticates with environment-scoped tokens. No
-	// workflow may reintroduce a GitHub App install/rotation lifecycle.
-	if len(contract.Apps) != 0 {
-		t.Fatalf("contract declares %d GitHub Apps, want none", len(contract.Apps))
-	}
-	appFiles := []string{releaseWorkflowFile}
-	for _, identity := range contract.Workflows {
-		if !retiredContractWorkflows[identity.ID] {
-			appFiles = append(appFiles, identity.File)
-		}
-	}
-	for _, file := range appFiles {
-		raw := readFile(t, filepath.Join("..", ".github", "workflows", file))
-		for _, marker := range []string{
-			"create-github-app-token", "APP_PRIVATE_KEY", "APP_CLIENT_ID", "app-slug",
-		} {
-			if strings.Contains(raw, marker) {
-				t.Fatalf("%s reintroduces GitHub App authentication via %q", file, marker)
-			}
-		}
-	}
-	for _, retired := range []string{"audit-release-app.yml", "audit-release-planning-app.yml"} {
-		if _, err := os.Stat(filepath.Join("..", ".github", "workflows", retired)); !os.IsNotExist(err) {
-			t.Fatalf("retired App audit workflow %s is present again", retired)
-		}
-	}
-
-	// Trim Phase 5 removed the bespoke provenance/SBOM contour. ADR 0011 moved
-	// attestations into release.yml, which TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit
-	// pins; no contract workflow may attest.
-	for _, identity := range contract.Workflows {
-		if retiredContractWorkflows[identity.ID] {
-			continue
-		}
-		raw := readFile(t, filepath.Join("..", ".github", "workflows", identity.File))
-		for _, marker := range []string{
-			"actions/attest", "anchore/sbom-action", "gh attestation", "attestations:",
-		} {
-			if strings.Contains(raw, marker) {
-				t.Fatalf("%s reintroduces attestation machinery via %q", identity.File, marker)
-			}
-		}
-	}
-
 }
 
 func TestCIUsesReusableQualityAndCancellationSafeGate(t *testing.T) {
@@ -544,7 +221,7 @@ func TestDependencyAndPullRequestWorkflowConcurrency(t *testing.T) {
 	}
 }
 
-func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
+func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T) {
 	path := "../.github/workflows/reusable-quality.yml"
 	wf := readWorkflow(t, path)
 	raw := readFile(t, path)
@@ -554,31 +231,18 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	if len(call.Inputs) != 1 || !call.Inputs["source_sha"].Required {
 		t.Fatalf("reusable quality inputs=%+v, want only the required source_sha", call.Inputs)
 	}
-	// ADR 0011: release.yml builds releases, so CI no longer classifies release
-	// commits or feeds a promotion manifest.
-	for _, retired := range []string{"release_candidate", "classify-release-commit", "release-version-probe", "releasecheck promotion", "validate-matrix", "promotion-platform"} {
+	// ADR 0011: release.yml builds releases. CI neither injects a version nor
+	// reads a release contract; the binary reports the version Go stamps.
+	for _, retired := range []string{"releasecheck", "release/contract", "internal/cli.Version", "ENV_VAULT_E2E_VERSION", "version=ci-", "validate-matrix", "promotion"} {
 		if strings.Contains(raw, retired) {
-			t.Fatalf("reusable quality still feeds the retired publisher via %q", retired)
+			t.Fatalf("reusable quality still uses the retired release machinery via %q", retired)
 		}
 	}
 	assertJobIDs(t, wf, "resolve", "source-quality", "license", "native", "e2e-gate")
 
 	resolve := wf.Jobs["resolve"]
-	if resolve.TimeoutMinutes != 15 {
-		t.Fatalf("resolve reporter bootstrap timeout=%d, want 15 minutes", resolve.TimeoutMinutes)
-	}
-	if version := namedStep(t, resolve, "Resolve the CI version"); !strings.Contains(version.Run, `printf 'version=ci-%s\n' "$SOURCE_SHA"`) {
-		t.Fatalf("CI version must derive from the commit: %s", version.Run)
-	}
-	contractStep := namedStep(t, resolve, "Validate release contract and resolve native matrix")
-	if !containsAll(contractStep.Run, "releasecheck validate-contract", "releasecheck contract matrix --json", "length == 5", "env-vault-native-matrix.json") {
-		t.Fatalf("resolve step does not derive the five-target matrix from the validated contract")
-	}
-	if countJobRunsContaining(wf, "releasecheck contract matrix --json") != 1 {
-		t.Fatalf("reusable quality must derive the candidate matrix exactly once")
-	}
-	if resolve.Outputs["matrix"] != "${{ steps.contract.outputs.matrix }}" || resolve.Outputs["version"] != "${{ steps.version.outputs.version }}" {
-		t.Fatalf("resolve outputs=%v", resolve.Outputs)
+	if resolve.TimeoutMinutes != 15 || len(resolve.Outputs) != 0 {
+		t.Fatalf("resolve timeout=%d outputs=%v, want 15 minutes and no outputs", resolve.TimeoutMinutes, resolve.Outputs)
 	}
 	var resolveSetup workflowStep
 	for _, step := range resolve.Steps {
@@ -590,12 +254,15 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	if !containsAll(resolveSetup.With["cache-dependency-path"], "go.sum", "tools/e2e-reporter/go.sum") {
 		t.Fatalf("resolve Go cache does not include the isolated reporter graph: %v", resolveSetup.With)
 	}
-	reporterBuild := namedStep(t, resolve, "Build exact E2E reporter bundle once")
-	if !containsAll(reporterBuild.Run, "build-e2e-reporters.sh", "env-vault-native-matrix.json", "reporter-tools") {
-		t.Fatalf("resolve does not build the reporters from the single resolved matrix: %q", reporterBuild.Run)
-	}
 	// ADR 0011: E2E runs once per operating system.
 	e2eTargets := []string{"linux-amd64", "darwin-arm64", "windows-amd64"}
+	reporterBuild := namedStep(t, resolve, "Build exact E2E reporter bundle once")
+	if !containsAll(reporterBuild.Run, `scripts/release/build-e2e-reporters.sh "$targets" reporter-tools`,
+		`{id: "linux-amd64", goos: "linux", goarch: "amd64"}`,
+		`{id: "darwin-arm64", goos: "darwin", goarch: "arm64"}`,
+		`{id: "windows-amd64", goos: "windows", goarch: "amd64"}`) || strings.Count(reporterBuild.Run, "{id: ") != len(e2eTargets) {
+		t.Fatalf("resolve does not build reporters for exactly the three E2E targets: %q", reporterBuild.Run)
+	}
 	reporterUploads := 0
 	for _, target := range e2eTargets {
 		upload := namedStep(t, resolve, "Upload "+target+" current-attempt E2E reporter")
@@ -622,11 +289,25 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	if !slices.Equal([]string(native.Needs), []string{"resolve"}) || native.RunsOn != "${{ matrix.runner }}" {
 		t.Fatalf("native topology needs=%v runner=%q", native.Needs, native.RunsOn)
 	}
-	if native.Strategy.Matrix.Kind != yaml.ScalarNode || native.Strategy.Matrix.Value != "${{ fromJSON(needs.resolve.outputs.matrix) }}" {
-		t.Fatalf("native matrix must consume the single resolved contract matrix, got kind=%d value=%q", native.Strategy.Matrix.Kind, native.Strategy.Matrix.Value)
-	}
 	if native.Strategy.FailFast == nil || *native.Strategy.FailFast {
 		t.Fatalf("native fail-fast=%v", native.Strategy.FailFast)
+	}
+	// CI builds exactly the targets release.yml builds, on the same runners.
+	matrix := decodeMatrix(t, native.Strategy.Matrix)
+	releaseMatrix := decodeMatrix(t, readWorkflow(t, "../.github/workflows/"+releaseWorkflowFile).Jobs["build"].Strategy.Matrix)
+	if len(matrix.Include) != 5 || len(releaseMatrix.Include) != 5 {
+		t.Fatalf("native matrix=%d targets, release matrix=%d, want 5 each", len(matrix.Include), len(releaseMatrix.Include))
+	}
+	for index, target := range matrix.Include {
+		archive := "env-vault-" + target["id"] + ".tar.gz"
+		if target["goos"] == "windows" {
+			archive = "env-vault-" + target["id"] + ".zip"
+		}
+		want := maps.Clone(releaseMatrix.Include[index])
+		want["archive"] = archive
+		if !maps.Equal(target, want) || target["id"] != target["goos"]+"-"+target["goarch"] {
+			t.Fatalf("native target %d=%v, want the release target %v", index, target, want)
+		}
 	}
 	if native.Env["E2E"] != "${{ matrix.id == 'linux-amd64' || matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64' }}" {
 		t.Fatalf("native E2E selection=%q, want one target per operating system", native.Env["E2E"])
@@ -644,6 +325,10 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 			t.Fatalf("native step %q if=%q, want %q", name, step.If, wantIf)
 		}
 	}
+	build := namedStep(t, native, "Build native release artifact")
+	if !strings.Contains(build.Run, `go build -trimpath -ldflags="-s -w" -o "dist/${name}/${BINARY}" ./cmd/env-vault`) || strings.Contains(build.Run, "-X ") {
+		t.Fatalf("native build must match the release build flags without a version override: %q", build.Run)
+	}
 	reporterDownload := namedStep(t, native, "Download exact current-attempt E2E reporter")
 	if reporterDownload.Uses != downloadAction ||
 		reporterDownload.With["name"] != "env-vault-tooling-gotestsum-${{ matrix.id }}-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}" ||
@@ -652,10 +337,21 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	}
 	runE2E := namedStep(t, native, "Run E2E and finalize reports")
 	if runE2E.Shell != "bash" ||
-		!containsAll(runE2E.Run, "reporter_name=gotestsum", "gotestsum.exe", "chmod 0755", "export GOPROXY=off", "go run ./e2e/cmd/e2e-runner run", "--reporter", "--reporter-checksum") ||
+		!containsAll(runE2E.Run, "reporter_name=gotestsum", "gotestsum.exe", "chmod 0755", "export GOPROXY=off", "go run ./e2e/cmd/e2e-runner run", "--reporter", "--reporter-checksum",
+			`--artifact "dist/${{ matrix.archive }}"`, `--checksum "dist/${{ matrix.archive }}.sha256"`) ||
 		strings.Contains(runE2E.Run, "export PATH=") ||
 		strings.Contains(runE2E.Run, "GOSUMDB=off") {
 		t.Fatalf("native E2E does not use the exact verified offline reporter: shell=%q run=%q", runE2E.Shell, runE2E.Run)
+	}
+	// CLI_VERSION_FORMS compares the binary's commit with the checked-out
+	// commit only when this variable is set.
+	if !maps.Equal(runE2E.Env, map[string]string{
+		"CGO_ENABLED":              "${{ matrix.cgo }}",
+		"ENV_VAULT_E2E_GOOS":       "${{ matrix.goos }}",
+		"ENV_VAULT_E2E_GOARCH":     "${{ matrix.goarch }}",
+		"ENV_VAULT_E2E_COMMIT_SHA": "${{ inputs.source_sha }}",
+	}) {
+		t.Fatalf("native E2E env=%v", runE2E.Env)
 	}
 	assertStepOrder(t, native,
 		"Build native release artifact",
@@ -689,13 +385,9 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	}
 
 	licenseMatrix := decodeMatrix(t, wf.Jobs["license"].Strategy.Matrix)
-	contract := readReleaseContract(t)
-	expandedJobs := 1 + 1 + len(licenseMatrix.Include) + len(contract.Platforms) + 1
+	expandedJobs := 1 + 1 + len(licenseMatrix.Include) + len(matrix.Include) + 1
 	if expandedJobs != 11 {
 		t.Fatalf("reusable quality expands to %d jobs, want 11", expandedJobs)
-	}
-	if expandedJobs+1 != 12 { // one top-level quality-gate job in ci.yml
-		t.Fatalf("main/PR CI total=%d jobs, want 12", expandedJobs+1)
 	}
 
 	for _, command := range []string{"go test ./...", "go vet ./...", "go test -race ./..."} {
@@ -708,466 +400,6 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	assertNeeds(t, "reusable e2e-gate", gate, "resolve", "source-quality", "license", "native")
 	if len(gate.Steps) != 1 || gate.Steps[0].Name != "Require every upstream quality stage" {
 		t.Fatalf("e2e-gate must only require every upstream stage: %+v", gate.Steps)
-	}
-}
-
-func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testing.T) {
-	directPairSteps := 0
-	activationCalls := 0
-	consumerOnlySteps := make([]string, 0, 1)
-	for _, path := range workflowPaths(t) {
-		wf := readWorkflow(t, path)
-		for jobID, job := range wf.Jobs {
-			for _, step := range job.Steps {
-				writesVersion := containsAny(step.Run,
-					"export RELEASE_CONTRACT_VERSION_FILE=",
-					"printf 'RELEASE_CONTRACT_VERSION_FILE=%s")
-				writesProjection := containsAny(step.Run,
-					"export RELEASE_CONTRACT_PROJECTION_FILE=",
-					"printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s")
-				if writesVersion != writesProjection {
-					t.Fatalf("%s job %s step %q establishes only one typed pair file", path, jobID, step.Name)
-				}
-				if writesVersion {
-					directPairSteps++
-					if !strings.Contains(step.Run, "RELEASE_CONTRACT_CHECKER") {
-						t.Fatalf("%s job %s step %q omits the dedicated checker identity", path, jobID, step.Name)
-					}
-				}
-				referencesVersion := strings.Contains(step.Run, "RELEASE_CONTRACT_VERSION_FILE")
-				referencesProjection := strings.Contains(step.Run, "RELEASE_CONTRACT_PROJECTION_FILE")
-				if referencesVersion != referencesProjection && !writesVersion {
-					consumerOnlySteps = append(consumerOnlySteps, path+"|"+jobID+"|"+step.Name)
-				}
-				activationCalls += strings.Count(step.Run, "scripts/release/activate-typed-contract.sh")
-			}
-		}
-	}
-	// 2 since ADR 0011 step 3 removed release-please.yml and build-binaries.yml,
-	// which established four typed pairs and made all four activation calls.
-	if directPairSteps != 2 {
-		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 2", directPairSteps)
-	}
-	if activationCalls != 0 {
-		t.Fatalf("typed-contract activation calls=%d, want none after the publisher's removal", activationCalls)
-	}
-	wantConsumers := []string{
-		"../.github/workflows/publish-homebrew-bridge.yml|homebrew_bridge|Validate protected-main control, source contract, tag, and Release",
-	}
-	if !slices.Equal(consumerOnlySteps, wantConsumers) {
-		t.Fatalf("one-sided typed-contract consumers=%v, want exact inventory %v", consumerOnlySteps, wantConsumers)
-	}
-
-	activation := readFile(t, "../scripts/release/activate-typed-contract.sh")
-	if !containsAll(activation,
-		`export RELEASE_CONTRACT_CHECKER="$typed_directory/release-contract-checker"`,
-		`go build -trimpath -o "$RELEASE_CONTRACT_CHECKER" ./cmd/releasecheck`,
-		`release_require_typed_contract_projection`,
-		`printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RELEASE_CONTRACT_CHECKER"`,
-		`printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "$RELEASE_CONTRACT_VERSION_FILE"`,
-		`printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "$RELEASE_CONTRACT_PROJECTION_FILE"`) {
-		t.Fatal("typed-contract activation helper does not build, validate, and persist the complete checker identity")
-	}
-}
-
-func TestEmptyReleaseBootstrapIsMainBoundMinimalAndFailClosed(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/bootstrap-release-assets.yml")
-	assertGlobalReleaseConcurrency(t, "release asset bootstrap", wf)
-	assertPermissions(t, "release asset bootstrap", wf.Permissions, map[string]string{
-		"actions": "read", "contents": "write",
-	})
-	assertJobIDs(t, wf, "bootstrap")
-	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
-	wantInputs := []string{
-		"version", "source_sha", "source_ci_run_id", "source_ci_run_attempt",
-		"failed_publisher_run_id", "failed_publisher_run_attempt", "failed_publisher_job_id",
-		"failed_publisher_bundle_artifact_id", "failed_publisher_bundle_sha256", "release_id",
-	}
-	if len(dispatch.Inputs) != len(wantInputs) {
-		t.Fatalf("bootstrap inputs=%v, want exact %v", dispatch.Inputs, wantInputs)
-	}
-	for _, name := range wantInputs {
-		input, ok := dispatch.Inputs[name]
-		if !ok || !input.Required || input.Type != "string" || input.Default != "" || len(input.Options) != 0 {
-			t.Fatalf("bootstrap input %q is not exact required string: %+v", name, input)
-		}
-	}
-
-	job := wf.Jobs["bootstrap"]
-	if job.Environment != "release" || job.TimeoutMinutes != 25 {
-		t.Fatalf("bootstrap environment/timeout=%q/%d", job.Environment, job.TimeoutMinutes)
-	}
-	control := namedStep(t, job, "Validate protected-main control plane, contracts, tag, and empty Release")
-	if !containsAll(control.Run,
-		`refs/heads/${DEFAULT_BRANCH}`, `"$GITHUB_SHA" == "$(git rev-parse HEAD)"`,
-		"release_require_typed_contract_projection", "validate-contract", `git show "${SOURCE_SHA}:release/contract.v2.json"`,
-		"$current.naming == $source.naming", "$current.platforms == $source.platforms", "$current.assets == $source.assets",
-		"source-releasecheck", `.semantic_contract_sha256 == $validation[0].semantic_contract_sha256`,
-		"default-branch-ref.json", `resolve-tag-sha.sh "$VERSION"`,
-		"${RELEASE_CI_WORKFLOW_FILE}", "$RELEASE_CI_WORKFLOW_PATH", "control-ci-runs.json", "expected one successful exact-control main CI attempt", "control-ci-identity.json",
-		".id == $release_id", ".draft == false", ".prerelease == false",
-		"release_write_asset_names", "exactly zero existing Release assets",
-	) {
-		t.Fatalf("bootstrap control-plane/empty-Release guard is incomplete: %s", control.Run)
-	}
-	identity := namedStep(t, job, "Bind exact source CI, failed publisher graph, and retained bundle")
-	if !containsAll(identity.Run,
-		"release_require_typed_contract_projection", "actions identity", "$RELEASE_CI_WORKFLOW_PATH", `--head-ref "$DEFAULT_BRANCH"`,
-		`.head_branch == $branch`, "classify-attempt", "ATTEMPT_MATRIX_COMPLETE",
-		"$SOURCE_RELEASECHECK", "$RELEASE_PUBLISHER_WORKFLOW_PATH", "--conclusion failure", "([.[].total_count] | unique) == [6]", "($jobs | length) == 6",
-		"No-clobber reconcile all ten release assets", "skipped", "homebrew", "health",
-		"artifact-pages", "env_vault_exact_artifact($name; $run_id; $source)",
-		".id == $artifact_id", ".digest == $digest", ".workflow_run.head_branch == $version",
-	) {
-		t.Fatalf("bootstrap exact CI/publisher/bundle guard is incomplete: %s", identity.Run)
-	}
-
-	sourceManifest := namedStep(t, job, "Download exact source CI promotion manifest")
-	sourceAssets := namedStep(t, job, "Download all five exact source CI native artifacts")
-	publisherBundle := namedStep(t, job, "Download exact retained failed-publisher bundle")
-	for label, step := range map[string]workflowStep{
-		"source manifest": sourceManifest, "source assets": sourceAssets, "publisher bundle": publisherBundle,
-	} {
-		if step.Uses != downloadAction || step.With["github-token"] != "${{ github.token }}" || step.With["repository"] != "${{ github.repository }}" {
-			t.Fatalf("bootstrap %s is not an exact authenticated artifact download: %+v", label, step.With)
-		}
-	}
-	if sourceManifest.With["run-id"] != "${{ inputs.source_ci_run_id }}" || sourceAssets.With["run-id"] != "${{ inputs.source_ci_run_id }}" ||
-		publisherBundle.With["run-id"] != "${{ inputs.failed_publisher_run_id }}" ||
-		!containsAll(publisherBundle.With["name"], "source_sha", "failed_publisher_run_attempt") {
-		t.Fatalf("bootstrap artifact downloads are not run/attempt bound")
-	}
-
-	offline := namedStep(t, job, "Verify source CI and retained publisher bytes entirely offline")
-	if !containsAll(offline.Run,
-		"env -i", "$SOURCE_RELEASECHECK", "source-contract.v2.json", "promotion verify", "source-native",
-		"failed-publisher-bundle/assets", "cmp -s", "diff -r --no-dereference", ".[0] == .[1]",
-		"BOOTSTRAP_ARCHIVE", ".platforms[0].archive",
-	) {
-		t.Fatalf("bootstrap does not replay both exact ten-asset bundles offline: %s", offline.Run)
-	}
-	recheck := namedStep(t, job, "Recheck protected main immediately before pair mutation")
-	if !containsAll(recheck.Run,
-		"default-branch-before-mutation.json", "git/ref/heads/${DEFAULT_BRANCH}",
-		`.object.sha == $control`, "protected default branch advanced before bootstrap mutation",
-	) {
-		t.Fatalf("bootstrap lacks an immediate exact control-SHA recheck: %s", recheck.Run)
-	}
-	mutation := namedStep(t, job, "Upload and verify only the minimum exact bootstrap pair")
-	if !containsAll(mutation.Run,
-		"bootstrap-release-asset-pair.sh", `"$VERSION"`, `"$SOURCE_SHA"`,
-		"failed-publisher-bundle/assets", `"$BOOTSTRAP_ARCHIVE"`, `"$RELEASE_ID"`,
-	) {
-		t.Fatalf("bootstrap mutation does not use the exact source-bound pair: %s", mutation.Run)
-	}
-	result := namedStep(t, job, "Emit versioned bootstrap result")
-	if !containsAll(result.Run,
-		"env-vault.release-assets-bootstrap.v1", "control_workflow", "ci_identity", "source_ci", "failed_publisher",
-		"bundle_artifact_id", "bundle_sha256", "bootstrap_pair", "dispatch_tag_scoped_release_assets_repair",
-	) {
-		t.Fatalf("bootstrap machine result omits required identities: %s", result.Run)
-	}
-	upload := namedStep(t, job, "Upload exact bootstrap result")
-	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "source_sha", "github.run_id", "github.run_attempt") ||
-		upload.With["path"] != "${{ runner.temp }}/release-assets-bootstrap-result.json" {
-		t.Fatalf("bootstrap result artifact is not exact-run qualified: %+v", upload.With)
-	}
-	assertStepOrder(t, job,
-		"Validate protected-main control plane, contracts, tag, and empty Release",
-		"Bind exact source CI, failed publisher graph, and retained bundle",
-		"Download exact source CI promotion manifest",
-		"Download all five exact source CI native artifacts",
-		"Download exact retained failed-publisher bundle",
-		"Verify source CI and retained publisher bytes entirely offline",
-		"Recheck protected main immediately before pair mutation",
-		"Upload and verify only the minimum exact bootstrap pair",
-		"Emit versioned bootstrap result",
-		"Upload exact bootstrap result",
-	)
-	raw := readFile(t, "../.github/workflows/bootstrap-release-assets.yml")
-	for _, forbidden := range []string{"--clobber", "gh release create", "gh release edit", "gh release delete", "gh run rerun", "gh workflow run", "git tag", "git push"} {
-		if strings.Contains(raw, forbidden) {
-			t.Fatalf("bootstrap workflow contains forbidden mutation %q", forbidden)
-		}
-	}
-}
-
-func TestEmptyReleaseBootstrapFailedPublisherPredicateUsesRealisticJobPages(t *testing.T) {
-	identityRun := namedStep(t,
-		readWorkflow(t, "../.github/workflows/bootstrap-release-assets.yml").Jobs["bootstrap"],
-		"Bind exact source CI, failed publisher graph, and retained bundle").Run
-	input := `"$RUNNER_TEMP/incident/failed-publisher-jobs.json" >/dev/null`
-	closing := "' " + input
-	closingIndex := strings.Index(identityRun, closing)
-	if closingIndex < 0 {
-		t.Fatalf("failed-publisher jq input not found")
-	}
-	openingIndex := strings.LastIndex(identityRun[:closingIndex], "'")
-	if openingIndex < 0 {
-		t.Fatalf("failed-publisher jq program opening quote not found")
-	}
-	predicate := strings.TrimSpace(identityRun[openingIndex+1 : closingIndex])
-	const (
-		repository  = "example/env-vault"
-		source      = "1111111111111111111111111111111111111111"
-		runID       = 7001
-		failedJobID = 8004
-	)
-	job := func(id int, name, conclusion string) map[string]any {
-		return map[string]any{"id": id, "name": name, "conclusion": conclusion}
-	}
-	fixture := func(mutate func([]any)) []any {
-		jobs := []any{
-			job(8005, "health", "skipped"), job(8006, "homebrew", "skipped"),
-			job(8001, "metadata", "success"), job(8002, "preflight", "success"),
-			job(8003, "promotion", "success"),
-			map[string]any{
-				"id": failedJobID, "run_id": runID, "head_sha": source, "name": "release",
-				"status": "completed", "conclusion": "failure",
-				"html_url": fmt.Sprintf("https://github.com/%s/actions/runs/%d/job/%d", repository, runID, failedJobID),
-				"steps": []any{
-					map[string]any{"name": "Create or verify stable GitHub Release", "status": "completed", "conclusion": "success"},
-					map[string]any{"name": "No-clobber reconcile all ten release assets", "status": "completed", "conclusion": "failure"},
-				},
-			},
-		}
-		if mutate != nil {
-			mutate(jobs)
-		}
-		return []any{map[string]any{"total_count": len(jobs), "jobs": jobs}}
-	}
-	run := func(t *testing.T, value any, wantPass bool) {
-		t.Helper()
-		data, err := json.Marshal(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		command := exec.Command("jq", "-e",
-			"--arg", "repository", repository, "--arg", "source", source,
-			"--arg", "step", "No-clobber reconcile all ten release assets",
-			"--argjson", "run_id", fmt.Sprint(runID), "--argjson", "failed_job_id", fmt.Sprint(failedJobID), predicate)
-		command.Stdin = strings.NewReader(string(data))
-		output, err := command.CombinedOutput()
-		if wantPass && err != nil {
-			t.Fatalf("valid failed publisher graph rejected: %v\n%s", err, output)
-		}
-		if !wantPass && err == nil {
-			t.Fatalf("invalid failed publisher graph accepted: %s", output)
-		}
-	}
-	run(t, fixture(nil), true)
-	invalid := map[string]func([]any){
-		"extra job":        func(jobs []any) { jobs[0] = job(8010, "unexpected", "success") },
-		"downstream ran":   func(jobs []any) { jobs[0].(map[string]any)["conclusion"] = "success" },
-		"duplicate job ID": func(jobs []any) { jobs[0].(map[string]any)["id"] = 8001 },
-		"wrong failed step": func(jobs []any) {
-			jobs[5].(map[string]any)["steps"].([]any)[1].(map[string]any)["name"] = "Different step"
-		},
-		"wrong failed head": func(jobs []any) { jobs[5].(map[string]any)["head_sha"] = strings.Repeat("2", 40) },
-	}
-	for name, mutate := range invalid {
-		t.Run(name, func(t *testing.T) { run(t, fixture(mutate), false) })
-	}
-}
-
-func TestHomebrewBridgeIsExactInputReadScopedAndFailClosed(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/publish-homebrew-bridge.yml")
-	assertGlobalReleaseConcurrency(t, "Homebrew bridge", wf)
-	assertPermissions(t, "Homebrew bridge", wf.Permissions, map[string]string{
-		"actions": "read", "contents": "read",
-	})
-	assertJobIDs(t, wf, "homebrew_bridge")
-	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
-	wantInputs := []string{
-		"control_sha", "control_ci_run_id", "control_ci_run_attempt",
-		"version", "source_sha", "source_ci_run_id", "source_ci_run_attempt", "release_id",
-		"bootstrap_control_sha", "bootstrap_run_id", "bootstrap_run_attempt", "bootstrap_job_id",
-		"bootstrap_result_artifact_id", "bootstrap_result_artifact_sha256",
-		"failed_publisher_run_id", "failed_publisher_run_attempt",
-		"metadata_job_id", "promotion_job_id", "preflight_job_id", "release_job_id",
-		"failed_homebrew_job_id", "health_job_id",
-	}
-	if len(dispatch.Inputs) != len(wantInputs) {
-		t.Fatalf("Homebrew bridge inputs=%v, want exact %v", dispatch.Inputs, wantInputs)
-	}
-	for _, name := range wantInputs {
-		input, ok := dispatch.Inputs[name]
-		if !ok || !input.Required || input.Type != "string" || input.Default != "" || len(input.Options) != 0 {
-			t.Fatalf("Homebrew bridge input %q is not an exact required string: %+v", name, input)
-		}
-	}
-
-	job := wf.Jobs["homebrew_bridge"]
-	if job.Environment != "release" || job.TimeoutMinutes != 55 {
-		t.Fatalf("Homebrew bridge environment/timeout=%q/%d", job.Environment, job.TimeoutMinutes)
-	}
-	assertPermissions(t, "Homebrew bridge job", job.Permissions, map[string]string{
-		"actions": "read", "contents": "read",
-	})
-
-	control := namedStep(t, job, "Validate protected-main control, source contract, tag, and Release")
-	if !containsAll(control.Run,
-		`"$GITHUB_SHA" == "$CONTROL_SHA"`, `refs/heads/${DEFAULT_BRANCH}`,
-		"release_require_typed_contract_projection", `git show "${SOURCE_SHA}:release/contract.v2.json"`,
-		"control-ci-identity.json", "source-ci-identity.json", "actions/workflows/${RELEASE_CI_WORKFLOW_FILE}/runs",
-		`$current.naming == $source.naming`, `$current.platforms == $source.platforms`, `$current.assets == $source.assets`,
-		`$current.repositories.homebrew_tap == $source.repositories.homebrew_tap`,
-		`.id == "ci" or .id == "publisher"`, `.id == "homebrew_bridge"`,
-		"source-releasecheck", "TAP_DEFAULT_BRANCH", "TAP_FORMULA_PATH",
-		`resolve-tag-sha.sh "$VERSION"`, `.id == $release_id`, `length == 10`, `$contract[0].assets`) {
-		t.Fatalf("Homebrew bridge control/source/release guard is incomplete: %s", control.Run)
-	}
-
-	incident := namedStep(t, job, "Bind successful bootstrap result and failed publisher graph")
-	if !containsAll(incident.Run,
-		"bootstrap-identity.json", `--workflow-path "$RELEASE_ASSETS_BOOTSTRAP_WORKFLOW_PATH"`, "--job-name bootstrap",
-		"BOOTSTRAP_RESULT_ARTIFACT_SHA256", "env_vault_exact_artifact", "failed-publisher-identity.json",
-		"event=workflow_dispatch version=${VERSION} repair=release-assets", "([.[].total_count] | unique) == [6]",
-		`{id:$homebrew,name:"homebrew",conclusion:"failure"}`,
-		`select(.conclusion == "failure")] | length) == 1`,
-		"Create or reuse deterministic Homebrew pull request") {
-		t.Fatalf("Homebrew bridge bootstrap/publisher incident guard is incomplete: %s", incident.Run)
-	}
-
-	download := namedStep(t, job, "Download exact bootstrap result")
-	if download.Uses != downloadAction || download.With["run-id"] != "${{ inputs.bootstrap_run_id }}" ||
-		download.With["github-token"] != "${{ github.token }}" || download.With["repository"] != "${{ github.repository }}" {
-		t.Fatalf("Homebrew bridge bootstrap download is not exact/authenticated: %+v", download.With)
-	}
-	preflight := namedStep(t, job, "Verify bootstrap result and complete release state before tap access")
-	if !containsAll(preflight.Run,
-		"source scripts/release/lib.sh", "env-vault.release-assets-bootstrap.v1", "bootstrap_pair",
-		`release_sha256_file "release-dist/$bootstrap_archive"`, `release_sha256_file "release-dist/$bootstrap_checksum"`,
-		`.name == $archive and .sha256 == $archive_sha256`, `.name == $checksum and .sha256 == $checksum_sha256`,
-		"download-release-assets.sh",
-		`git show "${SOURCE_SHA}:scripts/release/generate-homebrew-formula.sh"`,
-		"env -i", "source-formula-home", "current and immutable-source Homebrew formulas differ",
-		"--require-unpublished", ".state == \"UNPUBLISHED\"") {
-		t.Fatalf("Homebrew bridge release/bootstrap/formula preflight is incomplete: %s", preflight.Run)
-	}
-
-	preToken := namedStep(t, job, "Recheck protected main and unpublished tap immediately before token")
-	if !containsAll(preToken.Run,
-		"default-branch-before-token.json", `.object.sha == $control`, "--require-unpublished",
-		`.state == "UNPUBLISHED"`, `printf 'TAP_BEFORE_SHA=%s`) {
-		t.Fatalf("Homebrew bridge lacks immediate control/tap recheck: %s", preToken.Run)
-	}
-	appRecheck := namedStep(t, job, "Recheck exact tap base with the scoped tap token before publication")
-	if appRecheck.Env["GH_TOKEN"] != "${{ secrets.HOMEBREW_TAP_TOKEN }}" || !containsAll(appRecheck.Run,
-		"--require-unpublished", `.base_sha == $base`, `.state == "UNPUBLISHED"`, "$TAP_BEFORE_SHA") {
-		t.Fatalf("Homebrew bridge does not close the pre-publication tap race: env=%v run=%s", appRecheck.Env, appRecheck.Run)
-	}
-	publish := namedStep(t, job, "Create or reuse deterministic Homebrew pull request")
-	if publish.Env["EXPECTED_TAP_BASE_SHA"] != "${{ env.TAP_BEFORE_SHA }}" ||
-		publish.Env["GH_TOKEN"] != "${{ secrets.HOMEBREW_TAP_TOKEN }}" {
-		t.Fatalf("Homebrew bridge publication does not enforce the exact pre-token tap base: %v", publish.Env)
-	}
-
-	prCI := namedStep(t, job, "Require exact Homebrew pull-request head CI")
-	postCI := namedStep(t, job, "Require exact Homebrew post-merge CI")
-	if !containsAll(prCI.Run, "wait-tap-ci.sh", "pull_request") ||
-		prCI.Env["TAP_CI_IDENTITY_OUTPUT"] != "${{ runner.temp }}/tap-pr-ci-identity.json" ||
-		!containsAll(postCI.Run, "wait-tap-ci.sh", "push") ||
-		postCI.Env["TAP_CI_IDENTITY_OUTPUT"] != "${{ runner.temp }}/tap-push-ci-identity.json" {
-		t.Fatalf("Homebrew bridge does not preserve both typed tap CI identities")
-	}
-	merge := namedStep(t, job, "Merge exact Homebrew pull-request head")
-	if !containsAll(merge.Run, "merge-homebrew-pr.sh", `"$PR_NUMBER"`, `"$HEAD_SHA"`) {
-		t.Fatalf("Homebrew bridge merge is not exact-head guarded: %s", merge.Run)
-	}
-	final := namedStep(t, job, "Verify exact published Homebrew state")
-	if !containsAll(final.Run, "--verify-published-pr", `.merge_sha == $merge`, `.tap_sha | test`, `printf 'tap_sha=%s`) {
-		t.Fatalf("Homebrew bridge final tap snapshot is not independently verified: %s", final.Run)
-	}
-	result := namedStep(t, job, "Emit compact typed Homebrew bridge result")
-	if !containsAll(result.Run,
-		"env-vault.homebrew-publication-bridge.v1", "control", "source", "bootstrap", "failed_publisher",
-		"formula_sha256", "tap_before_sha", "pr_ci", "post_merge_ci", "workflow_identity",
-		`next_action:"dispatch_tag_scoped_health"`, `.homebrew.post_merge_ci.identity.run.head_sha == $merge_sha`) {
-		t.Fatalf("Homebrew bridge result omits required typed identities: %s", result.Run)
-	}
-	upload := namedStep(t, job, "Upload exact Homebrew bridge result")
-	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "version", "source_sha", "github.run_id", "github.run_attempt") ||
-		upload.With["path"] != "${{ runner.temp }}/homebrew-bridge-result.json" {
-		t.Fatalf("Homebrew bridge result artifact is not exact-run qualified: %+v", upload.With)
-	}
-
-	assertStepOrder(t, job,
-		"Validate protected-main control, source contract, tag, and Release",
-		"Bind successful bootstrap result and failed publisher graph",
-		"Download exact bootstrap result",
-		"Verify bootstrap result and complete release state before tap access",
-		"Recheck protected main and unpublished tap immediately before token",
-		"Recheck exact tap base with the scoped tap token before publication",
-		"Create or reuse deterministic Homebrew pull request",
-		"Require exact Homebrew pull-request head CI",
-		"Merge exact Homebrew pull-request head",
-		"Require exact Homebrew post-merge CI",
-		"Verify exact published Homebrew state",
-		"Emit compact typed Homebrew bridge result",
-		"Upload exact Homebrew bridge result",
-	)
-	raw := readFile(t, "../.github/workflows/publish-homebrew-bridge.yml")
-	for _, forbidden := range []string{
-		"gh release ", "reconcile-release-assets.sh", "bootstrap-release-asset-pair.sh",
-		"actions/attest@", "gh workflow run", "gh run rerun", "git tag", "release-evidence",
-		"permission-administration", "permission-workflows",
-	} {
-		if strings.Contains(raw, forbidden) {
-			t.Fatalf("Homebrew bridge contains forbidden mutation/scope %q", forbidden)
-		}
-	}
-}
-
-func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/legacy-rebuild.yml")
-	assertPermissions(t, "legacy rebuild", wf.Permissions, map[string]string{"contents": "read"})
-	assertJobIDs(t, wf, "resolve", "diagnostic")
-	if wf.Concurrency.CancelInProgress.Value || !containsAll(wf.Concurrency.Group, "legacy-rebuild", "inputs.version", "github.run_id") {
-		t.Fatalf("legacy diagnostic concurrency=%+v", wf.Concurrency)
-	}
-	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
-	wantVersions := []string{"v0.0.1", "v0.0.2", "v0.0.3", "v0.0.4", "v0.0.5", "v0.0.6", "v0.0.7"}
-	if !slices.Equal(dispatch.Inputs["version"].Options, wantVersions) {
-		t.Fatalf("legacy choices=%v, want %v", dispatch.Inputs["version"].Options, wantVersions)
-	}
-	resolve := namedStep(t, wf.Jobs["resolve"], "Resolve immutable diagnostic contract")
-	if !containsAll(resolve.Run, "releasecheck legacy", "publication_eligible == false", "dispatch_legacy_rebuild", "releasecheck contract matrix --json", "length == 5") {
-		t.Fatalf("legacy resolver does not fail closed against the diagnostic-only contract")
-	}
-	diagnostic := wf.Jobs["diagnostic"]
-	if diagnostic.Strategy.Matrix.Kind != yaml.ScalarNode || diagnostic.Strategy.Matrix.Value != "${{ fromJSON(needs.resolve.outputs.matrix) }}" {
-		t.Fatalf("legacy diagnostics do not consume contract matrix: %q", diagnostic.Strategy.Matrix.Value)
-	}
-	upload := namedStep(t, diagnostic, "Upload diagnostic-only result")
-	if !containsAll(upload.With["name"], "legacy-diagnostic", "github.run_id") || strings.Contains(upload.With["name"], "env-vault-release-") {
-		t.Fatalf("legacy artifact could be mistaken for a publication artifact: %v", upload.With)
-	}
-
-	contract := readReleaseContract(t)
-	if contract.VersionPolicy.LegacyRebuild.PublicationEligible || len(contract.VersionPolicy.LegacyRebuild.Versions) != 7 {
-		t.Fatalf("contract legacy policy=%+v", contract.VersionPolicy.LegacyRebuild)
-	}
-	for i, legacy := range contract.VersionPolicy.LegacyRebuild.Versions {
-		if legacy.Version != wantVersions[i] || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(legacy.TagSHA) {
-			t.Fatalf("legacy contract entry=%+v", legacy)
-		}
-	}
-	if len(contract.VersionPolicy.BlockedVersions) != 4 {
-		t.Fatalf("blocked version policy=%+v", contract.VersionPolicy.BlockedVersions)
-	}
-	for index, expected := range []string{"v0.0.8", "v0.0.9", "v0.0.10", "v0.0.11"} {
-		blocked := contract.VersionPolicy.BlockedVersions[index]
-		if blocked.Version != expected || !blocked.TagMustRemain || !blocked.GitHubReleaseMustNotExist {
-			t.Fatalf("%s immutable failed-tag policy=%+v", expected, blocked)
-		}
-	}
-
-	raw := readFile(t, "../.github/workflows/legacy-rebuild.yml")
-	for _, forbidden := range []string{"gh release", "reconcile-release-assets", "actions/attest", "publish-homebrew"} {
-		if strings.Contains(raw, forbidden) {
-			t.Fatalf("legacy diagnostic workflow contains publication marker %q", forbidden)
-		}
 	}
 }
 
@@ -1199,27 +431,10 @@ func TestReleasePleaseConfigDraftsReleasesAndTracksVersionedDocs(t *testing.T) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatalf("parse release-please-config.json: %v", err)
 	}
-	recovery := readReleaseContract(t).VersionPolicy.ReleasePleaseRecovery
-	if recovery.State != "complete" || recovery.AbandonedVersion != "v0.0.12" ||
-		recovery.AbandonedSourceSHA != "a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b" ||
-		recovery.GeneratedReleasePRNumber != 31 ||
-		recovery.GeneratedReleasePRHeadSHA != "c7169946d9c430209928266d95be7629c93d5878" ||
-		recovery.ResumeVersion != "v0.0.13" || config.LastReleaseSHA != nil ||
-		recovery.PendingLabel != "autorelease: pending" ||
-		recovery.AbandonedLabel != "autorelease: abandoned" ||
-		recovery.TaggedLabel != "autorelease: tagged" ||
-		!recovery.TagMustNotExist || !recovery.GitHubReleaseMustNotExist ||
-		recovery.ReasonCode != "PRETAG_AUTHORIZATION_MISSING" ||
-		recovery.CompletedReleaseSourceSHA != "6206b472cda81f7a87656055d8eb6627c26a0fef" {
-		t.Fatalf("complete Release Please recovery/config boundary=%+v config_last_release_sha=%s", recovery, config.LastReleaseSHA)
-	}
-	canonicalContract, err := releasecontract.LoadCanonical("..")
-	if err != nil {
-		t.Fatalf("load canonical release contract: %v", err)
-	}
-	manifestData := []byte(readFile(t, "../.release-please-manifest.json"))
-	if _, err := releasecontract.CheckReleasePleaseRecovery(canonicalContract, data, manifestData); err != nil {
-		t.Fatalf("completed recovery config/manifest: %v", err)
+	// Release Please finds the previous release from the tags. A pinned
+	// last-release-sha would override that search.
+	if config.LastReleaseSHA != nil || strings.Contains(string(data), "last-release-sha") {
+		t.Fatalf("release-please-config.json must not pin last-release-sha: %s", config.LastReleaseSHA)
 	}
 	// ADR 0011: Release Please tags the merge commit and opens a draft release,
 	// which release.yml publishes after it builds and attests the release.
@@ -1246,58 +461,19 @@ func TestReleasePleaseConfigDraftsReleasesAndTracksVersionedDocs(t *testing.T) {
 	if len(pkg.ExtraFiles) != 1 || pkg.ExtraFiles[0].Type != "generic" || pkg.ExtraFiles[0].Path != "README.md" {
 		t.Fatalf("versioned extra files=%+v", pkg.ExtraFiles)
 	}
-}
 
-func TestCompletedRecoveryTemporaryPlannerIsAbsent(t *testing.T) {
-	paths := workflowPaths(t)
-	scripts, err := filepath.Glob("../scripts/release/*")
-	if err != nil {
-		t.Fatal(err)
+	// The README line that Release Please updates names the current version.
+	var manifest map[string]string
+	if err := json.Unmarshal([]byte(readFile(t, "../.release-please-manifest.json")), &manifest); err != nil {
+		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	paths = append(paths, scripts...)
-	for _, path := range paths {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.IsDir() {
-			continue
-		}
-		if strings.Contains(readFile(t, path), "reconcile-abandoned-release-pr.sh") {
-			t.Fatalf("runtime file %s still references the one-time reconciliation", path)
-		}
+	version, ok := manifest["."]
+	if !ok || len(manifest) != 1 || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(version) {
+		t.Fatalf("release manifest=%v, want one root version", manifest)
 	}
-	if _, err := os.Lstat("../scripts/release/reconcile-abandoned-release-pr.sh"); !os.IsNotExist(err) {
-		t.Fatalf("one-time reconciliation script still exists: %v", err)
-	}
-	if strings.Contains(readFile(t, "../scripts/release/verify-release-proposal.sh"), "EXPECTED_RELEASE_VERSION") {
-		t.Fatal("proposal verifier retains the active-only recovery override")
-	}
-	release := readFile(t, "../.github/workflows/"+releaseWorkflowFile)
-	for _, marker := range []string{"Reconcile the exact abandoned untagged release pull request", "Upload exact abandoned-release recovery evidence", "env-vault-release-please-recovery-planning", "abandon-release"} {
-		if strings.Contains(release, marker) {
-			t.Fatalf("release workflow retains completed-recovery marker %q", marker)
-		}
-	}
-}
-
-func TestObsoleteNetworkOperatorAndHistoricalComparatorAreAbsent(t *testing.T) {
-	for _, path := range workflowPaths(t) {
-		raw := readFile(t, path)
-		for _, forbidden := range []string{"releasectl", "e2e-compare", "29441160687", "rerun --failed", "rerun-failed-jobs"} {
-			if strings.Contains(raw, forbidden) {
-				t.Fatalf("%s contains obsolete or unsafe release marker %q", path, forbidden)
-			}
-		}
-	}
-	for _, path := range []string{"../cmd/releasectl", "../internal/releasectl", "../cmd/e2e-compare"} {
-		files, err := filepath.Glob(filepath.Join(path, "*.go"))
-		if err != nil {
-			t.Fatalf("glob obsolete implementation path %s: %v", path, err)
-		}
-		if len(files) != 0 {
-			t.Fatalf("obsolete implementation files still exist: %v", files)
-		}
+	line := "Current version: `v" + version + "`. <!-- x-release-please-version -->\n"
+	if count := strings.Count(readFile(t, "../README.md"), line); count != 1 {
+		t.Fatalf("README version line count=%d, want 1; line=%q", count, line)
 	}
 }
 
@@ -1322,19 +498,6 @@ func workflowPaths(t *testing.T) []string {
 	}
 	sort.Strings(paths)
 	return paths
-}
-
-func readReleaseContract(t *testing.T) releaseContract {
-	t.Helper()
-	data, err := os.ReadFile("../release/contract.v2.json")
-	if err != nil {
-		t.Fatalf("read release contract: %v", err)
-	}
-	var contract releaseContract
-	if err := json.Unmarshal(data, &contract); err != nil {
-		t.Fatalf("parse release contract: %v", err)
-	}
-	return contract
 }
 
 func readFile(t *testing.T, path string) string {
@@ -1389,13 +552,6 @@ func assertPinnedAction(t *testing.T, path, jobName, uses string, expected map[s
 	}
 	if uses != want {
 		t.Fatalf("%s job %s uses %q, want reviewed pin %q", path, jobName, uses, want)
-	}
-}
-
-func assertGlobalReleaseConcurrency(t *testing.T, label string, wf workflow) {
-	t.Helper()
-	if wf.Concurrency.Group != "env-vault-release" || wf.Concurrency.CancelInProgress.Value || wf.Concurrency.Queue != "max" {
-		t.Fatalf("%s changed global release serialization: %+v", label, wf.Concurrency)
 	}
 }
 
@@ -1482,78 +638,6 @@ func containsAll(value string, fragments ...string) bool {
 		}
 	}
 	return true
-}
-
-func containsAny(value string, fragments ...string) bool {
-	for _, fragment := range fragments {
-		if strings.Contains(value, fragment) {
-			return true
-		}
-	}
-	return false
-}
-
-func assertJQIdentityPredicate(t *testing.T, predicate string, fixture map[string]any, args []string, wantPass bool) {
-	t.Helper()
-	data, err := json.Marshal(fixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	commandArgs := append([]string{"-e"}, args...)
-	commandArgs = append(commandArgs, predicate)
-	command := exec.Command("jq", commandArgs...)
-	command.Stdin = strings.NewReader(string(data))
-	output, err := command.CombinedOutput()
-	if wantPass && err != nil {
-		t.Fatalf("exact Actions identity fixture was rejected: %v\n%s", err, output)
-	}
-	if !wantPass && err == nil {
-		t.Fatalf("drifted Actions identity fixture was accepted: %s", output)
-	}
-}
-
-func workflowJQProgram(t *testing.T, run, inputFile string) string {
-	t.Helper()
-	closing := "' " + inputFile + " >/dev/null || {"
-	closingIndex := strings.Index(run, closing)
-	if closingIndex < 0 {
-		t.Fatalf("jq predicate for %s not found in workflow step", inputFile)
-	}
-	prefix := run[:closingIndex]
-	openingIndex := strings.LastIndex(prefix, "'")
-	if openingIndex < 0 {
-		t.Fatalf("jq predicate for %s has no opening quote", inputFile)
-	}
-	program := strings.TrimSpace(prefix[openingIndex+1:])
-	if program == "" {
-		t.Fatalf("jq predicate for %s is empty", inputFile)
-	}
-	return program
-}
-
-func cloneJSONMap(t *testing.T, value map[string]any) map[string]any {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var clone map[string]any
-	if err := json.Unmarshal(data, &clone); err != nil {
-		t.Fatal(err)
-	}
-	return clone
-}
-
-func countJobRunsContaining(wf workflow, fragment string) int {
-	count := 0
-	for _, job := range wf.Jobs {
-		for _, step := range job.Steps {
-			if strings.Contains(step.Run, fragment) {
-				count++
-			}
-		}
-	}
-	return count
 }
 
 func jobRunsExact(job workflowJob, command string) bool {

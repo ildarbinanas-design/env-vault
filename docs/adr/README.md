@@ -23,9 +23,9 @@ Nygard's ADRs, with the Considered options section from MADR.
 | [0012](0012-attestation-verification-pins-release-workflow.md) | Attestation verification pins the release workflow and main | Accepted |
 
 In force: 0001, 0008 as amended by 0011, 0009, 0010, and 0011 as amended by
-0012. Since step 3 of ADR 0011, releases run on `release.yml`. The code of
-the old pipeline stays until step 6, and until then AGENTS.md keeps the
-ADR 0007 artifact deletion ceremony.
+0012. Since step 3 of ADR 0011, releases run on `release.yml`. Step 6 removed
+the code of the old pipeline, so the superseded records describe code that now
+lives only in git history.
 
 ## Rules
 
