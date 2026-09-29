@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -185,12 +186,14 @@ func (p Params) validate() error {
 	return nil
 }
 
-// ValidatePassphrase enforces the minimum passphrase length.
+// ValidatePassphrase enforces the minimum passphrase length. It counts
+// characters, not bytes, so a passphrase in a non-Latin script needs as many
+// characters as a Latin one.
 func ValidatePassphrase(passphrase []byte) error {
 	if len(passphrase) == 0 {
 		return fmt.Errorf("passphrase is empty")
 	}
-	if len(passphrase) < MinPassphraseLength {
+	if utf8.RuneCount(passphrase) < MinPassphraseLength {
 		return fmt.Errorf("passphrase must be at least %d characters", MinPassphraseLength)
 	}
 	return nil

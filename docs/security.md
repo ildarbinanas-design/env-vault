@@ -7,7 +7,9 @@ env-vault does not print secret values. It does not store secret values in confi
 Secret input is limited to:
 
 - a hidden interactive prompt;
-- `--stdin`, which trims exactly one trailing line ending (`\n` or `\r\n`).
+- `--stdin`, which trims exactly one trailing line ending (`\n` or `\r\n`). It
+  refuses a terminal, which would echo the value; there the hidden prompt is
+  the way in.
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
@@ -42,7 +44,8 @@ Understand what a container costs you before writing one:
 - **Its strength is the passphrase, not the operating system.** A keychain
   entry is protected by the login session, platform key storage, and OS rate
   limiting. A container file can be attacked offline with no rate limit. Use a
-  long passphrase; the enforced 12-character minimum is a floor, not a target.
+  long passphrase; the enforced 12-character minimum counts characters, not
+  bytes, and is a floor, not a target.
 - **There is no revocation.** Deleting a secret from the keychain destroys it.
   A container that reached a backup, a cloud-sync folder, a git commit, or a
   chat message survives every later rotation, and env-vault cannot know it

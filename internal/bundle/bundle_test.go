@@ -309,6 +309,8 @@ func TestSealRejectsWeakPassphrase(t *testing.T) {
 	tests := map[string]string{
 		"empty": "",
 		"short": strings.Repeat("a", MinPassphraseLength-1),
+		// Two bytes per letter: enough bytes, too few characters.
+		"short in Cyrillic": strings.Repeat("я", MinPassphraseLength/2),
 	}
 
 	for name, passphrase := range tests {
@@ -318,6 +320,15 @@ func TestSealRejectsWeakPassphrase(t *testing.T) {
 				t.Fatal("Seal accepted a weak passphrase")
 			}
 		})
+	}
+}
+
+func TestValidatePassphraseCountsCharacters(t *testing.T) {
+	if err := ValidatePassphrase([]byte(strings.Repeat("я", MinPassphraseLength))); err != nil {
+		t.Fatalf("%d Cyrillic letters were rejected: %v", MinPassphraseLength, err)
+	}
+	if err := ValidatePassphrase([]byte(strings.Repeat("я", MinPassphraseLength-1))); err == nil {
+		t.Fatalf("%d Cyrillic letters were accepted", MinPassphraseLength-1)
 	}
 }
 
