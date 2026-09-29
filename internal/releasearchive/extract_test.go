@@ -9,22 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
-var (
-	testReleaseContract = mustLoadReleaseContract()
-	releaseArchives     = archiveSpecs(testReleaseContract)
-)
-
-func mustLoadReleaseContract() releasecontract.Contract {
-	contract, err := releasecontract.LoadFile(filepath.Join("..", "..", filepath.FromSlash(releasecontract.CanonicalPath)))
-	if err != nil {
-		panic(err)
-	}
-	return contract
-}
+var releaseArchives = archiveSpecs()
 
 type archiveEntry struct {
 	name     string
@@ -34,29 +21,25 @@ type archiveEntry struct {
 	linkname string
 }
 
-func TestExtractAllValidReleaseArchives(t *testing.T) {
-	inputDir := t.TempDir()
-	outputDir := filepath.Join(t.TempDir(), "extracted")
-
+func TestExtractArchiveExtractsEveryReleaseArchive(t *testing.T) {
+	names := make([]string, 0, len(releaseArchives))
 	for _, spec := range releaseArchives {
+		names = append(names, spec.name)
+		archivePath := filepath.Join(t.TempDir(), spec.name)
 		entries := []archiveEntry{
 			{name: spec.root + "/", kind: tar.TypeDir, mode: 0o755},
 			{name: spec.root + "/README.md", kind: tar.TypeReg, mode: 0o644, content: "release documentation\n"},
 		}
 		if spec.format == formatZip {
-			writeZipArchive(t, filepath.Join(inputDir, spec.name), entries)
+			writeZipArchive(t, archivePath, entries)
 		} else {
-			writeTarArchive(t, filepath.Join(inputDir, spec.name), entries)
+			writeTarArchive(t, archivePath, entries)
 		}
-		if err := os.WriteFile(filepath.Join(inputDir, spec.name+".sha256"), []byte("sidecar\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
 
-	if err := ExtractAll(inputDir, outputDir, testReleaseContract); err != nil {
-		t.Fatalf("ExtractAll() error = %v", err)
-	}
-	for _, spec := range releaseArchives {
+		outputDir := filepath.Join(t.TempDir(), "extracted")
+		if err := ExtractArchive(archivePath, outputDir); err != nil {
+			t.Fatalf("ExtractArchive(%s) error = %v", spec.name, err)
+		}
 		content, err := os.ReadFile(filepath.Join(outputDir, spec.root, "README.md"))
 		if err != nil {
 			t.Fatalf("read %s payload: %v", spec.name, err)
@@ -64,6 +47,14 @@ func TestExtractAllValidReleaseArchives(t *testing.T) {
 		if got, want := string(content), "release documentation\n"; got != want {
 			t.Fatalf("%s payload = %q, want %q", spec.name, got, want)
 		}
+	}
+	want := []string{
+		"env-vault-linux-amd64.tar.gz", "env-vault-linux-arm64.tar.gz",
+		"env-vault-darwin-amd64.tar.gz", "env-vault-darwin-arm64.tar.gz",
+		"env-vault-windows-amd64.zip",
+	}
+	if strings.Join(names, " ") != strings.Join(want, " ") {
+		t.Fatalf("release archives=%v, want %v", names, want)
 	}
 }
 
@@ -241,7 +232,7 @@ func TestRejectsWrongArchiveName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ExtractArchive(archivePath, filepath.Join(t.TempDir(), "output"), testReleaseContract)
+	err := ExtractArchive(archivePath, filepath.Join(t.TempDir(), "output"))
 	requireErrorContains(t, err, "unsupported release archive name")
 }
 
@@ -267,7 +258,7 @@ func TestRejectsNonEmptyOutputDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ExtractArchive(archivePath, outputDir, testReleaseContract)
+	err := ExtractArchive(archivePath, outputDir)
 	requireErrorContains(t, err, "output directory must be empty")
 	content, readErr := os.ReadFile(filepath.Join(outputDir, "keep"))
 	if readErr != nil || string(content) != "do not overwrite" {

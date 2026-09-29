@@ -54,12 +54,6 @@ assert_no_secret_file() {
 assert_no_secret_outputs() {
   assert_no_secret_file "$OUT" "captured command output"
   assert_no_secret_file "$META" "metadata output"
-  if [ -d "$ROOT_DIR/evidence" ] &&
-    find "$ROOT_DIR/evidence" -type f -exec grep -F -l -- "$SECRET_VALUE" {} + 2>/dev/null |
-      grep -q .; then
-    printf '%s\n' "generated sensitive value leaked to machine release evidence" >&2
-    exit 1
-  fi
 }
 
 capture() {

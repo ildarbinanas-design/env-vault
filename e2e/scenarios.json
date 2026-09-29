@@ -21,7 +21,7 @@
     {
       "id": "CLI_VERSION_FORMS",
       "feature": "cli.version",
-      "requirement": "The --version flag, version command, and JSON version contract agree.",
+      "requirement": "The --version flag, version command, and JSON version report the module version, commit, and commit date that Go stamped into the binary.",
       "go_test": "TestE2E/CLI_VERSION_FORMS",
       "platforms": ["linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"],
       "critical": true

@@ -21,9 +21,8 @@ normalization, validation, and rendering code that interprets their reports.
 Generated reports are excluded. In the isolated reporting-tool file, only the
 two version pin values are canonicalized; the checksum pin and every other byte
 remain hashed.
-Matrix validation recomputes the suite hash from the exact checkout and
-compares it with the hash stamped into every report, so a stale report set is
-rejected even when it is internally consistent.
+Every report records that hash, so it names the exact scenario and runner code
+that produced it.
 
 ## Isolation and secret safety
 
@@ -193,15 +192,15 @@ closed without a second network fallback or artifacts from another attempt.
 
 Build the checksum-pinned reporting tool outside the product module; it is not
 a production dependency. Candidate matrices require stable `v1.13.0`, whose `x/tools` graph builds with Go 1.26.5 while preserving
-JSONL, JUnit, and test exit-code behavior. The same builder used by CI emits all
-five target binaries and their exact checksum sidecars:
+JSONL, JUnit, and test exit-code behavior. The builder CI uses emits a binary
+and its exact checksum sidecar for each target in a small matrix file:
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go run ./cmd/releasecheck contract matrix --json \
-  > /tmp/env-vault-native-matrix.json
+jq -n '{include: [{id: "darwin-arm64", goos: "darwin", goarch: "arm64"}]}' \
+  > /tmp/env-vault-e2e-targets.json
 toolchain="$(GOTOOLCHAIN=go1.26.5 go env GOROOT)"
 PATH="$toolchain/bin:$PATH" scripts/release/build-e2e-reporters.sh \
-  /tmp/env-vault-native-matrix.json /tmp/env-vault-e2e-reporters
+  /tmp/env-vault-e2e-targets.json /tmp/env-vault-e2e-reporters
 ```
 
 Run every functional, coverage, full burn-in, and locking burn-in pass. With no
@@ -283,23 +282,8 @@ Each E2E job fails closed if a required file is missing, malformed, or leaked,
 if a scenario skips unexpectedly, if critical scenario coverage is below 100%,
 or if statement coverage falls below the conservative 60% floor.
 
-CI no longer seals a five-platform matrix proof or feeds a promotion manifest
-(ADR 0011). `validate-matrix` stays for local use until migration step 6
-removes it. It requires reports for all five contract platforms, so it cannot
-check a CI run, which produces three. It recomputes the semantic suite hash from
-the exact checkout and rejects reports produced by a different runner or
-scenario implementation:
-
-```sh
-GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
-  --contract release/contract.v2.json \
-  --reports reports-download --phase candidate \
-  --expected-commit "$GITHUB_SHA" --expected-run-id "$GITHUB_RUN_ID" \
-  --expected-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-  --expected-run-attempt "$GITHUB_RUN_ATTEMPT" \
-  --expected-repository "$GITHUB_REPOSITORY" \
-  --expected-reporter "v1.13.0"
-```
+Each platform's reports stand alone: CI no longer combines them into a
+five-platform matrix proof (ADR 0011).
 
 The current symlink contract rejects unsafe final config and lock targets. It
 does not claim protection from a hostile same-user process or a pre-existing

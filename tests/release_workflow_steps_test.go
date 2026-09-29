@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -387,18 +388,27 @@ esac
 	released, previous := formula("0.4.0", ""), formula("0.3.4", "")
 	for _, tc := range []struct {
 		name      string
-		main      string // the formula on the tap's main
-		branch    string // the formula on the release branch, or "" without a branch
-		pr        string // the pull request state, or "" without a pull request
-		extra     string // another file the release branch changes
-		ahead     string // the release branch's commits ahead of main, if not derived
-		compare   string // the whole compare response, if not derived
+		main      string            // the formula on the tap's main
+		branch    string            // the formula on the release branch, or "" without a branch
+		pr        string            // the pull request state, or "" without a pull request
+		extra     string            // another file the release branch changes
+		ahead     string            // the release branch's commits ahead of main, if not derived
+		compare   string            // the whole compare response, if not derived
+		env       map[string]string // extra environment for the step
 		failure   string
 		mutations []string // the gh calls that change the tap, in order
 	}{
 		{name: "tap already current", main: released},
 		{name: "tap already newer", main: formula("0.10.0", "")},
-		{name: "tap formula without a version", main: "class EnvVault < Formula\nend\n", failure: "has no version line"},
+		// A failing sort must stop the step, not read as "the tap is newer".
+		{name: "version comparison fails", main: previous,
+			env: map[string]string{"BASH_FUNC_sort%%": "() { cat > /dev/null; echo 'sort failed' >&2; return 1; }"}, failure: "sort failed"},
+		{name: "tap formula without a version", main: "class EnvVault < Formula\nend\n", failure: "has no single version line"},
+		{name: "tap formula with two version lines", main: formula("0.3.4", "  version \"0.3.5\"\n"), failure: "has no single version line"},
+		// A version nested in a block is not the formula's version.
+		{name: "only a nested version", main: "class EnvVault < Formula\n  resource \"x\" do\n    version \"0.10.0\"\n  end\nend\n", failure: "has no single version line"},
+		{name: "nested version newer than the formula's", main: formula("0.3.4", "  resource \"x\" do\n    version \"0.10.0\"\n  end\n"),
+			mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "same version with another formula", main: formula("0.4.0", "  # edited\n"), mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "new release", main: previous, mutations: []string{"api --method POST", "api --method PUT", "pr create", "pr merge"}},
 		{name: "re-run before the formula commit", main: previous, branch: previous, mutations: []string{"api --method PUT", "pr create", "pr merge"}},
@@ -442,10 +452,12 @@ esac
 				}
 			}
 
-			out, ok := runReleaseStep(t, script, temp, fakeGH, map[string]string{
+			env := map[string]string{
 				"RUNNER_TEMP": temp, "RELEASE_TAG": "v0.4.0", "FAKE_GH_STATE": state,
 				"TAP_REPOSITORY": "ildarbinanas-design/homebrew-tap", "FORMULA_PATH": "Formula/env-vault.rb",
-			})
+			}
+			maps.Copy(env, tc.env)
+			out, ok := runReleaseStep(t, script, temp, fakeGH, env)
 			var mutations []string
 			for _, line := range strings.Split(readFile(t, filepath.Join(state, "calls")), "\n") {
 				for _, mutation := range []string{"api --method POST", "api --method PUT", "pr create", "pr merge"} {

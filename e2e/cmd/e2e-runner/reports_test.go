@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ildarbinanas-design/env-vault/internal/e2ebaseline"
 )
 
 func TestValidateXMLParsesCompleteJUnit(t *testing.T) {
@@ -436,170 +434,6 @@ func TestReportValidationRescansUnexpectedFilesForSentinelMarkers(t *testing.T) 
 	if _, _, err := validateReportDirectory(directory); err == nil {
 		t.Fatal("report containing an unregistered sentinel marker was accepted")
 	}
-
-	root := t.TempDir()
-	reportDirectory := filepath.Join(root, "linux-amd64")
-	writeValidReportDirectoryAt(t, reportDirectory, "linux", "amd64")
-	mustWriteReportFixture(t, root, "outside-platform-report.txt", []byte(defaultSentinelPrefix+"root_marker\n"))
-	if _, _, err := discoverReports(root, true); err == nil {
-		t.Fatal("report root containing an extra sentinel marker was accepted")
-	}
-}
-
-func TestValidateMatrixEnforcesCrossPlatformRunIdentity(t *testing.T) {
-	commit := strings.Repeat("c", 40)
-	tests := []struct {
-		name          string
-		expectedRunID string
-		prepare       func(*runMetadata)
-		mutate        func(*runMetadata)
-		wantErr       bool
-	}{
-		{name: "consistent matrix", expectedRunID: "local"},
-		{name: "consistent numeric matrix", expectedRunID: "42", prepare: setNumericRunIdentity},
-		{name: "commit mismatch", wantErr: true, mutate: func(metadata *runMetadata) {
-			metadata.CommitSHA = strings.Repeat("d", 40)
-		}, expectedRunID: "local"},
-		{name: "Go version mismatch", wantErr: true, mutate: func(metadata *runMetadata) {
-			metadata.GoVersion = "go1.22.11"
-		}, expectedRunID: "local"},
-		{name: "GitHub run mismatch", wantErr: true, mutate: func(metadata *runMetadata) {
-			metadata.GitHubRunID = "42"
-			metadata.GitHubRunURL = "https://github.com/example/env-vault/actions/runs/42"
-			metadata.GitHubRunAttempt = "1"
-		}, expectedRunID: "local"},
-		{
-			name:          "GitHub run URL mismatch",
-			expectedRunID: "42",
-			wantErr:       true,
-			prepare:       setNumericRunIdentity,
-			mutate: func(metadata *runMetadata) {
-				metadata.GitHubRunURL = "https://github.com/another/env-vault/actions/runs/42"
-			},
-		},
-		{
-			name:          "GitHub run attempt mismatch",
-			expectedRunID: "42",
-			wantErr:       true,
-			prepare:       setNumericRunIdentity,
-			mutate: func(metadata *runMetadata) {
-				metadata.GitHubRunAttempt = "2"
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			linuxDirectory := filepath.Join(root, "linux-amd64")
-			writeValidReportDirectoryAt(t, linuxDirectory, "linux", "amd64")
-			darwinDirectory := filepath.Join(root, "darwin-arm64")
-			writeValidReportDirectoryAt(t, darwinDirectory, "darwin", "arm64")
-			if test.prepare != nil {
-				mutateReportMetadata(t, linuxDirectory, test.prepare)
-				mutateReportMetadata(t, darwinDirectory, test.prepare)
-			}
-			if test.mutate != nil {
-				mutateReportMetadata(t, darwinDirectory, test.mutate)
-			}
-
-			err := validateMatrix(matrixOptions{
-				reportsRoot:        root,
-				phase:              "baseline",
-				required:           "linux-amd64,darwin-arm64",
-				expectedCommit:     commit,
-				expectedRunID:      test.expectedRunID,
-				expectedRunURL:     map[bool]string{true: "local", false: "https://github.com/example/env-vault/actions/runs/42"}[test.expectedRunID == "local"],
-				expectedRunAttempt: map[bool]string{true: "local", false: "1"}[test.expectedRunID == "local"],
-				expectedRepository: map[bool]string{true: "local", false: "example/env-vault"}[test.expectedRunID == "local"],
-				expectedReporter:   gotestsumVersion,
-			})
-			if test.wantErr && err == nil {
-				t.Fatal("matrix identity tampering was accepted")
-			}
-			if !test.wantErr && err != nil {
-				t.Fatalf("consistent matrix rejected: %v", err)
-			}
-			if !test.wantErr && test.expectedRunID == "42" {
-				var proof e2ebaseline.MatrixProof
-				if err := readJSON(filepath.Join(root, "matrix-validation.json"), &proof); err != nil {
-					t.Fatalf("read sealed matrix proof: %v", err)
-				}
-				if proof.SchemaID != e2ebaseline.MatrixProofSchemaID || proof.SchemaVersion != e2ebaseline.MatrixProofSchemaVersion || proof.Run.RunID != "42" || len(proof.PlatformEvidence) != 2 {
-					t.Fatalf("matrix proof identity/evidence=%+v", proof)
-				}
-				for _, evidence := range proof.PlatformEvidence {
-					if !validSHA256(evidence.ContractSHA256) || !validSHA256(evidence.MetadataSHA256) || !validSHA256(evidence.LeakSHA256) || len(evidence.EvidenceSHA256) != len(evidenceDigestFiles()) || !validSHA256(evidence.NormalizedEvidenceSHA256) {
-						t.Fatalf("platform %s proof is incomplete: %+v", evidence.ID, evidence)
-					}
-				}
-			}
-		})
-	}
-}
-
-func setNumericRunIdentity(metadata *runMetadata) {
-	metadata.GitHubRunID = "42"
-	metadata.GitHubRunURL = "https://github.com/example/env-vault/actions/runs/42"
-	metadata.GitHubRunAttempt = "1"
-	metadata.GitHubRepository = "example/env-vault"
-	metadata.SubjectKind = "artifact"
-	format := "tar.gz"
-	if metadata.GOOS == "windows" {
-		format = "zip"
-	}
-	base := "env-vault-" + metadata.Platform + "." + format
-	metadata.Artifact = artifactEvidence{
-		Path:             "<REPO>/dist/" + base,
-		ChecksumPath:     "<REPO>/dist/" + base + ".sha256",
-		SHA256:           strings.Repeat("a", 64),
-		ChecksumVerified: true,
-		Format:           format,
-	}
-}
-
-func TestValidateMatrixRejectsReportsFromStaleSuite(t *testing.T) {
-	root := t.TempDir()
-	for _, target := range []struct{ goos, goarch string }{{"linux", "amd64"}, {"darwin", "arm64"}} {
-		directory := filepath.Join(root, target.goos+"-"+target.goarch)
-		writeValidReportDirectoryAt(t, directory, target.goos, target.goarch)
-		mutateReportSuiteHash(t, directory, strings.Repeat("d", 64))
-	}
-	err := validateMatrix(matrixOptions{
-		reportsRoot: root, phase: "baseline", required: "linux-amd64,darwin-arm64",
-		expectedCommit: strings.Repeat("c", 40), expectedRunID: "local", expectedRunURL: "local",
-		expectedRunAttempt: "local", expectedRepository: "local", expectedReporter: gotestsumVersion,
-	})
-	if err == nil {
-		t.Fatal("internally consistent reports from a stale suite were accepted")
-	}
-}
-
-func mutateReportSuiteHash(t *testing.T, directory, digest string) {
-	t.Helper()
-	var metadata runMetadata
-	var coverage featureCoverage
-	if err := readJSON(filepath.Join(directory, "metadata.json"), &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if err := readJSON(filepath.Join(directory, "feature-coverage.json"), &coverage); err != nil {
-		t.Fatal(err)
-	}
-	metadata.SuiteHash = digest
-	coverage.SuiteHash = digest
-	mustWriteRunnerJSON(t, filepath.Join(directory, "feature-coverage.json"), coverage)
-	if err := writeFeatureMarkdown(filepath.Join(directory, "feature-coverage.md"), coverage); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeSummaryReports(directory, metadata, coverage); err != nil {
-		t.Fatal(err)
-	}
-	var err error
-	metadata.EvidenceSHA256, err = computeEvidenceDigests(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustWriteRunnerJSON(t, filepath.Join(directory, "metadata.json"), metadata)
 }
 
 func mutateReportMetadata(t *testing.T, directory string, mutate func(*runMetadata)) {
@@ -607,16 +441,16 @@ func mutateReportMetadata(t *testing.T, directory string, mutate func(*runMetada
 	metadataPath := filepath.Join(directory, "metadata.json")
 	var metadata runMetadata
 	if err := readJSON(metadataPath, &metadata); err != nil {
-		t.Fatalf("read matrix metadata fixture: %v", err)
+		t.Fatalf("read metadata fixture: %v", err)
 	}
 	mutate(&metadata)
 	mustWriteRunnerJSON(t, metadataPath, metadata)
 	var coverage featureCoverage
 	if err := readJSON(filepath.Join(directory, "feature-coverage.json"), &coverage); err != nil {
-		t.Fatalf("read matrix feature fixture: %v", err)
+		t.Fatalf("read feature fixture: %v", err)
 	}
 	if err := writeSummaryReports(directory, metadata, coverage); err != nil {
-		t.Fatalf("rewrite matrix summary fixture: %v", err)
+		t.Fatalf("rewrite summary fixture: %v", err)
 	}
 }
 

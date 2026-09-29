@@ -1,9 +1,9 @@
 // Command e2e-runner builds (or verifies) an env-vault binary, runs the
 // black-box E2E suite, and emits deterministic CI reports.
 //
-// The command uses the Go standard library plus checked-in offline
-// contract/evidence helpers. It executes an exact checksum-pinned gotestsum
-// binary, but never downloads or resolves that reporter from the network.
+// The command uses the Go standard library plus checked-in offline helpers. It
+// executes an exact checksum-pinned gotestsum binary, but never downloads or
+// resolves that reporter from the network.
 package main
 
 import (
@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 const (
@@ -44,19 +42,6 @@ type runOptions struct {
 	runnerOS           string
 }
 
-type matrixOptions struct {
-	contractPath       string
-	reportsRoot        string
-	phase              string
-	required           string
-	expectedCommit     string
-	expectedRunID      string
-	expectedRunURL     string
-	expectedRunAttempt string
-	expectedRepository string
-	expectedReporter   string
-}
-
 func main() {
 	if err := realMain(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "e2e-runner:", err)
@@ -81,17 +66,11 @@ func realMain(args []string) error {
 			return err
 		}
 		return runSuite(opts)
-	case "validate-matrix":
-		opts, err := parseMatrixFlags(args)
-		if err != nil {
-			return err
-		}
-		return validateMatrix(opts)
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("unknown mode %q (want run or validate-matrix)", mode)
+		return fmt.Errorf("unknown mode %q (want run)", mode)
 	}
 }
 
@@ -146,63 +125,12 @@ func parseRunFlags(args []string) (runOptions, error) {
 	return opts, nil
 }
 
-func parseMatrixFlags(args []string) (matrixOptions, error) {
-	opts := matrixOptions{contractPath: releasecontract.CanonicalPath}
-	fs := flag.NewFlagSet("e2e-runner validate-matrix", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.StringVar(&opts.contractPath, "contract", opts.contractPath, "release contract defining the exact ordered native platform matrix")
-	fs.StringVar(&opts.reportsRoot, "reports", "", "downloaded report/artifact root")
-	fs.StringVar(&opts.phase, "phase", "", "required report phase: baseline or candidate")
-	fs.StringVar(&opts.expectedCommit, "expected-commit", "", "exact commit SHA expected in every report")
-	fs.StringVar(&opts.expectedRunID, "expected-run-id", "", "exact GitHub Actions run ID expected in every report")
-	fs.StringVar(&opts.expectedRunURL, "expected-run-url", "", "exact GitHub Actions run URL expected in every report")
-	fs.StringVar(&opts.expectedRunAttempt, "expected-run-attempt", "", "exact GitHub Actions run attempt expected in every report")
-	fs.StringVar(&opts.expectedRepository, "expected-repository", "", "exact owner/repository expected in every report")
-	fs.StringVar(&opts.expectedReporter, "expected-reporter", gotestsumVersion, "exact gotestsum version expected in every report")
-	if err := fs.Parse(args); err != nil {
-		return matrixOptions{}, err
-	}
-	if fs.NArg() != 0 {
-		return matrixOptions{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " "))
-	}
-	if opts.reportsRoot == "" {
-		return matrixOptions{}, errors.New("--reports is required")
-	}
-	if opts.phase != "baseline" && opts.phase != "candidate" {
-		return matrixOptions{}, errors.New("--phase must be baseline or candidate")
-	}
-	if opts.expectedCommit == "" || opts.expectedRunID == "" || opts.expectedRunURL == "" || opts.expectedRunAttempt == "" || opts.expectedRepository == "" || opts.expectedReporter == "" {
-		return matrixOptions{}, errors.New("--expected-commit, run ID/URL/attempt, repository, and reporter are required")
-	}
-	if !validGitCommitSHA(opts.expectedCommit) {
-		return matrixOptions{}, errors.New("--expected-commit must be a full Git commit SHA")
-	}
-	if opts.expectedRunID != "local" && !numericRunID(opts.expectedRunID) {
-		return matrixOptions{}, errors.New("--expected-run-id must be numeric or local")
-	}
-	if opts.expectedRunID == "local" && (opts.expectedRunURL != "local" || opts.expectedRunAttempt != "local" || opts.expectedRepository != "local") {
-		return matrixOptions{}, errors.New("local matrix identity requires local URL, attempt, and repository")
-	}
-	contract, err := releasecontract.LoadFile(opts.contractPath)
-	if err != nil {
-		return matrixOptions{}, fmt.Errorf("load release contract: %w", err)
-	}
-	required := make([]string, 0, len(contract.Platforms))
-	for _, platform := range contract.Platforms {
-		required = append(required, platform.ID)
-	}
-	opts.required = strings.Join(required, ",")
-	return opts, nil
-}
-
 func printUsage() {
 	fmt.Fprintln(os.Stdout, `Usage:
   go run ./e2e/cmd/e2e-runner run --phase baseline [--binary PATH | --artifact PATH]
-  go run ./e2e/cmd/e2e-runner validate-matrix --contract release/contract.v1.json --reports DIR --phase baseline [exact run identity flags]
 
 The run mode always executes the release-like suite, a separately instrumented
-coverage suite, a shuffled full-suite burn-in, and a targeted locking burn-in.
-The validate-matrix mode derives its exact ordered platform set from the release contract.`)
+coverage suite, a shuffled full-suite burn-in, and a targeted locking burn-in.`)
 }
 
 func envInt(name string, fallback int) int {
@@ -217,11 +145,6 @@ func envInt(name string, fallback int) int {
 	return n
 }
 
-func numericRunID(value string) bool {
-	n, err := strconv.ParseUint(value, 10, 64)
-	return err == nil && n > 0
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -229,19 +152,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func parseCSV(value string) []string {
-	seen := make(map[string]bool)
-	var result []string
-	for _, item := range strings.Split(value, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" && !seen[item] {
-			seen[item] = true
-			result = append(result, item)
-		}
-	}
-	return result
 }
 
 func requiredPlatforms() []string {

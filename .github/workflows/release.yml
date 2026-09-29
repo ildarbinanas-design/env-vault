@@ -466,10 +466,12 @@ jobs:
             echo "the tap already has the $RELEASE_TAG formula"
             exit 0
           fi
-          # A late re-run of an older release must not move the tap back.
+          # A late re-run of an older release must not move the tap back. Only
+          # the formula's own version line counts, not one nested in a block.
           tapped="$(sed -n 's/^  version "\([0-9][0-9.]*\)"$/\1/p' "$current")"
-          [[ -n "$tapped" ]] || { echo "the tap's formula has no version line" >&2; exit 1; }
-          if [[ "$(printf '%s\n' "$tapped" "${RELEASE_TAG#v}" | sort -V | tail -n 1)" != "${RELEASE_TAG#v}" ]]; then
+          [[ "$tapped" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "the tap's formula has no single version line" >&2; exit 1; }
+          newest="$(printf '%s\n' "$tapped" "${RELEASE_TAG#v}" | sort -V | tail -n 1)"
+          if [[ "$newest" != "${RELEASE_TAG#v}" ]]; then
             echo "the tap already has the newer version $tapped"
             exit 0
           fi

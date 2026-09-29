@@ -5,6 +5,7 @@ bin/
 dist/
 coverage.out
 reports/e2e/
+reporter-tool/
 *.test
 
 # Local editor and OS noise

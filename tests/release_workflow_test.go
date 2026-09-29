@@ -187,11 +187,6 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		t.Fatalf("release-please outputs=%v", planning.Outputs)
 	}
 
-	contract := readReleaseContract(t)
-	platforms := make(map[string]contractPlatform, len(contract.Platforms))
-	for _, platform := range contract.Platforms {
-		platforms[platform.ID] = platform
-	}
 	build := wf.Jobs["build"]
 	if !slices.Equal([]string(build.Needs), []string{"release-please"}) ||
 		build.If != "${{ !cancelled() && (github.event_name != 'push' || needs.release-please.outputs.release == 'true') }}" {
@@ -201,25 +196,20 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 	if err := build.Strategy.Matrix.Decode(&matrix); err != nil {
 		t.Fatalf("decode build matrix: %v", err)
 	}
-	if len(matrix.Include) != len(platforms) {
-		t.Fatalf("build matrix has %d targets, contract has %d", len(matrix.Include), len(platforms))
+	// The five release targets. Darwin needs cgo for the Keychain backend.
+	wantTargets := []map[string]string{
+		{"id": "linux-amd64", "runner": "ubuntu-latest", "goos": "linux", "goarch": "amd64", "cgo": "0", "binary": "env-vault"},
+		{"id": "linux-arm64", "runner": "ubuntu-24.04-arm", "goos": "linux", "goarch": "arm64", "cgo": "0", "binary": "env-vault"},
+		{"id": "darwin-amd64", "runner": "macos-15-intel", "goos": "darwin", "goarch": "amd64", "cgo": "1", "binary": "env-vault"},
+		{"id": "darwin-arm64", "runner": "macos-15", "goos": "darwin", "goarch": "arm64", "cgo": "1", "binary": "env-vault"},
+		{"id": "windows-amd64", "runner": "windows-latest", "goos": "windows", "goarch": "amd64", "cgo": "0", "binary": "env-vault.exe"},
 	}
-	seen := map[string]bool{}
-	for _, target := range matrix.Include {
-		if seen[target["id"]] {
-			t.Fatalf("build matrix repeats target %q", target["id"])
-		}
-		seen[target["id"]] = true
-		platform, ok := platforms[target["id"]]
-		if !ok {
-			t.Fatalf("build matrix target %q is not a contract platform", target["id"])
-		}
-		want := map[string]string{
-			"id": platform.ID, "runner": platform.Runner, "goos": platform.GOOS,
-			"goarch": platform.GOARCH, "cgo": platform.CGO, "binary": platform.Binary,
-		}
-		if !mapsEqual(target, want) {
-			t.Fatalf("build matrix target %v, want contract platform %v", target, want)
+	if len(matrix.Include) != len(wantTargets) {
+		t.Fatalf("build matrix has %d targets, want %d", len(matrix.Include), len(wantTargets))
+	}
+	for index, target := range matrix.Include {
+		if !mapsEqual(target, wantTargets[index]) {
+			t.Fatalf("build matrix target %v, want %v", target, wantTargets[index])
 		}
 	}
 	for _, name := range []string{"build", "package", "publish", "tap"} {
@@ -364,13 +354,13 @@ func TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit(t *testing.T) {
 		}
 		scriptTargets := strings.Fields(match[1])
 		sort.Strings(scriptTargets)
-		contractTargets := make([]string, 0, len(platforms))
-		for id := range platforms {
-			contractTargets = append(contractTargets, id)
+		releaseTargets := make([]string, 0, len(wantTargets))
+		for _, target := range wantTargets {
+			releaseTargets = append(releaseTargets, target["id"])
 		}
-		sort.Strings(contractTargets)
-		if !slices.Equal(scriptTargets, contractTargets) {
-			t.Fatalf("%s targets=%v, contract platforms=%v", script, scriptTargets, contractTargets)
+		sort.Strings(releaseTargets)
+		if !slices.Equal(scriptTargets, releaseTargets) {
+			t.Fatalf("%s targets=%v, release targets=%v", script, scriptTargets, releaseTargets)
 		}
 	}
 }
@@ -384,10 +374,10 @@ func TestPackageArchivesIsDeterministicAndKeepsTheLayout(t *testing.T) {
 			t.Skipf("%s is not available", tool)
 		}
 	}
-	contract := readReleaseContract(t)
+	targets := releaseTargets()
 	work := t.TempDir()
 	binaries := filepath.Join(work, "binaries")
-	for _, platform := range contract.Platforms {
+	for _, platform := range targets {
 		directory := filepath.Join(binaries, platform.ID)
 		if err := os.MkdirAll(directory, 0o755); err != nil {
 			t.Fatal(err)
@@ -420,10 +410,10 @@ func TestPackageArchivesIsDeterministicAndKeepsTheLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2*len(contract.Platforms) {
-		t.Fatalf("output has %d files, want %d", len(entries), 2*len(contract.Platforms))
+	if len(entries) != 2*len(targets) {
+		t.Fatalf("output has %d files, want %d", len(entries), 2*len(targets))
 	}
-	for _, platform := range contract.Platforms {
+	for _, platform := range targets {
 		archive := readBytes(t, filepath.Join(first, platform.Archive))
 		if !bytes.Equal(archive, readBytes(t, filepath.Join(second, platform.Archive))) {
 			t.Fatalf("%s differs between two runs over the same inputs", platform.Archive)
@@ -460,10 +450,10 @@ func TestPackageReleaseArrangesDownloadsAndAttestationSubjects(t *testing.T) {
 			t.Skipf("%s is not available", tool)
 		}
 	}
-	contract := readReleaseContract(t)
+	targets := releaseTargets()
 	work := t.TempDir()
 	downloads := filepath.Join(work, "downloads")
-	for _, platform := range contract.Platforms {
+	for _, platform := range targets {
 		directory := filepath.Join(downloads, "binary-"+platform.ID)
 		if err := os.MkdirAll(directory, 0o755); err != nil {
 			t.Fatal(err)
@@ -487,11 +477,11 @@ func TestPackageReleaseArrangesDownloadsAndAttestationSubjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2*len(contract.Platforms) {
-		t.Fatalf("archives has %d files, want %d", len(entries), 2*len(contract.Platforms))
+	if len(entries) != 2*len(targets) {
+		t.Fatalf("archives has %d files, want %d", len(entries), 2*len(targets))
 	}
 	summary := string(readBytes(t, filepath.Join(work, "summary.md")))
-	for _, platform := range contract.Platforms {
+	for _, platform := range targets {
 		if _, err := os.Stat(filepath.Join(archives, platform.Archive)); err != nil {
 			t.Fatal(err)
 		}
@@ -713,6 +703,26 @@ func archiveEntries(t *testing.T, name string, archive []byte, epoch int64) map[
 		})
 	}
 	return entries
+}
+
+// releaseTarget is one of the five platforms that release.yml builds.
+type releaseTarget struct {
+	ID, Binary, Archive, Checksum string
+}
+
+// releaseTargets lists the release platforms in build order.
+func releaseTargets() []releaseTarget {
+	var targets []releaseTarget
+	for _, id := range []string{"linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"} {
+		target := releaseTarget{ID: id, Binary: "env-vault", Archive: "env-vault-" + id + ".tar.gz"}
+		if strings.HasPrefix(id, "windows-") {
+			target.Binary = "env-vault.exe"
+			target.Archive = "env-vault-" + id + ".zip"
+		}
+		target.Checksum = target.Archive + ".sha256"
+		targets = append(targets, target)
+	}
+	return targets
 }
 
 func readBytes(t *testing.T, path string) []byte {

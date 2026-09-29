@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/ildarbinanas-design/env-vault/internal/releasearchive"
-	"github.com/ildarbinanas-design/env-vault/internal/releasecontract"
 )
 
 const maxArtifactCompressedBytes = 128 << 20
@@ -32,7 +31,7 @@ func prepareSubjectBinary(repoRoot, privateDir string, opts runOptions) (string,
 		return binary, artifactEvidence{}, commandResult{Name: "prebuilt-binary", ExitCode: boolExitCode(err == nil)}, err
 	}
 	if opts.artifact != "" {
-		binary, evidence, err := verifyAndExtractArtifact(repoRoot, opts.artifact, opts.checksum, filepath.Join(privateDir, "artifact"))
+		binary, evidence, err := verifyAndExtractArtifact(opts.artifact, opts.checksum, filepath.Join(privateDir, "artifact"))
 		return binary, evidence, commandResult{Name: "verify-release-artifact", ExitCode: boolExitCode(err == nil)}, err
 	}
 
@@ -85,7 +84,7 @@ func requireRegularBinary(filename string) (string, error) {
 	return abs, nil
 }
 
-func verifyAndExtractArtifact(repoRoot, archivePath, checksumPath, outputDir string) (string, artifactEvidence, error) {
+func verifyAndExtractArtifact(archivePath, checksumPath, outputDir string) (string, artifactEvidence, error) {
 	abs, err := filepath.Abs(archivePath)
 	if err != nil {
 		return "", artifactEvidence{}, fmt.Errorf("resolve artifact path: %w", err)
@@ -144,11 +143,7 @@ func verifyAndExtractArtifact(repoRoot, archivePath, checksumPath, outputDir str
 		evidence.ChecksumVerified = true
 	}
 
-	contract, err := releasecontract.LoadCanonical(repoRoot)
-	if err != nil {
-		return "", evidence, fmt.Errorf("load release contract for artifact extraction: %w", err)
-	}
-	if err := releasearchive.ExtractArchive(abs, outputDir, contract); err != nil {
+	if err := releasearchive.ExtractArchive(abs, outputDir); err != nil {
 		return "", evidence, fmt.Errorf("extract release artifact: %w", err)
 	}
 	root := wantBase
