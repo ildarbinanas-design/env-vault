@@ -152,6 +152,24 @@ GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
 ./env-vault version
 ```
 
+## Version
+
+`env-vault --version` prints the version, the short commit and the commit date,
+for example `v0.4.0 (1fd6638, 2026-09-27)`. `env-vault --json version` adds the
+full commit, the commit time, whether the source tree was modified, the Go
+version and the platform:
+
+```json
+{"ok":true,"command":"version","timestamp":"2026-09-27T12:00:00Z","data":{"commit":"1fd6638295fb616189e66da7cc110cf4831a3d94","commit_time":"2026-09-27T10:16:51Z","go":"go1.26.5","modified":false,"platform":"darwin/arm64","version":"v0.4.0"},"warnings":[],"error":null}
+```
+
+Every value comes from the build information Go embeds, which `go version -m`
+also shows. A build from a checkout between releases reports a pseudo-version,
+ending in `+dirty` if the tree had changes. A build without Git information has
+no commit fields, and one without a module version prints `dev`. The output
+helps diagnosis but proves nothing, because a modified binary can print
+anything; the attestation check above proves where a binary came from.
+
 ## GitHub Builds
 
 Pull-request and `main` CI call `reusable-quality.yml`: source tests, vet, the

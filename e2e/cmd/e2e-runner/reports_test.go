@@ -743,7 +743,7 @@ func writeValidReportDirectoryAt(t *testing.T, directory, goos, goarch string) {
 	profile := filepath.Join(directory, "coverage.out")
 	mustWriteReportFixture(t, directory, "coverage.out", []byte("mode: set\n"+
 		"github.com/ildarbinanas-design/env-vault/cmd/env-vault/main.go:9.13,11.2 1 1\n"+
-		"github.com/ildarbinanas-design/env-vault/internal/cli/cli.go:29.30,30.22 1 1\n"+
+		"github.com/ildarbinanas-design/env-vault/internal/cli/version.go:25.35,26.24 1 1\n"+
 		"github.com/ildarbinanas-design/env-vault/internal/config/config.go:41.20,46.2 1 1\n"+
 		"github.com/ildarbinanas-design/env-vault/internal/errors/errors.go:43.86,51.2 1 1\n"+
 		"github.com/ildarbinanas-design/env-vault/internal/output/output.go:44.62,51.2 1 0\n"))

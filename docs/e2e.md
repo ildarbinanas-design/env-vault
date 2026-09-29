@@ -111,7 +111,7 @@ skip instead of silently dropping the platform.
 |---|---|---|---|
 | Root `--help`; zero exit; stdout/stderr separation | `CLI_HELP_ROOT` | `TestE2E/CLI_HELP_ROOT` | P5 |
 | Help for every public command and subcommand | `CLI_HELP_SUBCOMMANDS` | `TestE2E/CLI_HELP_SUBCOMMANDS` | P5 |
-| `--version`, `version`, and JSON version agreement | `CLI_VERSION_FORMS` | `TestE2E/CLI_VERSION_FORMS` | P5 |
+| `--version` and `version` print the exact line from the binary's Go build information, JSON carries every build field, and in CI the commit is the checked-out commit | `CLI_VERSION_FORMS` | `TestE2E/CLI_VERSION_FORMS` | P5 |
 | Missing commands/arguments and unknown flags | `CLI_ARGUMENT_ERRORS` | `TestE2E/CLI_ARGUMENT_ERRORS` | P5 |
 | Stable usage exit code and human/machine stream separation | `CLI_ARGUMENT_ERRORS` | `TestE2E/CLI_ARGUMENT_ERRORS` | P5 |
 | Exact non-secret text contracts for secret and profile lifecycles | `TEXT_OUTPUT_CONTRACTS` | `TestE2E/TEXT_OUTPUT_CONTRACTS` | P5 |

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime/debug"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -21,43 +20,6 @@ import (
 	keyringstore "github.com/ildarbinanas-design/env-vault/internal/secretstore/keyring"
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore/teststore"
 )
-
-var Version = "dev"
-
-// resolveVersion prefers the release version injected through -ldflags and
-// falls back to module/VCS metadata the Go toolchain embeds into source builds.
-func resolveVersion() string {
-	if Version != "dev" {
-		return Version
-	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return Version
-	}
-	if v := info.Main.Version; v != "" && v != "(devel)" {
-		return v
-	}
-	revision := ""
-	modified := false
-	for _, setting := range info.Settings {
-		switch setting.Key {
-		case "vcs.revision":
-			revision = setting.Value
-		case "vcs.modified":
-			modified = setting.Value == "true"
-		}
-	}
-	if revision == "" {
-		return Version
-	}
-	if len(revision) > 12 {
-		revision = revision[:12]
-	}
-	if modified {
-		return Version + "-" + revision + "-dirty"
-	}
-	return Version + "-" + revision
-}
 
 type App struct {
 	stdin      io.Reader
@@ -189,7 +151,7 @@ func (a *App) versionCommand() *cobra.Command {
 }
 
 func (a *App) renderVersion() error {
-	return a.renderer().Success("version", map[string]any{"version": resolveVersion()}, nil)
+	return a.renderer().Success("version", currentBuild().data(), nil)
 }
 
 func (a *App) secretCommand() *cobra.Command {

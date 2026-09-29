@@ -134,7 +134,7 @@ func (a *App) exportCommand() *cobra.Command {
 			}
 			defer bundle.Wipe(passphrase)
 
-			raw, err := bundle.Seal(payload, passphrase, bundle.Options{ToolVersion: resolveVersion()})
+			raw, err := bundle.Seal(payload, passphrase, bundle.Options{ToolVersion: currentBuild().Version})
 			if err != nil {
 				return bundleError("export", err)
 			}

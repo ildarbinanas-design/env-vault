@@ -480,11 +480,7 @@ func buildCoverageBinary(repoRoot, privateDir string, opts runOptions) (string, 
 		name += ".exe"
 	}
 	output := filepath.Join(privateDir, "bin", name)
-	args := []string{"build", "-trimpath", "-cover", "-coverpkg=./..."}
-	if version := firstNonEmpty(os.Getenv("ENV_VAULT_E2E_VERSION"), os.Getenv("VERSION")); version != "" {
-		args = append(args, "-ldflags=-X github.com/ildarbinanas-design/env-vault/internal/cli.Version="+version)
-	}
-	args = append(args, "-o", output, "./cmd/env-vault")
+	args := []string{"build", "-trimpath", "-cover", "-coverpkg=./...", "-o", output, "./cmd/env-vault"}
 	result := runCommand(commandSpec{
 		name:       "go",
 		args:       args,

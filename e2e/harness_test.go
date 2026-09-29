@@ -4,6 +4,7 @@ import (
 	"bytes"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -26,7 +27,7 @@ import (
 
 const (
 	binaryEnv           = "ENV_VAULT_E2E_BINARY"
-	versionEnv          = "ENV_VAULT_E2E_VERSION"
+	commitEnv           = "ENV_VAULT_E2E_COMMIT_SHA"
 	helperEnv           = "ENV_VAULT_E2E_HELPER"
 	contractsDirEnv     = "ENV_VAULT_E2E_CONTRACTS_DIR"
 	sentinelRegistryEnv = "ENV_VAULT_E2E_SENTINEL_REGISTRY"
@@ -39,7 +40,7 @@ var registryMu sync.Mutex
 
 type suite struct {
 	binary      string
-	version     string
+	build       expectedBuild
 	helper      string
 	root        string
 	contracts   string
@@ -137,13 +138,66 @@ func newSuite(t *testing.T) *suite {
 	}
 	return &suite{
 		binary:      binary,
-		version:     os.Getenv(versionEnv),
+		build:       readExpectedBuild(t, binary),
 		helper:      helper,
 		root:        root,
 		contracts:   os.Getenv(contractsDirEnv),
 		registry:    os.Getenv(sentinelRegistryEnv),
 		passthrough: passthrough,
 	}
+}
+
+// expectedBuild is what the binary under test must report about itself. The
+// harness reads it independently from the build information the Go toolchain
+// embedded in the file.
+type expectedBuild struct {
+	version    string
+	commit     string
+	commitTime string
+	modified   bool
+	goVersion  string
+	platform   string
+}
+
+func readExpectedBuild(t *testing.T, binary string) expectedBuild {
+	t.Helper()
+	info, err := buildinfo.ReadFile(binary)
+	if err != nil {
+		t.Fatalf("read the build information of %s: %v", binary, err)
+	}
+	build := expectedBuild{version: "dev", goVersion: info.GoVersion}
+	if version := info.Main.Version; version != "" && version != "(devel)" {
+		build.version = version
+	}
+	var goos, goarch string
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			build.commit = setting.Value
+		case "vcs.time":
+			build.commitTime = setting.Value
+		case "vcs.modified":
+			build.modified = setting.Value == "true"
+		case "GOOS":
+			goos = setting.Value
+		case "GOARCH":
+			goarch = setting.Value
+		}
+	}
+	build.platform = goos + "/" + goarch
+	return build
+}
+
+// line is the exact one-line --version output ADR 0011 specifies.
+func (b expectedBuild) line() string {
+	if b.commit == "" {
+		return b.version
+	}
+	line := b.version + " (" + b.commit[:min(7, len(b.commit))]
+	if commitTime, err := time.Parse(time.RFC3339, b.commitTime); err == nil {
+		line += ", " + commitTime.UTC().Format(time.DateOnly)
+	}
+	return line + ")"
 }
 
 func buildHelper(t *testing.T, target string) {
@@ -438,10 +492,7 @@ func (sc *scenario) normalizeArgs(args []string) []string {
 	return out
 }
 
-var (
-	timestampPattern = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z`)
-	versionPattern   = regexp.MustCompile(`\b(?:dev-[0-9a-f]{7,40}(?:-dirty)?|ci-[0-9a-f]{40})\b`)
-)
+var timestampPattern = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z`)
 
 func (sc *scenario) normalizeText(value string) string {
 	value = strings.ReplaceAll(value, "\r\n", "\n")
@@ -486,11 +537,22 @@ func (sc *scenario) normalizeScalarText(value string) string {
 			}
 		}
 	}
-	value = timestampPattern.ReplaceAllString(value, "<TIMESTAMP>")
-	if sc.suite.version != "" {
-		value = strings.ReplaceAll(value, sc.suite.version, "<VERSION>")
+	// The version line and the build fields change with every commit and
+	// toolchain, so contracts record only their shape.
+	build := sc.suite.build
+	for _, replacement := range [][2]string{
+		{build.line(), "<VERSION_LINE>"},
+		{build.version, "<VERSION>"},
+		{build.commit, "<COMMIT>"},
+		{build.goVersion, "<GO_VERSION>"},
+		{build.platform, "<PLATFORM>"},
+	} {
+		// A bare "dev" is too common a word to mask, and "/" is an unknown platform.
+		if replacement[0] != "" && replacement[0] != "dev" && replacement[0] != "/" {
+			value = strings.ReplaceAll(value, replacement[0], replacement[1])
+		}
 	}
-	value = versionPattern.ReplaceAllString(value, "<VERSION>")
+	value = timestampPattern.ReplaceAllString(value, "<TIMESTAMP>")
 	return value
 }
 
@@ -511,21 +573,46 @@ func TestContractNormalizationReplacesSentinelDerivedHashes(t *testing.T) {
 	}
 }
 
-func TestContractNormalizationReplacesOnlyExpectedVersion(t *testing.T) {
-	sc := &scenario{t: t, suite: &suite{version: "v0.0.9"}}
-
-	if got, want := sc.normalizeScalarText("v0.0.9\n"), "<VERSION>\n"; got != want {
-		t.Fatalf("normalized expected version=%q, want %q", got, want)
+func TestContractNormalizationMasksOnlyTheBinaryBuild(t *testing.T) {
+	build := expectedBuild{
+		version:    "v0.4.0",
+		commit:     "1fd6638295fb616189e66da7cc110cf4831a3d94",
+		commitTime: "2026-09-27T10:16:51Z",
+		goVersion:  "go1.26.5",
+		platform:   "linux/amd64",
 	}
-	if got, want := sc.normalizeScalarText("v0.0.8\n"), "v0.0.8\n"; got != want {
+	sc := &scenario{t: t, suite: &suite{build: build}}
+
+	if got, want := sc.normalizeScalarText("v0.4.0 (1fd6638, 2026-09-27)\n"), "<VERSION_LINE>\n"; got != want {
+		t.Fatalf("normalized version line=%q, want %q", got, want)
+	}
+	if got, want := sc.normalizeScalarText("v0.3.9\n"), "v0.3.9\n"; got != want {
 		t.Fatalf("unexpected version was masked: got %q, want %q", got, want)
 	}
-	if got, want := sc.normalizeScalarText("ci-0123456789abcdef0123456789abcdef01234567"), "<VERSION>"; got != want {
-		t.Fatalf("normalized CI version=%q, want %q", got, want)
-	}
-	input := `{"version":"v0.0.9","unexpected":"v0.0.8"}`
-	if got, want := sc.normalizeText(input), `{"unexpected":"v0.0.8","version":"\u003cVERSION\u003e"}`; got != want {
+	input := `{"commit":"1fd6638295fb616189e66da7cc110cf4831a3d94","commit_time":"2026-09-27T10:16:51Z","go":"go1.26.5","modified":false,"platform":"linux/amd64","unexpected":"v0.3.9","version":"v0.4.0"}`
+	want := `{"commit":"\u003cCOMMIT\u003e","commit_time":"\u003cTIMESTAMP\u003e","go":"\u003cGO_VERSION\u003e","modified":false,"platform":"\u003cPLATFORM\u003e","unexpected":"v0.3.9","version":"\u003cVERSION\u003e"}`
+	if got := sc.normalizeText(input); got != want {
 		t.Fatalf("normalized JSON version=%q, want %q", got, want)
+	}
+
+	dev := &scenario{t: t, suite: &suite{build: expectedBuild{version: "dev", platform: "/"}}}
+	if got, want := dev.normalizeScalarText("/dev/null dev\n"), "/dev/null dev\n"; got != want {
+		t.Fatalf("a development build masked ordinary text: got %q, want %q", got, want)
+	}
+}
+
+func TestExpectedVersionLine(t *testing.T) {
+	for _, tc := range []struct {
+		build expectedBuild
+		want  string
+	}{
+		{expectedBuild{version: "v0.4.0", commit: "1fd6638295fb616189e66da7cc110cf4831a3d94", commitTime: "2026-09-27T10:16:51Z"}, "v0.4.0 (1fd6638, 2026-09-27)"},
+		{expectedBuild{version: "v0.4.0", commit: "1fd6638295fb"}, "v0.4.0 (1fd6638)"},
+		{expectedBuild{version: "dev"}, "dev"},
+	} {
+		if got := tc.build.line(); got != tc.want {
+			t.Fatalf("%+v line=%q, want %q", tc.build, got, tc.want)
+		}
 	}
 }
 

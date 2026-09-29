@@ -71,3 +71,28 @@ func TestQuietSuppressesHumanSuccess(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
+
+func TestHumanVersionLine(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		data map[string]any
+		want string
+	}{
+		{"release", map[string]any{"version": "v0.4.0", "commit": "1fd6638295fb616189e66da7cc110cf4831a3d94", "commit_time": "2026-09-27T10:16:51Z"}, "v0.4.0 (1fd6638, 2026-09-27)\n"},
+		{"commit time in another zone", map[string]any{"version": "v0.4.0", "commit": "1fd6638295fb", "commit_time": "2026-09-27T23:30:00-02:00"}, "v0.4.0 (1fd6638, 2026-09-28)\n"},
+		{"no commit time", map[string]any{"version": "v0.4.0", "commit": "1fd6638295fb"}, "v0.4.0 (1fd6638)\n"},
+		{"no commit", map[string]any{"version": "dev"}, "dev\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			if err := New(&stdout, &bytes.Buffer{}, Options{}).Success("version", tc.data, nil); err != nil {
+				t.Fatalf("success: %v", err)
+			}
+			if stdout.String() != tc.want {
+				t.Fatalf("version line=%q, want %q", stdout.String(), tc.want)
+			}
+		})
+	}
+}
