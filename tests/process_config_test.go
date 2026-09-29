@@ -28,10 +28,9 @@ func TestLocalConfigAndTransactionLockAreIgnored(t *testing.T) {
 type dependabotConfig struct {
 	Version int `yaml:"version"`
 	Updates []struct {
-		PackageEcosystem   string `yaml:"package-ecosystem"`
-		Directory          string `yaml:"directory"`
-		VersioningStrategy string `yaml:"versioning-strategy"`
-		Schedule           struct {
+		PackageEcosystem string `yaml:"package-ecosystem"`
+		Directory        string `yaml:"directory"`
+		Schedule         struct {
 			Interval string `yaml:"interval"`
 		} `yaml:"schedule"`
 		CommitMessage struct {
@@ -59,6 +58,20 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 	if config.Version != 2 {
 		t.Fatalf("Dependabot version=%d, want 2", config.Version)
 	}
+	// Dependabot rejects the whole file when an ecosystem sets an option it
+	// does not support, and then opens no version updates at all. It rejected
+	// versioning-strategy for Go modules, whatever its value.
+	var raw struct {
+		Updates []map[string]any `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse Dependabot config: %v", err)
+	}
+	for _, update := range raw.Updates {
+		if _, ok := update["versioning-strategy"]; ok {
+			t.Fatalf("Dependabot %v sets versioning-strategy, which Dependabot rejects for it", update["package-ecosystem"])
+		}
+	}
 	want := map[string]bool{"gomod": false, "github-actions": false}
 	for _, update := range config.Updates {
 		if _, ok := want[update.PackageEcosystem]; !ok {
@@ -74,9 +87,6 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 			t.Fatalf("Dependabot %s commit message=%+v, want %s(deps)", update.PackageEcosystem, update.CommitMessage, wantPrefix)
 		}
 		if update.PackageEcosystem == "gomod" {
-			if update.VersioningStrategy != "increase-if-necessary" {
-				t.Fatalf("Dependabot gomod versioning-strategy=%q", update.VersioningStrategy)
-			}
 			group, ok := update.Groups["go-modules-minor-patch"]
 			if !ok || group.AppliesTo != "version-updates" || !slices.Equal(group.Patterns, []string{"*"}) || !slices.Equal(group.UpdateTypes, []string{"minor", "patch"}) {
 				t.Fatalf("Dependabot gomod group=%+v, want isolated minor/patch version updates", group)
