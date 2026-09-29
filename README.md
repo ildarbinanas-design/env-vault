@@ -170,12 +170,12 @@ GOTOOLCHAIN=go1.26.8 go build -o env-vault ./cmd/env-vault
 ## Version
 
 `env-vault --version` prints the version, the short commit and the commit date,
-for example `v0.4.0 (1fd6638, 2026-09-27)`. `env-vault --json version` adds the
+for example `v0.4.0 (1bc4567, 2026-09-29)`. `env-vault --json version` adds the
 full commit, the commit time, whether the source tree was modified, the Go
 version and the platform:
 
 ```json
-{"ok":true,"command":"version","timestamp":"2026-09-27T12:00:00Z","data":{"commit":"1fd6638295fb616189e66da7cc110cf4831a3d94","commit_time":"2026-09-27T10:16:51Z","go":"go1.26.5","modified":false,"platform":"darwin/arm64","version":"v0.4.0"},"warnings":[],"error":null}
+{"ok":true,"command":"version","timestamp":"2026-09-29T12:00:00Z","data":{"commit":"1bc45679516875794146ac11a5ba5dfcaa598c7a","commit_time":"2026-09-29T07:36:23Z","go":"go1.26.5","modified":false,"platform":"darwin/arm64","version":"v0.4.0"},"warnings":[],"error":null}
 ```
 
 Every value comes from the build information Go embeds, which `go version -m`

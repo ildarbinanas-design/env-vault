@@ -86,7 +86,7 @@ create/add/remove wrap the
 complete load, mutation, validation, and same-directory save in an exclusive
 lock from
 `github.com/gofrs/flock` (the version pinned in `go.mod`), verified by the
-unchanged cross-platform E2E contract on Go 1.26.5. The adjacent `<config>.lock` file is created with mode `0600`,
+unchanged cross-platform E2E contract. The adjacent `<config>.lock` file is created with mode `0600`,
 rechecked as a non-symlink regular file, and intentionally kept after unlock so
 all processes continue to coordinate on one inode. Acquisition retries every
 25 milliseconds for at most five seconds (or the caller's earlier deadline),
