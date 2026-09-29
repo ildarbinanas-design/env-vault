@@ -1,13 +1,13 @@
 package output
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/ildarbinanas-design/env-vault/internal/atomicfile"
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 )
 
@@ -86,6 +86,22 @@ func (r Renderer) Error(command string, err *apperrors.AppError) error {
 	_, writeErr := fmt.Fprintf(r.stderr, "code=%s\nmessage=%s\nremediation=%s\n",
 		env.Error.Code, env.Error.Message, env.Error.Remediation)
 	return writeErr
+}
+
+// CommandFailed records in the --output file that the command exec ran exited
+// with a non-zero status. It writes nothing to stdout or stderr: there a caller
+// sees only the command's own output, and env-vault exits with its status. As
+// for errors, a failure to write the file is reported only with --verbose.
+func (r Renderer) CommandFailed(command string, data any, exitCode int) {
+	obj := &ErrorObject{
+		Code:        apperrors.CodeCommandFailed,
+		Message:     fmt.Sprintf("Command exited with status %d", exitCode),
+		Remediation: "Inspect the command's output",
+	}
+	env := r.envelope(false, command, data, nil, obj)
+	if err := r.writeOutputFile(env); err != nil && r.options.Verbose {
+		fmt.Fprintf(r.stderr, "OUTPUT_WRITE_FAILED: %s\n", err.Error())
+	}
 }
 
 func (r Renderer) envelope(ok bool, command string, data any, warnings []string, err *ErrorObject) Envelope {
@@ -174,22 +190,18 @@ func (r Renderer) writeHumanSuccess(env Envelope) error {
 	return err
 }
 
+// writeOutputFile publishes the envelope at the --output path atomically with
+// mode 0600. It refuses a symlink or any other non-regular file there, as the
+// config and transfer container writers do, instead of writing through it.
 func (r Renderer) writeOutputFile(env Envelope) error {
 	if r.options.OutputPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(r.options.OutputPath), 0o700); err != nil {
+	var data bytes.Buffer
+	if err := json.NewEncoder(&data).Encode(env); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(r.options.OutputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if err := json.NewEncoder(file).Encode(env); err != nil {
-		return err
-	}
-	return os.Chmod(r.options.OutputPath, 0o600)
+	return atomicfile.Write(r.options.OutputPath, data.Bytes())
 }
 
 // versionLine renders the version, the short commit and the commit date on one
