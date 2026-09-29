@@ -191,14 +191,14 @@ running with `GOPROXY=off`. A missing or incompatible reporter therefore fails
 closed without a second network fallback or artifacts from another attempt.
 
 Build the checksum-pinned reporting tool outside the product module; it is not
-a production dependency. Candidate matrices require stable `v1.13.0`, whose `x/tools` graph builds with Go 1.26.5 while preserving
+a production dependency. Candidate matrices require stable `v1.13.0`, whose `x/tools` graph builds with Go 1.26.8 while preserving
 JSONL, JUnit, and test exit-code behavior. The builder CI uses emits a binary
 and its exact checksum sidecar for each target in a small matrix file:
 
 ```sh
 jq -n '{include: [{id: "darwin-arm64", goos: "darwin", goarch: "arm64"}]}' \
   > /tmp/env-vault-e2e-targets.json
-toolchain="$(GOTOOLCHAIN=go1.26.5 go env GOROOT)"
+toolchain="$(GOTOOLCHAIN=go1.26.8 go env GOROOT)"
 PATH="$toolchain/bin:$PATH" scripts/release/build-e2e-reporters.sh \
   /tmp/env-vault-e2e-targets.json /tmp/env-vault-e2e-reporters
 ```
@@ -234,7 +234,7 @@ PATH="$toolchain/bin:$PATH" GOTOOLCHAIN=local GOPROXY=off \
 The raw Go suite also deliberately accepts a prebuilt binary directly:
 
 ```sh
-ENV_VAULT_E2E_BINARY="$PWD/env-vault" GOTOOLCHAIN=go1.26.5 \
+ENV_VAULT_E2E_BINARY="$PWD/env-vault" GOTOOLCHAIN=go1.26.8 \
   go test -json -run '^TestE2E$' ./e2e
 ```
 

@@ -143,12 +143,12 @@ quarantine attribute, which is why that path works.
 
 ## Install From Source
 
-Source builds require Go 1.26.5 or newer. CI and release artifacts use the
+Source builds require Go 1.26.8 or newer. CI and release artifacts use the
 exact stable patch declared in `go.mod`.
 
 ```sh
-GOTOOLCHAIN=go1.26.5 go version
-GOTOOLCHAIN=go1.26.5 go build -o env-vault ./cmd/env-vault
+GOTOOLCHAIN=go1.26.8 go version
+GOTOOLCHAIN=go1.26.8 go build -o env-vault ./cmd/env-vault
 ./env-vault version
 ```
 

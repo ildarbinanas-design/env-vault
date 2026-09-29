@@ -79,13 +79,13 @@ Run the checks appropriate to the change. The full release-quality set is:
 ```sh
 gofmt -w $(git ls-files '*.go')
 git diff --check
-GOTOOLCHAIN=go1.26.5 go mod tidy -diff
-GOTOOLCHAIN=go1.26.5 go mod verify
-GOTOOLCHAIN=go1.26.5 go test ./...
-GOTOOLCHAIN=go1.26.5 go vet ./...
-GOTOOLCHAIN=go1.26.5 go test -race ./...
-GOTOOLCHAIN=go1.26.5 scripts/smoke.sh
-GOTOOLCHAIN=go1.26.5 scripts/license-check.sh
+GOTOOLCHAIN=go1.26.8 go mod tidy -diff
+GOTOOLCHAIN=go1.26.8 go mod verify
+GOTOOLCHAIN=go1.26.8 go test ./...
+GOTOOLCHAIN=go1.26.8 go vet ./...
+GOTOOLCHAIN=go1.26.8 go test -race ./...
+GOTOOLCHAIN=go1.26.8 scripts/smoke.sh
+GOTOOLCHAIN=go1.26.8 scripts/license-check.sh
 ```
 
 The protected pull request checks remain authoritative for the native Linux,
