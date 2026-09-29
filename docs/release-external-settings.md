@@ -15,9 +15,10 @@ settings change and at each audit.
 | `build` | none | `GITHUB_TOKEN`, `contents: read` | Builds, checks and smoke-tests the five targets. |
 | `publish` | `release` | `GITHUB_TOKEN`, `contents`, `id-token` and `attestations: write` | Attests the archives and binaries, uploads them to the draft and publishes it. |
 | `verify` | none | `GITHUB_TOKEN`, `contents` and `attestations: read` | Checks the published release, its tag, checksums and attestations. |
-| `tap` | `release` | `HOMEBREW_TAP_TOKEN` | Opens the formula pull request in `homebrew-tap` and enables auto-merge. |
+| `tap` | `release` | `HOMEBREW_TAP_TOKEN`; `GITHUB_TOKEN`, `contents: read` | Downloads the published archives with `GITHUB_TOKEN`, then opens the formula pull request in `homebrew-tap` and enables auto-merge. |
 
-Workflow-level permissions are `contents: read`; only `publish` raises them.
+Workflow-level permissions are `contents: read`. `publish` raises them, and
+`verify` adds only `attestations: read`.
 Pull request and manual runs stop after packaging and use no secret.
 
 A pull request opened with `GITHUB_TOKEN` would not trigger the required checks,
@@ -65,7 +66,9 @@ drop that grant at the next rotation if the token still has it.
 | `release-planning` | `RELEASE_PLANNING_TOKEN` | `main` only |
 | `release` | `HOMEBREW_TAP_TOKEN` | `main` only |
 
-No workflow runs on a tag, so neither environment allows tags. Neither has a
+No workflow runs on a tag, so neither environment allows tags. The old
+pipeline also admitted `v*` in `release`; remove that rule if it is still
+there (migration step 5 in #107). Neither has a
 required reviewer or a wait timer: merging the release pull request is the
 release authorization, and a second approval would stop every release halfway.
 

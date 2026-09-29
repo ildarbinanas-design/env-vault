@@ -46,8 +46,9 @@ Homebrew, and everything else stays proportionate to a single-user tool
   failed release is resumed with "Re-run failed jobs" on the same run, never
   "Re-run all jobs" (see `RELEASING.md`).
 - The release audit trail is the GitHub Releases page, the attestations, and
-  ordinary git and pull request history. The `release-evidence` branch of the
-  old pipeline is frozen history: never rewrite or extend it.
+  ordinary git and pull request history. The published `release-evidence`
+  branch and the durable evidence artifacts already in Actions storage are
+  frozen history: never rewrite, extend, or retrofit them.
 
 ## Working Mode
 

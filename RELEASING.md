@@ -104,7 +104,9 @@ rebuilt only on macOS.
   fine-grained token for this repository that expires every 90 days. The next
   renewal is due before 2026-12-26.
 - The `release` environment holds `HOMEBREW_TAP_TOKEN`, a fine-grained token
-  for `ildarbinanas-design/homebrew-tap`. Both environments admit only `main`.
+  for `ildarbinanas-design/homebrew-tap`. Both environments admit only `main`;
+  the `v*` rule the old pipeline needed in `release` is removed in migration
+  step 5 ([#107](https://github.com/ildarbinanas-design/env-vault/issues/107)).
 - [`docs/release-external-settings.md`](docs/release-external-settings.md)
   lists every external setting, the token permissions, and how to check and
   rotate them.

@@ -404,44 +404,64 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 }
 
 func TestReleasePleaseConfigDraftsReleasesAndTracksVersionedDocs(t *testing.T) {
-	data := []byte(readFile(t, "../release-please-config.json"))
 	type changelogSection struct {
 		Type    string `json:"type"`
 		Section string `json:"section"`
 		Hidden  bool   `json:"hidden"`
 	}
-	var config struct {
-		LastReleaseSHA json.RawMessage `json:"last-release-sha"`
-		Packages       map[string]struct {
-			ReleaseType       string             `json:"release-type"`
-			PackageName       string             `json:"package-name"`
-			Component         string             `json:"component"`
-			ChangelogPath     string             `json:"changelog-path"`
-			SkipGitHubRelease *bool              `json:"skip-github-release"`
-			Draft             bool               `json:"draft"`
-			ForceTagCreation  bool               `json:"force-tag-creation"`
-			IncludeVInTag     bool               `json:"include-v-in-tag"`
-			ChangelogSections []changelogSection `json:"changelog-sections"`
-			ExtraFiles        []struct {
-				Type string `json:"type"`
-				Path string `json:"path"`
-			} `json:"extra-files"`
-		} `json:"packages"`
+	type extraFile struct {
+		Type string `json:"type"`
+		Path string `json:"path"`
 	}
-	if err := json.Unmarshal(data, &config); err != nil {
+	type releasePackage struct {
+		ReleaseType             string             `json:"release-type"`
+		PackageName             string             `json:"package-name"`
+		Component               string             `json:"component"`
+		ChangelogPath           string             `json:"changelog-path"`
+		Draft                   *bool              `json:"draft"`
+		ForceTagCreation        *bool              `json:"force-tag-creation"`
+		IncludeVInTag           *bool              `json:"include-v-in-tag"`
+		IncludeComponentInTag   *bool              `json:"include-component-in-tag"`
+		PullRequestTitlePattern string             `json:"pull-request-title-pattern"`
+		PullRequestHeader       string             `json:"pull-request-header"`
+		PullRequestFooter       string             `json:"pull-request-footer"`
+		ChangelogSections       []changelogSection `json:"changelog-sections"`
+		ExtraFiles              []extraFile        `json:"extra-files"`
+	}
+	var config struct {
+		Schema               string                    `json:"$schema"`
+		SeparatePullRequests *bool                     `json:"separate-pull-requests"`
+		Packages             map[string]releasePackage `json:"packages"`
+	}
+	// Every key must be one of these, so a setting such as last-release-sha,
+	// bootstrap-sha, release-as or skip-github-release cannot slip in.
+	decoder := json.NewDecoder(strings.NewReader(readFile(t, "../release-please-config.json")))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
 		t.Fatalf("parse release-please-config.json: %v", err)
 	}
-	// Release Please finds the previous release from the tags. A pinned
-	// last-release-sha would override that search.
-	if config.LastReleaseSHA != nil || strings.Contains(string(data), "last-release-sha") {
-		t.Fatalf("release-please-config.json must not pin last-release-sha: %s", config.LastReleaseSHA)
+	if decoder.More() {
+		t.Fatal("release-please-config.json holds more than one JSON value")
+	}
+	isTrue := func(value *bool) bool { return value != nil && *value }
+	isFalse := func(value *bool) bool { return value != nil && !*value }
+	if config.Schema != "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json" ||
+		!isTrue(config.SeparatePullRequests) || len(config.Packages) != 1 {
+		t.Fatalf("release config schema=%q separate-pull-requests=%v packages=%d", config.Schema, config.SeparatePullRequests, len(config.Packages))
 	}
 	// ADR 0011: Release Please tags the merge commit and opens a draft release,
-	// which release.yml publishes after it builds and attests the release.
+	// which release.yml publishes after it builds and attests the release. The
+	// find step expects the tag vX.Y.Z; without include-component-in-tag set to
+	// false, Release Please would create env-vault-vX.Y.Z instead.
 	pkg, ok := config.Packages["."]
 	if !ok || pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" ||
-		pkg.SkipGitHubRelease != nil || !pkg.Draft || !pkg.ForceTagCreation || !pkg.IncludeVInTag {
+		!isTrue(pkg.Draft) || !isTrue(pkg.ForceTagCreation) || !isTrue(pkg.IncludeVInTag) || !isFalse(pkg.IncludeComponentInTag) {
 		t.Fatalf("release package config=%+v", pkg)
+	}
+	if pkg.PullRequestTitlePattern != "chore${scope}: release env-vault v${version}" ||
+		pkg.PullRequestHeader != "Merging this pull request releases env-vault: the release workflow tags the merge commit, then builds, attests and publishes it." ||
+		pkg.PullRequestFooter != "This PR was generated with Release Please." {
+		t.Fatalf("release pull request title=%q header=%q footer=%q", pkg.PullRequestTitlePattern, pkg.PullRequestHeader, pkg.PullRequestFooter)
 	}
 	// Only product changes are visible, so only they create a release.
 	wantSections := []changelogSection{
@@ -458,7 +478,7 @@ func TestReleasePleaseConfigDraftsReleasesAndTracksVersionedDocs(t *testing.T) {
 	if !slices.Equal(pkg.ChangelogSections, wantSections) {
 		t.Fatalf("changelog sections=%+v, want %+v", pkg.ChangelogSections, wantSections)
 	}
-	if len(pkg.ExtraFiles) != 1 || pkg.ExtraFiles[0].Type != "generic" || pkg.ExtraFiles[0].Path != "README.md" {
+	if !slices.Equal(pkg.ExtraFiles, []extraFile{{Type: "generic", Path: "README.md"}}) {
 		t.Fatalf("versioned extra files=%+v", pkg.ExtraFiles)
 	}
 
