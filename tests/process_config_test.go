@@ -73,10 +73,13 @@ func TestDependabotCoversGoModulesAndGitHubActions(t *testing.T) {
 		if update.CommitMessage.Prefix != wantPrefix || update.CommitMessage.Include != "scope" {
 			t.Fatalf("Dependabot %s commit message=%+v, want %s(deps)", update.PackageEcosystem, update.CommitMessage, wantPrefix)
 		}
+		// Dependabot rejects the whole file when an ecosystem sets an option
+		// it does not support, and then opens no version updates at all. It
+		// rejected versioning-strategy for Go modules.
+		if update.VersioningStrategy != "" {
+			t.Fatalf("Dependabot %s sets versioning-strategy=%q, which Dependabot rejects for it", update.PackageEcosystem, update.VersioningStrategy)
+		}
 		if update.PackageEcosystem == "gomod" {
-			if update.VersioningStrategy != "increase-if-necessary" {
-				t.Fatalf("Dependabot gomod versioning-strategy=%q", update.VersioningStrategy)
-			}
 			group, ok := update.Groups["go-modules-minor-patch"]
 			if !ok || group.AppliesTo != "version-updates" || !slices.Equal(group.Patterns, []string{"*"}) || !slices.Equal(group.UpdateTypes, []string{"minor", "patch"}) {
 				t.Fatalf("Dependabot gomod group=%+v, want isolated minor/patch version updates", group)
