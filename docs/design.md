@@ -213,145 +213,58 @@ is the compiler that actually ran its checks.
 
 ## Release Artifact Builds
 
-Release planning and publication are separate trust boundaries. After `ci`
-succeeds for a `main` push that is still current at the planning preflight,
-Release Please v5 uses the `release-planning` environment token to open or
-update a release pull request; stale planning-only runs are skipped. That token
-is scoped to `env-vault` only. Release Please runs in
-manifest, PR-only mode: it updates the reviewed version documentation and
-`CHANGELOG.md`, but it cannot create a tag or GitHub Release.
-The resulting proposal must be one commit that changes exactly the manifest,
-README marker, and changelog on top of a `main` commit with a successful push
-CI run. Planning and publication share the `env-vault-release` concurrency
-group, which completes the tag/label handoff before the publisher runs and
-prevents a later proposal from overtaking an active release.
+Releases follow [ADR 0011](adr/0011-minimal-release-pipeline.md) and
+[ADR 0012](adr/0012-attestation-verification-pins-release-workflow.md).
+`.github/workflows/release.yml` is the only workflow that creates tags,
+releases, or Homebrew updates, and no workflow runs on a tag.
 
-Pull request titles use Conventional Commits and become deterministic squash
-subjects; squash bodies use the reviewed pull request body so an explicit
-`BREAKING CHANGE:` footer survives into `main`. Publication authorization is
-the byte-exact version/PR/full-head-SHA confirmation recorded as a pre-merge
-owner/member PR comment; merging alone is not authorization. The unchanged
-release PR may be merged only after that checkpoint. A thin checked-in `gh`
-operator binds the comment and merge into one fail-closed sequence: it verifies
-the proposal/base and the exact contract-declared required-check identities
-after binding that contract to the remote base and validating it offline. It
-writes or reconciles exactly one trusted comment, observes a later GitHub
-server second, rechecks the unchanged state, and uses the server-side head-SHA
-merge guard. A post-merge read verifies that the comment remained unchanged;
-an interrupted exact merge is resumable without a second mutation. The release
-merge SHA
-must then pass `ci` as a push to `main`; failed, foreign-repository, non-push, or unrelated
-successful runs do not authorize the tag handoff. The planning workflow
-classifies the exact green commit and creates or verifies the tag only when the
-manifest, changelog, README marker, commit subject, file modes, and three-path
-diff satisfy the deterministic release-commit contract. It also proves the
-single associated merged PR was generated on the expected
-branch, the SHA remains in `main`, and that SHA owns a successful `ci` push
-run. Before tag creation, both the exact source manifest and current `main`
-must equal the proposed version. A tagged retry instead reads the manifest at
-the immutable source SHA and permits current `main` to contain the same or a
-later SemVer, so an older release remains repairable after a later version is
-merged. After tag verification it reconciles the PR lifecycle label to
-`autorelease: tagged`.
+On every push to `main`, the `release-please` job runs Release Please with
+`RELEASE_PLANNING_TOKEN` from the `release-planning` environment. It keeps the
+release pull request current. When a release pull request has merged, it tags
+the merge commit and opens a draft GitHub Release. Runs on `main` queue and are
+never cancelled, but GitHub does not guarantee their order, so the job then
+looks for a draft release whose tag points to the run's own commit. Only that
+run builds, which binds every attestation to the exact released commit.
 
-The exact tag push hands the reviewed version and source SHA to
-`build-binaries`. Release publication is owned exclusively by that workflow:
-its tag entry point repeats the release-commit, generated-PR, ancestry,
-manifest, and successful-CI authorization checks before release quality, and
-creates the public GitHub Release only after those gates pass. The Release body is extracted from the exact non-empty
-version section in the reviewed `CHANGELOG.md`; it is not regenerated from
-mutable GitHub metadata. A manual dispatch remains a recovery interface and
-can only retry an existing exact tag; new tags remain exclusive to planning.
-Published `v0.0.1`–`v0.0.7` retain a bounded legacy repair path that requires an
-existing stable Release and tag ancestry, while `v0.0.8+` also requires the
-generated-PR authorization. A dispatch without a version is build-only. No
-product version constant is maintained in Go source;
-the reviewed release version is injected into each binary through Go linker
-flags.
-
-Both pull-request CI and releases call `reusable-quality.yml`. Every release
-waits for unit tests, vet, race tests, smoke tests, a pinned native
-`go-licenses` matrix on Linux, macOS, and Windows, all platform builds, and a
-binary-only native E2E matrix. It publishes exactly five archives and five
-matching SHA-256 files.
-
-On each native release target, a bounded probe with a scrubbed environment
-executes the flag, command, and JSON version surfaces and saves versioned JSON.
-The offline `releasecheck` process never executes the candidate binary: it
-strictly parses that evidence, binds it to the binary digest and exact CI
-attempt, and seals it into the promotion manifest.
-
-The E2E matrix runs the unpacked release-like artifacts on Linux amd64/arm64,
-Darwin amd64/arm64, and Windows amd64. Tests invoke only the public executable
-through `os/exec` with an isolated, explicitly gated test backend. A separate
-coverage-instrumented binary produces subprocess coverage. A fail-closed
-aggregate gate requires all native reports, 100% critical scenario coverage,
-only declared platform skips, valid report formats, and a clean sentinel leak
-scan. The full architecture and feature trace are documented in
-[`docs/e2e.md`](e2e.md).
-
-The durable checked-in baseline that every candidate matrix was compared
-against was removed on 2026-08-14 (Phase 9 of
-[`docs/trim-plan-2026-07-30.md`](trim-plan-2026-07-30.md)). Non-regression now
-rests on the per-run gate above plus the suite hash that matrix validation
-recomputes from the exact checkout, which still rejects a stale report set.
+The `build` job checks out that commit with its tags and fails unless the tag
+points to it. It builds the five targets without `-ldflags -X` and requires the
+Go build information to report an unmodified tree and the tag as the module
+version, which `--version` must print. It uploads each binary before it runs
+anything else, then smoke-tests the platform's real secret store.
 
 Darwin release artifacts support macOS 15+ and are built on macOS GitHub-hosted
 runners with `CGO_ENABLED=1` because the macOS Keychain backend requires
 CGO-enabled darwin binaries. Linux and Windows artifact builds remain
 `CGO_ENABLED=0`.
 
-After the GitHub Release succeeds, the workflow generates declarative
-`on_macos`/`on_linux` and `on_arm`/`on_intel` URL/checksum blocks. The formula
-declares macOS Sequoia as its minimum and installs the archived README, license,
-and third-party notices as documentation. The `homebrew-tap`-scoped release
-token creates or reuses `release/env-vault-vX.Y.Z` in `homebrew-tap`.
-The generated pull request changes only `Formula/env-vault.rb` and carries a
-marker binding the version, source SHA, and formula digest. The workflow waits for
-`test-formula.yml` with `event=pull_request` and the exact PR head SHA before a
-squash merge that is guarded by the same head SHA. It then waits for the
-workflow with `event=push`, the exact release merge SHA, and a successful
-conclusion. Health records the current tap SHA separately and proves that the
-release merge remains its ancestor and that the current formula is still exact;
-later unrelated tap commits cannot make the immutable release's CI evidence
-move. Style, installation, and the installed exact version therefore form an
-automated release gate rather than a follow-up operator check.
+The `publish` job runs in the `release` environment and is the only job with
+write permissions: `contents: write` for the release, and `id-token: write` and
+`attestations: write` for the attestations. It packages the five archives
+deterministically and attests the archives and the binaries. It verifies the
+attestations with the release workflow, `main`, the release commit, and
+GitHub-hosted runners pinned. It uploads the ten files to the draft without
+ever replacing an asset, then publishes it. Immutable releases then lock the
+assets and the tag.
 
-The release audit trail is the GitHub Releases page plus git and pull-request
-history. The `health` job verifies live published state and fails the publisher
-on drift; it stores no durable record. The append-only evidence ledger that
-earlier releases published was retired on 2026-07-30 (Phase 3 of
-`docs/trim-plan-2026-07-30.md`); its `release-evidence` branch and durable
-artifacts stay frozen and replayable at tag `pre-trim-2026-07-30`.
+The `verify` job downloads the published assets, checks their checksums and
+attestations, and requires the release to be published, immutable, and tagged
+at the release commit. Only then does the `tap` job, also in the `release`
+environment, generate the formula from the published archives. It opens a pull
+request in `homebrew-tap` with `HOMEBREW_TAP_TOKEN` and enables auto-merge. The
+tap's ruleset requires its `test` check, which runs style, audit, installation,
+and version checks and compares every url and sha256 with the published
+checksums.
 
-The two release tokens are deliberately independent. The release-planning
-token is scoped to `env-vault` only; the Release Please planning job is the only
-operational job that declares `environment: release-planning` and can read
-`RELEASE_PLANNING_TOKEN`. The planning
-workflow prepares the release pull request and performs the classified
-exact-tag handoff. GitHub does not split tag/branch writes from Release writes
-inside `Contents: write`, so this separation is an audited workflow invariant,
-not a claim that the credential lacks Release API capability. The tap token is
-scoped to `homebrew-tap` only; only the `homebrew` job declares
-`environment: release` and can read `HOMEBREW_TAP_TOKEN`. Build-only, build,
-Release, and `health`
-jobs cannot read either credential. The `health` repair is read-only: it
-verifies the tag, Release, checksums, generated formula, and the
-exact release-merge push run plus current tap ancestry using public repository state and its
-read-only workflow token. It also downloads the attempt-qualified repository
-settings proof sealed by release planning before tag creation and replays that
-proof offline; it never queries Administration APIs. Required external settings
-and credential rotation procedures are documented in
+The two release tokens are independent fine-grained tokens.
+`RELEASE_PLANNING_TOKEN` is scoped to `env-vault`, and only the
+`release-please` job references it. `HOMEBREW_TAP_TOKEN` is scoped to
+`homebrew-tap`, and only the `tap` job references it; the workflow tests
+enforce both. Pull request and manual runs build and package without
+publishing and receive neither token. Release automation uses no GitHub App.
+
+The release audit trail is the GitHub Releases page, the attestations, and git
+and pull-request history. The append-only evidence ledger that earlier releases
+published was retired on 2026-07-30. Its `release-evidence` branch and durable
+artifacts stay frozen and replayable at tag `pre-trim-2026-07-30`. Required
+external settings and credential rotation procedures are documented in
 `docs/release-external-settings.md`.
-
-Release automation uses no GitHub App. The retired
-`env-vault-release-planning` and `env-vault-tap-release` Apps carried an
-installation and key-rotation lifecycle plus two audit workflows without
-granting any capability a repository-scoped token lacks; workflow tests now
-assert that no workflow reintroduces App authentication.
-
-The offline checker requires an exact three-ruleset GraphQL snapshot with zero
-bypass actors plus canonical REST rule details, binds the exact raw responses
-and their digests to the release/planning tuple, and seals a self-digested
-proof. Missing or partial GraphQL state fails closed. No out-of-band read can
-substitute for that proof.

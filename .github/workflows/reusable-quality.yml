@@ -7,25 +7,6 @@ on:
         description: "Commit to check out, test, and build."
         required: true
         type: string
-      version:
-        description: "Exact vX.Y.Z version, or auto for deterministic CI resolution."
-        required: true
-        type: string
-      event_name:
-        description: "Caller event name used only when version is auto."
-        required: false
-        default: ""
-        type: string
-      pull_request_head_ref:
-        description: "Caller pull-request head ref used to recognize Release Please."
-        required: false
-        default: ""
-        type: string
-      pull_request_head_sha:
-        description: "Exact caller pull-request head SHA used to classify Release Please."
-        required: false
-        default: ""
-        type: string
 
 permissions:
   contents: read
@@ -40,14 +21,10 @@ jobs:
     outputs:
       matrix: ${{ steps.contract.outputs.matrix }}
       version: ${{ steps.version.outputs.version }}
-      release_candidate: ${{ steps.version.outputs.release_candidate }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_sha }}
-          # Release Please PR checks run on a synthetic merge. The classifier
-          # needs the PR-head parent and its own parent, hence depth three.
-          fetch-depth: 3
           persist-credentials: "false"
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -57,66 +34,17 @@ jobs:
             go.sum
             tools/e2e-reporter/go.sum
 
+      # ADR 0011: release.yml builds releases from the tag, so CI builds every
+      # commit, release commits included, with a commit-derived version.
       - id: version
-        name: Resolve exact candidate version
+        name: Resolve the CI version
         shell: bash
         env:
-          REQUESTED_VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          CALLER_EVENT_NAME: ${{ inputs.event_name }}
-          PR_HEAD_REF: ${{ inputs.pull_request_head_ref }}
-          PR_HEAD_SHA: ${{ inputs.pull_request_head_sha }}
         run: |
           set -euo pipefail
-          source scripts/release/lib.sh
-          resolved="$REQUESTED_VERSION"
-          release_candidate=false
-
-          if [[ "$resolved" == "auto" ]]; then
-            resolved="ci-${SOURCE_SHA}"
-            if [[ "$CALLER_EVENT_NAME" == "pull_request" && "$PR_HEAD_REF" == "$RELEASE_PLEASE_BRANCH" ]]; then
-              [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-                echo "Release Please head SHA is missing or malformed" >&2
-                exit 1
-              }
-              git cat-file -e "${PR_HEAD_SHA}^{commit}"
-              read -r -a source_parents <<< "$(git rev-list --parents -n 1 "$SOURCE_SHA")"
-              if [[ ${#source_parents[@]} -ne 3 || "${source_parents[2]}" != "$PR_HEAD_SHA" ]]; then
-                echo "Release Please head ${PR_HEAD_SHA} is not the exact pull-request parent of source ${SOURCE_SHA}" >&2
-                exit 1
-              fi
-              classification="$(scripts/release/classify-release-commit.sh "$PR_HEAD_SHA")"
-              [[ "$(sed -n 's/^publish=//p' <<< "$classification")" == "true" ]] || {
-                echo "Release Please head did not classify as a release" >&2
-                exit 1
-              }
-              [[ "$(sed -n 's/^source_sha=//p' <<< "$classification")" == "$PR_HEAD_SHA" ]] || {
-                echo "Release Please classifier returned a different source SHA" >&2
-                exit 1
-              }
-              resolved="$(sed -n 's/^version=//p' <<< "$classification")"
-              release_candidate=true
-            elif [[ "$CALLER_EVENT_NAME" == "push" ]]; then
-              read -r -a parents <<< "$(git rev-list --parents -n 1 "$SOURCE_SHA")"
-              if [[ ${#parents[@]} -eq 2 ]]; then
-                classification="$(scripts/release/classify-release-commit.sh "$SOURCE_SHA")"
-                if [[ "$(sed -n 's/^publish=//p' <<< "$classification")" == "true" ]]; then
-                  resolved="$(sed -n 's/^version=//p' <<< "$classification")"
-                  release_candidate=true
-                fi
-              fi
-            fi
-          fi
-
-          if [[ "$resolved" =~ ^ci-[0-9a-f]{40}$ ]]; then
-            :
-          else
-            release_require_version "$resolved"
-          fi
-          {
-            printf 'version=%s\n' "$resolved"
-            printf 'release_candidate=%s\n' "$release_candidate"
-          } >> "$GITHUB_OUTPUT"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source commit '$SOURCE_SHA' is malformed" >&2; exit 1; }
+          printf 'version=ci-%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
       - id: contract
         name: Validate release contract and resolve native matrix
@@ -142,22 +70,6 @@ jobs:
         with:
           name: env-vault-tooling-gotestsum-linux-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
           path: reporter-tools/linux-amd64
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload linux-arm64 current-attempt E2E reporter
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-tooling-gotestsum-linux-arm64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
-          path: reporter-tools/linux-arm64
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload darwin-amd64 current-attempt E2E reporter
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-tooling-gotestsum-darwin-amd64-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
-          path: reporter-tools/darwin-amd64
           if-no-files-found: error
           retention-days: 14
 
@@ -244,6 +156,9 @@ jobs:
     timeout-minutes: 90
     env:
       GOTOOLCHAIN: local
+      # ADR 0011: E2E runs once per operating system; build and smoke cover
+      # all five targets.
+      E2E: ${{ matrix.id == 'linux-amd64' || matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
@@ -288,7 +203,7 @@ jobs:
           cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/${name}/"
 
       - name: Package native release artifact on Unix
-        if: runner.os != 'Windows'
+        if: env.E2E == 'true' && runner.os != 'Windows'
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
@@ -303,7 +218,7 @@ jobs:
           shasum -a 256 "$ARCHIVE" > "$CHECKSUM"
 
       - name: Package native release artifact on Windows
-        if: runner.os == 'Windows'
+        if: env.E2E == 'true' && runner.os == 'Windows'
         shell: pwsh
         env:
           GOOS: ${{ matrix.goos }}
@@ -319,23 +234,15 @@ jobs:
           $checksum = Join-Path "dist" $env:CHECKSUM
           [System.IO.File]::WriteAllText($checksum, "$hash  $env:ARCHIVE`n", [System.Text.Encoding]::ASCII)
 
-      - name: Upload current-attempt native release artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-release-${{ matrix.id }}-attempt-${{ github.run_attempt }}
-          path: |
-            dist/${{ matrix.archive }}
-            dist/${{ matrix.checksum }}
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Download exact current-attempt E2E reporter
+        if: env.E2E == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: env-vault-tooling-gotestsum-${{ matrix.id }}-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
           path: reporter-tool
 
       - name: Run E2E and finalize reports
+        if: env.E2E == 'true'
         shell: bash
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
@@ -381,57 +288,8 @@ jobs:
           fi
           scripts/backend-smoke.sh "$BINARY_PATH"
 
-      - name: Verify three literal versions and seal native proof
-        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
-        shell: bash
-        env:
-          PLATFORM_ID: ${{ matrix.id }}
-          ARCHIVE: ${{ matrix.archive }}
-          CHECKSUM: ${{ matrix.checksum }}
-          BINARY: ${{ matrix.binary }}
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          name="env-vault-${GOOS}-${GOARCH}"
-          mkdir -p promotion-platform
-          version_results="promotion-platform/${PLATFORM_ID}-version-results.json"
-          go run ./cmd/release-version-probe \
-            --platform "$PLATFORM_ID" \
-            --source-sha "$SOURCE_SHA" \
-            --release-version "$VERSION" \
-            --repository "$GITHUB_REPOSITORY" \
-            --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --binary "dist/${name}/${BINARY}" \
-            > "$version_results"
-          go run ./cmd/releasecheck promotion record-platform \
-            --platform "$PLATFORM_ID" \
-            --source-sha "$SOURCE_SHA" \
-            --release-version "$VERSION" \
-            --repository "$GITHUB_REPOSITORY" \
-            --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --archive "dist/$ARCHIVE" \
-            --checksum "dist/$CHECKSUM" \
-            --binary "dist/${name}/${BINARY}" \
-            --version-results "$version_results" \
-            --output "promotion-platform/${PLATFORM_ID}.json" \
-            --json
-
-      - name: Upload current-attempt native proof
-        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-promotion-platform-${{ matrix.id }}-attempt-${{ github.run_attempt }}
-          path: promotion-platform/${{ matrix.id }}.json
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Upload current-attempt E2E reports
-        if: always()
+        if: always() && env.E2E == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-e2e-candidate-${{ matrix.id }}-attempt-${{ github.run_attempt }}
@@ -444,8 +302,6 @@ jobs:
     needs: [resolve, source-quality, license, native]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GOTOOLCHAIN: local
     steps:
       - name: Require every upstream quality stage
         shell: bash
@@ -462,139 +318,3 @@ jobs:
               exit 1
             }
           done
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.source_sha }}
-          persist-credentials: "false"
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-
-      - name: Download current-attempt E2E reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: env-vault-e2e-candidate-*-attempt-${{ github.run_attempt }}
-          path: reports-download
-          merge-multiple: true
-
-      - name: Validate and seal the complete E2E matrix once
-        shell: bash
-        run: >-
-          go run ./e2e/cmd/e2e-runner validate-matrix
-          --contract release/contract.v2.json
-          --reports reports-download
-          --phase candidate
-          --expected-commit "${{ inputs.source_sha }}"
-          --expected-run-id "${{ github.run_id }}"
-          --expected-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          --expected-run-attempt "${{ github.run_attempt }}"
-          --expected-repository "${{ github.repository }}"
-          --expected-reporter "v1.13.0"
-
-      - name: Download current-attempt native proofs
-        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: env-vault-promotion-platform-*-attempt-${{ github.run_attempt }}
-          path: promotion-evidence
-          merge-multiple: true
-
-      - name: Seal observed source-quality results
-        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          VERSION: ${{ needs.resolve.outputs.version }}
-          SOURCE_QUALITY_RESULT: ${{ needs.source-quality.result }}
-          LICENSE_RESULT: ${{ needs.license.result }}
-        run: |
-          set -euo pipefail
-          mkdir -p promotion
-          jq -n \
-            --arg source_sha "$SOURCE_SHA" \
-            --arg release_version "$VERSION" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg source_quality "$SOURCE_QUALITY_RESULT" \
-            --arg license_matrix "$LICENSE_RESULT" \
-            '{
-              schema_id: "env-vault.source-quality-proof.v1",
-              schema_version: 1,
-              source_sha: $source_sha,
-              release_version: $release_version,
-              repository: $repository,
-              workflow: {
-                id: "ci",
-                name: "ci",
-                file: "ci.yml",
-                run_id: ($run_id | tonumber),
-                run_attempt: ($run_attempt | tonumber),
-                event: "push",
-                head_sha: $source_sha
-              },
-              observed_jobs: {
-                source_quality: $source_quality,
-                license_matrix: $license_matrix
-              }
-            }' > promotion/source-quality-input.json
-          go run ./cmd/releasecheck promotion seal-source-quality \
-            --input promotion/source-quality-input.json \
-            --output promotion/source-quality.json \
-            --json
-
-      - name: Assemble exact promotion manifest
-        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          mapfile -t proofs < <(find promotion-evidence -type f -name '*.json' -print | LC_ALL=C sort)
-          [[ ${#proofs[@]} -eq 5 ]] || {
-            echo "native proof count=${#proofs[@]}, want 5 from run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" >&2
-            exit 1
-          }
-          args=()
-          for proof in "${proofs[@]}"; do
-            args+=(--platform-proof "$proof")
-          done
-          created_at="$(git show -s --format=%cI "$SOURCE_SHA")"
-          go run ./cmd/releasecheck promotion assemble \
-            --source-sha "$SOURCE_SHA" \
-            --release-version "$VERSION" \
-            --repository "$GITHUB_REPOSITORY" \
-            --run-id "$GITHUB_RUN_ID" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --source-quality promotion/source-quality.json \
-            --matrix-proof reports-download/matrix-validation.json \
-            "${args[@]}" \
-            --created-at "$created_at" \
-            --output promotion/promotion-manifest.json \
-            --json
-
-      - name: Upload exact promotion manifest
-        if: needs.resolve.outputs.release_candidate == 'true' && inputs.event_name == 'push'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-promotion-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}
-          path: |
-            promotion/promotion-manifest.json
-            promotion/source-quality.json
-            reports-download/matrix-validation.json
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload sealed E2E matrix proof
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: env-vault-e2e-matrix-proof-attempt-${{ github.run_attempt }}
-          path: |
-            reports-download/matrix-validation.json
-            reports-download/matrix-validation.md
-          if-no-files-found: error
-          retention-days: 30

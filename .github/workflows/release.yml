@@ -1,31 +1,116 @@
 name: release
 
-# ADR 0011, migration step 2: build and package every release target without
-# publishing anything. Step 3 adds the release trigger on main, attestations,
-# publication and the Homebrew tap update.
+# ADR 0011 and ADR 0012. On every push to main, Release Please maintains the
+# release pull request. When that pull request merges, Release Please tags the
+# merge commit and opens a draft release, and the run for that commit builds,
+# packages, attests and publishes it, verifies the published release, and opens
+# the Homebrew tap pull request. Pull requests that change the release path
+# build and package without publishing.
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
   pull_request:
     paths:
       - .github/workflows/release.yml
       - scripts/release/package-archives.sh
+      - scripts/release/package-release.sh
+      - scripts/release/homebrew-formula.sh
       - scripts/backend-smoke.sh
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  # Runs are never cancelled, because a release may already have its tag and
+  # draft. They queue instead of replacing each other.
+  cancel-in-progress: false
+  queue: max
 
 jobs:
+  release-please:
+    name: release-please
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-planning
+    outputs:
+      release: ${{ steps.find.outputs.release }}
+      tag: ${{ steps.find.outputs.tag }}
+      sha: ${{ steps.find.outputs.sha }}
+    steps:
+      # A pull request opened with GITHUB_TOKEN would not trigger the required
+      # checks, so Release Please uses the planning token.
+      - name: Maintain the release pull request and create the release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLANNING_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The parent shows whether this commit changed the version.
+          fetch-depth: "2"
+          persist-credentials: "false"
+
+      # Runs are not strictly ordered, so the run that created the draft may
+      # belong to another commit. Only the run for the tagged commit builds, so
+      # its attestations name exactly the released commit. The run for the
+      # commit that changed the version fails unless the tag points to it, so a
+      # release never stops silently.
+      - id: find
+        name: Find a draft release for this commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLANNING_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(jq -er '."."' .release-please-manifest.json)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "manifest version '$version' is invalid" >&2; exit 1; }
+          previous="$(git show HEAD^:.release-please-manifest.json | jq -er '."."')"
+          tag="v$version"
+          # An annotated tag is listed a second time, peeled to its commit.
+          refs="$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")"
+          tagged="$(awk -v plain="refs/tags/$tag" -v peeled="refs/tags/$tag^{}" '
+            $2 == plain { commit = $1 }
+            $2 == peeled { peeled_commit = $1 }
+            END { print (peeled_commit != "" ? peeled_commit : commit) }' <<< "$refs")"
+          release=false
+          if [[ "$tagged" == "$GITHUB_SHA" ]]; then
+            draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" ||
+              { echo "tag $tag points to this commit, but its release cannot be read" >&2; exit 1; }
+            if [[ "$draft" == "true" ]]; then
+              release=true
+            else
+              echo "release $tag is already published"
+            fi
+          elif [[ "$version" != "$previous" ]]; then
+            echo "this commit releases $tag, but the tag points to '${tagged:-nothing}' (see RELEASING.md)" >&2
+            exit 1
+          fi
+          {
+            printf 'release=%s\n' "$release"
+            printf 'tag=%s\n' "$tag"
+            printf 'sha=%s\n' "$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+          echo "draft release for this commit: $release ($tag)"
+
   build:
     name: build-${{ matrix.id }}
+    needs: [release-please]
+    if: ${{ !cancelled() && (github.event_name != 'push' || needs.release-please.outputs.release == 'true') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
       GOTOOLCHAIN: local
+      RELEASE: ${{ needs.release-please.outputs.release == 'true' }}
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+      RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +152,20 @@ jobs:
           fetch-depth: "0"
           persist-credentials: "false"
 
+      - name: Check that the tag points to this commit
+        if: env.RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+            { echo "invalid release tag '$RELEASE_TAG' or commit '$RELEASE_SHA'" >&2; exit 1; }
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] ||
+            { echo "checked out $(git rev-parse HEAD), expected $RELEASE_SHA" >&2; exit 1; }
+          tagged="$(git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG^{commit}")" ||
+            { echo "tag $RELEASE_TAG does not exist" >&2; exit 1; }
+          [[ "$tagged" == "$RELEASE_SHA" ]] ||
+            { echo "tag $RELEASE_TAG points to $tagged, not the release commit $RELEASE_SHA" >&2; exit 1; }
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -97,6 +196,22 @@ jobs:
           reported="$("$binary" --version | awk '{ print $1; exit }')"
           [[ -n "$module_version" && "$reported" == "$module_version" ]] ||
             { echo "--version reports '$reported', build information has '$module_version'" >&2; exit 1; }
+          if [[ "$RELEASE" == "true" ]]; then
+            [[ "$module_version" == "$RELEASE_TAG" ]] ||
+              { echo "build information has '$module_version', the release is '$RELEASE_TAG'" >&2; exit 1; }
+          fi
+
+      # Upload before the smoke test runs anything, so the attested bytes are
+      # the bytes the build produced.
+      - name: Upload the binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binary-${{ matrix.id }}
+          path: ${{ runner.temp }}/release/${{ matrix.id }}/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
+          # A re-run of this job replaces the binary of its failed attempt.
+          overwrite: "true"
 
       - name: Smoke-test the real OS secret store
         shell: bash
@@ -115,17 +230,13 @@ jobs:
           temp="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || printf '%s' "$RUNNER_TEMP")"
           scripts/backend-smoke.sh "$temp/release/$TARGET/$BINARY"
 
-      - name: Upload the binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ matrix.id }}
-          path: ${{ runner.temp }}/release/${{ matrix.id }}/${{ matrix.binary }}
-          if-no-files-found: error
-          retention-days: 7
-
+  # Pull requests and manual runs stop after packaging. release-please is
+  # skipped on them, and a skipped job anywhere up the chain skips every later
+  # job without a status function, so this job checks build itself.
   package:
     name: package
     needs: [build]
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -136,30 +247,25 @@ jobs:
       - name: Download the binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: ${{ runner.temp }}/binaries
+          pattern: binary-*
+          path: ${{ runner.temp }}/downloads
 
       - name: Package deterministically
         shell: bash
+        run: scripts/release/package-release.sh "$RUNNER_TEMP/downloads" "$RUNNER_TEMP/archives"
+
+      # A release runs these checks only after its tag exists, so a pull
+      # request confirms first that the runner's gh still has every flag the
+      # publish and verify jobs use (ADR 0012).
+      - name: Check the attestation verifier's flags
+        shell: bash
         run: |
           set -euo pipefail
-          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct HEAD)"
-          export SOURCE_DATE_EPOCH
-          scripts/release/package-archives.sh "$RUNNER_TEMP/binaries" "$RUNNER_TEMP/archives"
-          # A second run from the same inputs must give the same bytes.
-          scripts/release/package-archives.sh "$RUNNER_TEMP/binaries" "$RUNNER_TEMP/archives-again"
-          diff -r "$RUNNER_TEMP/archives" "$RUNNER_TEMP/archives-again"
-          cd "$RUNNER_TEMP/archives"
-          sha256sum -c ./*.sha256
-          # The archive bytes depend on these tools, so record them for a rebuild.
-          {
-            echo '```'
-            tar --version | sed -n 1p
-            gzip --version | sed -n 1p
-            python3 -c 'import sys, zlib; print("Python", sys.version.split()[0], "zlib", zlib.ZLIB_RUNTIME_VERSION)'
-            echo
-            cat ./*.sha256
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          gh --version | sed -n 1p
+          help="$(gh attestation verify --help)"
+          for flag in --repo --signer-workflow --source-ref --source-digest --deny-self-hosted-runners; do
+            grep -qe "$flag" <<< "$help" || { echo "gh attestation verify has no $flag" >&2; exit 1; }
+          done
 
       - name: Upload the archives
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -168,3 +274,240 @@ jobs:
           path: ${{ runner.temp }}/archives/
           if-no-files-found: error
           retention-days: 7
+
+  publish:
+    name: publish
+    needs: [release-please, build]
+    if: needs.release-please.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write # upload assets to the draft release and publish it
+      id-token: write # sign the attestations with the workflow identity
+      attestations: write # store the attestations in this repository
+    env:
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+      RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: "false"
+
+      - name: Download the binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binary-*
+          path: ${{ runner.temp }}/downloads
+
+      - name: Package deterministically
+        shell: bash
+        run: scripts/release/package-release.sh "$RUNNER_TEMP/downloads" "$RUNNER_TEMP/archives" "$RUNNER_TEMP/subjects"
+
+      - name: Attest the archives and the binaries
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            ${{ runner.temp }}/archives/env-vault-*.tar.gz
+            ${{ runner.temp }}/archives/env-vault-*.zip
+            ${{ runner.temp }}/subjects/env-vault-*
+
+      - name: Verify the attestations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for file in "$RUNNER_TEMP"/archives/env-vault-*.{tar.gz,zip} "$RUNNER_TEMP"/subjects/env-vault-*; do
+            gh attestation verify "$file" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref refs/heads/main \
+              --source-digest "$RELEASE_SHA" \
+              --deny-self-hosted-runners > /dev/null
+            echo "attestation verified: $(basename "$file")"
+          done
+
+      - name: Upload to the draft release and publish it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          # A re-run may find assets from an earlier attempt: keep them only if
+          # their bytes are identical, and never replace them.
+          names="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          declare -A uploaded=()
+          while IFS= read -r name; do
+            [[ -z "$name" ]] || uploaded["$name"]=1
+          done <<< "$names"
+          declare -A built=()
+          for file in "$RUNNER_TEMP"/archives/*; do
+            built["$(basename "$file")"]=1
+          done
+          for name in "${!uploaded[@]}"; do
+            [[ -n "${built[$name]:-}" ]] ||
+              { echo "release $RELEASE_TAG has an unexpected asset $name" >&2; exit 1; }
+          done
+          existing="$RUNNER_TEMP/existing"
+          mkdir "$existing"
+          pending=()
+          for file in "$RUNNER_TEMP"/archives/*; do
+            name="$(basename "$file")"
+            if [[ -n "${uploaded[$name]:-}" ]]; then
+              gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$existing"
+              cmp -s "$file" "$existing/$name" || { echo "$name already exists with different bytes" >&2; exit 1; }
+            else
+              pending+=("$file")
+            fi
+          done
+          # An earlier attempt may have published the release but failed after
+          # that. The release then must already hold exactly these files.
+          if [[ "$draft" != "true" ]]; then
+            (( ${#pending[@]} == 0 )) ||
+              { echo "release $RELEASE_TAG is published without ${pending[*]##*/}" >&2; exit 1; }
+            echo "release $RELEASE_TAG is already published with these files"
+            exit 0
+          fi
+          if (( ${#pending[@]} > 0 )); then
+            gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" "${pending[@]}"
+          fi
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "published $RELEASE_TAG"
+
+  verify:
+    name: verify
+    needs: [release-please, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read # read the attestations that gh verifies
+    env:
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+      RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+    steps:
+      - name: Verify the published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          jq -e '.draft == false and .immutable == true' <<< "$release" > /dev/null ||
+            { echo "release $RELEASE_TAG is not published as an immutable release" >&2; exit 1; }
+          tagged="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+          [[ "$tagged" == "$RELEASE_SHA" ]] ||
+            { echo "tag $RELEASE_TAG points to $tagged, not $RELEASE_SHA" >&2; exit 1; }
+          published="$RUNNER_TEMP/published"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$published"
+          expected=""
+          for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+            archive="env-vault-$target.tar.gz"
+            [[ "$target" == windows-* ]] && archive="env-vault-$target.zip"
+            expected+="$archive"$'\n'"$archive.sha256"$'\n'
+          done
+          diff <(LC_ALL=C sort <<< "${expected%$'\n'}") <(cd "$published" && ls -1 | LC_ALL=C sort) ||
+            { echo "the published assets differ from the expected ten" >&2; exit 1; }
+          cd "$published"
+          sha256sum -c ./*.sha256
+          for archive in env-vault-*.tar.gz env-vault-*.zip; do
+            gh attestation verify "$archive" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref refs/heads/main \
+              --source-digest "$RELEASE_SHA" \
+              --deny-self-hosted-runners > /dev/null
+            echo "attestation verified: $archive"
+          done
+
+  tap:
+    name: tap
+    needs: [release-please, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    env:
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
+      TAP_REPOSITORY: ildarbinanas-design/homebrew-tap
+      FORMULA_PATH: Formula/env-vault.rb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: "false"
+
+      - name: Generate the formula from the published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets="$RUNNER_TEMP/assets"
+          for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$assets" \
+              --pattern "env-vault-$target.tar.gz" --pattern "env-vault-$target.tar.gz.sha256"
+          done
+          scripts/release/homebrew-formula.sh "$RELEASE_TAG" "$assets" "$RUNNER_TEMP/env-vault.rb"
+
+      # The tap's ruleset requires its `test` check, which also compares every
+      # url and sha256 with the published checksums. Auto-merge waits for it.
+      - name: Open the tap pull request with auto-merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          formula="$RUNNER_TEMP/env-vault.rb"
+          branch="env-vault-$RELEASE_TAG"
+          current="$RUNNER_TEMP/current.rb"
+          gh api "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH?ref=main" --jq .content | base64 -d > "$current"
+          if cmp -s "$formula" "$current"; then
+            echo "the tap already has the $RELEASE_TAG formula"
+            exit 0
+          fi
+          # A late re-run of an older release must not move the tap back.
+          tapped="$(sed -n 's/^  version "\([0-9][0-9.]*\)"$/\1/p' "$current")"
+          [[ -n "$tapped" ]] || { echo "the tap's formula has no version line" >&2; exit 1; }
+          if [[ "$(printf '%s\n' "$tapped" "${RELEASE_TAG#v}" | sort -V | tail -n 1)" != "${RELEASE_TAG#v}" ]]; then
+            echo "the tap already has the newer version $tapped"
+            exit 0
+          fi
+          # A re-run finds the branch from an earlier attempt, with or without
+          # its formula commit. Anyone who can write to the tap could have
+          # created it, so the squash merge may change nothing but the formula.
+          # A new branch is read at its base commit.
+          ref="$branch"
+          if gh api "repos/$TAP_REPOSITORY/branches/$branch" > /dev/null 2>&1; then
+            gh api "repos/$TAP_REPOSITORY/compare/main...$branch" |
+              jq -e --arg formula "$FORMULA_PATH" \
+                '.files | arrays | [.[] | .filename, (.previous_filename // empty)] - [$formula] == []' > /dev/null ||
+              { echo "tap branch $branch changes more than the formula" >&2; exit 1; }
+          else
+            ref="$(gh api "repos/$TAP_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+            gh api --method POST "repos/$TAP_REPOSITORY/git/refs" \
+              -f "ref=refs/heads/$branch" -f "sha=$ref" > /dev/null
+          fi
+          on_branch="$RUNNER_TEMP/branch.json"
+          gh api "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH?ref=$ref" > "$on_branch"
+          jq -er .content "$on_branch" | base64 -d > "$RUNNER_TEMP/branch.rb"
+          if ! cmp -s "$formula" "$RUNNER_TEMP/branch.rb"; then
+            cmp -s "$current" "$RUNNER_TEMP/branch.rb" ||
+              { echo "tap branch $branch exists with a different formula" >&2; exit 1; }
+            blob="$(jq -er .sha "$on_branch")"
+            gh api --method PUT "repos/$TAP_REPOSITORY/contents/$FORMULA_PATH" \
+              -f "message=env-vault $RELEASE_TAG" -f "branch=$branch" -f "sha=$blob" \
+              -f "content=$(base64 -w0 "$formula")" > /dev/null
+          fi
+          state="$(gh pr view "$branch" --repo "$TAP_REPOSITORY" --json state --jq .state 2>/dev/null || true)"
+          if [[ -z "$state" ]]; then
+            gh pr create --repo "$TAP_REPOSITORY" --base main --head "$branch" \
+              --title "env-vault $RELEASE_TAG" \
+              --body "Updates the env-vault formula to $RELEASE_TAG. The env-vault release workflow generated it from the published release. Auto-merge waits for the \`test\` check."
+            state=OPEN
+          fi
+          case "$state" in
+            OPEN) gh pr merge "$branch" --repo "$TAP_REPOSITORY" --auto --squash ;;
+            MERGED) echo "the tap pull request is already merged" ;;
+            *) echo "tap pull request for $branch is $state" >&2; exit 1 ;;
+          esac

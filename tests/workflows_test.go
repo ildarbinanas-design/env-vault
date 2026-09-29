@@ -35,10 +35,32 @@ type workflow struct {
 	Jobs        map[string]workflowJob `yaml:"jobs"`
 }
 
+// retiredContractWorkflows are contract v2 workflows whose files ADR 0011
+// step 3 removed when release.yml took over. Contract v2 still lists them
+// until step 6 deletes it.
+var retiredContractWorkflows = map[string]bool{"planning": true, "publisher": true}
+
 type workflowConcurrency struct {
-	Group            string `yaml:"group"`
-	CancelInProgress bool   `yaml:"cancel-in-progress"`
-	Queue            string `yaml:"queue"`
+	Group            string       `yaml:"group"`
+	CancelInProgress workflowFlag `yaml:"cancel-in-progress"`
+	Queue            string       `yaml:"queue"`
+}
+
+// workflowFlag is a boolean workflow field that may hold an expression instead.
+type workflowFlag struct {
+	Value      bool
+	Expression string
+}
+
+func (f *workflowFlag) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!bool" {
+		return node.Decode(&f.Value)
+	}
+	if node.Kind == yaml.ScalarNode && strings.HasPrefix(node.Value, "${{") && strings.HasSuffix(node.Value, "}}") {
+		f.Expression = node.Value
+		return nil
+	}
+	return fmt.Errorf("line %d: want a boolean or an expression, got %q", node.Line, node.Value)
 }
 
 type workflowJob struct {
@@ -229,11 +251,12 @@ func TestWorkflowFilesParseAndPinReviewedActions(t *testing.T) {
 		"actions/create-github-app-token":  createAppTokenAction,
 		"actions/dependency-review-action": "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
 		"googleapis/release-please-action": releasePleaseAction,
+		"actions/attest":                   attestAction,
 	}
 
 	paths := workflowPaths(t)
-	if len(paths) < 9 {
-		t.Fatalf("workflow count=%d, want at least 9", len(paths))
+	if len(paths) < 8 {
+		t.Fatalf("workflow count=%d, want at least 8", len(paths))
 	}
 	for _, path := range paths {
 		wf := readWorkflow(t, path)
@@ -304,6 +327,12 @@ func TestReleaseContractOwnsWorkflowAndNativeInventory(t *testing.T) {
 			t.Fatalf("invalid or duplicate workflow identity: %+v", identity)
 		}
 		seenIDs[identity.ID] = true
+		if retiredContractWorkflows[identity.ID] {
+			if _, err := os.Stat(filepath.Join("..", ".github", "workflows", identity.File)); !os.IsNotExist(err) {
+				t.Fatalf("retired contract workflow %s is present again: %v", identity.File, err)
+			}
+			continue
+		}
 		contractFiles = append(contractFiles, identity.File)
 		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
 		if wf.Name != identity.Name {
@@ -355,29 +384,40 @@ func TestContractOwnsStaticWorkflowBootstrapIdentities(t *testing.T) {
 		if identity.ID == "" {
 			t.Fatalf("release concurrency references unknown workflow %q", id)
 		}
+		if retiredContractWorkflows[id] {
+			continue
+		}
 		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
 		if wf.Concurrency.Group != contract.Concurrency.Release.Group ||
-			wf.Concurrency.CancelInProgress != contract.Concurrency.Release.CancelInProgress ||
+			wf.Concurrency.CancelInProgress.Value != contract.Concurrency.Release.CancelInProgress ||
 			wf.Concurrency.Queue != contract.Concurrency.Release.Queue {
 			t.Fatalf("workflow %s concurrency=%+v contract=%+v", identity.File, wf.Concurrency, contract.Concurrency.Release)
 		}
 	}
 	var actualReleaseParticipants []string
 	for _, identity := range contract.Workflows {
+		if retiredContractWorkflows[identity.ID] {
+			continue
+		}
 		wf := readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
 		if wf.Concurrency.Group == contract.Concurrency.Release.Group {
 			actualReleaseParticipants = append(actualReleaseParticipants, identity.ID)
 		}
 	}
-	wantReleaseParticipants := append([]string(nil), contract.Concurrency.Release.Workflows...)
+	var wantReleaseParticipants []string
+	for _, id := range contract.Concurrency.Release.Workflows {
+		if !retiredContractWorkflows[id] {
+			wantReleaseParticipants = append(wantReleaseParticipants, id)
+		}
+	}
 	sort.Strings(actualReleaseParticipants)
 	sort.Strings(wantReleaseParticipants)
 	if !slices.Equal(actualReleaseParticipants, wantReleaseParticipants) {
 		t.Fatalf("shared release concurrency membership differs: YAML=%v contract=%v", actualReleaseParticipants, wantReleaseParticipants)
 	}
 	ci := readWorkflow(t, "../.github/workflows/ci.yml")
-	if ci.Concurrency.CancelInProgress != contract.Concurrency.CI.CancelInProgress {
-		t.Fatalf("CI cancellation=%v contract=%v", ci.Concurrency.CancelInProgress, contract.Concurrency.CI.CancelInProgress)
+	if ci.Concurrency.CancelInProgress.Value != contract.Concurrency.CI.CancelInProgress {
+		t.Fatalf("CI cancellation=%v contract=%v", ci.Concurrency.CancelInProgress.Value, contract.Concurrency.CI.CancelInProgress)
 	}
 }
 
@@ -396,37 +436,13 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 		return identity, readWorkflow(t, filepath.Join("..", ".github", "workflows", identity.File))
 	}
 
-	ciIdentity, ci := requireWorkflow("ci")
+	_, ci := requireWorkflow("ci")
 	ciPush := decodeTrigger[pushTrigger](t, ci, "push")
 	if !slices.Equal(ciPush.Branches, []string{contract.Repositories.Source.DefaultBranch}) {
 		t.Fatalf("CI static branch trigger=%v, contract default=%q", ciPush.Branches, contract.Repositories.Source.DefaultBranch)
 	}
-	planningIdentity, planning := requireWorkflow("planning")
-	planningTrigger := decodeTrigger[workflowRunTrigger](t, planning, "workflow_run")
-	if !slices.Equal(planningTrigger.Workflows, []string{ciIdentity.Name}) ||
-		!slices.Equal(planningTrigger.Types, []string{"completed"}) ||
-		!slices.Equal(planningTrigger.Branches, []string{contract.Repositories.Source.DefaultBranch}) {
-		t.Fatalf("planning static trigger=%+v, CI=%q default=%q", planningTrigger, ciIdentity.Name, contract.Repositories.Source.DefaultBranch)
-	}
-	_, publisher := requireWorkflow("publisher")
-	publisherPush := decodeTrigger[pushTrigger](t, publisher, "push")
-	if !slices.Equal(publisherPush.Tags, []string{contract.VersionPolicy.TagPrefix + "*"}) {
-		t.Fatalf("publisher tag trigger=%v, contract prefix=%q", publisherPush.Tags, contract.VersionPolicy.TagPrefix)
-	}
 	if contract.VersionPolicy.ReleasePlease.TargetBranch != contract.Repositories.Source.DefaultBranch {
 		t.Fatalf("Release Please target=%q differs from source default=%q", contract.VersionPolicy.ReleasePlease.TargetBranch, contract.Repositories.Source.DefaultBranch)
-	}
-
-	_, quality := requireWorkflow("quality")
-	proof := namedStep(t, quality.Jobs["e2e-gate"], "Seal observed source-quality results")
-	for _, marker := range []string{
-		fmt.Sprintf(`id: %q`, ciIdentity.ID),
-		fmt.Sprintf(`name: %q`, ciIdentity.Name),
-		fmt.Sprintf(`file: %q`, ciIdentity.File),
-	} {
-		if !strings.Contains(proof.Run, marker) {
-			t.Fatalf("source-quality proof static CI identity omits contract marker %q", marker)
-		}
 	}
 
 	// Release automation authenticates with environment-scoped tokens. No
@@ -434,13 +450,19 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 	if len(contract.Apps) != 0 {
 		t.Fatalf("contract declares %d GitHub Apps, want none", len(contract.Apps))
 	}
+	appFiles := []string{releaseWorkflowFile}
 	for _, identity := range contract.Workflows {
-		raw := readFile(t, filepath.Join("..", ".github", "workflows", identity.File))
+		if !retiredContractWorkflows[identity.ID] {
+			appFiles = append(appFiles, identity.File)
+		}
+	}
+	for _, file := range appFiles {
+		raw := readFile(t, filepath.Join("..", ".github", "workflows", file))
 		for _, marker := range []string{
 			"create-github-app-token", "APP_PRIVATE_KEY", "APP_CLIENT_ID", "app-slug",
 		} {
 			if strings.Contains(raw, marker) {
-				t.Fatalf("%s reintroduces GitHub App authentication via %q", identity.File, marker)
+				t.Fatalf("%s reintroduces GitHub App authentication via %q", file, marker)
 			}
 		}
 	}
@@ -450,13 +472,13 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 		}
 	}
 
-	// Trim Phase 5 removed the bespoke provenance/SBOM contour outright
-	// (docs/release-refactor-backlog.md item 14 holds the deferred
-	// replacement). No workflow may quietly reintroduce it.
-	if _, ok := publisher.Jobs["supply_chain"]; ok {
-		t.Fatal("publisher reintroduces the retired supply_chain job")
-	}
+	// Trim Phase 5 removed the bespoke provenance/SBOM contour. ADR 0011 moved
+	// attestations into release.yml, which TestReleaseWorkflowPublishesOnlyTheTaggedMainCommit
+	// pins; no contract workflow may attest.
 	for _, identity := range contract.Workflows {
+		if retiredContractWorkflows[identity.ID] {
+			continue
+		}
 		raw := readFile(t, filepath.Join("..", ".github", "workflows", identity.File))
 		for _, marker := range []string{
 			"actions/attest", "anchore/sbom-action", "gh attestation", "attestations:",
@@ -467,7 +489,6 @@ func TestContractOwnsStaticTriggersAppEnvironmentsAndAttestationSubjects(t *test
 		}
 	}
 
-	_ = planningIdentity
 }
 
 func TestCIUsesReusableQualityAndCancellationSafeGate(t *testing.T) {
@@ -480,7 +501,7 @@ func TestCIUsesReusableQualityAndCancellationSafeGate(t *testing.T) {
 	if !slices.Equal(push.Branches, []string{"main"}) {
 		t.Fatalf("ci push branches=%v", push.Branches)
 	}
-	if !wf.Concurrency.CancelInProgress || !containsAll(wf.Concurrency.Group, "workflow_dispatch", "github.run_id", "github.run_attempt > 1", "rerun-", "github.ref") {
+	if !wf.Concurrency.CancelInProgress.Value || !containsAll(wf.Concurrency.Group, "workflow_dispatch", "github.run_id", "github.run_attempt > 1", "rerun-", "github.ref") {
 		t.Fatalf("ci concurrency does not isolate manual dispatch while cancelling superseded runs: %+v", wf.Concurrency)
 	}
 	assertJobIDs(t, wf, "quality", "quality-gate")
@@ -490,17 +511,9 @@ func TestCIUsesReusableQualityAndCancellationSafeGate(t *testing.T) {
 		t.Fatalf("ci quality uses=%q", quality.Uses)
 	}
 	assertPermissions(t, "ci quality", quality.Permissions, map[string]string{"actions": "read", "contents": "read"})
-	for key, want := range map[string]string{
-		"source_sha":            "${{ github.sha }}",
-		"version":               "auto",
-		"event_name":            "${{ github.event_name }}",
-		"pull_request_head_ref": "${{ github.event.pull_request.head.ref || '' }}",
-		"pull_request_head_sha": "${{ github.event.pull_request.head.sha || '' }}",
-	} {
-		if quality.With[key] != want {
-			t.Fatalf("ci quality input %s=%q, want %q", key, quality.With[key], want)
-		}
-	}
+	// ADR 0011: CI no longer classifies release commits, so it passes only
+	// the commit to check.
+	assertPermissions(t, "ci quality inputs", quality.With, map[string]string{"source_sha": "${{ github.sha }}"})
 
 	gate := wf.Jobs["quality-gate"]
 	if compactExpression(gate.If) != "always()" || !slices.Equal([]string(gate.Needs), []string{"quality"}) {
@@ -514,7 +527,7 @@ func TestCIUsesReusableQualityAndCancellationSafeGate(t *testing.T) {
 func TestDependencyAndPullRequestWorkflowConcurrency(t *testing.T) {
 	dependency := readWorkflow(t, "../.github/workflows/dependency-review.yml")
 	assertTrigger(t, dependency, "pull_request")
-	if dependency.Concurrency.Group != "dependency-review-${{ github.event.pull_request.number }}" || !dependency.Concurrency.CancelInProgress {
+	if dependency.Concurrency.Group != "dependency-review-${{ github.event.pull_request.number }}" || !dependency.Concurrency.CancelInProgress.Value {
 		t.Fatalf("dependency review concurrency=%+v", dependency.Concurrency)
 	}
 	assertPermissions(t, "dependency review", dependency.Permissions, map[string]string{"contents": "read"})
@@ -522,7 +535,7 @@ func TestDependencyAndPullRequestWorkflowConcurrency(t *testing.T) {
 
 	prTitle := readWorkflow(t, "../.github/workflows/pr-title.yml")
 	assertTrigger(t, prTitle, "pull_request")
-	if len(prTitle.Permissions) != 0 || prTitle.Concurrency.Group != "pr-title-${{ github.event.pull_request.number }}" || !prTitle.Concurrency.CancelInProgress {
+	if len(prTitle.Permissions) != 0 || prTitle.Concurrency.Group != "pr-title-${{ github.event.pull_request.number }}" || !prTitle.Concurrency.CancelInProgress.Value {
 		t.Fatalf("pr-title permissions/concurrency=%v %+v", prTitle.Permissions, prTitle.Concurrency)
 	}
 	step := namedStep(t, prTitle.Jobs["pr-title"], "Require a Conventional Commit pull request title")
@@ -532,23 +545,30 @@ func TestDependencyAndPullRequestWorkflowConcurrency(t *testing.T) {
 }
 
 func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	path := "../.github/workflows/reusable-quality.yml"
+	wf := readWorkflow(t, path)
+	raw := readFile(t, path)
 	assertPermissions(t, "reusable quality", wf.Permissions, map[string]string{"contents": "read"})
 	assertTrigger(t, wf, "workflow_call")
 	call := decodeTrigger[callTrigger](t, wf, "workflow_call")
-	for _, input := range []string{"source_sha", "version", "event_name", "pull_request_head_ref", "pull_request_head_sha"} {
-		if _, ok := call.Inputs[input]; !ok {
-			t.Fatalf("reusable workflow missing input %q", input)
-		}
+	if len(call.Inputs) != 1 || !call.Inputs["source_sha"].Required {
+		t.Fatalf("reusable quality inputs=%+v, want only the required source_sha", call.Inputs)
 	}
-	if !call.Inputs["source_sha"].Required || !call.Inputs["version"].Required {
-		t.Fatalf("source/version inputs must be required: %+v", call.Inputs)
+	// ADR 0011: release.yml builds releases, so CI no longer classifies release
+	// commits or feeds a promotion manifest.
+	for _, retired := range []string{"release_candidate", "classify-release-commit", "release-version-probe", "releasecheck promotion", "validate-matrix", "promotion-platform"} {
+		if strings.Contains(raw, retired) {
+			t.Fatalf("reusable quality still feeds the retired publisher via %q", retired)
+		}
 	}
 	assertJobIDs(t, wf, "resolve", "source-quality", "license", "native", "e2e-gate")
 
 	resolve := wf.Jobs["resolve"]
 	if resolve.TimeoutMinutes != 15 {
 		t.Fatalf("resolve reporter bootstrap timeout=%d, want 15 minutes", resolve.TimeoutMinutes)
+	}
+	if version := namedStep(t, resolve, "Resolve the CI version"); !strings.Contains(version.Run, `printf 'version=ci-%s\n' "$SOURCE_SHA"`) {
+		t.Fatalf("CI version must derive from the commit: %s", version.Run)
 	}
 	contractStep := namedStep(t, resolve, "Validate release contract and resolve native matrix")
 	if !containsAll(contractStep.Run, "releasecheck validate-contract", "releasecheck contract matrix --json", "length == 5", "env-vault-native-matrix.json") {
@@ -557,8 +577,8 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	if countJobRunsContaining(wf, "releasecheck contract matrix --json") != 1 {
 		t.Fatalf("reusable quality must derive the candidate matrix exactly once")
 	}
-	if resolve.Outputs["matrix"] != "${{ steps.contract.outputs.matrix }}" {
-		t.Fatalf("resolved matrix output=%q", resolve.Outputs["matrix"])
+	if resolve.Outputs["matrix"] != "${{ steps.contract.outputs.matrix }}" || resolve.Outputs["version"] != "${{ steps.version.outputs.version }}" {
+		t.Fatalf("resolve outputs=%v", resolve.Outputs)
 	}
 	var resolveSetup workflowStep
 	for _, step := range resolve.Steps {
@@ -572,15 +592,17 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	}
 	reporterBuild := namedStep(t, resolve, "Build exact E2E reporter bundle once")
 	if !containsAll(reporterBuild.Run, "build-e2e-reporters.sh", "env-vault-native-matrix.json", "reporter-tools") {
-		t.Fatalf("resolve does not build the five reporters from the single resolved matrix: %q", reporterBuild.Run)
+		t.Fatalf("resolve does not build the reporters from the single resolved matrix: %q", reporterBuild.Run)
 	}
+	// ADR 0011: E2E runs once per operating system.
+	e2eTargets := []string{"linux-amd64", "darwin-arm64", "windows-amd64"}
 	reporterUploads := 0
-	for _, platform := range readReleaseContract(t).Platforms {
-		upload := namedStep(t, resolve, "Upload "+platform.ID+" current-attempt E2E reporter")
-		wantName := "env-vault-tooling-gotestsum-" + platform.ID + "-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}"
+	for _, target := range e2eTargets {
+		upload := namedStep(t, resolve, "Upload "+target+" current-attempt E2E reporter")
+		wantName := "env-vault-tooling-gotestsum-" + target + "-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}"
 		if upload.Uses != uploadArtifactAction || upload.With["name"] != wantName ||
-			upload.With["path"] != "reporter-tools/"+platform.ID || upload.With["if-no-files-found"] != "error" {
-			t.Fatalf("%s reporter artifact is not exact-source/current-attempt qualified: uses=%q with=%v", platform.ID, upload.Uses, upload.With)
+			upload.With["path"] != "reporter-tools/"+target || upload.With["if-no-files-found"] != "error" {
+			t.Fatalf("%s reporter artifact is not exact-source/current-attempt qualified: uses=%q with=%v", target, upload.Uses, upload.With)
 		}
 		reporterUploads++
 	}
@@ -593,7 +615,7 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 		}
 	}
 	if reporterUploads != 0 {
-		t.Fatalf("reporter artifact closure differs from the five contract platforms: residual=%d", reporterUploads)
+		t.Fatalf("reporter artifacts differ from the three E2E targets: residual=%d", reporterUploads)
 	}
 
 	native := wf.Jobs["native"]
@@ -605,6 +627,22 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	}
 	if native.Strategy.FailFast == nil || *native.Strategy.FailFast {
 		t.Fatalf("native fail-fast=%v", native.Strategy.FailFast)
+	}
+	if native.Env["E2E"] != "${{ matrix.id == 'linux-amd64' || matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64' }}" {
+		t.Fatalf("native E2E selection=%q, want one target per operating system", native.Env["E2E"])
+	}
+	for name, wantIf := range map[string]string{
+		"Package native release artifact on Unix":     "env.E2E == 'true' && runner.os != 'Windows'",
+		"Package native release artifact on Windows":  "env.E2E == 'true' && runner.os == 'Windows'",
+		"Download exact current-attempt E2E reporter": "env.E2E == 'true'",
+		"Run E2E and finalize reports":                "env.E2E == 'true'",
+		"Upload current-attempt E2E reports":          "always() && env.E2E == 'true'",
+		"Build native release artifact":               "",
+		"Smoke-test the real OS secret store":         "",
+	} {
+		if step := namedStep(t, native, name); step.If != wantIf {
+			t.Fatalf("native step %q if=%q, want %q", name, step.If, wantIf)
+		}
 	}
 	reporterDownload := namedStep(t, native, "Download exact current-attempt E2E reporter")
 	if reporterDownload.Uses != downloadAction ||
@@ -620,13 +658,13 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 		t.Fatalf("native E2E does not use the exact verified offline reporter: shell=%q run=%q", runE2E.Shell, runE2E.Run)
 	}
 	assertStepOrder(t, native,
-		"Upload current-attempt native release artifact",
+		"Build native release artifact",
 		"Download exact current-attempt E2E reporter",
 		"Run E2E and finalize reports",
 		"Smoke-test the real OS secret store",
 	)
 	if smoke := namedStep(t, native, "Smoke-test the real OS secret store"); !containsAll(smoke.Run, `scripts/backend-smoke.sh "$BINARY_PATH"`) ||
-		smoke.Env["BINARY_PATH"] != "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}/${{ matrix.binary }}" || smoke.If != "" || smoke.ContinueOnError {
+		smoke.Env["BINARY_PATH"] != "dist/env-vault-${{ matrix.goos }}-${{ matrix.goarch }}/${{ matrix.binary }}" || smoke.ContinueOnError {
 		t.Fatalf("native job must smoke-test the release binary against the real secret store: %+v", smoke)
 	}
 	for _, job := range wf.Jobs {
@@ -637,6 +675,9 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 			if step.ContinueOnError && strings.Contains(strings.ToLower(step.Name), "reporter") {
 				t.Fatalf("reporter bootstrap may not continue on error: %q", step.Name)
 			}
+			if step.Uses == uploadArtifactAction && strings.Contains(step.With["name"], "env-vault-release-") {
+				t.Fatalf("native release artifacts only fed the retired publisher: %+v", step.With)
+			}
 		}
 	}
 	if step := namedStep(t, native, "Burn in Windows config concurrency"); step.If != "matrix.goos == 'windows'" || !containsAll(step.Run, "TestConcurrentSavePublishesOnlyCompleteConfigs", "-count=10") {
@@ -645,14 +686,6 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	windowsPackage := namedStep(t, native, "Package native release artifact on Windows")
 	if windowsPackage.Shell != "pwsh" || !containsAll(windowsPackage.Run, "[System.IO.File]::WriteAllText", "`n", "[System.Text.Encoding]::ASCII") || strings.Contains(windowsPackage.Run, "`r") || strings.Contains(windowsPackage.Run, "Set-Content") {
 		t.Fatalf("Windows checksum writer does not produce deterministic LF-terminated ASCII: shell=%q run=%q", windowsPackage.Shell, windowsPackage.Run)
-	}
-	upload := namedStep(t, native, "Upload current-attempt native release artifact")
-	if upload.Uses != uploadArtifactAction || !containsAll(upload.With["name"], "matrix.id", "github.run_attempt") {
-		t.Fatalf("native artifact is not attempt-qualified: uses=%q with=%v", upload.Uses, upload.With)
-	}
-	proof := namedStep(t, native, "Verify three literal versions and seal native proof")
-	if !containsAll(proof.If, "release_candidate", "inputs.event_name == 'push'") || !containsAll(proof.Run, "release-version-probe", "releasecheck promotion record-platform", "--archive", "--checksum", "--binary", "--version-results") {
-		t.Fatalf("native promotion proof is not exact-version/push-only: if=%q", proof.If)
 	}
 
 	licenseMatrix := decodeMatrix(t, wf.Jobs["license"].Strategy.Matrix)
@@ -673,198 +706,8 @@ func TestReusableQualityHasElevenJobsAndOneNativeMatrixSource(t *testing.T) {
 	gate := wf.Jobs["e2e-gate"]
 	assertCancellationSafe(t, "reusable e2e-gate", gate)
 	assertNeeds(t, "reusable e2e-gate", gate, "resolve", "source-quality", "license", "native")
-	validate := namedStep(t, gate, "Validate and seal the complete E2E matrix once")
-	if !containsAll(validate.Run, "e2e-runner validate-matrix", "--contract release/contract.v2.json", "--expected-run-attempt") {
-		t.Fatalf("E2E matrix validation does not bind the contract/current attempt")
-	}
-	proofUpload := namedStep(t, gate, "Upload sealed E2E matrix proof")
-	wantProofPaths := []string{
-		"reports-download/matrix-validation.json",
-		"reports-download/matrix-validation.md",
-	}
-	if proofUpload.If != "always()" || proofUpload.Uses != uploadArtifactAction ||
-		!slices.Equal(strings.Fields(proofUpload.With["path"]), wantProofPaths) ||
-		proofUpload.With["if-no-files-found"] != "error" {
-		t.Fatalf("sealed matrix proof is not always uploaded exactly: if=%q uses=%q with=%v", proofUpload.If, proofUpload.Uses, proofUpload.With)
-	}
-	manifest := namedStep(t, gate, "Assemble exact promotion manifest")
-	if !containsAll(manifest.Run, "releasecheck promotion assemble", "--platform-proof", "--matrix-proof", "--run-attempt") {
-		t.Fatalf("promotion manifest does not bind platform/matrix/current attempt")
-	}
-	manifestUpload := namedStep(t, gate, "Upload exact promotion manifest")
-	if !containsAll(manifestUpload.With["name"], "inputs.source_sha", "github.run_attempt") {
-		t.Fatalf("promotion manifest artifact is not source/attempt qualified: %v", manifestUpload.With)
-	}
-}
-
-func TestReleasePleaseVerifiesExactAttemptBeforeTagAndOnlyFullReruns(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/release-please.yml")
-	rawWorkflow := readFile(t, "../.github/workflows/release-please.yml")
-	assertJobIDs(t, wf, "inspect", "rerun-incomplete-attempt", "plan")
-	assertGlobalReleaseConcurrency(t, "release-please", wf)
-	trigger := decodeTrigger[workflowRunTrigger](t, wf, "workflow_run")
-	if !slices.Equal(trigger.Workflows, []string{"ci"}) || !slices.Equal(trigger.Types, []string{"completed"}) || !slices.Equal(trigger.Branches, []string{"main"}) {
-		t.Fatalf("release-please trigger=%+v", trigger)
-	}
-	inspect := wf.Jobs["inspect"]
-	assertPermissions(t, "release inspect", inspect.Permissions, map[string]string{
-		"actions": "read", "contents": "read",
-	})
-	if inspect.Environment != "" || strings.Contains(inspect.If, "conclusion == 'success'") || !containsAll(inspect.If, "event == 'push'", "head_branch == 'main'", "head_repository.full_name == github.repository") {
-		t.Fatalf("release inspection cannot classify failed repository-owned main attempts: environment=%q if=%q", inspect.Environment, inspect.If)
-	}
-	inspectAttempt := namedStep(t, inspect, "Classify the exact completed release-candidate attempt offline")
-	if !containsAll(inspectAttempt.Run, "gh-api-read.sh", "classify-attempt", "rerun_all_jobs", "inspect_failure", "ATTEMPT_MATRIX_INCOMPLETE", "CI_ATTEMPT_FAILED", ".head_repository == $repository") {
-		t.Fatalf("read-only attempt classifier is incomplete")
-	}
-	inspectUpload := namedStep(t, inspect, "Upload machine-readable attempt classification")
-	if inspectUpload.Uses != uploadArtifactAction || !containsAll(inspectUpload.If, "always()", "!cancelled()") || !containsAll(inspectUpload.With["name"], "workflow_run.id", "workflow_run.run_attempt", "github.run_id", "github.run_attempt") || !containsAll(inspectUpload.With["path"], "ci-run.json", "ci-artifacts.json", "attempt-classification.json") {
-		t.Fatalf("attempt classification artifact is not immutable across planning reruns: %+v", inspectUpload.With)
-	}
-
-	rerun := wf.Jobs["rerun-incomplete-attempt"]
-	assertNeeds(t, "incomplete-attempt rerun", rerun, "inspect")
-	assertPermissions(t, "incomplete-attempt rerun", rerun.Permissions, map[string]string{
-		"actions": "write", "contents": "read",
-	})
-	if rerun.Environment != "" || !containsAll(rerun.If, "always()", "attempt_action == 'rerun_all_jobs'", "attempt == '1'") {
-		t.Fatalf("rerun mutation is not isolated and bounded: environment=%q if=%q", rerun.Environment, rerun.If)
-	}
-	rerunStep := namedStep(t, rerun, "Reclassify current remote state and rerun the whole attempt")
-	if !containsAll(rerunStep.Run, "--version --json", "contract operational --json",
-		"RELEASE_CONTRACT_VERSION_FILE", "RELEASE_CONTRACT_PROJECTION_FILE", "source scripts/release/lib.sh",
-		"release_require_typed_contract_projection", `[[ "$GITHUB_REPOSITORY" == "$RELEASE_SOURCE_REPOSITORY" ]]`,
-		"gh-api-read.sh", "classify-attempt", "rerun-classified-attempt.sh", "ATTEMPT_MATRIX_INCOMPLETE") || strings.Contains(rerunStep.Run, "--failed") {
-		t.Fatalf("bounded rerun does not reclassify exact state and issue only a full rerun")
-	}
-
-	plan := wf.Jobs["plan"]
-	assertPermissions(t, "release plan", plan.Permissions, map[string]string{
-		"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read",
-	})
-	assertNeeds(t, "release plan", plan, "inspect")
-	if plan.Environment != "release-planning" || !containsAll(plan.If, "needs.inspect.result == 'success'", "conclusion == 'success'", "event == 'push'", "head_branch == 'main'", "head_repository.full_name == github.repository", "attempt_action == 'none'") {
-		t.Fatalf("release plan does not require exact green repository-owned main CI: environment=%q if=%q", plan.Environment, plan.If)
-	}
-	current := namedStep(t, plan, "Require the planning commit to remain current")
-	if !containsAll(current.Run, "gh-api-read.sh", "main-ref.json", "EXPECTED_SHA") {
-		t.Fatalf("planning current-main observation is not bounded and file-backed")
-	}
-	contractStep := namedStep(t, plan, "Route and validate the exact source release contract")
-	if !containsAll(contractStep.Run,
-		"recovery validate-config", `--config "$release_please_config_path"`,
-		`--manifest "$release_please_manifest_path"`, "release-please-recovery-check.json",
-		"release-control-plane", "contract operational", "contract.v2.json",
-		"source-releasecheck-capabilities.json", "source-contract-operational.json", "release-contract-operational.v2",
-		"contract_file_sha256") ||
-		strings.Contains(contractStep.Run, "route-source") ||
-		strings.Contains(contractStep.Run, "contract.v1.json") ||
-		strings.Contains(contractStep.Run, "recovery_state") || strings.Contains(contractStep.Run, "recovery_resume_version") ||
-		strings.Contains(contractStep.Run, `if [[ "$PUBLISH"`) || contractStep.Env["PUBLISH"] != "" {
-		t.Fatalf("planning does not validate the completed Release Please config unconditionally: env=%v run=%q", contractStep.Env, contractStep.Run)
-	}
-	controlCheckout := namedStep(t, plan, "Check out the exact reviewed listener control plane")
-	if controlCheckout.Uses != checkoutAction || controlCheckout.With["ref"] != "${{ github.workflow_sha }}" ||
-		controlCheckout.With["path"] != "release-control-plane" || controlCheckout.With["persist-credentials"] != "false" {
-		t.Fatalf("release planning listener control plane is not exact/reviewed: %+v", controlCheckout.With)
-	}
-	controlSetup := namedStep(t, plan, "Set up Go for the reviewed listener control plane")
-	if controlSetup.Uses != setupGoAction || controlSetup.With["go-version-file"] != "release-control-plane/go.mod" {
-		t.Fatalf("release planning control checker does not use its reviewed toolchain: %+v", controlSetup.With)
-	}
-
-	attempt := namedStep(t, plan, "Snapshot and classify the exact triggering CI attempt")
-	if !containsAll(attempt.Run, "gh-api-read.sh", "classify-attempt", "action_code == \"none\"", "rerun_failed_jobs_allowed == false", ".repository == $repository", ".head_repository == $repository") || strings.Contains(attempt.Run, "rerun-classified-attempt.sh") {
-		t.Fatalf("pre-tag plan does not require a previously accepted exact attempt")
-	}
-	if !containsAll(attempt.Run, "include \"artifact-pages\"", "env_vault_artifacts") || strings.Contains(attempt.Run, ".[][]") {
-		t.Fatalf("pre-tag artifact selection does not parse slurped page envelopes fail closed")
-	}
-	if strings.Contains(attempt.Run, "--failed") {
-		t.Fatalf("pre-tag classifier must never recommend or issue a failed-jobs-only rerun")
-	}
-	downloadManifest := namedStep(t, plan, "Download the exact promotion manifest artifact")
-	downloadAssets := namedStep(t, plan, "Download all five exact-attempt native release artifacts")
-	for name, step := range map[string]workflowStep{"manifest": downloadManifest, "assets": downloadAssets} {
-		if step.Uses != downloadAction || step.With["run-id"] != "${{ github.event.workflow_run.id }}" {
-			t.Fatalf("pre-tag %s download is not tied to the triggering run: %+v", name, step.With)
-		}
-	}
-	if !containsAll(downloadAssets.With["pattern"], "steps.attempt.outputs.platform_pattern") || downloadAssets.With["merge-multiple"] != "true" {
-		t.Fatalf("pre-tag native artifact download=%v", downloadAssets.With)
-	}
-	verify := namedStep(t, plan, "Verify exact manifest and ten packaged assets offline")
-	if !containsAll(verify.Run, "promotion verify", "--source-sha", "--release-version", "--run-id", "--run-attempt", "--artifacts-root") {
-		t.Fatalf("pre-tag promotion verification does not bind exact tuple")
-	}
-	finalAttempt := namedStep(t, plan, "Recheck the exact CI attempt immediately before tag creation")
-	if !containsAll(finalAttempt.Run, "gh-api-read.sh", "classify-attempt", "ci-run-final.json", "ci-artifacts-final.json", "cmp") {
-		t.Fatalf("final pre-tag state is not re-snapshotted and compared")
-	}
-	if !containsAll(finalAttempt.Run, "include \"artifact-pages\"", "env_vault_artifacts") || strings.Contains(finalAttempt.Run, ".[][]") {
-		t.Fatalf("final pre-tag artifact selection does not parse slurped page envelopes fail closed")
-	}
-	if strings.Count(rawWorkflow, "scripts/release/gh-api-read.sh") != 11 {
-		t.Fatalf("release planning read-helper calls=%d, want 11", strings.Count(rawWorkflow, "scripts/release/gh-api-read.sh"))
-	}
-	for _, line := range strings.Split(rawWorkflow, "\n") {
-		if strings.Contains(line, "gh api") && !strings.Contains(line, "gh api --method POST") {
-			t.Fatalf("release planning retains an unbounded direct API read: %q", strings.TrimSpace(line))
-		}
-	}
-	if strings.Count(rawWorkflow, "gh api --method POST") != 1 {
-		t.Fatalf("release planning must contain exactly one direct tag POST")
-	}
-	settings := namedStep(t, plan, "Verify repository release settings and bypass policy")
-	if !containsAll(settings.Env["RELEASE_SETTINGS_PROOF_OUTPUT"], "steps.classify.outputs.publish", "repository-release-settings-proof.json") ||
-		settings.Env["RELEASE_SETTINGS_PLANNING_RUN_ID"] != "${{ github.run_id }}" ||
-		settings.Env["RELEASE_SETTINGS_PLANNING_RUN_ATTEMPT"] != "${{ github.run_attempt }}" {
-		t.Fatalf("pre-tag settings proof is not bound to the exact planning attempt: %+v", settings.Env)
-	}
-	settingsUpload := namedStep(t, plan, "Upload exact pre-tag repository settings proof")
-	if settingsUpload.Uses != uploadArtifactAction || !containsAll(settingsUpload.With["name"], "source_sha", "github.run_attempt") ||
-		settingsUpload.With["path"] != "${{ runner.temp }}/repository-release-settings-proof.json" {
-		t.Fatalf("pre-tag settings proof artifact is not source/attempt qualified: %+v", settingsUpload.With)
-	}
-	proposal := namedStep(t, plan, "Verify the proposal is based on a green main commit")
-	if _, present := proposal.Env["EXPECTED_RELEASE_VERSION"]; present || proposal.Run != "scripts/release/verify-release-proposal.sh" {
-		t.Fatalf("completed recovery retained the active-only proposal override: %+v", proposal)
-	}
-	tagMutation := namedStep(t, plan, "Create or verify the exact release tag")
-	if strings.Count(tagMutation.Run, "gh api --method POST") != 1 || strings.Contains(tagMutation.Run, "gh-api-read.sh") ||
-		!containsAll(tagMutation.Run, "verify-abandoned-release-policy.sh", `"$VERSION" "$SOURCE_SHA"`, "abandoned-release-policy.json") ||
-		tagMutation.Env["RELEASECHECK"] != "${{ runner.temp }}/releasecheck" {
-		t.Fatalf("immutable tag mutation must remain a one-shot direct API call")
-	}
-	pretagRecoveryUpload := namedStep(t, plan, "Upload the exact pre-tag abandoned-release proof")
-	if pretagRecoveryUpload.Uses != uploadArtifactAction ||
-		!containsAll(pretagRecoveryUpload.With["name"], "source_sha", "github.run_id", "github.run_attempt") ||
-		pretagRecoveryUpload.With["path"] != "${{ runner.temp }}/pretag/abandoned-release-policy.json" {
-		t.Fatalf("pre-tag abandoned-release proof is not source/planning-attempt qualified: %+v", pretagRecoveryUpload.With)
-	}
-
-	assertStepOrder(t, plan,
-		"Snapshot and classify the exact triggering CI attempt",
-		"Download the exact promotion manifest artifact",
-		"Download all five exact-attempt native release artifacts",
-		"Verify exact manifest and ten packaged assets offline",
-		"Verify repository release settings and bypass policy",
-		"Upload exact pre-tag repository settings proof",
-		"Verify generated release pull request authorization",
-		"Recheck the exact CI attempt immediately before tag creation",
-		"Create or verify the exact release tag",
-		"Upload the exact pre-tag abandoned-release proof",
-	)
-	assertStepOrder(t, plan,
-		"Ensure release lifecycle labels",
-		"Create or update the reviewed release pull request",
-		"Verify the proposal is based on a green main commit",
-	)
-
-	helper := readFile(t, "../scripts/release/rerun-classified-attempt.sh")
-	failedOnlyCommand := regexp.MustCompile(`(?m)^\s*(?:exec\s+)?gh\s+run\s+rerun\b[^\n]*--failed`)
-	if !containsAll(helper, "rerun_all_jobs", "gh run rerun", "--repo") || failedOnlyCommand.MatchString(helper) {
-		t.Fatalf("classified rerun helper must use gh full rerun and prohibit --failed")
+	if len(gate.Steps) != 1 || gate.Steps[0].Name != "Require every upstream quality stage" {
+		t.Fatalf("e2e-gate must only require every upstream stage: %+v", gate.Steps)
 	}
 }
 
@@ -900,13 +743,13 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 			}
 		}
 	}
-	// 6 since the two retired App audit workflows and the retired evidence
-	// publisher, which each established a typed pair, were removed.
-	if directPairSteps != 6 {
-		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 6", directPairSteps)
+	// 2 since ADR 0011 step 3 removed release-please.yml and build-binaries.yml,
+	// which established four typed pairs and made all four activation calls.
+	if directPairSteps != 2 {
+		t.Fatalf("direct workflow typed-pair boundaries=%d, want exact inventory 2", directPairSteps)
 	}
-	if activationCalls != 4 {
-		t.Fatalf("typed-contract activation calls=%d, want one for each of four publisher consumer jobs", activationCalls)
+	if activationCalls != 0 {
+		t.Fatalf("typed-contract activation calls=%d, want none after the publisher's removal", activationCalls)
 	}
 	wantConsumers := []string{
 		"../.github/workflows/publish-homebrew-bridge.yml|homebrew_bridge|Validate protected-main control, source contract, tag, and Release",
@@ -924,193 +767,6 @@ func TestTypedContractCheckerIdentityIsCompleteAtEveryWorkflowBoundary(t *testin
 		`printf 'RELEASE_CONTRACT_VERSION_FILE=%s\n' "$RELEASE_CONTRACT_VERSION_FILE"`,
 		`printf 'RELEASE_CONTRACT_PROJECTION_FILE=%s\n' "$RELEASE_CONTRACT_PROJECTION_FILE"`) {
 		t.Fatal("typed-contract activation helper does not build, validate, and persist the complete checker identity")
-	}
-
-	planning := readWorkflow(t, "../.github/workflows/release-please.yml")
-	route := namedStep(t, planning.Jobs["plan"], "Route and validate the exact source release contract")
-	if !containsAll(route.Run,
-		`"$RELEASECHECK" --version --json > "${RUNNER_TEMP}/source-releasecheck-capabilities.json"`,
-		`"$RELEASECHECK" contract operational --contract "$source_contract" --json`,
-		`> "${RUNNER_TEMP}/source-contract-operational.json"`,
-		`"$CONTROL_RELEASECHECK" contract operational --contract "$source_contract" --json`,
-		`cmp "${RUNNER_TEMP}/source-contract-operational.json"`,
-		`printf 'RELEASE_CONTRACT_CHECKER=%s\n' "$RELEASECHECK"`) {
-		t.Fatalf("Release Please planning does not emit one same-checker raw pair and corroborate it with the reviewed control plane: %s", route.Run)
-	}
-}
-
-func TestPublisherPromotesExactArtifactsWithoutProductRebuild(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
-	assertGlobalReleaseConcurrency(t, "publisher", wf)
-	assertJobIDs(t, wf, "metadata", "preflight", "promotion", "release", "homebrew", "health")
-	if len(wf.Jobs) != 6 {
-		t.Fatalf("publisher job count=%d, want 6", len(wf.Jobs))
-	}
-	assertPermissions(t, "publisher", wf.Permissions, map[string]string{
-		"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read",
-	})
-	push := decodeTrigger[pushTrigger](t, wf, "push")
-	if !slices.Equal(push.Tags, []string{"v*"}) {
-		t.Fatalf("publisher tag trigger=%v", push.Tags)
-	}
-	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
-	if dispatch.Inputs["version"].Type != "string" || !dispatch.Inputs["version"].Required || !slices.Equal(dispatch.Inputs["repair"].Options, []string{"health", "homebrew", "release-assets"}) {
-		t.Fatalf("publisher manual inputs=%+v", dispatch.Inputs)
-	}
-
-	for _, jobID := range []string{"preflight", "promotion", "release", "homebrew", "health"} {
-		assertCancellationSafe(t, "publisher "+jobID, wf.Jobs[jobID])
-	}
-	assertNeeds(t, "preflight", wf.Jobs["preflight"], "metadata")
-	assertNeeds(t, "promotion", wf.Jobs["promotion"], "metadata")
-	assertNeeds(t, "release", wf.Jobs["release"], "metadata", "preflight", "promotion")
-	assertNeeds(t, "homebrew", wf.Jobs["homebrew"], "metadata", "preflight", "promotion", "release")
-	assertNeeds(t, "health", wf.Jobs["health"], "metadata", "promotion", "release", "homebrew")
-
-	metadata := wf.Jobs["metadata"]
-	resolve := namedStep(t, metadata, "Resolve exact tag, source, CI attempt, and repair stage")
-	if !containsAll(resolve.Run, "version_policy.blocked_versions", "outside the steady-state publisher", "actions/workflows/${RELEASE_CI_WORKFLOW_FILE}/runs", "run_attempt", "release-assets|homebrew|health") {
-		t.Fatalf("publisher metadata does not bind immutable tag/current CI attempt/repair policy")
-	}
-	for _, output := range []string{"version", "source_sha", "ci_run_id", "ci_run_attempt", "planning_run_id", "planning_run_attempt", "settings_proof_artifact_id", "settings_proof_artifact_name", "run_promotion", "run_release", "run_homebrew"} {
-		if metadata.Outputs[output] == "" {
-			t.Fatalf("publisher metadata missing output %q", output)
-		}
-	}
-	if !containsAll(resolve.Run, "actions/workflows/${RELEASE_PLANNING_WORKFLOW_FILE}/runs", "exactly one successful ${RELEASE_PLANNING_WORKFLOW_FILE} run", "planning-artifacts.json", "include \"artifact-pages\"", "env_vault_exact_artifact", "exact pre-tag repository settings proof artifact is missing or ambiguous") {
-		t.Fatalf("publisher metadata does not uniquely bind the exact-source planning proof artifact")
-	}
-
-	promotion := wf.Jobs["promotion"]
-	assertPermissions(t, "promotion", promotion.Permissions, map[string]string{"actions": "read", "contents": "read"})
-	classifier := namedStep(t, promotion, "Save and classify the exact current CI attempt")
-	if !containsAll(classifier.Run, "releasecheck classify-attempt", "CI_RUN_ATTEMPT", "ATTEMPT_MATRIX_COMPLETE", "rerun_failed_jobs_allowed == false") {
-		t.Fatalf("publisher promotion classifier is not exact-attempt fail-closed")
-	}
-	promotionManifest := namedStep(t, promotion, "Download the exact promotion manifest from CI")
-	nativeAssets := namedStep(t, promotion, "Download five exact native release artifacts from CI")
-	for name, step := range map[string]workflowStep{"manifest": promotionManifest, "native assets": nativeAssets} {
-		if step.Uses != downloadAction || step.With["run-id"] != "${{ needs.metadata.outputs.ci_run_id }}" {
-			t.Fatalf("publisher %s download is not tied to exact CI run: %v", name, step.With)
-		}
-	}
-	if !containsAll(nativeAssets.With["pattern"], "needs.metadata.outputs.ci_run_attempt") {
-		t.Fatalf("native artifacts are not tied to CI attempt: %v", nativeAssets.With)
-	}
-	verify := namedStep(t, promotion, "Verify promotion and stage the exact publisher bundle")
-	if !containsAll(verify.Run,
-		"releasecheck promotion verify", "--run-attempt", "verified publisher bundle", "exactly ten regular release assets",
-		"mapfile -t manifests", "find promotion-manifest -type f -name promotion-manifest.json",
-		"${#manifests[@]} -eq 1", `--manifest "${manifests[0]}"`, `install -m 0600 "${manifests[0]}"`,
-		"verified-bundle/assets/$archive", "verified-bundle/assets/$checksum",
-		"find verified-bundle/assets -mindepth 1 -maxdepth 1", "find verified-bundle/assets -maxdepth 1 -type f",
-	) {
-		t.Fatalf("publisher promotion does not isolate one manifest from exactly ten regular assets")
-	}
-	if strings.Contains(verify.Run, "--manifest promotion-manifest/promotion-manifest.json") {
-		t.Fatal("publisher reintroduced the incorrect flattened promotion-manifest path")
-	}
-	bundle := namedStep(t, promotion, "Upload publisher-local verified bundle")
-	if !containsAll(bundle.With["name"], "source_sha", "github.run_attempt") || bundle.With["path"] != "verified-bundle" {
-		t.Fatalf("publisher-local bundle is not current-run qualified: %v", bundle.With)
-	}
-
-	release := wf.Jobs["release"]
-	downloadBundle := namedStep(t, release, "Download publisher-local verified promotion bundle")
-	if downloadBundle.Uses != downloadAction || downloadBundle.With["name"] != bundle.With["name"] || downloadBundle.With["path"] != "dist" {
-		t.Fatalf("release does not consume the exact publisher-local bundle: download=%v upload=%v", downloadBundle.With, bundle.With)
-	}
-	assertStepOrder(t, release,
-		"Download publisher-local verified promotion bundle",
-		"Reverify promotion immediately before mutation",
-		"Verify release tag commit",
-		"Create or verify stable GitHub Release",
-		"No-clobber reconcile all ten release assets",
-	)
-	reverify := namedStep(t, release, "Reverify promotion immediately before mutation")
-	if !containsAll(reverify.Run, "releasecheck promotion verify", "--run-attempt", "--manifest dist/promotion-manifest.json", "--artifacts-root dist/assets") {
-		t.Fatalf("release mutation lacks immediate promotion re-verification")
-	}
-	create := namedStep(t, release, "Create or verify stable GitHub Release")
-	if !containsAll(create.Run, "source scripts/release/lib.sh", `for asset in "${RELEASE_ASSETS[@]}"`, `assets+=("dist/assets/$asset")`, `--notes-file release-notes.md \`, `"${assets[@]}"`) {
-		t.Fatalf("release creation must upload all ten verified assets in the create call, so the Release stays a draft until they are all present")
-	}
-	reconcile := namedStep(t, release, "No-clobber reconcile all ten release assets")
-	if reconcile.Run != `scripts/release/reconcile-release-assets.sh "$VERSION" dist/assets` {
-		t.Fatalf("release no-clobber reconciliation does not use the exact verified asset inventory: %q", reconcile.Run)
-	}
-
-	raw := readFile(t, "../.github/workflows/build-binaries.yml")
-	for _, forbidden := range []string{"go test ./...", "go test -race ./...", "./cmd/env-vault", "-ldflags="} {
-		if strings.Contains(raw, forbidden) {
-			t.Fatalf("publisher must promote tested artifacts, found product rebuild/source-quality marker %q", forbidden)
-		}
-	}
-}
-
-func TestPublisherKeepsReleaseHomebrewAndHealthBoundaries(t *testing.T) {
-	wf := readWorkflow(t, "../.github/workflows/build-binaries.yml")
-	assertPermissions(t, "release", wf.Jobs["release"].Permissions, map[string]string{"contents": "write"})
-	assertPermissions(t, "homebrew", wf.Jobs["homebrew"].Permissions, map[string]string{"contents": "read"})
-	assertPermissions(t, "health", wf.Jobs["health"].Permissions, map[string]string{"actions": "read", "contents": "read", "pull-requests": "read"})
-
-	homebrew := wf.Jobs["homebrew"]
-	if homebrew.Environment != "release" {
-		t.Fatalf("Homebrew job environment=%q", homebrew.Environment)
-	}
-	for _, output := range []string{"publication_state", "pr_number", "pr_url", "pr_head_sha", "merge_sha", "tap_sha", "pr_ci_url", "tap_ci_url"} {
-		if homebrew.Outputs[output] == "" {
-			t.Fatalf("Homebrew job missing exact-state output %q", output)
-		}
-	}
-	prCI := namedStep(t, homebrew, "Require exact Homebrew pull-request head CI")
-	postMergeCI := namedStep(t, homebrew, "Require exact Homebrew post-merge CI")
-	if !containsAll(prCI.Run, "wait-tap-ci.sh", `"$HEAD_SHA" pull_request`) || !containsAll(postMergeCI.Run, "wait-tap-ci.sh", `"$MERGE_SHA" push`) {
-		t.Fatalf("Homebrew must preserve both exact PR-head and post-merge CI gates")
-	}
-	assertStepOrder(t, homebrew,
-		"Download and verify published assets",
-		"Generate exact Homebrew formula",
-		"Create or reuse deterministic Homebrew pull request",
-		"Require exact Homebrew pull-request head CI",
-		"Merge exact Homebrew pull-request head",
-		"Require exact Homebrew post-merge CI",
-	)
-
-	health := wf.Jobs["health"]
-	settingsDownload := namedStep(t, health, "Download the exact pre-tag repository settings proof")
-	if settingsDownload.Uses != downloadAction || settingsDownload.With["run-id"] != "${{ needs.metadata.outputs.planning_run_id }}" ||
-		settingsDownload.With["name"] != "${{ needs.metadata.outputs.settings_proof_artifact_name }}" {
-		t.Fatalf("health settings-proof download is not exact planning-run bound: %+v", settingsDownload.With)
-	}
-	settingsVerify := namedStep(t, health, "Verify the exact pre-tag repository settings proof offline")
-	if !containsAll(settingsVerify.Run, "settings verify", "--planning-run-id", "--planning-run-attempt", "--source-sha", "--release-version", "cmp") {
-		t.Fatalf("health does not replay the settings proof against the exact release/planning tuple")
-	}
-	healthVerify := namedStep(t, health, "Verify release, Homebrew, blocked tags, and abandoned release")
-	if !containsAll(healthVerify.Run,
-		"wait-tap-ci.sh", "pull_request", "push", "version_policy.blocked_versions[]",
-		"--verify-published-pr", `include "homebrew-state"`, "env_vault_homebrew_state",
-		"merge_is_ancestor_of_tap", `merge-base --is-ancestor "$merge_sha" "$tap_sha"`,
-		`wait-tap-ci.sh "$TAP_REPOSITORY" "$TAP_CI_WORKFLOW" "$merge_sha" push`,
-		"checked_blocked_versions", "verify-abandoned-release-policy.sh") {
-		t.Fatalf("health does not independently re-observe release, both tap gates, and all blocked versions")
-	}
-	if strings.Contains(healthVerify.Run, "verify-repository-release-settings.sh") || !strings.Contains(healthVerify.Run, "$GITHUB_STEP_SUMMARY") {
-		t.Fatalf("read-scoped health must replay the sealed proof without a live administration query")
-	}
-	// The evidence ledger and the bespoke provenance/SBOM contour are retired:
-	// health verifies live state and fails the publisher, it no longer uploads
-	// an observation or re-verifies attestations.
-	for _, retired := range []string{"releasecheck evidence", "release-observation.json", "health-proof.json", "attestation-verifications.json", "gh attestation verify", "verified_attestations"} {
-		if strings.Contains(healthVerify.Run, retired) {
-			t.Fatalf("health still produces retired output %q", retired)
-		}
-	}
-	for _, step := range health.Steps {
-		if step.Uses == uploadArtifactAction {
-			t.Fatalf("health still uploads an artifact: %v", step.With)
-		}
 	}
 }
 
@@ -1467,7 +1123,7 @@ func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
 	wf := readWorkflow(t, "../.github/workflows/legacy-rebuild.yml")
 	assertPermissions(t, "legacy rebuild", wf.Permissions, map[string]string{"contents": "read"})
 	assertJobIDs(t, wf, "resolve", "diagnostic")
-	if wf.Concurrency.CancelInProgress || !containsAll(wf.Concurrency.Group, "legacy-rebuild", "inputs.version", "github.run_id") {
+	if wf.Concurrency.CancelInProgress.Value || !containsAll(wf.Concurrency.Group, "legacy-rebuild", "inputs.version", "github.run_id") {
 		t.Fatalf("legacy diagnostic concurrency=%+v", wf.Concurrency)
 	}
 	dispatch := decodeTrigger[dispatchTrigger](t, wf, "workflow_dispatch")
@@ -1515,17 +1171,25 @@ func TestLegacyRebuildIsDiagnosticOnlyAndCannotSelectV008(t *testing.T) {
 	}
 }
 
-func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T) {
+func TestReleasePleaseConfigDraftsReleasesAndTracksVersionedDocs(t *testing.T) {
 	data := []byte(readFile(t, "../release-please-config.json"))
+	type changelogSection struct {
+		Type    string `json:"type"`
+		Section string `json:"section"`
+		Hidden  bool   `json:"hidden"`
+	}
 	var config struct {
 		LastReleaseSHA json.RawMessage `json:"last-release-sha"`
 		Packages       map[string]struct {
-			ReleaseType       string `json:"release-type"`
-			PackageName       string `json:"package-name"`
-			Component         string `json:"component"`
-			ChangelogPath     string `json:"changelog-path"`
-			SkipGitHubRelease bool   `json:"skip-github-release"`
-			IncludeVInTag     bool   `json:"include-v-in-tag"`
+			ReleaseType       string             `json:"release-type"`
+			PackageName       string             `json:"package-name"`
+			Component         string             `json:"component"`
+			ChangelogPath     string             `json:"changelog-path"`
+			SkipGitHubRelease *bool              `json:"skip-github-release"`
+			Draft             bool               `json:"draft"`
+			ForceTagCreation  bool               `json:"force-tag-creation"`
+			IncludeVInTag     bool               `json:"include-v-in-tag"`
+			ChangelogSections []changelogSection `json:"changelog-sections"`
 			ExtraFiles        []struct {
 				Type string `json:"type"`
 				Path string `json:"path"`
@@ -1557,21 +1221,30 @@ func TestReleasePleaseConfigDefersPublicationAndTracksVersionedDocs(t *testing.T
 	if _, err := releasecontract.CheckReleasePleaseRecovery(canonicalContract, data, manifestData); err != nil {
 		t.Fatalf("completed recovery config/manifest: %v", err)
 	}
+	// ADR 0011: Release Please tags the merge commit and opens a draft release,
+	// which release.yml publishes after it builds and attests the release.
 	pkg, ok := config.Packages["."]
-	if !ok || pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" || !pkg.SkipGitHubRelease || !pkg.IncludeVInTag {
+	if !ok || pkg.ReleaseType != "go" || pkg.PackageName != "env-vault" || pkg.Component != "env-vault" || pkg.ChangelogPath != "CHANGELOG.md" ||
+		pkg.SkipGitHubRelease != nil || !pkg.Draft || !pkg.ForceTagCreation || !pkg.IncludeVInTag {
 		t.Fatalf("release package config=%+v", pkg)
+	}
+	// Only product changes are visible, so only they create a release.
+	wantSections := []changelogSection{
+		{"feat", "Features", false},
+		{"fix", "Bug Fixes", false},
+		{"build", "Build System", true},
+		{"ci", "Continuous Integration", true},
+		{"docs", "Documentation", true},
+		{"test", "Tests", true},
+		{"refactor", "Refactoring", true},
+		{"perf", "Performance", false},
+		{"revert", "Reverts", false},
+	}
+	if !slices.Equal(pkg.ChangelogSections, wantSections) {
+		t.Fatalf("changelog sections=%+v, want %+v", pkg.ChangelogSections, wantSections)
 	}
 	if len(pkg.ExtraFiles) != 1 || pkg.ExtraFiles[0].Type != "generic" || pkg.ExtraFiles[0].Path != "README.md" {
 		t.Fatalf("versioned extra files=%+v", pkg.ExtraFiles)
-	}
-
-	plan := readWorkflow(t, "../.github/workflows/release-please.yml").Jobs["plan"]
-	step := namedStep(t, plan, "Create or update the reviewed release pull request")
-	if step.Uses != releasePleaseAction || step.With["skip-github-release"] != "true" ||
-		step.With["target-branch"] != "${{ steps.release-contract.outputs.release_please_target_branch }}" ||
-		step.With["config-file"] != "${{ steps.release-contract.outputs.release_please_config_path }}" ||
-		step.With["manifest-file"] != "${{ steps.release-contract.outputs.release_please_manifest_path }}" {
-		t.Fatalf("Release Please action is allowed to publish directly: uses=%q with=%v", step.Uses, step.With)
 	}
 }
 
@@ -1600,10 +1273,10 @@ func TestCompletedRecoveryTemporaryPlannerIsAbsent(t *testing.T) {
 	if strings.Contains(readFile(t, "../scripts/release/verify-release-proposal.sh"), "EXPECTED_RELEASE_VERSION") {
 		t.Fatal("proposal verifier retains the active-only recovery override")
 	}
-	planning := readFile(t, "../.github/workflows/release-please.yml")
+	release := readFile(t, "../.github/workflows/"+releaseWorkflowFile)
 	for _, marker := range []string{"Reconcile the exact abandoned untagged release pull request", "Upload exact abandoned-release recovery evidence", "env-vault-release-please-recovery-planning", "abandon-release"} {
-		if strings.Contains(planning, marker) {
-			t.Fatalf("planning workflow retains completed-recovery marker %q", marker)
+		if strings.Contains(release, marker) {
+			t.Fatalf("release workflow retains completed-recovery marker %q", marker)
 		}
 	}
 }
@@ -1721,7 +1394,7 @@ func assertPinnedAction(t *testing.T, path, jobName, uses string, expected map[s
 
 func assertGlobalReleaseConcurrency(t *testing.T, label string, wf workflow) {
 	t.Helper()
-	if wf.Concurrency.Group != "env-vault-release" || wf.Concurrency.CancelInProgress || wf.Concurrency.Queue != "max" {
+	if wf.Concurrency.Group != "env-vault-release" || wf.Concurrency.CancelInProgress.Value || wf.Concurrency.Queue != "max" {
 		t.Fatalf("%s changed global release serialization: %+v", label, wf.Concurrency)
 	}
 }

@@ -1,5 +1,11 @@
 # Release architecture and refactor baseline
 
+> **Superseded.** Since migration step 3 of
+> [ADR 0011](adr/0011-minimal-release-pipeline.md), releases run on
+> `.github/workflows/release.yml`; see [`RELEASING.md`](../RELEASING.md).
+> This document describes the previous pipeline, and migration step 6
+> removes it.
+
 Status: immutable pre-refactor baseline plus dated stage deltas, 2026-07-19.
 The machine-readable baseline companion is
 [`release/refactor-baseline.v1.json`](../release/refactor-baseline.v1.json). It

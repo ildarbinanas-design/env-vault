@@ -27,7 +27,7 @@ const (
 	ValidationSchemaID      = "env-vault.actions-artifact-policy-validation.v1"
 	ValidationSchemaVersion = 1
 	CanonicalPolicyPath     = "release/actions-artifact-policy.v1.json"
-	ExpectedUploadSiteCount = 18
+	ExpectedUploadSiteCount = 7
 	SupportedUploadAction   = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 	RunAttemptExpression    = "${{ github.run_attempt }}"
 
@@ -44,15 +44,14 @@ var (
 	// replacementReleaseWorkflow is the ADR 0011 pipeline, outside this policy.
 	replacementReleaseWorkflow = "release.yml"
 	// uploadingWorkflows are the current workflows that upload artifacts; each
-	// must own at least one policy site. Retired workflows (release-evidence.yml)
-	// are absent here but keep their name patterns, so artifacts they already
-	// uploaded stay classifiable instead of failing the lifecycle tooling closed.
+	// must own at least one policy site. Retired workflows (release-evidence.yml,
+	// and release-please.yml and build-binaries.yml since ADR 0011) are absent
+	// here but keep their name patterns, so artifacts they already uploaded stay
+	// classifiable instead of failing the lifecycle tooling closed.
 	uploadingWorkflows = []string{
 		"bootstrap-release-assets.yml",
-		"build-binaries.yml",
 		"legacy-rebuild.yml",
 		"publish-homebrew-bridge.yml",
-		"release-please.yml",
 		"reusable-quality.yml",
 	}
 	supportedClasses = []string{
@@ -237,8 +236,10 @@ func (policy Policy) Validate() error {
 			return fmt.Errorf("policy is missing supported workflow %q", workflow)
 		}
 	}
+	// ADR 0011 retired the only 90-day sites, in release-please.yml. The tier
+	// stays supported for the artifacts those sites already uploaded.
 	for _, days := range supportedRetentionDays {
-		if !seenTiers[days] {
+		if !seenTiers[days] && days != 90 {
 			return fmt.Errorf("policy does not use supported retention tier %d", days)
 		}
 	}

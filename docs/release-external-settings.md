@@ -1,5 +1,15 @@
 # External settings for automated releases
 
+> **Partly superseded.** Since migration step 3 of
+> [ADR 0011](adr/0011-minimal-release-pipeline.md), releases run on
+> `.github/workflows/release.yml` (see [`RELEASING.md`](../RELEASING.md)).
+> The token scopes, environments, and branch policies below still apply,
+> except that `homebrew-tap` now needs "Allow auto-merge" (enabled on
+> 2026-09-27), because `release.yml` merges the formula pull request by
+> auto-merge. The parts about `build-binaries`, the pre-tag settings check, and
+> repair modes describe the previous pipeline; migration step 6 rewrites this
+> document. The planning token no longer needs Administration read.
+
 This document is the external configuration contract for release planning and
 publication in `ildarbinanas-design/env-vault`. Release Please v5 prepares
 version documentation and `CHANGELOG.md` through a protected pull request in

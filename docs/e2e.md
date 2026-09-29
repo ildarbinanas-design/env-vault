@@ -100,7 +100,10 @@ No other critical scenario may skip.
 
 ## Functional coverage matrix
 
-`P5` means all five platform IDs above. `Unix + expected Windows skip` means
+`P5` means every platform the suite runs on. CI runs it on one target per
+operating system, `linux-amd64`, `darwin-arm64`, and `windows-amd64` (ADR 0011);
+CI and the release workflow still build all five targets above and smoke-test
+them against the real secret store. `Unix + expected Windows skip` means
 the manifest still requires the Windows result, but records the intentional
 skip instead of silently dropping the platform.
 
@@ -182,8 +185,8 @@ skip instead of silently dropping the platform.
 CI does not fetch the reporting tool inside native matrix jobs. The isolated
 [`tools/e2e-reporter`](../tools/e2e-reporter) module pins its complete checksum
 graph. The resolve job downloads that graph with three bounded attempts, then
-builds all five `CGO_ENABLED=0` reporters once and uploads source-SHA- and
-attempt-qualified artifacts. Each native job verifies the downloaded binary's
+builds the `CGO_ENABLED=0` reporters once and uploads source-SHA- and
+attempt-qualified artifacts for the three E2E targets. Each E2E job verifies the downloaded binary's
 SHA-256, Go build information, target, and exact `--version` output before
 running with `GOPROXY=off`. A missing or incompatible reporter therefore fails
 closed without a second network fallback or artifacts from another attempt.
@@ -276,15 +279,16 @@ files, human-readable reports are regenerated exactly from their machine
 evidence, `coverage.txt` and full `coverage.html` are regenerated from
 `coverage.out` with the report's exact Go patch toolchain, package percentages
 are independently recomputed, and immutable report digests are rechecked.
-`e2e-gate` fails closed if a
-platform or required file is missing, malformed, leaked, skipped unexpectedly,
-does not have 100% critical scenario coverage, or falls below the conservative
-60% cross-platform statement-coverage floor. Matrix validation recomputes the
-semantic suite hash from the exact checkout and rejects reports produced by a
-different runner/scenario implementation, even if every report in that stale
-set agrees with every other one.
+Each E2E job fails closed if a required file is missing, malformed, or leaked,
+if a scenario skips unexpectedly, if critical scenario coverage is below 100%,
+or if statement coverage falls below the conservative 60% floor.
 
-Validate a downloaded five-platform set with:
+CI no longer seals a five-platform matrix proof or feeds a promotion manifest
+(ADR 0011). `validate-matrix` stays for local use until migration step 6
+removes it. It requires reports for all five contract platforms, so it cannot
+check a CI run, which produces three. It recomputes the semantic suite hash from
+the exact checkout and rejects reports produced by a different runner or
+scenario implementation:
 
 ```sh
 GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
@@ -296,15 +300,6 @@ GOTOOLCHAIN=go1.26.5 go run ./e2e/cmd/e2e-runner validate-matrix \
   --expected-repository "$GITHUB_REPOSITORY" \
   --expected-reporter "v1.13.0"
 ```
-
-That command writes a sealed `matrix-validation.json`, which is uploaded as
-the `env-vault-e2e-matrix-proof` artifact and consumed by the promotion
-manifest.
-
-For a strict `vMAJOR.MINOR.PATCH` candidate, every native job also records the
-three exact `CLI_VERSION_FORMS` outputs in its promotion proof. The promotion
-manifest is assembled only after the sealed matrix passes, so a wrong binary
-version, stale suite, or lower coverage cannot be masked by another target.
 
 The current symlink contract rejects unsafe final config and lock targets. It
 does not claim protection from a hostile same-user process or a pre-existing

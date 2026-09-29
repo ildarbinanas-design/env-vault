@@ -1,577 +1,129 @@
 # Releasing env-vault
 
-This runbook covers the deterministic release path, narrow repair paths, and
-release incidents. GitHub transport and mutations use `gh`. Repository tools
-consume saved JSON and artifacts only; they do not access the network or hold
-credentials.
+Releases follow [ADR 0011](docs/adr/0011-minimal-release-pipeline.md) and
+[ADR 0012](docs/adr/0012-attestation-verification-pins-release-workflow.md).
+One workflow, [`.github/workflows/release.yml`](.github/workflows/release.yml),
+does all of it. No workflow runs on a tag.
 
-Release Please v5 prepares the version, `CHANGELOG.md`, manifest, and marked
-README line in a generated pull request. The exact release merge is tested and
-packaged by normal `ci`. Release planning creates the immutable tag only after
-that exact CI attempt and its promotion manifest pass the pre-tag gate.
-`build-binaries` then promotes those verified bytes; it does not rebuild the
-product or repeat version-independent source quality.
+## How a release happens
 
-Never move or delete an existing release tag, overwrite a Release asset, mix
-artifacts from workflow attempts, or lower the Homebrew version.
+1. Changes reach `main` through squash-merged pull requests with Conventional
+   Commits titles. Only `feat`, `fix`, `perf`, and `revert` appear in the
+   changelog and create a release; `docs`, `ci`, `build`, `test`, `refactor`,
+   and `chore` do not. Dependabot titles Go module updates `fix(deps)` and
+   GitHub Actions updates `ci(deps)`.
+2. On every push to `main`, Release Please opens or updates the release pull
+   request: the version, `CHANGELOG.md`, `.release-please-manifest.json`, and
+   the marked README line. It uses `RELEASE_PLANNING_TOKEN`, because a pull
+   request opened with `GITHUB_TOKEN` would not run the required checks.
+3. **Merging the release pull request is the release authorization.** Review
+   the version and changelog, check that the required checks are green, and
+   merge head-guarded, so a head that moved during review is never published:
 
-For the end-to-end operator path, role boundaries, exact no-LLM command
-equivalents, and the incident matrix, see
-[`docs/release-operator-runbook.md`](docs/release-operator-runbook.md).
-
-## Sources of truth
-
-- [`release/contract.v2.json`](release/contract.v2.json) is the canonical
-  operational release contract. It defines the repositories/default branches,
-  version and tag policy, five native platforms, ten archive/checksum assets,
-  Homebrew templates, twelve workflow identities, five shared-concurrency
-  participants, token environments, required checks, repair actions,
-  schemas, and stable action/reason/error codes.
-  It is the **only** contract generation: the v1 archive, its closed historical
-  registry, and the source-routing commands were removed on 2026-07-30. Repair
-  workflows read `release/contract.v2.json` from the exact immutable source
-  commit and require it to agree with the reviewed control plane on naming,
-  platforms, assets, the promotion-manifest schema, and workflow identities.
-- `.release-please-manifest.json`, `release-please-config.json`,
-  `CHANGELOG.md`, and the marked README version line are the reviewed version
-  boundary.
-- A promotion manifest is valid only for one repository, exact version,
-  source SHA, CI run ID, and run attempt. It contains the five platform proofs,
-  ten artifact digests, semantic suite and contract identities, and the
-  source-quality, contract, literal-version, coverage, and leak results.
-
-Unknown, incomplete, malformed, authentication-failed, rate-limited, or
-transport-failed state is not absence. Every release gate fails closed.
-
-## Authorizing a release
-
-Review the generated Release Please pull request semantically: confirm the
-version and changelog describe the changes, its required checks are green, and
-its exact head has not changed. **Merging that pull request is the release
-authorization.** The byte-exact `ПОДТВЕРЖДАЮ RELEASE …` confirmation comment and
-the `authorize-and-merge-release-pr.sh` wrapper were removed on 2026-07-30 at
-the owner's instruction; there is no separate confirmation step.
-
-Merge it head-guarded, so a head that moved during review can never be
-published silently:
-
-```sh
-gh pr merge <pr-number> --repo ildarbinanas-design/env-vault \
-  --squash --match-head-commit <full-head-sha>
-```
-
-`scripts/release/verify-release-authorization.sh` still runs in the planning
-workflow and fails closed unless **exactly one** generated release pull request
-— with the contract's title, header, footer, lifecycle label, base branch, and
-head branch — merged to that exact source commit, the manifest version agrees
-at the source commit and at the current default branch, and that commit has a
-typed successful default-branch CI attempt. That merge authorizes only the
-resulting exact merge source, immutable tag, and fail-closed publisher; it is
-not approval for any changed head, version, or ref.
-
-Deleting Actions artifacts keeps its own byte-exact confirmation ceremony —
-that operation is irreversible and has no release gate behind it. See
-[ADR 0007](docs/adr/0007-actions-artifact-lifecycle.md).
-
-Release-planning REST observations use `scripts/release/gh-api-read.sh`. It
-accepts only explicit or implicit GET reads, publishes a response file only
-after a non-empty successful response, and attempts each page at most five
-times. Its fallback retry schedule is `1, 2, 4, 8` seconds; validated server
-retry timing is honored only inside a 120-second cumulative wait budget. It
-rejects request bodies, GraphQL, custom hosts, cached observations, and mutation
-methods before invoking `gh`, and pins transport to `github.com`. A paginated
-`Link` must preserve the original path and complete endpoint-query/field scope;
-`per_page` is invariant when supplied and only canonical, exactly consecutive
-`page` progression is accepted. State-changing API calls do not use this helper
-and remain single-attempt operations with their own exact state reconciliation.
-
-The helper delegates to the release-only `releasetransport` binary. Workflows
-build it once per consuming job and export `RELEASE_TRANSPORT_BIN`; local
-operators may omit that variable and let the launcher create and remove one
-private temporary binary. The stable exits are `0` success, `2` invalid input,
-`3` local `gh` capability drift, `4` an exact HTTP 404, `5` every other remote
-or identity failure, and `6` output publication failure. Controlled validation,
-bootstrap, transport, and output failures are JSON with schema
-`env-vault.github-transport-error.v1`; never parse stderr prose or map an exit
-other than `4` to absence. External process signals and an executable-removal
-race after launcher validation remain operating-system failures, not transport
-documents.
-
-One read is limited to 100 pages and 500 REST requests; each `gh` process is
-limited to 64 MiB stdout and 256 KiB stderr. The transport enforces a 60-second
-deadline for each request process, a 300-second deadline for the entire public
-operation, and a 256 MiB aggregate response budget. Every attempt—including a
-malformed, incomplete, rate-limited, or otherwise retried response—consumes
-that aggregate budget before response classification. Capability probes share
-the operation deadline and singleflight waiters honor their own cancellation.
-
-Use the typed boundary when a run or required-check job authorizes release
-state:
-
-```sh
-scripts/release/releasetransport.sh actions identity \
-  --output "$SNAPSHOT_DIR/ci-identity.json" \
-  --repository "$REPOSITORY" \
-  --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
-  --workflow-path .github/workflows/ci.yml \
-  --event push --head-sha "$SOURCE_SHA" --head-ref main
-```
-
-The command reads the attempt-qualified run and, when `--job-id`, `--job-name`,
-and `--job-url` are supplied together, the complete attempt-qualified jobs
-collection. Output uses `env-vault.github-actions-identity.v1`. Output paths
-are no-clobber; allocate a new path for every observation phase.
-
-Immediately before merge, re-read the remote PR and require the same tuple.
-Any version, PR number, or head-SHA change invalidates the authorization. There
-is no additional routine approval for tag creation, publication, Homebrew, or
-post-release verification.
-
-Opening, updating, approving, or closing the generated PR is not publication
-authorization. Do not create a tag or Release manually.
-
-## Completed one-time abandoned `v0.0.12` recovery
-
-Generated PR #31 was merged at
-`a0eb82cb1fc4fa486ff2032d50ddedf6bccdbb8b` before its exact authorization
-could be recorded on GitHub. It is permanently abandoned: tag `v0.0.12` and a
-GitHub Release for that version must never exist. The completed recovery record
-in the release contract still pins PR #31, its head, merge source, lifecycle
-labels, reason code, and both absence guarantees. It additionally pins the
-verified `v0.0.13` release source
-`6206b472cda81f7a87656055d8eb6627c26a0fef`. The checker permanently rejects a
-rollback from `complete` to `active`.
-
-The temporary top-level `last-release-sha` and active-only planning override
-have been removed. Every ordinary planning run validates the complete config
-and a manifest at or above `0.0.13` offline. Immediately before any new tag,
-the permanent policy verifier still re-observes PR #31 and requires explicit
-HTTP 404 results for both the `v0.0.12` tag and Release. Unknown transport or
-authentication state is not absence.
-
-This completion uses the authorized one-time exception; it does not rewrite
-the `v0.0.13` outcome. That version has the correct immutable tag, ten assets,
-attestations, and Homebrew state, but its health job failed on the deterministic
-Homebrew parser bug and its durable evidence run was skipped. The next release
-must complete publisher, Homebrew, and health successfully; the evidence ledger
-that this record refers to was retired on 2026-07-30. See the
-[`v0.0.12`/`v0.0.13` record](docs/release-operator-runbook.md#honest-v0012-and-v0013-record)
-for the exact run and commit identities.
-
-## Normal release sequence
-
-1. Release Please opens or updates the generated release PR in PR-only mode.
-2. The PR's normal `ci` run verifies the exact proposed version on all five
-   native targets.
-3. Squash-merge the reviewed PR with a server-side head guard
-   (`gh pr merge <n> --squash --match-head-commit <head-sha>`). That merge is
-   the release authorization; its merge commit becomes the release source SHA.
-4. The `ci` push run for that exact `main` SHA performs source quality once,
-   builds the five native artifacts, runs E2E and leak gates, and verifies all
-   three literal version forms on every target. A bounded native
-   `release-version-probe` executes them with a scrubbed environment and saves
-   versioned JSON; `releasecheck` only reads and binds those bytes:
-
-   ```text
-   env-vault --version
-   env-vault version
-   env-vault version --json
+   ```sh
+   gh pr merge <number> --repo ildarbinanas-design/env-vault \
+     --squash --match-head-commit <full-head-sha>
    ```
 
-5. The same CI attempt seals a versioned promotion manifest. Its five native
-   proofs and ten assets all carry the same run ID and attempt.
-6. `release-please` downloads that exact attempt, classifies completeness,
-   verifies the manifest and all ten bytes offline, rechecks generated-PR
-   provenance, and only then creates or verifies the immutable tag at the
-   release source SHA.
-7. The tag starts `build-binaries`. Its six jobs are `metadata`, `preflight`,
-   `promotion`, `release`, `homebrew`, and `health`.
-   `promotion` downloads and verifies the same CI attempt again; `release`
-   publishes those bytes without rebuilding. It creates the Release with all
-   ten assets in one `gh release create` call: gh keeps the Release a draft
-   until every upload has finished and deletes the draft if one fails, so a
-   published Release never lacks an asset. This is what allows GitHub
-   immutable releases to be enabled. Once they are, a published Release's
-   assets cannot change, and `repair=release-assets` can only verify them.
-   Two rare failure modes remain. If gh cannot delete a failed draft (the
-   runner dies, the create response is lost, or the cleanup call fails), the
-   draft stays; drafts are invisible to the tag lookup, so a repair creates and
-   publishes a second one, and the owner deletes the stale draft on the
-   Releases page. If GitHub publishes the Release but the
-   response is lost, gh deletes the Release it believes failed; with
-   immutable releases the tag name cannot be reused, so recover by releasing
-   the next patch version.
-8. `homebrew` creates or reuses the deterministic tap PR, requires CI on its
-   exact head, squash-merges with a head guard, and requires post-merge tap CI
-   on the exact release merge SHA. The current tap SHA is observed separately
-   and may advance only as a descendant while the formula remains exact.
-9. `health` verifies the tag, Release, ten assets, digests,
-   Homebrew formula, PR head, both tap CI gates, and the protected failed-tag
-   exception. It also downloads the unique attempt-qualified settings proof
-   from the exact successful planning run and replays it offline; `health`
-   never receives the planning token or queries Administration APIs.
-A green `health` job is the end of the release: the GitHub Release page, the
-tag, and the pull-request history are the audit trail.
+   Either maintainer may merge it. An agent merges it only on the owner's
+   explicit instruction (see `AGENTS.md`).
+4. The `release.yml` run for the merge commit then works through these jobs:
+   - **release-please** tags the merge commit and opens a draft release. Only
+     the run for the tagged commit builds, so the attestations name exactly
+     that commit. The run for the merge commit fails if the tag is missing or
+     points to another commit, so a release never stops silently.
+   - **build** stops unless the tag points to the checked-out commit. It builds
+     the five targets, checks that the build information is unmodified and
+     that `--version` reports the tag, uploads each binary, and smoke-tests the
+     real OS secret store.
+   - **publish** packages the five archives deterministically, attests the
+     archives and the binaries, and verifies those attestations. It then
+     uploads the ten files to the draft and publishes it. Releases are
+     immutable, so the published release can no longer change.
+   - **verify** checks that the release is published and immutable and that
+     the tag points to the release commit. It downloads the ten assets and
+     checks their checksums and attestations.
+   - **tap** generates the formula from the published archives and opens a
+     pull request in `ildarbinanas-design/homebrew-tap` with auto-merge. The
+     tap's `test` check must pass first; it also compares every url and sha256
+     with the published checksums.
 
-The shared `env-vault-release` concurrency group covers planning and
-publication with cancellation disabled and
-`queue: max`; GitHub retains up to 100 pending runs, but does not guarantee
-their dispatch order. Correctness therefore depends on every stage
-revalidating the exact repository/workflow/run/job/attempt/source identity,
-not on queue arrival order. Manual CI dispatch has its own identity and cannot
-cancel an automatic green-`main` run. A full CI rerun also uses an
-attempt-qualified concurrency identity, so it cannot cancel a newer automatic
-`main` run.
-
-## CI topology
-
-The normal `ci` path has one reusable quality graph plus the caller's required
-`quality-gate`:
-
-- one contract/version resolver;
-- one combined source-quality job (`tidy`, module verification, tests, vet,
-  smoke, and full race suite);
-- three native license jobs;
-- five native build/package/E2E jobs;
-- one `e2e-gate` that validates the matrix once and seals release promotion
-  evidence when the push is a release merge;
-- one top-level `quality-gate`, which remains `always()` so cancellation cannot
-  become a merge bypass.
-
-Downstream gates use `always() && !cancelled()`: upstream failures are reported
-deterministically, while an intentional cancellation does not start more work.
-The publisher does not rerun this graph for the same source SHA.
-
-## Offline `releasecheck`
-
-Build the checker from the source revision being inspected:
+## Verifying a release
 
 ```sh
-go build -trimpath -o ./releasecheck ./cmd/releasecheck
-./releasecheck --version --json
-./releasecheck validate-contract --json
-./releasecheck contract matrix --json
-```
-
-`--version --json` reports the checker version, build/source revision when
-available, supported schema versions, release contract schema, and semantic
-contract hash. `releasecheck` has no network client, never reads credentials,
-and never executes a candidate binary. Use `gh` to save remote observations,
-then pass filenames:
-
-```sh
-REPOSITORY=ildarbinanas-design/env-vault
-RUN_ID=123456789
-
-gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" > run.json
-gh api --paginate --slurp \
-  "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" \
-  > artifacts.json
-
-./releasecheck classify-attempt \
-  --run run.json --artifacts artifacts.json --json \
-  > attempt-classification.json
-```
-
-The checker accepts complete saved responses and rejects duplicate or
-case-variant JSON keys, unknown fields, unsupported schemas, incompatible
-contract identities, and incomplete input documents.
-
-Exit statuses are stable:
-
-| Status | Meaning |
-| ---: | --- |
-| `0` | requested offline validation or document generation succeeded |
-| `2` | command-line usage error |
-| `3` | release contract invalid or schema unsupported |
-| `4` | valid attempt classification requires waiting, inspection, or `rerun_all_jobs` |
-| `5` | saved input or promotion proof is invalid, incomplete, or inconsistent |
-| `6` | internal or no-clobber output failure |
-
-Promotion verification is explicit about every coordinate:
-
-```sh
-./releasecheck promotion verify \
-  --manifest promotion-manifest.json \
-  --source-sha "$SOURCE_SHA" \
-  --release-version "$VERSION" \
-  --repository "$REPOSITORY" \
-  --run-id "$RUN_ID" \
-  --run-attempt "$RUN_ATTEMPT" \
-  --artifacts-root release-assets \
-  --json
-```
-
-## Incomplete workflow attempts
-
-An incomplete current attempt cannot be repaired with “rerun failed jobs”:
-that operation can leave artifacts from different executions under one run.
-The classifier instead emits all of the following:
-
-- `ok=false`;
-- `action_code="rerun_all_jobs"`;
-- exact run ID and attempt;
-- sorted missing targets/artifacts;
-- `reason_code="ATTEMPT_MATRIX_INCOMPLETE"`;
-- `rerun_failed_jobs_allowed=false` and the prohibited action
-  `rerun_failed_jobs`.
-
-The read-only planning job preserves the run, artifact inventory, and
-classification JSON, then an isolated `actions:write` job re-snapshots the
-same tuple and automatically performs at most one full rerun. The guarded
-transport shim validates the entire document and deliberately invokes
-`gh run rerun` without `--failed`; the same command remains useful for a
-diagnostic reproduction:
-
-```sh
-scripts/release/with-typed-contract.sh \
-  scripts/release/rerun-classified-attempt.sh \
-  attempt-classification.json ildarbinanas-design/env-vault
-```
-
-The new completed attempt triggers classification again. A second incomplete
-attempt stops with the same machine action instead of entering an infinite
-retry loop. Never copy artifacts between attempts or manually edit the
-manifest.
-
-## Manual repairs
-
-Manual publisher dispatch is only for an existing exact immutable tag. Run it
-at that tag ref, not at `main`:
-
-```sh
-VERSION=vX.Y.Z
-REPOSITORY=ildarbinanas-design/env-vault
-gh workflow run build-binaries.yml \
-  --repo "$REPOSITORY" \
-  --ref "$VERSION" \
-  -f version="$VERSION" \
-  -f repair=release-assets
-```
-
-| Repair | Rebuilds product | Resume point | Required existing state |
-| --- | --- | --- | --- |
-| `release-assets` | no | promotion/publication | exact tag and publication-eligible CI promotion attempt |
-| `homebrew` | no | Homebrew | exact public Release and ten assets |
-| `health` | no | read-only health | publication complete; re-verify published state only |
-
-The publisher resolves the source SHA from the tag and fails if the tag,
-generated release provenance, CI attempt, promotion manifest, existing Release
-bytes, or Homebrew state conflicts. Existing assets are verified before any
-missing asset is uploaded. `gh release upload --clobber` is forbidden.
-
-Use a repair only after collecting the exact failed job, step, log, run ID,
-attempt, artifacts, and remote state. Fix workflow or code defects through a
-normal reviewed PR; do not mask a reproducible failure with repeated reruns.
-
-### Empty-Release parser recovery
-
-`assets: []` is a valid GitHub Release response for reconciliation, but it is
-not a complete release. Shape validation must succeed independently of name
-extraction; `download-release-assets.sh` still fails until all ten unique exact
-assets exist. After every upload response, reconciliation refreshes inventory.
-An ambiguous response is accepted only after the intended single-name delta
-and exact downloaded bytes are observed; it is never retried blindly.
-
-If a deterministic parser defect is frozen in an immutable tag and its exact
-public Release has zero assets, merge the reviewed fix first and require green
-exact-head and `main` CI. Then dispatch `bootstrap-release-assets.yml` on the
-protected default branch with explicit version, source CI run/attempt, failed
-publisher run/attempt/job, retained publisher-bundle artifact ID/digest, and
-Release ID. The workflow replays both ten-asset bundles offline and uploads
-only one contract archive/checksum pair. It also fails unless the dispatched
-default-branch control SHA has one exact successful main CI attempt. Require its
-`env-vault.release-assets-bootstrap.v1` result before dispatching the ordinary
-`repair=release-assets` workflow at the immutable tag.
-
-This path is forbidden when any Release asset already exists, any supplied
-identity differs, the source and reviewed release-byte contracts differ, a
-publisher for the source has succeeded, or the failed publisher graph/bundle
-is missing or ambiguous. Never replace this bootstrap with a tag move, Release
-deletion, local upload, clobber, failed-job-only rerun, or broader permission.
-See [ADR 0004](docs/adr/0004-empty-release-asset-bootstrap.md).
-
-The workflow re-reads the protected default-branch ref immediately before the
-first asset mutation and stops if it no longer equals the dispatched reviewed
-control SHA. A response file containing more than one top-level JSON value is
-malformed even when every value independently has a valid Release shape.
-
-### Protected-main Homebrew-only recovery
-
-If an immutable tag has already produced the exact stable ten-asset Release
-but its Homebrew job failed in
-source-frozen tooling before formula/tap mutation, do not rerun the same
-deterministic path. Merge the reviewed transport/bridge fix with exact-head and
-main CI green, then dispatch `publish-homebrew-bridge.yml` from that exact
-protected `main` commit. Every control/source/bootstrap/publisher/job/Release
-and artifact coordinate is a required input; there are no incident defaults.
-
-The bridge's source permissions remain read-only. It verifies contract and
-formula parity, exact bootstrap-result pair bytes, the six-job failed
-publisher graph, all ten assets, and absence of a deterministic
-tap branch/PR in every state/base. It rechecks protected main and tap absence
-before using the release-environment tap token, then enforces the exact tap
-base again inside `publish-homebrew-pr.sh` before branch/PR mutation. The token
-is still limited to one tap repository with Actions read, Contents write, and
-Pull requests write.
-
-Accept only an `env-vault.homebrew-publication-bridge.v1` result whose control,
-source, bootstrap, failed publisher, PR/head/merge, both tap CI attempts, and
-final tap snapshot all match. Its `next_action` must be exactly
-`dispatch_tag_scoped_health`. Then dispatch one normal `repair=health` at the
-immutable tag and require health success. The bridge
-must never create/move tags, create/edit Releases, upload/replace assets,
-or broaden token permissions. See
-[ADR 0005](docs/adr/0005-informational-link-and-homebrew-bridge.md).
-
-## Legacy and blocked versions
-
-`v0.0.1` through `v0.0.7` may be rebuilt only for diagnostics through
-`legacy-rebuild.yml`. The contract binds each immutable tag to its peeled
-source SHA and Go `1.22.12`; every output declares
-`publication_eligible=false`. Legacy diagnostic bytes must never enter a
-promotion manifest, GitHub Release, or Homebrew update.
-
-```sh
-gh workflow run legacy-rebuild.yml \
+TARGET=darwin-arm64
+gh release download vX.Y.Z --repo ildarbinanas-design/env-vault \
+  --pattern "env-vault-$TARGET.tar.gz*"
+shasum -a 256 -c "env-vault-$TARGET.tar.gz.sha256"
+gh attestation verify "env-vault-$TARGET.tar.gz" \
   --repo ildarbinanas-design/env-vault \
-  --ref main \
-  -f version=v0.0.7
+  --signer-workflow ildarbinanas-design/env-vault/.github/workflows/release.yml \
+  --source-ref refs/heads/main \
+  --deny-self-hosted-runners
 ```
 
-`v0.0.8` is a permanently failed immutable tag at
-`1d094f9e4a3e0343e713d4126f6118a8a9e98e2d`. It must remain present and must
-not acquire a GitHub Release. `v0.0.9` is likewise preserved at
-`b8b652dcff41d5f2ab4a9f14bed65ddf1f866c65` after its publisher exposed a
-deterministic orchestration defect before any publication or attestation.
-`v0.0.10` is preserved at
-`591350ea0e9ebb2b9ef7a8f9d89c0e86c251c795`; its publisher promoted and staged
-the exact artifacts, then failed closed because the manifest shared the
-ten-asset inventory directory. No publication or attestation occurred.
-`v0.0.11` is preserved at
-`95181260700afdb0bf257b69f490079d2fb6d5f0`; its exact Windows checksum sidecar
-used CRLF, which the pre-tag Go verifier accepted but the publisher shell
-verifier rejected. The failed attempt created an empty Release record before
-that deterministic mismatch surfaced; the empty record was removed without
-changing the tag or any artifact bytes. No asset, attestation, or Homebrew
-mutation occurred. All four are blocked from steady-state publication and from
-the legacy diagnostic selector.
+An installed binary verifies the same way: pass `"$(command -v env-vault)"`
+instead of the archive. `-R` alone is not enough, because it accepts an
+attestation from any branch or workflow in the repository (ADR 0012).
 
-`v0.3.3` is permanently abandoned. Release PR #102 was squash-merged as
-`e85c160c794bb15af032a5f404af1923836935cf` on 2026-09-27, but its planning run
-stopped before creating the tag. Earlier that day the `env-vault-release-planning`
-App had been deleted, so GitHub began reporting PR #31 as authored by `ghost`,
-and the abandoned-`v0.0.12` verifier still required the App's bot login.
-Planning and the publisher run the scripts of the commit they release, so
-`e85c160` cannot be published. PR #102 carries `autorelease: abandoned` instead
-of `autorelease: pending`, tag `v0.3.3` and a GitHub Release for it must never
-exist, and `v0.3.4` ships its changes. The verifier now accepts either login
-for PR #31.
+The archives are deterministic. Rebuilding from the tag with the Go version in
+`go.mod` reproduces the Linux and Windows binaries and, from the published
+binaries, all five archives (`scripts/release/package-archives.sh` with
+`SOURCE_DATE_EPOCH` set to the commit time). Darwin binaries use cgo and can be
+rebuilt only on macOS.
 
-Historical published releases are immutable. If one needs correction, publish
-a higher patch version; never rebuild historical bytes for publication or
-lower the tap.
+## When a release fails
 
-## Healthy release definition
+- Use **Re-run failed jobs** on the same run. A re-run uses the same workflow
+  file and commit, so it cannot fix a defect in them. Do not use **Re-run all
+  jobs** once the release is published: that run finds the published release,
+  skips `verify` and `tap`, and ends green.
+- If the merge commit's run fails because its tag is missing, Release Please
+  did not create it: re-run the failed job. If the tag points to another
+  commit, for example because it was created by hand before the merge, the
+  version cannot be released.
+- `publish` never replaces an uploaded asset. On a re-run it keeps assets whose
+  bytes match and stops on any difference. If an asset in the draft is broken,
+  the owner deletes that asset from the draft, which can still change, and
+  re-runs the failed job. After the release is published, a re-run of
+  `publish` only confirms that the published files are these files.
+- `tap` re-runs reuse the branch and the pull request of an earlier attempt,
+  but only a branch that changes nothing except the formula. A re-run never
+  moves the tap back to an older version. If the tap's `test` check fails, the
+  pull request stays open. Fix the cause and let auto-merge finish.
+- A tag cannot be moved or deleted. If a tagged version cannot be finished,
+  abandon it: label its release pull request `autorelease: abandoned`, fix the
+  defect, and release the next version.
 
-A release is healthy only when the publisher's `health` job proves all of the
-following against live GitHub state:
+## Configuration
 
-1. The immutable tag peels to the exact release source SHA.
-2. The GitHub Release is public, non-draft, non-prerelease, and bound to that
-   tag.
-3. It contains exactly five archives and their five matching SHA-256 sidecars,
-   with no duplicate or extra assets and no changed bytes.
-4. All five archives were promoted from one CI run attempt whose manifest
-   passed source quality, contracts, coverage, leak scanning, semantic-suite
-   identity, and the three literal version checks.
-5. The generated Homebrew formula is byte-exact for the version and four
-   supported Homebrew archives; the version is monotonic.
-6. The deterministic tap PR's recorded head passed pull-request CI, the exact
-   head was merged, post-merge tap CI passed on that immutable merge SHA, and
-   the current tap SHA contains the merge with the byte-exact formula intact.
-7. A pre-tag settings proof binds the exact repository merge policy, three
-   rulesets, present empty bypass lists, source/version, and planning run
-   attempt; `health` replays its self-digest offline.
-8. Release health passed and every blocked failed tag, currently `v0.0.8`
-   through `v0.0.11`, still has no GitHub Release.
+- `release-please-config.json` makes Release Please open draft releases,
+  create the tag itself (`force-tag-creation`), and hide the non-product
+  changelog sections. `.release-please-manifest.json` holds the version.
+- The `release-planning` environment holds `RELEASE_PLANNING_TOKEN`, a
+  fine-grained token for this repository that expires every 90 days. The next
+  renewal is due before 2026-12-26.
+- The `release` environment holds `HOMEBREW_TAP_TOKEN`, a fine-grained token
+  for `ildarbinanas-design/homebrew-tap`. Until migration step 5 it also admits
+  `v*` tags, so that the switch can still be reverted; after that it admits
+  only `main`.
+- Immutable releases are enabled for the repository. The `main` ruleset
+  requires the `quality-gate`, `pr-title`, `Dependency review`,
+  `Analyze (go)`, and `Analyze (actions)` checks.
 
-The Release asset set is always exactly:
+## Versions that must stay unpublished
 
-```text
-env-vault-linux-amd64.tar.gz
-env-vault-linux-amd64.tar.gz.sha256
-env-vault-linux-arm64.tar.gz
-env-vault-linux-arm64.tar.gz.sha256
-env-vault-darwin-amd64.tar.gz
-env-vault-darwin-amd64.tar.gz.sha256
-env-vault-darwin-arm64.tar.gz
-env-vault-darwin-arm64.tar.gz.sha256
-env-vault-windows-amd64.zip
-env-vault-windows-amd64.zip.sha256
-```
+- `v0.0.8` through `v0.0.11` are failed immutable tags. They stay, and they
+  never get a GitHub Release.
+- `v0.0.12` (pull request #31) and `v0.3.3` (pull request #102) are abandoned.
+  No tag or release may exist for them.
+- Published releases are immutable. To correct one, publish a higher version.
 
-Provenance/SBOM attestations are no longer generated. The bespoke supply-chain
-contour was removed by Phase 5 of the 2026-07 trim; attestations already
-created for published versions stay on GitHub's registry as immutable history.
-The deferred DevSecOps-standard replacement is
-`docs/release-refactor-backlog.md` item 14.
+## Before ADR 0011
 
-## Audit trail
-
-The release audit trail is the GitHub Releases page, the immutable tag, and
-ordinary git and pull-request history. There is no evidence ledger: the
-`health` job verifies live release, Homebrew, tap CI, blocked-tag,
-and abandoned-release state and fails the publisher when anything drifts, but
-it stores nothing durable.
-
-The append-only ledger that earlier releases published is frozen history. The
-`release-evidence` branch, the durable replay artifacts already in Actions
-storage, and the tooling that produced them at tag `pre-trim-2026-07-30` remain
-valid and replayable; nothing rewrites, extends, or migrates them. See
-[ADR 0003](docs/adr/0003-compact-release-evidence-ledger.md), superseded by
-Phase 3 of [`trim-plan-2026-07-30.md`](docs/trim-plan-2026-07-30.md).
-
-The dedicated release-metrics tooling was removed by trim Phase 7
-(2026-07-31); for ad-hoc timing questions, `gh run view --json jobs` on the
-exact run is sufficient.
-
-## External configuration and incidents
-
-Before a release, the release-planning token, tap token, environments,
-branch/tag rulesets, and required checks must match
-[`docs/release-external-settings.md`](docs/release-external-settings.md).
-Neither token may bypass a ruleset. Only the `homebrew` job receives the tap
-token; Release writes remain a separate permission
-boundary.
-
-For a wrong SHA, checksum mismatch, unsafe binary, or inconsistent published
-state:
-
-1. Stop and preserve machine evidence, logs, SHAs, digests, and URLs without
-   credentials or secret values.
-2. Do not move the tag, replace assets, rewrite attestations, force-push the
-   tap branch, or weaken a required check/environment/ruleset.
-3. Fix the defect through a normal PR and publish a higher patch version.
-4. If necessary, mark the existing Release as withdrawn in its notes and use
-   Homebrew's reviewed deprecation/disable mechanism; do not mutate its bytes.
-
-Global release serialization, five native targets, E2E/burn-in frequency,
-single-attempt identity, both Homebrew CI gates, and Windows concurrency
-coverage are release guarantees, not emergency retry knobs.
-
-GitHub Actions run identity must use the exact repository/head-repository,
-run ID/attempt, workflow `path`, event, head SHA/branch, and completed/success
-state. REST `.name` is not a stable workflow identifier when `run-name` is
-configured, and `.pull_requests` may be empty for an exact run after its pull
-request is merged. Resolve release-PR CI from the unique successful required
-`ci / quality-gate` check URL on the exact PR. Require its exact `/job/JOB_ID`
-shape, then use the attempt-qualified typed identity to cross-check the job ID,
-run ID/attempt, direct head SHA, check name, success state, and canonical URL.
-The job's `workflow_name` is diagnostic just like the run's `.name`; workflow
-authority comes from the run `path`. See the incident matrix in the
-[operator runbook](docs/release-operator-runbook.md).
-
-Publisher and repair workflows stay pinned to the immutable release source, so
-a reviewed fix in a listener can recover an old immutable release without
-changing that release's code, tag, assets, or Homebrew state.
+Releases up to v0.3.4 went through the previous pipeline: release planning,
+the tag-triggered publisher, and the repair workflows. Its procedures are in
+[`RELEASING.md` at v0.3.4](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/RELEASING.md).
+The bootstrap, bridge, and legacy workflows and their code stay dormant until
+migration step 6 ([#107](https://github.com/ildarbinanas-design/env-vault/issues/107))
+removes them.
