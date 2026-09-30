@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.0...v0.4.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **deps:** build with Go 1.26.8 ([#116](https://github.com/ildarbinanas-design/env-vault/issues/116)) ([8932f3d](https://github.com/ildarbinanas-design/env-vault/commit/8932f3dcdea5f8cca77daf0e76270c27b5db8ca1))
+* **output:** write --output atomically and record failed commands ([#121](https://github.com/ildarbinanas-design/env-vault/issues/121)) ([eb1ce54](https://github.com/ildarbinanas-design/env-vault/commit/eb1ce54da2d338807c434ae01db7a673e12f0906))
+* **secret:** refuse --stdin from a terminal, count passphrase characters ([#122](https://github.com/ildarbinanas-design/env-vault/issues/122)) ([ee60230](https://github.com/ildarbinanas-design/env-vault/commit/ee60230fdbf282b6cd86e2b7fde36c786badf303))
+* **secret:** say what a failed --verify write did ([#125](https://github.com/ildarbinanas-design/env-vault/issues/125)) ([729fd39](https://github.com/ildarbinanas-design/env-vault/commit/729fd39defc64653d75411d761c267e984e77ef1))
+* **secretstore:** refuse a service name with a slash on pass ([#124](https://github.com/ildarbinanas-design/env-vault/issues/124)) ([19c7493](https://github.com/ildarbinanas-design/env-vault/commit/19c749359855ed33543963524de47e9e15582b91))
+* **secretstore:** report the Windows Credential Manager size limit ([#123](https://github.com/ildarbinanas-design/env-vault/issues/123)) ([41b7183](https://github.com/ildarbinanas-design/env-vault/commit/41b718323f68c19f96fb4b7f8b63f1a17cb7935c))
+
 ## [0.4.0](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.4...v0.4.0) (2026-09-29)
 
 
