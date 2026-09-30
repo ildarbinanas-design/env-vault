@@ -37,8 +37,11 @@ an offline guess of a low-entropy value. JSON reports it as `record_id` and,
 until a later minor release, as the deprecated alias `fingerprint`.
 `secret set` reports `created` or `overwritten`; `--verify` reads the value
 back and compares it in constant time, failing with `SECRET_UNVERIFIED` on a
-mismatch. That error, and a backend error during the read-back, say whether
-the write created or overwrote the secret, because the write took effect.
+mismatch. That error, and a backend error during the read-back, report that
+the backend acknowledged the write, with `created` or `overwritten` based on
+the existence check before the write. This is not an atomic create/overwrite
+result. Persistence is unconfirmed: a previous value may have been replaced,
+and the command does not roll back the write.
 `Exists` answers from the backend key listing that `List` uses, so
 `secret check` never decrypts a value. On Windows Credential Manager, which
 matches target names without regard to case, it compares secret names the same

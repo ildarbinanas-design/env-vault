@@ -119,14 +119,14 @@ func SecretExists(command, name string) *AppError {
 }
 
 // SecretUnverified reports a write whose read-back did not match the input,
-// so the caller must not assume the new value is in effect. action is what the
-// write did, "created" or "overwritten": the write itself took effect, and an
-// overwrite already replaced the previous value.
+// so the caller must not assume the new value is in effect. action is
+// "created" or "overwritten", based on the existence check before the write;
+// the backend's success response does not prove which value remains stored.
 func SecretUnverified(command, name, action string) *AppError {
 	return New(
 		command,
 		CodeSecretUnverified,
-		"Secret "+name+" was "+action+", but reading it back did not return the value written",
+		"Backend reported success for secret "+name+" (action: "+action+"), but reading it back did not return the value written",
 		"Re-run secret set to write it again, then env-vault doctor if it persists",
 		ExitRuntimeError,
 	)

@@ -292,10 +292,12 @@ env-vault secret set --verify nexus-token
 ```
 
 `--verify` reads the value back and compares it in constant time; a mismatch
-fails with `SECRET_UNVERIFIED`. The write has already happened by then, so the
-error says whether the secret was created or overwritten; an overwrite has
-already replaced the previous value. On macOS the read-back is a Keychain access to
-the item, so it can show the same access prompt as `exec`.
+fails with `SECRET_UNVERIFIED`. The read-back happens after the backend reports
+a successful write. Errors include `created` or `overwritten` according to the
+existence check before the write, but do not confirm which value remains stored.
+A previous value may have been replaced; env-vault does not roll back the write.
+On macOS the read-back is a Keychain access to the item, so it can show the same
+access prompt as `exec`.
 
 ## Moving To Another Machine
 
