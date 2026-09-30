@@ -248,8 +248,8 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 		openKeyring = keyring.Open
 	}
 	// pass cannot keep a service name with a slash apart from secret names,
-	// so such a service never falls back to it. An empty list must never
-	// reach keyring.Open, which would then try every backend it knows.
+	// so such a service never falls back to it. If removing pass leaves no
+	// backend, report the slash rule before trying to open a backend.
 	var withoutPass bool
 	if secretstore.ValidatePassServiceName(service) != nil && slices.Contains(allowed, keyring.PassBackend) {
 		allowed = slices.DeleteFunc(allowed, func(backend keyring.BackendType) bool { return backend == keyring.PassBackend })

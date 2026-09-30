@@ -104,7 +104,7 @@ transaction, and dry runs do not create a config or lock file.
 
 ## Backend Assumptions
 
-Production secret storage uses OS keychain-style backends through `github.com/99designs/keyring`: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. `pass` requires the `pass` command and an initialized password store. Secret and service identifiers are validated as relative slash-separated names before backend access; absolute, empty, `.` and `..` path components are rejected so `pass` operations remain below the `env-vault` prefix.
+Production secret storage uses OS keychain-style backends through `github.com/99designs/keyring`: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. `pass` requires the `pass` command and an initialized password store. Secret and service identifiers are validated as relative names before backend access; absolute, empty, `.` and `..` path components are rejected so `pass` operations remain below the `env-vault` prefix. Secret names may contain slashes. Service names may contain slashes on other backends, but are refused with `pass` because its single path cannot distinguish a service hierarchy from a secret-name hierarchy.
 
 If `pass` is explicitly selected and unavailable, commands return structured error code `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
 
