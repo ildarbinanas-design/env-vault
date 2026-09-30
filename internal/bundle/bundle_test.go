@@ -309,6 +309,8 @@ func TestSealRejectsWeakPassphrase(t *testing.T) {
 	tests := map[string]string{
 		"empty": "",
 		"short": strings.Repeat("a", MinPassphraseLength-1),
+		// Two bytes per letter: enough bytes, too few characters.
+		"short in Cyrillic": strings.Repeat("я", MinPassphraseLength/2),
 	}
 
 	for name, passphrase := range tests {
@@ -318,6 +320,41 @@ func TestSealRejectsWeakPassphrase(t *testing.T) {
 				t.Fatal("Seal accepted a weak passphrase")
 			}
 		})
+	}
+}
+
+// Before v0.4.1 the minimum counted bytes, so six Cyrillic letters (twelve
+// bytes) sealed a container. Open must keep accepting such a container.
+func TestOpenAcceptsAContainerSealedBelowTheCurrentMinimum(t *testing.T) {
+	passphrase := []byte(strings.Repeat("я", MinPassphraseLength/2))
+	if ValidatePassphrase(passphrase) == nil {
+		t.Fatal("the passphrase must be below the current minimum for this test")
+	}
+	want := testPayload()
+	raw, err := seal(want, passphrase, Options{Params: testParams})
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	got, err := Open(raw, passphrase)
+	if err != nil {
+		t.Fatalf("Open refused a container sealed under the old minimum: %v", err)
+	}
+	if len(got.Secrets) != len(want.Secrets) {
+		t.Fatalf("got %d secrets, want %d", len(got.Secrets), len(want.Secrets))
+	}
+	for i := range want.Secrets {
+		if !bytes.Equal(got.Secrets[i].Value, want.Secrets[i].Value) {
+			t.Fatalf("secret %d changed in the round trip", i)
+		}
+	}
+}
+
+func TestValidatePassphraseCountsCharacters(t *testing.T) {
+	if err := ValidatePassphrase([]byte(strings.Repeat("я", MinPassphraseLength))); err != nil {
+		t.Fatalf("%d Cyrillic letters were rejected: %v", MinPassphraseLength, err)
+	}
+	if err := ValidatePassphrase([]byte(strings.Repeat("я", MinPassphraseLength-1))); err == nil {
+		t.Fatalf("%d Cyrillic letters were accepted", MinPassphraseLength-1)
 	}
 }
 

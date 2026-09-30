@@ -21,6 +21,13 @@ func Seal(payload Payload, passphrase []byte, opts Options) ([]byte, error) {
 	if err := ValidatePassphrase(passphrase); err != nil {
 		return nil, err
 	}
+	return seal(payload, passphrase, opts)
+}
+
+// seal is Seal without the passphrase minimum. The minimum is a rule for new
+// containers only: Open accepts any non-empty passphrase, so a container that
+// an earlier version sealed under a weaker rule still opens.
+func seal(payload Payload, passphrase []byte, opts Options) ([]byte, error) {
 	if err := validatePayload(payload); err != nil {
 		return nil, err
 	}

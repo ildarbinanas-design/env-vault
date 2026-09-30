@@ -228,7 +228,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 			return a.renderer().Success("secret_set", data, nil)
 		},
 	}
-	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from stdin and trim exactly one trailing line ending (\\n or \\r\\n)")
+	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from a pipe or file on stdin (a terminal is refused) and trim exactly one trailing line ending (\\n or \\r\\n)")
 	cmd.Flags().BoolVar(&verify, "verify", false, "read the stored value back and confirm it matches, without printing it")
 	cmd.Flags().StringVar(&service, "service", secretstore.DefaultService, "keychain service name")
 	return cmd
@@ -703,6 +703,11 @@ func trimLineEnding(value []byte) []byte {
 
 func (a *App) readSecret(useStdin bool) ([]byte, error) {
 	if useStdin {
+		// A terminal would echo the value while the user types it, so --stdin
+		// takes only a pipe or a file.
+		if file, ok := a.stdin.(interface{ Fd() uintptr }); ok && term.IsTerminal(int(file.Fd())) {
+			return nil, apperrors.Usage("secret_set", "--stdin reads a pipe, but stdin is a terminal that would show the secret", "Omit --stdin to type the secret at the hidden prompt, or pipe it into --stdin")
+		}
 		value, err := io.ReadAll(a.stdin)
 		if err != nil {
 			return nil, apperrors.Wrap("secret_set", apperrors.CodeRuntimeError, "Unable to read secret from stdin", "Retry with --stdin and a readable pipe", apperrors.ExitRuntimeError, err)
