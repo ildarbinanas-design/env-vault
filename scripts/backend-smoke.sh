@@ -166,10 +166,13 @@ windows_limits() {
   largest="$(openssl rand -hex 1280)"
   oversized="$(openssl rand -hex 1281 | cut -c1-2561)"
   limit_values=("$largest" "$oversized")
+  if [[ ${#largest} -ne 2560 || ${#oversized} -ne 2561 ]]; then
+    fail "limit values are ${#largest} and ${#oversized} bytes, not 2560 and 2561"
+  fi
   cleanup_steps+=("'$bin' secret delete '$name-largest' --confirm '$name-largest'" "'$bin' secret delete '$name-oversized' --confirm '$name-oversized'")
-  printf '%s' "$largest" | run set-largest 60 "$bin" --json secret set --stdin "$name-largest" || status=$?
+  printf '%s' "$largest" | run set-largest 60 "$bin" --json secret set --stdin --verify "$name-largest" || status=$?
   if [[ $status -eq 0 ]]; then
-    echo "ok: set-largest stored 2560 bytes"
+    echo "ok: set-largest stored and verified 2560 bytes"
   else
     failed_step set-largest "set-largest exited $status"
   fi

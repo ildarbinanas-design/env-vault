@@ -38,7 +38,12 @@ until a later minor release, as the deprecated alias `fingerprint`.
 `secret set` reports `created` or `overwritten`; `--verify` reads the value
 back and compares it in constant time, failing with `SECRET_UNVERIFIED` on a
 mismatch. `Exists` answers from the backend key listing that `List` uses, so
-`secret check` never decrypts a value. A value-derived digest, a keyed MAC, and
+`secret check` never decrypts a value. On Windows Credential Manager, which
+matches target names without regard to case, it compares secret names the same
+way. A store can also report the largest value its backend keeps
+(`ValueLimiter`: 2560 bytes on Credential Manager), so `secret set` fails with
+`SECRET_TOO_LARGE` before the backend is called and `import` refuses a
+container before its first write. A value-derived digest, a keyed MAC, and
 backend modification times were rejected for #77: the first allows offline
 guessing and all of them either read every value for metadata commands or are
 not available on every production backend.

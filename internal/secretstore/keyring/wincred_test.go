@@ -3,6 +3,7 @@ package keyring
 import (
 	"context"
 	"errors"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -87,5 +88,19 @@ func TestWinCredMatchesNamesWithoutRegardToCase(t *testing.T) {
 		if err != nil || got != want {
 			t.Fatalf("WinCred=%v: Exists(token)=%v,%v with TOKEN stored, want %v", winCred, got, err, want)
 		}
+	}
+}
+
+// Only the default store on Windows writes to Credential Manager; the limit
+// and the case rule must never reach macOS Keychain or pass.
+func TestUsesWinCredOnlyForTheDefaultStoreOnWindows(t *testing.T) {
+	windows := runtime.GOOS == "windows"
+	for name, store := range map[string]Store{"default": New(), "zero": {}} {
+		if got := store.usesWinCred(); got != windows {
+			t.Fatalf("%s store: usesWinCred()=%v on %s", name, got, runtime.GOOS)
+		}
+	}
+	if NewPass().usesWinCred() {
+		t.Fatal("the pass store uses Credential Manager")
 	}
 }
