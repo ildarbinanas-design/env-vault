@@ -168,6 +168,7 @@ windows_limits() {
   limit_values=("$largest" "$oversized")
   if [[ ${#largest} -ne 2560 || ${#oversized} -ne 2561 ]]; then
     fail "limit values are ${#largest} and ${#oversized} bytes, not 2560 and 2561"
+    return
   fi
   cleanup_steps+=("'$bin' secret delete '$name-largest' --confirm '$name-largest'" "'$bin' secret delete '$name-oversized' --confirm '$name-oversized'")
   printf '%s' "$largest" | run set-largest 60 "$bin" --json secret set --stdin --verify "$name-largest" || status=$?

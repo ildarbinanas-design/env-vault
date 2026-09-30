@@ -119,13 +119,15 @@ func SecretExists(command, name string) *AppError {
 }
 
 // SecretUnverified reports a write whose read-back did not match the input,
-// so the caller must not assume the new value is in effect.
-func SecretUnverified(command, name string) *AppError {
+// so the caller must not assume the new value is in effect. action is
+// "created" or "overwritten", based on the existence check before the write;
+// the backend's success response does not prove which value remains stored.
+func SecretUnverified(command, name, action string) *AppError {
 	return New(
 		command,
 		CodeSecretUnverified,
-		"Stored secret could not be verified: "+name,
-		"Re-run secret set, then env-vault doctor if it persists",
+		"Backend reported success for secret "+name+" (action: "+action+"), but reading it back did not return the value written",
+		"Re-run secret set to write it again, then env-vault doctor if it persists",
 		ExitRuntimeError,
 	)
 }

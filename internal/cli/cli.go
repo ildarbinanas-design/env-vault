@@ -222,12 +222,13 @@ func (a *App) secretSetCommand() *cobra.Command {
 				}
 				return backendUnavailable("secret_set", err)
 			}
-			data["action"] = actionCreated
+			action := actionCreated
 			if existed {
-				data["action"] = actionOverwritten
+				action = actionOverwritten
 			}
+			data["action"] = action
 			if verify {
-				if err := verifyStoredSecret(ctx, store, service, name, value); err != nil {
+				if err := verifyStoredSecret(ctx, store, service, name, value, action); err != nil {
 					return err
 				}
 			}
@@ -850,20 +851,21 @@ func backendUnavailable(command string, err error) *apperrors.AppError {
 	return apperrors.BackendUnavailable(command, "Secret backend unavailable", secretstore.BackendRemediation(err), err)
 }
 
-// verifyStoredSecret reads the value just written and compares it in constant
-// time, so secret set --verify can prove the write took effect without
-// printing or digesting the value. The read-back copy is cleared before return.
-func verifyStoredSecret(ctx context.Context, store secretstore.Store, service, name string, want []byte) error {
+// verifyStoredSecret reads after the backend reports a successful write and
+// compares in constant time without printing or digesting the value. A failed
+// check leaves persistence unconfirmed and does not roll back the write. action
+// comes from the existence check before the write. The read-back copy is cleared.
+func verifyStoredSecret(ctx context.Context, store secretstore.Store, service, name string, want []byte, action string) error {
 	got, err := store.Get(ctx, service, name)
 	defer clear(got)
 	if stderrors.Is(err, secretstore.ErrNotFound) {
-		return apperrors.SecretUnverified("secret_set", name)
+		return apperrors.SecretUnverified("secret_set", name, action)
 	}
 	if err != nil {
-		return backendUnavailable("secret_set", err)
+		return apperrors.BackendUnavailable("secret_set", "Backend reported success for secret "+name+" (action: "+action+"), but reading it back failed", secretstore.BackendRemediation(err), err)
 	}
 	if subtle.ConstantTimeCompare(got, want) != 1 {
-		return apperrors.SecretUnverified("secret_set", name)
+		return apperrors.SecretUnverified("secret_set", name, action)
 	}
 	return nil
 }

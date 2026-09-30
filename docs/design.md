@@ -37,13 +37,19 @@ an offline guess of a low-entropy value. JSON reports it as `record_id` and,
 until a later minor release, as the deprecated alias `fingerprint`.
 `secret set` reports `created` or `overwritten`; `--verify` reads the value
 back and compares it in constant time, failing with `SECRET_UNVERIFIED` on a
-mismatch. `Exists` answers from the backend key listing that `List` uses, so
+mismatch. That error, and a backend error during the read-back, report that
+the backend acknowledged the write, with `created` or `overwritten` based on
+the existence check before the write. This is not an atomic create/overwrite
+result. Persistence is unconfirmed: a previous value may have been replaced,
+and the command does not roll back the write.
+`Exists` answers from the backend key listing that `List` uses, so
 `secret check` never decrypts a value. On Windows Credential Manager, which
 matches target names without regard to case, it compares secret names the same
 way. A store can also report the largest value its backend keeps
-(`ValueLimiter`: 2560 bytes on Credential Manager), so `secret set` fails with
-`SECRET_TOO_LARGE` before the backend is called and `import` refuses a
-container before its first write. A value-derived digest, a keyed MAC, and
+(`ValueLimiter`: 2560 bytes on Credential Manager). The keyring store's `Set`
+refuses a larger value before it reaches the backend, which `secret set`
+reports as `SECRET_TOO_LARGE`, and `import` refuses a container before its
+first write. A value-derived digest, a keyed MAC, and
 backend modification times were rejected for #77: the first allows offline
 guessing and all of them either read every value for metadata commands or are
 not available on every production backend.
@@ -84,7 +90,7 @@ create/add/remove wrap the
 complete load, mutation, validation, and same-directory save in an exclusive
 lock from
 `github.com/gofrs/flock` (the version pinned in `go.mod`), verified by the
-unchanged cross-platform E2E contract on Go 1.26.5. The adjacent `<config>.lock` file is created with mode `0600`,
+unchanged cross-platform E2E contract. The adjacent `<config>.lock` file is created with mode `0600`,
 rechecked as a non-symlink regular file, and intentionally kept after unlock so
 all processes continue to coordinate on one inode. Acquisition retries every
 25 milliseconds for at most five seconds (or the caller's earlier deadline),

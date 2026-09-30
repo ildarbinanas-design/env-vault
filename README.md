@@ -27,7 +27,8 @@ On Linux, process environment variables may be visible to the same user through 
 - Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
 - Windows Credential Manager stores at most 2560 bytes per secret, and secret
   names that differ only in case are one secret there: `secret set TOKEN` over
-  `token` reports `overwritten`, and the record follows the name as typed.
+  `token` reports `overwritten`, and the record ID it reports follows the name
+  as typed.
   Service names are still compared exactly, so keep one spelling per service.
   env-vault refuses a larger value with `SECRET_TOO_LARGE`; `import` checks
   every value it will write before it writes the first one.
@@ -170,12 +171,12 @@ GOTOOLCHAIN=go1.26.8 go build -o env-vault ./cmd/env-vault
 ## Version
 
 `env-vault --version` prints the version, the short commit and the commit date,
-for example `v0.4.0 (1fd6638, 2026-09-27)`. `env-vault --json version` adds the
+for example `v0.4.0 (1bc4567, 2026-09-29)`. `env-vault --json version` adds the
 full commit, the commit time, whether the source tree was modified, the Go
 version and the platform:
 
 ```json
-{"ok":true,"command":"version","timestamp":"2026-09-27T12:00:00Z","data":{"commit":"1fd6638295fb616189e66da7cc110cf4831a3d94","commit_time":"2026-09-27T10:16:51Z","go":"go1.26.5","modified":false,"platform":"darwin/arm64","version":"v0.4.0"},"warnings":[],"error":null}
+{"ok":true,"command":"version","timestamp":"2026-09-29T12:00:00Z","data":{"commit":"1bc45679516875794146ac11a5ba5dfcaa598c7a","commit_time":"2026-09-29T07:36:23Z","go":"go1.26.5","modified":false,"platform":"darwin/arm64","version":"v0.4.0"},"warnings":[],"error":null}
 ```
 
 Every value comes from the build information Go embeds, which `go version -m`
@@ -291,8 +292,12 @@ env-vault secret set --verify nexus-token
 ```
 
 `--verify` reads the value back and compares it in constant time; a mismatch
-fails with `SECRET_UNVERIFIED`. On macOS the read-back is a Keychain access to
-the item, so it can show the same access prompt as `exec`.
+fails with `SECRET_UNVERIFIED`. The read-back happens after the backend reports
+a successful write. Errors include `created` or `overwritten` according to the
+existence check before the write, but do not confirm which value remains stored.
+A previous value may have been replaced; env-vault does not roll back the write.
+On macOS the read-back is a Keychain access to the item, so it can show the same
+access prompt as `exec`.
 
 ## Moving To Another Machine
 
@@ -384,10 +389,11 @@ on stderr when the file cannot be written; the previous record then stays.
 `--output` names a regular file or a new one; missing directories are created
 with mode `0700`. env-vault writes a new file with mode `0600` next to it and
 renames it into place, so a reader never sees a partial record. The directory
-must therefore be writable, and the file belongs to whoever ran env-vault. A symlink, a device such as `/dev/stdout`, or a pipe at
-that path is refused instead of written through. On Windows, a replacement
-blocked by a program that holds the file open, such as a virus scanner, is
-retried for up to a second.
+must therefore be writable, and the file belongs to whoever ran env-vault. A
+symlink, a device such as `/dev/stdout`, or a pipe at that path is refused
+instead of written through. On Windows, a replacement blocked by a program
+that holds the file open, such as a virus scanner, is retried for up to a
+second.
 
 ## Doctor
 
