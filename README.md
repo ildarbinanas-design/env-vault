@@ -386,10 +386,11 @@ on stderr when the file cannot be written; the previous record then stays.
 `--output` names a regular file or a new one; missing directories are created
 with mode `0700`. env-vault writes a new file with mode `0600` next to it and
 renames it into place, so a reader never sees a partial record. The directory
-must therefore be writable, and the file belongs to whoever ran env-vault. A symlink, a device such as `/dev/stdout`, or a pipe at
-that path is refused instead of written through. On Windows, a replacement
-blocked by a program that holds the file open, such as a virus scanner, is
-retried for up to a second.
+must therefore be writable, and the file belongs to whoever ran env-vault. A
+symlink, a device such as `/dev/stdout`, or a pipe at that path is refused
+instead of written through. On Windows, a replacement blocked by a program
+that holds the file open, such as a virus scanner, is retried for up to a
+second.
 
 ## Doctor
 
