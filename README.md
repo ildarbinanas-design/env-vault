@@ -27,7 +27,8 @@ On Linux, process environment variables may be visible to the same user through 
 - Production storage uses `github.com/99designs/keyring` with OS keychain-style backends only: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager.
 - Windows Credential Manager stores at most 2560 bytes per secret, and secret
   names that differ only in case are one secret there: `secret set TOKEN` over
-  `token` reports `overwritten`, and the record follows the name as typed.
+  `token` reports `overwritten`, and the record ID it reports follows the name
+  as typed.
   Service names are still compared exactly, so keep one spelling per service.
   env-vault refuses a larger value with `SECRET_TOO_LARGE`; `import` checks
   every value it will write before it writes the first one.
