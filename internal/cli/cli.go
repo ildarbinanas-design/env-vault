@@ -189,7 +189,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service = defaultService(service)
 			if err := validateService(service); err != nil {
-				return apperrors.Usage("secret_set", err.Error(), "Use a safe relative slash-separated service name")
+				return serviceUsage("secret_set", err)
 			}
 			name := args[0]
 			recordID := secretstore.RecordID(service, name)
@@ -255,7 +255,7 @@ func (a *App) secretCheckCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service = defaultService(service)
 			if err := validateService(service); err != nil {
-				return apperrors.Usage("secret_check", err.Error(), "Use a safe relative slash-separated service name")
+				return serviceUsage("secret_check", err)
 			}
 			store, err := a.store("secret_check")
 			if err != nil {
@@ -296,7 +296,7 @@ func (a *App) secretDeleteCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service = defaultService(service)
 			if err := validateService(service); err != nil {
-				return apperrors.Usage("secret_delete", err.Error(), "Use a safe relative slash-separated service name")
+				return serviceUsage("secret_delete", err)
 			}
 			name := args[0]
 			if confirm != name {
@@ -820,7 +820,22 @@ func defaultService(service string) string {
 }
 
 func validateService(service string) error {
-	return secretstore.ValidateServiceName(service)
+	if err := secretstore.ValidateServiceName(service); err != nil {
+		return err
+	}
+	if os.Getenv(teststore.BackendEnv) == "pass" {
+		return secretstore.ValidatePassServiceName(service)
+	}
+	return nil
+}
+
+// serviceUsage reports an invalid service name as a usage error.
+func serviceUsage(command string, err error) *apperrors.AppError {
+	remediation := "Use a safe relative slash-separated service name"
+	if stderrors.Is(err, secretstore.ErrPassServiceSlash) {
+		remediation = secretstore.PassServiceRemediation
+	}
+	return apperrors.Usage(command, err.Error(), remediation)
 }
 
 func missingSecretError(command, service, name string) *apperrors.AppError {

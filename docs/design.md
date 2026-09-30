@@ -65,7 +65,10 @@ Secret names allow letters, digits, dot, underscore, dash, slash, and at-sign.
 Slash-separated hierarchy is preserved, but absolute paths, empty components,
 `.`/`..` components, backslashes, colon, newline, and control characters are
 rejected. Service names use the same path-safety rules, and the production
-keyring adapter repeats both validations before opening a backend. Environment
+keyring adapter repeats both validations before opening a backend. With `pass`,
+service names cannot contain slashes because they share one path with the
+secret name; a slashed service never selects `pass` from the default backend
+list. Environment
 variables must match `[A-Za-z_][A-Za-z0-9_]*`; names that differ only by case
 are treated as the same portable target because Windows environment names are
 case-insensitive.

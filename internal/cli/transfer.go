@@ -194,6 +194,11 @@ func (a *App) importCommand() *cobra.Command {
 			if err := validateImportedPayload(payload); err != nil {
 				return err
 			}
+			for _, entry := range payload.Secrets {
+				if err := validateService(entry.Service); err != nil {
+					return apperrors.Usage("import", "Container service "+entry.Service+": "+err.Error(), secretstore.PassServiceRemediation)
+				}
+			}
 
 			store, err := a.store("import")
 			if err != nil {
@@ -278,8 +283,8 @@ func exportServices(command string, extra []string) ([]string, error) {
 		if service == "" {
 			return nil, apperrors.Usage(command, "Empty service name in --with-services", "Remove the empty entry from the service list")
 		}
-		if err := secretstore.ValidateServiceName(service); err != nil {
-			return nil, apperrors.Usage(command, err.Error(), "Use a safe relative slash-separated service name")
+		if err := validateService(service); err != nil {
+			return nil, serviceUsage(command, err)
 		}
 		if _, duplicate := seen[service]; duplicate {
 			continue
