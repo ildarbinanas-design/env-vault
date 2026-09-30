@@ -33,6 +33,10 @@ type App struct {
 	// tests. It is unexported and never assigned outside this package, so it
 	// adds no flag, no environment variable, and no production code path.
 	passphraseReader func(prompt string) ([]byte, error)
+	// wrapStore wraps the secret store a command opened. Tests use it to give
+	// the gated test backend a value limit; like passphraseReader, it is never
+	// assigned outside this package.
+	wrapStore func(secretstore.Store) secretstore.Store
 }
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -213,6 +217,9 @@ func (a *App) secretSetCommand() *cobra.Command {
 				return backendUnavailable("secret_set", err)
 			}
 			if err := store.Set(ctx, service, name, value); err != nil {
+				if stderrors.Is(err, secretstore.ErrValueTooLarge) {
+					return apperrors.New("secret_set", apperrors.CodeSecretTooLarge, "Secret value is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+				}
 				return backendUnavailable("secret_set", err)
 			}
 			data["action"] = actionCreated
@@ -672,6 +679,14 @@ func (a *App) doctorCommand() *cobra.Command {
 }
 
 func (a *App) store(command string) (secretstore.Store, error) {
+	store, err := a.openStore(command)
+	if err != nil || a.wrapStore == nil {
+		return store, err
+	}
+	return a.wrapStore(store), nil
+}
+
+func (a *App) openStore(command string) (secretstore.Store, error) {
 	if teststore.EnabledFromEnv() {
 		return teststore.NewFromEnv(command)
 	}

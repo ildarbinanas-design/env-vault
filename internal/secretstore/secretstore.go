@@ -25,6 +25,8 @@ var (
 	// ErrUnreadable reports a record the backend lists but refused to return,
 	// for example after a denied macOS Keychain prompt or a locked keychain.
 	ErrUnreadable = errors.New("secret exists but the backend did not return it")
+	// ErrValueTooLarge reports a value larger than the backend can store.
+	ErrValueTooLarge = errors.New("secret value is larger than the backend stores")
 )
 
 const (
@@ -32,6 +34,7 @@ const (
 	PassBackendRemediation       = "install pass or use another supported OS keychain backend."
 	TimeoutBackendRemediation    = "Answer the system keychain prompt or unlock the keychain, then retry"
 	UnreadableBackendRemediation = "Allow env-vault in the system keychain prompt or unlock the keychain, then retry"
+	ValueTooLargeRemediation     = "Windows Credential Manager stores at most 2560 bytes per secret; store a shorter value"
 )
 
 func BackendRemediation(err error) string {
@@ -50,6 +53,15 @@ type Metadata struct {
 	Service  string
 	Name     string
 	RecordID string
+}
+
+// ValueLimiter is implemented by a store whose backend limits the size of a
+// value, so a command that writes several secrets can refuse before the first
+// write instead of stopping halfway.
+type ValueLimiter interface {
+	// MaxValueBytes returns the largest value the backend stores, or 0 when
+	// env-vault knows of no limit.
+	MaxValueBytes() int
 }
 
 type Store interface {

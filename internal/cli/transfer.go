@@ -241,12 +241,18 @@ func (a *App) importCommand() *cobra.Command {
 				"on_conflict":  policy,
 				"dry_run":      dryRun,
 			}
+			if err := refuseOversizedValues(store, writes); err != nil {
+				return err
+			}
 			if dryRun {
 				return a.renderer().Success("import", data, nil)
 			}
 
 			for _, entry := range writes {
 				if err := store.Set(cmd.Context(), entry.Service, entry.Name, entry.Value); err != nil {
+					if stderrors.Is(err, secretstore.ErrValueTooLarge) {
+						return apperrors.New("import", apperrors.CodeSecretTooLarge, "Secret "+entry.Name+" is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+					}
 					return backendUnavailable("import", err)
 				}
 			}
@@ -395,6 +401,25 @@ func parseConflictPolicy(value string) (string, error) {
 	default:
 		return "", apperrors.Usage("import", "Unsupported --on-conflict value: "+value, "Use --on-conflict fail, skip, or overwrite")
 	}
+}
+
+// refuseOversizedValues fails before any write when the backend cannot store
+// one of the values, so an import does not stop halfway.
+func refuseOversizedValues(store secretstore.Store, entries []bundle.SecretEntry) error {
+	limiter, ok := store.(secretstore.ValueLimiter)
+	if !ok {
+		return nil
+	}
+	limit := limiter.MaxValueBytes()
+	if limit <= 0 {
+		return nil
+	}
+	for _, entry := range entries {
+		if len(entry.Value) > limit {
+			return apperrors.New("import", apperrors.CodeSecretTooLarge, "Secret "+entry.Name+" is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+		}
+	}
+	return nil
 }
 
 func ensureExportTarget(path string, force bool) error {

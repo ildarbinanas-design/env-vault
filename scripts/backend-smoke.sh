@@ -22,6 +22,7 @@ first="$(openssl rand -hex 24)"
 second="$(openssl rand -hex 24)"
 py=python3
 command -v python3 >/dev/null 2>&1 || py=python
+limit_values=()
 failures=0
 failed_labels=()
 cleanup_steps=()
@@ -157,6 +158,34 @@ macos_precreate() {
     fail "security add-generic-password failed"
 }
 
+# Windows Credential Manager stores at most 2560 bytes per value and matches
+# names without regard to case; env-vault must say so instead of failing as
+# an unavailable backend.
+windows_limits() {
+  local largest oversized status=0
+  largest="$(openssl rand -hex 1280)"
+  oversized="$(openssl rand -hex 1281 | cut -c1-2561)"
+  limit_values=("$largest" "$oversized")
+  if [[ ${#largest} -ne 2560 || ${#oversized} -ne 2561 ]]; then
+    fail "limit values are ${#largest} and ${#oversized} bytes, not 2560 and 2561"
+  fi
+  cleanup_steps+=("'$bin' secret delete '$name-largest' --confirm '$name-largest'" "'$bin' secret delete '$name-oversized' --confirm '$name-oversized'")
+  printf '%s' "$largest" | run set-largest 60 "$bin" --json secret set --stdin --verify "$name-largest" || status=$?
+  if [[ $status -eq 0 ]]; then
+    echo "ok: set-largest stored and verified 2560 bytes"
+  else
+    failed_step set-largest "set-largest exited $status"
+  fi
+  status=0
+  printf '%s' "$oversized" | run set-oversized 60 "$bin" --json secret set --stdin "$name-oversized" || status=$?
+  if [[ $status -eq 2 ]] && grep -Fq '"code":"SECRET_TOO_LARGE"' "$out/set-oversized.out"; then
+    echo "ok: set-oversized refused 2561 bytes"
+  else
+    failed_step set-oversized "set-oversized exited $status without SECRET_TOO_LARGE"
+  fi
+  expect check-other-case 0 "$bin" --json secret check "$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+}
+
 case "$(uname -s)" in
   Linux)
     setup_pass
@@ -183,6 +212,7 @@ case "$(uname -s)" in
   MINGW* | MSYS* | CYGWIN*)
     cleanup_steps+=("'$bin' secret delete '$name' --confirm '$name'")
     set_value create "$first"
+    windows_limits
     ;;
   *)
     echo "unsupported operating system: $(uname -s)" >&2
@@ -203,7 +233,7 @@ expect check-after-delete 3 "$bin" --json secret check "$name"
 
 # The patterns come from a pipe, so the values never appear in argv.
 leaked=false
-if grep -rFq -f <(printf '%s\n' "$first" "$second") "$out"; then
+if grep -rFq -f <(printf '%s\n' "$first" "$second" ${limit_values[@]+"${limit_values[@]}"}) "$out"; then
   leaked=true
   fail "a stored value appeared in env-vault output"
 fi
