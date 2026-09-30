@@ -228,7 +228,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 			return a.renderer().Success("secret_set", data, nil)
 		},
 	}
-	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from stdin and trim exactly one trailing line ending (\\n or \\r\\n)")
+	cmd.Flags().BoolVar(&useStdin, "stdin", false, "read secret from a pipe or file on stdin (a terminal is refused) and trim exactly one trailing line ending (\\n or \\r\\n)")
 	cmd.Flags().BoolVar(&verify, "verify", false, "read the stored value back and confirm it matches, without printing it")
 	cmd.Flags().StringVar(&service, "service", secretstore.DefaultService, "keychain service name")
 	return cmd
