@@ -346,7 +346,7 @@ During recovery, a separate temporary helper requested a native unlock
 dialog. The owner reported that macOS accepted the password but repeated the
 dialog. An independent Keychain API check reported the keychain unlocked
 while that helper was still pending. The helper was stopped; the owner later
-confirmed that the dialogs had disappeared and normal operation had resumed.
+confirmed that the dialogs had disappeared.
 These observations do not establish an env-vault defect or isolate the cause
 of the repeated dialogs.
 
