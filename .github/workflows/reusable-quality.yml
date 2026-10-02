@@ -72,6 +72,7 @@ jobs:
   source-quality:
     name: source-quality
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       GOTOOLCHAIN: local
     steps:
@@ -104,6 +105,12 @@ jobs:
 
       - name: Run full race suite
         run: go test -race ./...
+
+      - name: Verify pinned historical transfer
+        run: scripts/historical-transfer.sh
+
+      - name: Verify isolated Debian Secret Service
+        run: scripts/secret-service-ci.sh
 
   license:
     name: license-${{ matrix.os }}
@@ -197,6 +204,16 @@ jobs:
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
         run: go test -v ./internal/config -count=1
+
+      - name: Run native internal tests
+        if: matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64'
+        shell: bash
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          ENV_VAULT_NATIVE_WINCRED_TEST: ${{ matrix.goos == 'windows' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          go test ./internal/... -count=1 -timeout=5m -json | python3 scripts/check-native-tests.py
 
       - name: Burn in Windows config concurrency
         if: matrix.goos == 'windows'

@@ -390,10 +390,16 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		t.Fatalf("reusable quality expands to %d jobs, want 11", expandedJobs)
 	}
 
-	for _, command := range []string{"go test ./...", "go vet ./...", "scripts/vuln-check.sh", "go test -race ./..."} {
+	for _, command := range []string{"go test ./...", "go vet ./...", "scripts/vuln-check.sh", "go test -race ./...", "scripts/historical-transfer.sh", "scripts/secret-service-ci.sh"} {
 		if !jobRunsExact(wf.Jobs["source-quality"], command) {
 			t.Fatalf("source-quality missing %q", command)
 		}
+	}
+	nativeTests := namedStep(t, native, "Run native internal tests")
+	if nativeTests.If != "matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64'" ||
+		!containsAll(nativeTests.Run, "go test ./internal/... -count=1", "-timeout=5m", "scripts/check-native-tests.py") ||
+		nativeTests.Env["ENV_VAULT_NATIVE_WINCRED_TEST"] != "${{ matrix.goos == 'windows' && '1' || '' }}" {
+		t.Fatal("native internal tests must execute and require platform scenarios")
 	}
 	gate := wf.Jobs["e2e-gate"]
 	assertCancellationSafe(t, "reusable e2e-gate", gate)
