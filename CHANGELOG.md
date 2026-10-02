@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.2...v0.4.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **secretstore:** preserve native identity and validate imports before writes ([#129](https://github.com/ildarbinanas-design/env-vault/issues/129)) ([e9aca77](https://github.com/ildarbinanas-design/env-vault/commit/e9aca77f0164fb4155ee8246d239f8de00d21e0b))
+
 ## [0.4.2](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.1...v0.4.2) (2026-10-02)
 
 
