@@ -18,7 +18,7 @@ func openPseudoTerminal(t *testing.T) (*os.File, *os.File) {
 	t.Helper()
 	controller, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
-		t.Skipf("no pseudo-terminal: %v", err)
+		t.Fatalf("no pseudo-terminal: %v", err)
 	}
 	t.Cleanup(func() { _ = controller.Close() })
 	fd := int(controller.Fd())
@@ -39,7 +39,7 @@ func openPseudoTerminal(t *testing.T) (*os.File, *os.File) {
 	}
 	terminal, err := os.OpenFile(string(name[:end]), os.O_RDWR|syscall.O_NOCTTY, 0)
 	if err != nil {
-		t.Skipf("open the pseudo-terminal: %v", err)
+		t.Fatalf("open the pseudo-terminal: %v", err)
 	}
 	t.Cleanup(func() { _ = terminal.Close() })
 	return controller, terminal

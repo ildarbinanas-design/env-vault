@@ -87,7 +87,7 @@ func TestResolveOptionalMissingSecretUsesOneGet(t *testing.T) {
 		t.Fatalf("Get calls=%d Exists calls=%d, want one Get and no Exists", store.getCalls, store.existsCalls)
 	}
 	if len(result.Secrets) != 0 || strings.Join(result.Env, "\n") != "PATH=/bin" {
-		t.Fatalf("optional missing secret changed result: %#v", result)
+		t.Fatal("optional missing secret changed result")
 	}
 }
 
@@ -252,7 +252,7 @@ func TestResolveOverrideReplacesAllCaseVariants(t *testing.T) {
 		}
 	}
 	if pathEntries != 1 {
-		t.Fatalf("case-variant PATH entries=%d, want 1: %v", pathEntries, result.Env)
+		t.Fatalf("case-variant PATH entries=%d, want 1", pathEntries)
 	}
 }
 

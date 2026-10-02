@@ -160,7 +160,7 @@ func TestExecDryRunDoesNotRunChild(t *testing.T) {
 	}
 	marker := filepath.Join(t.TempDir(), "marker")
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--dry-run", "--json", "--config", cfgPath, "exec", "dev", "--", "sh", "-c", "touch " + marker}, strings.NewReader(""), &stdout, &stderr)
+	code := Run([]string{"--dry-run", "--json", "--config", cfgPath, "exec", "dev", "--", os.Args[0], "-test.run=^TestDryRunChildHelper$", "--", marker}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code=%d", code)
 	}
@@ -176,7 +176,7 @@ func TestExecDryRunDoesNotRunChild(t *testing.T) {
 
 func setupTestBackend(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "env-vault-cli-test-")
+	dir, err := os.MkdirTemp("", "env-vault-cli-test-")
 	if err != nil {
 		t.Fatalf("mktemp: %v", err)
 	}
@@ -190,7 +190,7 @@ func setupTestBackend(t *testing.T) string {
 
 func setupBrokenTestBackend(t *testing.T) {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "env-vault-cli-test-broken-")
+	dir, err := os.MkdirTemp("", "env-vault-cli-test-broken-")
 	if err != nil {
 		t.Fatalf("mktemp: %v", err)
 	}
@@ -217,6 +217,17 @@ func TestSecretSetOutputDoesNotRevealValueContainedInName(t *testing.T) {
 		}
 		if strings.Contains(stdout.String(), "REDACTED") || !strings.Contains(stdout.String(), name) {
 			t.Fatalf("mode=%d output rewrote the secret name instead of printing it unchanged", mode)
+		}
+	}
+}
+
+func TestDryRunChildHelper(t *testing.T) {
+	for i, arg := range os.Args {
+		if arg == "--" && i+1 < len(os.Args) {
+			if err := os.WriteFile(os.Args[i+1], nil, 0o600); err != nil {
+				os.Exit(2)
+			}
+			os.Exit(0)
 		}
 	}
 }

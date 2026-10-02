@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"github.com/ildarbinanas-design/env-vault/internal/testutil"
 )
 
-const transferPassphrase = "correct horse battery staple"
+var transferPassphrase = rand.Text()
 
 type transferEnv struct {
 	storePath string
@@ -47,7 +48,13 @@ func runCLI(t *testing.T, stdin, passphrase string, args ...string) (int, string
 		// independently of the passphrase it keeps.
 		app.passphraseReader = func(string) ([]byte, error) { return []byte(passphrase), nil }
 	}
-	return app.run(args), stdout.String(), stderr.String()
+	code := app.run(args)
+	for _, value := range []string{stdin, passphrase} {
+		if value != "" {
+			testutil.AssertNotContains(t, "transfer output", stdout.String()+stderr.String(), value)
+		}
+	}
+	return code, stdout.String(), stderr.String()
 }
 
 func mustRunCLI(t *testing.T, stdin, passphrase string, args ...string) string {
