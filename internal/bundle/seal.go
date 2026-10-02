@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -80,6 +81,21 @@ func seal(payload Payload, passphrase []byte, opts Options) ([]byte, error) {
 		return nil, fmt.Errorf("encode payload: %w", err)
 	}
 	defer Wipe(plaintext)
+
+	// Refuse anything Open would reject before deriving a key or encrypting.
+	// The payload JSON already includes the inner base64 encoding of values;
+	// the ciphertext also needs its tag and the container's outer base64.
+	if len(plaintext) > maxCiphertextBytes-tagLength {
+		return nil, fmt.Errorf("%w: ciphertext exceeds %d bytes", ErrInvalid, maxCiphertextBytes)
+	}
+	emptyDocument, err := json.Marshal(container{Header: header, Payload: []byte{}})
+	if err != nil {
+		return nil, fmt.Errorf("encode container: %w", err)
+	}
+	encodedPayloadBytes := base64.StdEncoding.EncodedLen(len(plaintext) + tagLength)
+	if len(emptyDocument) > MaxContainerBytes || encodedPayloadBytes > MaxContainerBytes-len(emptyDocument) {
+		return nil, fmt.Errorf("%w: container exceeds %d bytes", ErrInvalid, MaxContainerBytes)
+	}
 
 	key := deriveKey(passphrase, salt, params)
 	defer Wipe(key)
