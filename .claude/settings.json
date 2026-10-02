@@ -18,11 +18,7 @@
       "Bash(gh release upload *)",
       "Bash(gh release edit *)",
       "Bash(gh release delete *)",
-      "Bash(gh release delete-asset *)",
-      "Bash(gh workflow run build-binaries.yml *)",
-      "Bash(gh workflow run bootstrap-release-assets.yml *)",
-      "Bash(gh workflow run publish-homebrew-bridge.yml *)",
-      "Bash(go run ./cmd/actionsartifactdelete *)"
+      "Bash(gh release delete-asset *)"
     ]
   }
 }

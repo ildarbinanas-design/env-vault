@@ -42,6 +42,8 @@ const (
 	saltLength  = 16
 	nonceLength = 12
 	keyLength   = 32
+	// AES-GCM's standard authentication tag is appended to the ciphertext.
+	tagLength = 16
 )
 
 // Key-derivation cost bounds. They are enforced when sealing and, more
@@ -58,11 +60,12 @@ const (
 )
 
 const (
-	// MaxContainerBytes caps the raw container before it is parsed. Callers
-	// reading a container from disk should refuse a larger file rather than
+	// MaxContainerBytes caps the raw container when sealing and before parsing.
+	// Callers reading a container from disk should refuse a larger file rather than
 	// load it only for Open to reject it.
 	MaxContainerBytes = 24 << 20
-	// maxCiphertextBytes caps the ciphertext after base64 decoding.
+	// maxCiphertextBytes caps the ciphertext, including its authentication tag,
+	// before base64 encoding when sealing and after decoding when opening.
 	maxCiphertextBytes = 16 << 20
 )
 

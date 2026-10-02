@@ -171,6 +171,12 @@ bytes, nonce 12 bytes, ciphertext at most 16 MiB, file at most 24 MiB — so a
 hostile container cannot force a large allocation ahead of authentication. Salt
 and nonce are drawn fresh per export.
 
+Sealing enforces the same size limits before key derivation and encryption.
+It counts the serialized payload plus the 16-byte GCM tag, then the complete
+JSON envelope including the base64 ciphertext and escaped header fields.
+Oversized exports return `BUNDLE_INVALID` before creating or replacing the
+output file; the container format and opening limits remain unchanged.
+
 The plaintext is a JSON object holding one entry per secret, each with its
 keychain service, name, and base64 value. Entries are unique by
 `(service, name)`, which is how the backend addresses a secret.

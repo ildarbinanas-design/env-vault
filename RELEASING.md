@@ -49,8 +49,8 @@ does all of it. No workflow runs on a tag.
      checks their checksums and attestations.
    - **tap** generates the formula from the published archives and opens a
      pull request in `ildarbinanas-design/homebrew-tap` with auto-merge. The
-     tap's `test` check must pass first; it also compares every url and sha256
-     with the published checksums.
+     tap's `test` check must pass first; it compares the entire formula with
+     its reviewed template, using the version and published checksums.
 
 ## Verifying a release
 
@@ -130,6 +130,25 @@ rebuilt only on macOS.
 - Published releases are immutable. To correct one, publish a higher version.
 
 ## Before ADR 0011
+
+### Reading the v0.3.4 release notes
+
+The generated v0.3.4 changelog links to v0.3.3, which was abandoned and has no
+tag or published release. Use the
+[v0.3.2 to v0.3.4 comparison](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.2...v0.3.4)
+to see what changed between the published versions. The runtime fix first
+shipped in v0.3.4 is preserving ignored SIGHUP and SIGINT for a child under
+`nohup` ([#101](https://github.com/ildarbinanas-design/env-vault/pull/101));
+[#103](https://github.com/ildarbinanas-design/env-vault/pull/103) corrected the
+previous release pipeline's handling of a deleted GitHub App author.
+
+That generated section also repeats earlier work, including encrypted
+import/export (#78), Actions artifact lifecycle tooling (#60), and the initial
+MVP. Those entries do not mean the features were introduced in v0.3.4. The
+original generated changelog and immutable releases remain the historical
+record; this note explains how to read them.
+
+### Previous pipeline
 
 Releases up to v0.3.4 went through the previous pipeline: release planning,
 the tag-triggered publisher, and the repair workflows. Its procedures are in

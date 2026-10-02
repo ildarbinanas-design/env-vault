@@ -331,6 +331,13 @@ env-vault --dry-run export --out vault.evb          # list what would be written
 `--on-conflict` defaults to `fail`, which refuses the import and writes nothing
 if any secret already exists here.
 
+Containers allow at most 16 MiB of ciphertext (including encoded values,
+secret metadata, and the authentication tag) and 24 MiB for the complete file.
+Export refuses a larger container with `BUNDLE_INVALID` and leaves the output
+path untouched, including with `--force`. The limit applies to all selected
+secrets together; base64 encoding means their combined raw values must fit
+below 12 MiB.
+
 Export covers the default keychain service. If you stored something with
 `secret set --service <name>`, name that service again on export — a keychain
 offers no way to enumerate the services an application has used, so env-vault

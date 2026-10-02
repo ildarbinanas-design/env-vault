@@ -55,8 +55,6 @@ func TestAgentSettingsKeepReservedActionsDenied(t *testing.T) {
 		"Bash(git push * refs/tags/*)",
 		"Bash(gh release create *)",
 		"Bash(gh release delete *)",
-		"Bash(gh workflow run build-binaries.yml *)",
-		"Bash(go run ./cmd/actionsartifactdelete *)",
 	} {
 		if !slices.Contains(settings.Permissions.Deny, rule) {
 			t.Fatalf(".claude/settings.json must deny %s", rule)

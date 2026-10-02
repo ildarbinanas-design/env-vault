@@ -89,5 +89,12 @@ GOTOOLCHAIN=go1.26.8 scripts/smoke.sh
 GOTOOLCHAIN=go1.26.8 scripts/license-check.sh
 ```
 
+Release-script tests require Bash 4 or newer on `PATH`, plus the GNU tools
+used by the scripts (`sha256sum`, `base64`, and `tar`). macOS ships Bash 3 and
+BSD utilities; install the newer shell and GNU utilities and put their bin
+directories first on `PATH` to run those tests locally. A test that cannot find
+its required tool skips with a prerequisite message; a skipped test is not a
+successful release-script check.
+
 The protected pull request checks remain authoritative for the native Linux,
 macOS, and Windows build, license, smoke, and E2E matrices.
