@@ -2,8 +2,12 @@
 
 ## P0
 
-- Verify macOS user-session prompts, refusal, and locked/login keychain behavior
-  manually. Disposable CI keychains do not establish these user-session facts.
+- Complete the manual locked login-keychain exercise on macOS: distinguish
+  cancellation/refusal from a backend timeout and verify recovery without
+  repeated unlock dialogs. The [2026-10-03 session check](docs/e2e.md#manual-macos-login-session-check-2026-10-03)
+  verified explicit refusal and one-time approval with an unlocked keychain,
+  but did not resolve the locked case. Disposable CI keychains do not establish
+  these user-session facts.
 
 ## P1
 
@@ -32,6 +36,11 @@ Gated by ADR 0008 (2026-07-30) — same rule as P1.
 
 ## Completed
 
+- Manual macOS login-session check on 2026-10-03 using the Homebrew v0.4.3
+  binary: set/check/list, explicit refusal, one-time approval, exact value
+  delivery to the child, and removal of the temporary records passed. See
+  [session observations and limits](docs/e2e.md#manual-macos-login-session-check-2026-10-03);
+  locked-keychain behavior remains P0 above.
 - Secret import/export. **Delivered 2026-08-14,
   [ADR 0010](docs/adr/0010-encrypted-secret-transfer-container.md):** the
   original P1 scoping ("profile import/export without values") was dropped as

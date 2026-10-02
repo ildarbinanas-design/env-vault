@@ -315,4 +315,46 @@ uploaded. An unavailable baseline or failed scenario fails CI. Ordinary unit
 tests do not fetch a baseline or use the network.
 
 Disposable macOS checks do not verify prompts or access decisions in the
-owner's login session; that remains a manual item in the backlog.
+owner's login session. The manual observations below cover explicit refusal
+and approval; completing the locked-keychain scenario remains in the backlog.
+
+## Manual macOS login-session check (2026-10-03)
+
+The owner and an agent exercised the installed Homebrew
+[v0.4.3 binary](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.4.3)
+on darwin/arm64. Its version output identified commit
+`239d416d80400b1e6c8a1594c72ee18115e5ece2`, Go 1.26.8, and an unmodified build.
+`gh attestation verify` passed for that installed binary with the repository,
+release workflow, `refs/heads/main`, and exact source commit pinned, and
+`--deny-self-hosted-runners` enabled.
+
+The manual harness used runtime-generated values kept in memory, passed them
+through stdin, and created two temporary records in the login keychain under
+the default service. It captured CLI and child output in memory and checked
+for value leaks before reporting results. Exact value delivery was compared
+using a digest in memory; neither the value nor its digest was recorded.
+
+| Exercise | Observed result |
+| --- | --- |
+| Create a temporary record, then `secret check` and `secret list` | Exit 0; check/list returned metadata without reading the stored value. |
+| Explicit **Deny** for `exec` while the login keychain was unlocked | Exit 4, `BACKEND_UNAVAILABLE`; the child did not run. A subsequent check returned exit 0, confirming the record remained. |
+| Explicit one-time **Allow** for `exec` while unlocked | Exit 0; the child received the exact original value. |
+| Read after explicitly locking the login keychain | Locked status was confirmed through the Keychain API. `exec` returned exit 4, `BACKEND_UNAVAILABLE`, without running the child; the record remained. The owner did not confirm a denial or cancellation, so this result does not distinguish either action from a backend timeout. |
+| Remove both temporary records | Each deletion returned exit 0; each subsequent check returned exit 3, `MISSING_SECRET`. |
+
+During recovery, a separate temporary helper requested a native unlock
+dialog. The owner reported that macOS accepted the password but repeated the
+dialog. An independent Keychain API check reported the keychain unlocked
+while that helper was still pending. The helper was stopped; the owner later
+confirmed that the dialogs had disappeared and normal operation had resumed.
+These observations do not establish an env-vault defect or isolate the cause
+of the repeated dialogs.
+
+Final API status confirmed the login keychain was unlocked. The default
+keychain and search list matched their initial state. The temporary records
+and helper scripts were removed; existing records and their access controls
+were unchanged. No password or keychain settings were changed.
+
+This is a manual observation record, not automated coverage. A controlled
+locked-keychain check that identifies the failure cause and confirms reliable
+recovery remains open in [the backlog](../backlog.md#p0).
