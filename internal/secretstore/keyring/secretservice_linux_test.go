@@ -9,6 +9,7 @@ import (
 
 	"github.com/99designs/keyring"
 	"github.com/godbus/dbus"
+	libsecret "github.com/gsterjov/go-libsecret"
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
 	"github.com/ildarbinanas-design/env-vault/internal/testutil"
 )
@@ -119,5 +120,34 @@ func TestSecretServiceMetadataFailuresAndDeadline(t *testing.T) {
 func TestSecretServiceCollectionPathCompatibility(t *testing.T) {
 	if decodeCollectionPath("/org/freedesktop/secrets/collection/env_2dvault") != "/org/freedesktop/secrets/collection/env-vault" {
 		t.Fatal("legacy collection path changed")
+	}
+}
+
+func TestSecretServiceLockedOrDeniedIsNotAbsence(t *testing.T) {
+	for _, denied := range []bool{false, true} {
+		service := metadataService(t, map[string]string{"profile": "token"})
+		original := service.property
+		service.property = func(path dbus.ObjectPath, property string) (dbus.Variant, error) {
+			if property == "org.freedesktop.Secret.Collection.Locked" {
+				return dbus.MakeVariant(true), nil
+			}
+			return original(path, property)
+		}
+		calls := 0
+		service.unlockObject = func(libsecret.DBusObject) error {
+			calls++
+			if denied {
+				return dbus.Error{Name: "org.freedesktop.DBus.Error.AccessDenied"}
+			}
+			return nil // A dismissed prompt may leave the collection locked.
+		}
+		store := serviceStore(service)
+		exists, err := store.Exists(context.Background(), "test", "token")
+		if exists || !errors.Is(err, secretstore.ErrUnavailable) || errors.Is(err, secretstore.ErrNotFound) || calls != 1 {
+			t.Fatal("a locked or denied collection was treated as absent")
+		}
+		if !denied && !errors.Is(err, secretstore.ErrUnreadable) {
+			t.Fatal("dismissed unlock was treated as success")
+		}
 	}
 }

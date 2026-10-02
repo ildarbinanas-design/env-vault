@@ -18,10 +18,11 @@ import (
 // Secret Service adapter changes: identity is (collection, profile), never Label.
 // In particular, neither metadata operation opens a secret session or GetSecret.
 type secretService struct {
-	service  *libsecret.Service
-	conn     *dbus.Conn
-	name     string
-	property func(dbus.ObjectPath, string) (dbus.Variant, error)
+	service      *libsecret.Service
+	conn         *dbus.Conn
+	name         string
+	property     func(dbus.ObjectPath, string) (dbus.Variant, error)
+	unlockObject func(libsecret.DBusObject) error
 }
 
 func openPlatform(cfg keyring.Config) (keyring.Keyring, error) {
@@ -54,7 +55,7 @@ func openSecretService(name string) (*secretService, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &secretService{service: service, conn: conn, name: name}
+	s := &secretService{service: service, conn: conn, name: name, unlockObject: service.Unlock}
 	s.property = func(path dbus.ObjectPath, property string) (dbus.Variant, error) {
 		return conn.Object(libsecret.DBusServiceName, path).GetProperty(property)
 	}
@@ -119,7 +120,7 @@ func (s *secretService) unlock(object libsecret.DBusObject, kind string) error {
 	if !locked {
 		return nil
 	}
-	if err := s.service.Unlock(object); err != nil {
+	if err := s.unlockObject(object); err != nil {
 		return err
 	}
 	value, err = s.property(object.Path(), property)
