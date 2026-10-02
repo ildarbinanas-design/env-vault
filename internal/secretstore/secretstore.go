@@ -16,9 +16,11 @@ const DefaultService = "env-vault"
 var secretNameRE = regexp.MustCompile(`^[A-Za-z0-9._/@-]+$`)
 
 var (
-	ErrNotFound        = errors.New("secret not found")
-	ErrUnavailable     = errors.New("secret backend unavailable")
-	ErrPassUnavailable = errors.New("pass backend unavailable")
+	ErrAmbiguous         = errors.New("multiple physical records have the same secret identity")
+	ErrIdentityCollision = errors.New("container entries address the same backend record")
+	ErrNotFound          = errors.New("secret not found")
+	ErrUnavailable       = errors.New("secret backend unavailable")
+	ErrPassUnavailable   = errors.New("pass backend unavailable")
 	// ErrTimeout reports a backend call that did not return in time, usually a
 	// system prompt that nobody answered.
 	ErrTimeout = errors.New("secret backend did not respond in time")
@@ -43,6 +45,8 @@ const (
 
 func BackendRemediation(err error) string {
 	switch {
+	case errors.Is(err, ErrAmbiguous):
+		return "Inspect duplicate records in the OS keychain; env-vault will not choose or repair them automatically"
 	case errors.Is(err, ErrTimeout):
 		return TimeoutBackendRemediation
 	case errors.Is(err, ErrUnreadable):
@@ -68,6 +72,12 @@ type ValueLimiter interface {
 	// MaxValueBytes returns the largest value the backend stores, or 0 when
 	// env-vault knows of no limit.
 	MaxValueBytes() int
+}
+
+// IdentityValidator checks a batch before any writes, using the selected
+// backend's record identity. It does not extend Store or promise a transaction.
+type IdentityValidator interface {
+	ValidateIdentities([]Metadata) error
 }
 
 type Store interface {

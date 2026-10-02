@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/99designs/keyring"
@@ -39,6 +38,14 @@ type Store struct {
 // keeps running in the background, and a backend helper such as pass or gpg
 // may still finish its work after the command has reported the timeout.
 func withTimeout[T any](call func() (T, error)) (T, error) {
+	return withContextTimeout(context.Background(), call)
+}
+
+func withContextTimeout[T any](ctx context.Context, call func() (T, error)) (T, error) {
+	if ctx.Err() != nil {
+		var zero T
+		return zero, secretstore.ErrTimeout
+	}
 	type result struct {
 		value T
 		err   error
@@ -53,6 +60,9 @@ func withTimeout[T any](call func() (T, error)) (T, error) {
 	select {
 	case r := <-done:
 		return r.value, r.err
+	case <-ctx.Done():
+		var zero T
+		return zero, secretstore.ErrTimeout
 	case <-timer.C:
 		var zero T
 		return zero, secretstore.ErrTimeout
@@ -73,7 +83,7 @@ func NewPass() Store {
 	}
 }
 
-func (s Store) Set(_ context.Context, service, name string, value []byte) error {
+func (s Store) Set(ctx context.Context, service, name string, value []byte) error {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return fmt.Errorf("invalid secret name: %w", err)
 	}
@@ -82,11 +92,11 @@ func (s Store) Set(_ context.Context, service, name string, value []byte) error 
 	if limit := s.MaxValueBytes(); limit > 0 && len(value) > limit {
 		return fmt.Errorf("%w: Windows Credential Manager stores at most %d bytes", secretstore.ErrValueTooLarge, limit)
 	}
-	kr, err := s.open(service)
+	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
 	if err != nil {
 		return err
 	}
-	_, err = withTimeout(func() (struct{}, error) {
+	_, err = withContextTimeout(ctx, func() (struct{}, error) {
 		return struct{}{}, kr.Set(keyring.Item{
 			Key:         name,
 			Data:        append([]byte(nil), value...),
@@ -100,15 +110,15 @@ func (s Store) Set(_ context.Context, service, name string, value []byte) error 
 	return nil
 }
 
-func (s Store) Get(_ context.Context, service, name string) ([]byte, error) {
+func (s Store) Get(ctx context.Context, service, name string) ([]byte, error) {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return nil, fmt.Errorf("invalid secret name: %w", err)
 	}
-	kr, err := s.open(service)
+	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
 	if err != nil {
 		return nil, err
 	}
-	item, err := withTimeout(func() (keyring.Item, error) { return kr.Get(name) })
+	item, err := withContextTimeout(ctx, func() (keyring.Item, error) { return kr.Get(name) })
 	if stderrors.Is(err, keyring.ErrKeyNotFound) {
 		if !s.notFoundMayHideRefusal() {
 			return nil, secretstore.ErrNotFound
@@ -116,7 +126,7 @@ func (s Store) Get(_ context.Context, service, name string) ([]byte, error) {
 		// The macOS Keychain backend reports a denied prompt or a locked
 		// keychain as "not found". A record that is still listed was refused,
 		// not missing, and must not be treated as an absent optional secret.
-		keys, keysErr := withTimeout(kr.Keys)
+		keys, keysErr := withContextTimeout(ctx, kr.Keys)
 		if keysErr != nil {
 			return nil, s.backendError(keysErr)
 		}
@@ -134,35 +144,44 @@ func (s Store) Get(_ context.Context, service, name string) ([]byte, error) {
 // Exists answers from the backend's key listing, the same metadata that List
 // reads. Get would decrypt the value only to discard it, and on macOS it asks
 // for Keychain access to the item just to report that the record exists.
-func (s Store) Exists(_ context.Context, service, name string) (bool, error) {
+func (s Store) Exists(ctx context.Context, service, name string) (bool, error) {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return false, fmt.Errorf("invalid secret name: %w", err)
 	}
-	kr, err := s.open(service)
+	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
 	if err != nil {
 		return false, err
 	}
-	keys, err := withTimeout(kr.Keys)
+	keys, err := withContextTimeout(ctx, kr.Keys)
 	if err != nil {
 		return false, s.backendError(err)
 	}
-	// Windows Credential Manager matches names without regard to case, so
-	// "TOKEN" and "token" are one record there.
-	if s.usesWinCred() {
-		return slices.ContainsFunc(keys, func(key string) bool { return strings.EqualFold(key, name) }), nil
+	if matcher, ok := kr.(interface {
+		MatchName(string, string) (bool, error)
+	}); ok {
+		for _, key := range keys {
+			match, err := matcher.MatchName(key, name)
+			if err != nil {
+				return false, s.backendError(err)
+			}
+			if match {
+				return true, nil
+			}
+		}
+		return false, nil
 	}
 	return slices.Contains(keys, name), nil
 }
 
-func (s Store) Delete(_ context.Context, service, name string) error {
+func (s Store) Delete(ctx context.Context, service, name string) error {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return fmt.Errorf("invalid secret name: %w", err)
 	}
-	kr, err := s.open(service)
+	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
 	if err != nil {
 		return err
 	}
-	_, err = withTimeout(func() (struct{}, error) { return struct{}{}, kr.Remove(name) })
+	_, err = withContextTimeout(ctx, func() (struct{}, error) { return struct{}{}, kr.Remove(name) })
 	if stderrors.Is(err, keyring.ErrKeyNotFound) {
 		return secretstore.ErrNotFound
 	} else if err != nil {
@@ -171,12 +190,12 @@ func (s Store) Delete(_ context.Context, service, name string) error {
 	return nil
 }
 
-func (s Store) List(_ context.Context, service string) ([]secretstore.Metadata, error) {
-	kr, err := s.open(service)
+func (s Store) List(ctx context.Context, service string) ([]secretstore.Metadata, error) {
+	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
 	if err != nil {
 		return nil, err
 	}
-	keys, err := withTimeout(kr.Keys)
+	keys, err := withContextTimeout(ctx, kr.Keys)
 	if err != nil {
 		return nil, s.backendError(err)
 	}
@@ -245,7 +264,7 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 	}
 	openKeyring := s.openKeyring
 	if openKeyring == nil {
-		openKeyring = keyring.Open
+		openKeyring = openPlatform
 	}
 	// pass cannot keep a service name with a slash apart from secret names,
 	// so such a service never falls back to it. If pass was the only

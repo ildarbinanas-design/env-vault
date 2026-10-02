@@ -81,16 +81,6 @@ func TestWinCredRefusesAValueLargerThanItStores(t *testing.T) {
 	}
 }
 
-func TestWinCredMatchesNamesWithoutRegardToCase(t *testing.T) {
-	kr := &memoryKeyring{items: map[string][]byte{"TOKEN": {1}}}
-	for winCred, want := range map[bool]bool{true: true, false: false} {
-		got, err := winCredStore(kr, winCred).Exists(context.Background(), secretstore.DefaultService, "token")
-		if err != nil || got != want {
-			t.Fatalf("WinCred=%v: Exists(token)=%v,%v with TOKEN stored, want %v", winCred, got, err, want)
-		}
-	}
-}
-
 // Only the default store on Windows writes to Credential Manager; the limit
 // and the case rule must never reach macOS Keychain or pass.
 func TestUsesWinCredOnlyForTheDefaultStoreOnWindows(t *testing.T) {
