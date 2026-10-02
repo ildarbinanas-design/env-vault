@@ -92,7 +92,7 @@ func (s Store) Set(ctx context.Context, service, name string, value []byte) erro
 	if limit := s.MaxValueBytes(); limit > 0 && len(value) > limit {
 		return fmt.Errorf("%w: Windows Credential Manager stores at most %d bytes", secretstore.ErrValueTooLarge, limit)
 	}
-	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
+	kr, err := s.openContext(ctx, service)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func (s Store) Get(ctx context.Context, service, name string) ([]byte, error) {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return nil, fmt.Errorf("invalid secret name: %w", err)
 	}
-	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
+	kr, err := s.openContext(ctx, service)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (s Store) Exists(ctx context.Context, service, name string) (bool, error) {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return false, fmt.Errorf("invalid secret name: %w", err)
 	}
-	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
+	kr, err := s.openContext(ctx, service)
 	if err != nil {
 		return false, err
 	}
@@ -177,7 +177,7 @@ func (s Store) Delete(ctx context.Context, service, name string) error {
 	if err := secretstore.ValidateSecretName(name); err != nil {
 		return fmt.Errorf("invalid secret name: %w", err)
 	}
-	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
+	kr, err := s.openContext(ctx, service)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func (s Store) Delete(ctx context.Context, service, name string) error {
 }
 
 func (s Store) List(ctx context.Context, service string) ([]secretstore.Metadata, error) {
-	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return s.open(service) })
+	kr, err := s.openContext(ctx, service)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +255,10 @@ func (s Store) usesWinCred() bool {
 }
 
 func (s Store) open(service string) (keyring.Keyring, error) {
+	return s.openContext(context.Background(), service)
+}
+
+func (s Store) openContext(ctx context.Context, service string) (keyring.Keyring, error) {
 	if err := secretstore.ValidateServiceName(service); err != nil {
 		return nil, fmt.Errorf("invalid service name: %w", err)
 	}
@@ -293,16 +297,16 @@ func (s Store) open(service string) (keyring.Keyring, error) {
 		// other backends' ServiceName scoping.
 		PassPrefix: "env-vault/" + service,
 	}
-	kr, err := withTimeout(func() (keyring.Keyring, error) { return openKeyring(cfg) })
+	kr, err := withContextTimeout(ctx, func() (keyring.Keyring, error) { return openKeyring(cfg) })
 	if withoutPass && stderrors.Is(err, keyring.ErrNoAvailImpl) {
 		// Tell a missing backend apart from one that is only pass.
 		passCfg := cfg
 		passCfg.AllowedBackends = []keyring.BackendType{keyring.PassBackend}
-		if _, passErr := withTimeout(func() (keyring.Keyring, error) { return openKeyring(passCfg) }); passErr == nil {
+		if _, passErr := withContextTimeout(ctx, func() (keyring.Keyring, error) { return openKeyring(passCfg) }); passErr == nil {
 			return nil, s.backendError(secretstore.ErrPassServiceSlash)
 		}
 	}
-	if stderrors.Is(err, keyring.ErrNoAvailImpl) || stderrors.Is(err, secretstore.ErrTimeout) {
+	if err != nil {
 		return nil, s.backendError(err)
 	}
 	return kr, err

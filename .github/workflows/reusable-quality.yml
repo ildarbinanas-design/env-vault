@@ -199,6 +199,8 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          # Native tests execute the requested source; do not save its cache.
+          cache: "false"
 
       - name: Run native platform config tests
         env:
