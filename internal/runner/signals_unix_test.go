@@ -6,8 +6,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -30,27 +33,73 @@ func TestChildKilledBySignalReportsTheSignal(t *testing.T) {
 	}
 }
 
-// startSignalLogger starts a child that appends the name of every trapped
-// signal to a log file and exits on SIGTERM. With ownGroup the child runs in a
-// new process group, as after setsid.
-func startSignalLogger(t *testing.T, ownGroup bool) (*exec.Cmd, string) {
+// TestSignalLoggerHelper runs in a separate copy of the test binary. It
+// handles signals directly, without shell traps or sleep subprocesses. Each
+// unbuffered log write acknowledges one received signal.
+func TestSignalLoggerHelper(t *testing.T) {
+	dir := os.Getenv("ENV_VAULT_RUNNER_SIGNAL_LOGGER_DIR")
+	if dir == "" {
+		return
+	}
+	log, err := os.OpenFile(filepath.Join(dir, "log"), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		os.Exit(2)
+	}
+	signals := make(chan os.Signal, 4)
+	signal.Notify(signals, os.Interrupt, syscall.SIGQUIT, syscall.SIGTERM)
+	if err := os.WriteFile(filepath.Join(dir, "ready"), nil, 0o600); err != nil {
+		os.Exit(2)
+	}
+	exit := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		close(exit)
+	}()
+	for {
+		select {
+		case sig := <-signals:
+			name := map[os.Signal]string{os.Interrupt: "int", syscall.SIGQUIT: "quit", syscall.SIGTERM: "term"}[sig]
+			if _, err := fmt.Fprintln(log, name); err != nil {
+				os.Exit(2)
+			}
+		case <-exit:
+			if err := log.Close(); err != nil {
+				os.Exit(2)
+			}
+			os.Exit(0)
+		}
+	}
+}
+
+// startSignalLogger starts a child that acknowledges each signal in a log
+// file. Closing its input ends it after the test has observed the signals.
+// With ownGroup it starts in a new process group.
+func startSignalLogger(t *testing.T, ownGroup bool) (*exec.Cmd, string, io.WriteCloser) {
 	t.Helper()
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready")
 	log := filepath.Join(dir, "log")
-	child := exec.Command("sh", "-c", `trap 'echo int >> "$2"' INT
-trap 'echo quit >> "$2"' QUIT
-trap 'echo term >> "$2"; exit 0' TERM
-: > "$1"
-while :; do sleep 0.05; done`, "sh", ready, log)
+	child := exec.Command(os.Args[0], "-test.run=^TestSignalLoggerHelper$")
+	child.Env = append(os.Environ(), "ENV_VAULT_RUNNER_SIGNAL_LOGGER_DIR="+dir)
+	input, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = input.Close() })
 	if ownGroup {
 		child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if child.ProcessState == nil {
+			_ = child.Process.Kill()
+			_ = child.Wait()
+		}
+	})
 	waitFor(t, func() bool { _, err := os.Stat(ready); return err == nil }, "child readiness")
-	return child, log
+	return child, log, input
 }
 
 func waitFor(t *testing.T, done func() bool, what string) {
@@ -78,30 +127,40 @@ func withTerminalForeground(t *testing.T, foreground bool) {
 	t.Cleanup(func() { terminalForegroundGroup = old })
 }
 
-func stopSignalLogger(t *testing.T, child *exec.Cmd, ch chan os.Signal, stop func()) {
+func stopSignalLogger(t *testing.T, child *exec.Cmd, input io.WriteCloser, log string, ch chan os.Signal, observe time.Duration) {
 	t.Helper()
 	ch <- syscall.SIGTERM
+	waitFor(t, func() bool { return strings.Contains(logged(log), "term") }, "forwarded SIGTERM")
+	// For the absence check, stay alive briefly after TERM is acknowledged:
+	// Unix does not promise delivery order across different signal numbers.
+	time.Sleep(observe)
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
 	waited := make(chan error, 1)
 	go func() { waited <- child.Wait() }()
 	select {
-	case <-waited:
+	case err := <-waited:
+		if err != nil {
+			t.Fatalf("signal logger: %v", err)
+		}
 	case <-time.After(10 * time.Second):
 		_ = child.Process.Kill()
-		t.Fatal("child did not exit after SIGTERM")
+		<-waited
+		t.Fatal("signal logger did not exit after closing its input")
 	}
-	stop()
 }
 
 // In a terminal's foreground group the terminal delivers SIGINT and SIGQUIT to
 // the child itself, so forwarding them would deliver each twice.
 func TestForwardSignalsSkipsInterruptsTheTerminalAlreadyDelivered(t *testing.T) {
 	withTerminalForeground(t, true)
-	child, log := startSignalLogger(t, false)
+	child, log, input := startSignalLogger(t, false)
 	ch := make(chan os.Signal, 4)
-	stop := forwardSignals(child.Process, ch)
+	t.Cleanup(forwardSignals(child.Process, ch))
 	ch <- os.Interrupt
 	ch <- syscall.SIGQUIT
-	stopSignalLogger(t, child, ch, stop)
+	stopSignalLogger(t, child, input, log, ch, 50*time.Millisecond)
 	if got := logged(log); got != "term" {
 		t.Fatalf("child received %q, want only term", got)
 	}
@@ -111,14 +170,14 @@ func TestForwardSignalsSkipsInterruptsTheTerminalAlreadyDelivered(t *testing.T) 
 // script, and only env-vault receives them, so they must be forwarded.
 func TestForwardSignalsPassesInterruptsWithoutATerminal(t *testing.T) {
 	withTerminalForeground(t, false)
-	child, log := startSignalLogger(t, false)
+	child, log, input := startSignalLogger(t, false)
 	ch := make(chan os.Signal, 4)
-	stop := forwardSignals(child.Process, ch)
+	t.Cleanup(forwardSignals(child.Process, ch))
 	ch <- os.Interrupt
-	waitFor(t, func() bool { return strings.Contains(logged(log), "int") }, "forwarded SIGINT")
+	waitFor(t, func() bool { return logged(log) == "int" }, "forwarded SIGINT")
 	ch <- syscall.SIGQUIT
-	waitFor(t, func() bool { return strings.Contains(logged(log), "quit") }, "forwarded SIGQUIT")
-	stopSignalLogger(t, child, ch, stop)
+	waitFor(t, func() bool { return logged(log) == "int\nquit" }, "forwarded SIGQUIT")
+	stopSignalLogger(t, child, input, log, ch, 0)
 	if got := logged(log); got != "int\nquit\nterm" {
 		t.Fatalf("child received %q, want int, quit, term", got)
 	}
@@ -128,14 +187,14 @@ func TestForwardSignalsPassesInterruptsWithoutATerminal(t *testing.T) {
 // not in the terminal's foreground group, so only forwarding reaches it.
 func TestForwardSignalsPassesInterruptsToAChildInAnotherGroup(t *testing.T) {
 	withTerminalForeground(t, true)
-	child, log := startSignalLogger(t, true)
+	child, log, input := startSignalLogger(t, true)
 	ch := make(chan os.Signal, 4)
-	stop := forwardSignals(child.Process, ch)
+	t.Cleanup(forwardSignals(child.Process, ch))
 	ch <- os.Interrupt
-	waitFor(t, func() bool { return strings.Contains(logged(log), "int") }, "forwarded SIGINT")
+	waitFor(t, func() bool { return logged(log) == "int" }, "forwarded SIGINT")
 	ch <- syscall.SIGQUIT
-	waitFor(t, func() bool { return strings.Contains(logged(log), "quit") }, "forwarded SIGQUIT")
-	stopSignalLogger(t, child, ch, stop)
+	waitFor(t, func() bool { return logged(log) == "int\nquit" }, "forwarded SIGQUIT")
+	stopSignalLogger(t, child, input, log, ch, 0)
 	if got := logged(log); got != "int\nquit\nterm" {
 		t.Fatalf("child received %q, want int, quit, term", got)
 	}

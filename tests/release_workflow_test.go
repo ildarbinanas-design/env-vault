@@ -512,7 +512,21 @@ func TestPackageReleaseArrangesDownloadsAndAttestationSubjects(t *testing.T) {
 	}
 }
 
+// requireReleaseBash checks the shell selected by PATH, which is also the one
+// used to run the release scripts. macOS ships Bash 3 by default.
+func requireReleaseBash(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("release scripts require Bash 4 or newer on PATH")
+	}
+	out, err := exec.Command("bash", "--noprofile", "--norc", "-c", "echo ${BASH_VERSINFO[0]}").Output()
+	if major, parseErr := strconv.Atoi(strings.TrimSpace(string(out))); err != nil || parseErr != nil || major < 4 {
+		t.Skip("release scripts require Bash 4 or newer on PATH")
+	}
+}
+
 func TestHomebrewFormulaPinsTheVerifiedArchives(t *testing.T) {
+	requireReleaseBash(t)
 	if _, err := exec.LookPath("sha256sum"); err != nil {
 		t.Skip("sha256sum is not available")
 	}

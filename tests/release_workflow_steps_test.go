@@ -27,10 +27,7 @@ func requireReleaseStepTools(t *testing.T) {
 			t.Skipf("%s is not available", tool)
 		}
 	}
-	out, err := exec.Command("bash", "-c", "echo ${BASH_VERSINFO[0]}").Output()
-	if major, _ := strconv.Atoi(strings.TrimSpace(string(out))); err != nil || major < 4 {
-		t.Skip("the release run blocks need bash 4 or newer")
-	}
+	requireReleaseBash(t)
 	if err := exec.Command("base64", "-w0", "/dev/null").Run(); err != nil {
 		t.Skip("the release run blocks need GNU base64")
 	}
