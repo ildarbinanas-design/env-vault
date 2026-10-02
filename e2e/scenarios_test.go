@@ -860,9 +860,8 @@ func wantExact(t *testing.T, got, want, label string) {
 // complete insecure test-backend gate is active for every scenario. Without
 // that gate the prompt requires a terminal, which is what keeps a passphrase
 // out of shell history in real use.
-const containerPassphrase = "e2e container passphrase"
-
 func testTransferRoundTrip(sc *scenario) {
+	containerPassphrase := sc.newSentinel()
 	secret := sc.sentinels[0]
 	container := filepath.Join(sc.root, "vault.evb")
 
@@ -918,17 +917,49 @@ func testTransferRoundTrip(sc *scenario) {
 	}
 
 	wantExit(sc.t, sc.run("--json", "secret", "check", "team/token"), 0)
+	// Every conflict policy is exercised on the public CLI. Fail and skip
+	// preserve the value already stored; overwrite restores the container value.
+	replacement := sc.newSentinel()
+	wantExit(sc.t, sc.runWith(runOptions{stdin: []byte(replacement + "\n")}, "secret", "set", "team/token", "--stdin"), 0)
+	for _, policy := range []string{"fail", "skip", "overwrite"} {
+		result := sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")}, "--json", "import", container, "--on-conflict", policy)
+		want, expected := 0, replacement
+		if policy == "fail" {
+			want = 2
+		}
+		if policy == "overwrite" {
+			expected = secret
+		}
+		wantExit(sc.t, result, want)
+		wantExit(sc.t, sc.run("exec", "--secret", "team/token:TOKEN", "--", sc.suite.helper, "env", "--expect-hash", "TOKEN="+sha256Text(expected)), 0)
+	}
 }
 
 func testTransferRejectsTampering(sc *scenario) {
+	containerPassphrase := sc.newSentinel()
 	secret := sc.sentinels[0]
 	container := filepath.Join(sc.root, "tamper.evb")
 
+	// Invalid preflight inputs must not create a container or change storage.
+	emptyExport := sc.run("--json", "export", "--out", container)
+	wantExit(sc.t, emptyExport, 2)
+	if _, err := os.Stat(container); !os.IsNotExist(err) {
+		sc.t.Fatal("empty export created a container")
+	}
+	for _, args := range [][]string{
+		{"--json", "export", "--out", container, "--with-services", "bad/../service"},
+		{"--json", "import", container, "--on-conflict", "unknown"},
+	} {
+		wantExit(sc.t, sc.run(args...), 2)
+	}
+	wantExit(sc.t, sc.run("--json", "import", sc.root), 5)
+	wantExit(sc.t, sc.run("--json", "import", container), 5)
+
 	wantExit(sc.t, sc.runWith(runOptions{stdin: []byte(secret + "\n")}, "--json", "secret", "set", "team/token", "--stdin"), 0)
 	wantExit(sc.t, sc.runWith(runOptions{stdin: []byte(containerPassphrase + "\n")},
-		"--json", "export", "--out", container), 0)
+		"--json", "export", "--out", container, "--with-services", "named,env-vault,named"), 0)
 
-	wrongPassphrase := sc.runWith(runOptions{stdin: []byte("an entirely different passphrase\n")},
+	wrongPassphrase := sc.runWith(runOptions{stdin: []byte(sc.newSentinel() + "\n")},
 		"--json", "import", container)
 	wantExit(sc.t, wrongPassphrase, 5)
 	if got := parseEnvelope(sc.t, wrongPassphrase); got.Error == nil || got.Error.Code != "BUNDLE_AUTH_FAILED" {

@@ -58,8 +58,8 @@ func TestHistoricalTransfer(t *testing.T) {
 		run(oldCLI, oldStore, values[i], "secret", "set", "token", "--service", service, "--stdin")
 	}
 	container := filepath.Join(root, "transfer.evb")
-	confirmation := append(append(append([]byte{}, passphrase...), '\n'), passphrase...)
-	confirmation = append(confirmation, '\n')
+	// The fully gated stdin reader reuses one input for both prompts.
+	confirmation := append(append([]byte{}, passphrase...), '\n')
 	run(oldCLI, oldStore, confirmation, "export", "--with-services", services[1], "--out", container)
 	run(currentCLI, newStore, append(append([]byte{}, passphrase...), '\n'), "import", container)
 	store, err := teststore.NewFromEnv("historical-transfer")

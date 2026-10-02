@@ -26,6 +26,7 @@ const (
 
 type workflow struct {
 	Name        string                 `yaml:"name"`
+	CacheMode   string                 `yaml:"cache-mode"`
 	RunName     string                 `yaml:"run-name"`
 	On          map[string]yaml.Node   `yaml:"on"`
 	Permissions map[string]string      `yaml:"permissions"`
@@ -239,6 +240,9 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		}
 	}
 	assertJobIDs(t, wf, "resolve", "source-quality", "license", "native", "e2e-gate")
+	if wf.CacheMode != "none" {
+		t.Fatal("quality jobs must not receive cache access")
+	}
 
 	resolve := wf.Jobs["resolve"]
 	if resolve.TimeoutMinutes != 15 || len(resolve.Outputs) != 0 {
