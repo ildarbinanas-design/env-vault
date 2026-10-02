@@ -131,6 +131,25 @@ rebuilt only on macOS.
 
 ## Before ADR 0011
 
+### Reading the v0.3.4 release notes
+
+The generated v0.3.4 changelog links to v0.3.3, which was abandoned and has no
+tag or published release. Use the
+[v0.3.2 to v0.3.4 comparison](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.2...v0.3.4)
+to see what changed between the published versions. The runtime fix first
+shipped in v0.3.4 is preserving ignored SIGHUP and SIGINT for a child under
+`nohup` ([#101](https://github.com/ildarbinanas-design/env-vault/pull/101));
+[#103](https://github.com/ildarbinanas-design/env-vault/pull/103) corrected the
+previous release pipeline's handling of a deleted GitHub App author.
+
+That generated section also repeats earlier work, including encrypted
+import/export (#78), Actions artifact lifecycle tooling (#60), and the initial
+MVP. Those entries do not mean the features were introduced in v0.3.4. The
+original generated changelog and immutable releases remain the historical
+record; this note explains how to read them.
+
+### Previous pipeline
+
 Releases up to v0.3.4 went through the previous pipeline: release planning,
 the tag-triggered publisher, and the repair workflows. Its procedures are in
 [`RELEASING.md` at v0.3.4](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/RELEASING.md).
