@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.1...v0.4.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **bundle:** reject oversized exports and close review regressions ([9c15037](https://github.com/ildarbinanas-design/env-vault/commit/9c15037c5e00227cc4341783098dc80bf266eef2))
+
 ## [0.4.1](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.0...v0.4.1) (2026-09-30)
 
 
