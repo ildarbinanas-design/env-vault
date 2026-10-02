@@ -49,8 +49,8 @@ does all of it. No workflow runs on a tag.
      checks their checksums and attestations.
    - **tap** generates the formula from the published archives and opens a
      pull request in `ildarbinanas-design/homebrew-tap` with auto-merge. The
-     tap's `test` check must pass first; it also compares every url and sha256
-     with the published checksums.
+     tap's `test` check must pass first; it compares the entire formula with
+     its reviewed template, using the version and published checksums.
 
 ## Verifying a release
 
