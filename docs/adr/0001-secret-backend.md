@@ -28,7 +28,7 @@ The production allowlist includes OS keychain-style backends only:
 
 `pass` is allowed after the native platform stores. It requires the `pass` command and an initialized password store. When explicitly selected and unavailable, the CLI returns structured error code `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
 
-The `file` and kernel keyctl backends are not used as production fallback in this MVP. `keyring.FileBackend`, plaintext config, and env-file storage require a separate ADR and explicit approval before any production use.
+The `file` and kernel keyctl backends are not used as production fallback in this MVP. `keyring.FileBackend`, plaintext config, and env-file storage are forbidden in production.
 
 Passwork is not implemented and remains deferred.
 

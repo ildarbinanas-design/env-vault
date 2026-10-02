@@ -66,9 +66,9 @@ drop that grant at the next rotation if the token still has it.
 | `release-planning` | `RELEASE_PLANNING_TOKEN` | `main` only |
 | `release` | `HOMEBREW_TAP_TOKEN` | `main` only |
 
-No workflow runs on a tag, so neither environment allows tags. The old
-pipeline also admitted `v*` in `release`; remove that rule if it is still
-there (migration step 5 in #107). Neither has a
+No workflow runs on a tag, so neither environment allows tags. Migration #107
+is complete; read-only checks on 2026-10-03 confirmed `branch main` alone in
+both environments and the one expected secret in each. Neither has a
 required reviewer or a wait timer: merging the release pull request is the
 release authorization, and a second approval would stop every release halfway.
 
@@ -119,7 +119,20 @@ gh api repos/ildarbinanas-design/homebrew-tap --jq .allow_auto_merge
 Each environment should list only `branch main` and its one secret, and
 `allow_auto_merge` should be `true`.
 
-Both tokens expire on 2026-12-26; regenerate them about a week earlier. For
+The recorded expiry for both tokens is 2026-12-26; plan the owner-run renewal
+around 2026-12-19. Issue #107 and this runbook agree on that date. The Actions
+secret metadata API confirms names and update times, but cannot reveal a PAT's
+expiry or grants; verify those in the owner's token settings before renewal.
+The 2026-10-03 read-only check found the two secrets last updated on 2026-09-27.
+No token values were read and no settings were changed.
+
+The operator helper lives in
+[`claude-ops/scripts/setup-env-vault-release-tokens.sh`](https://github.com/ildarbinanas-design/claude-ops/blob/main/scripts/setup-env-vault-release-tokens.sh).
+Use its ADR 0011 version: it no longer reads the removed release contract or
+requires Administration/Actions-read probes. Its public-repository reads do
+not prove a token's selected repositories, write grants, or expiry.
+
+For
 each token: open <https://github.com/settings/personal-access-tokens>, choose
 the token, select **Regenerate token**, set the expiry, then store the new value
 through the hidden prompt:
@@ -131,3 +144,17 @@ gh secret set HOMEBREW_TAP_TOKEN --env release -R ildarbinanas-design/env-vault
 
 A regenerated token keeps its permissions. The next push to `main` exercises
 the planning token; the next release exercises the tap token.
+
+### Owner renewal checklist
+
+1. In `claude-ops`, merge the reviewed helper update before using it.
+2. Around 2026-12-19, open the fine-grained token settings and confirm the
+   recorded 2026-12-26 expiry, one selected repository per token, no account
+   permissions, and the grants in sections 1–2. Remove obsolete Administration
+   access from planning and Actions read from tap if present.
+3. Regenerate each token with an explicit expiry and store it in the exact
+   environment/secret shown above, using a hidden prompt. Never put it in a
+   command argument, file, issue, or chat.
+4. Confirm the next ordinary `main` planning run succeeds. The next
+   owner-authorized release verifies tap publication; do not manufacture a
+   release solely to test rotation.

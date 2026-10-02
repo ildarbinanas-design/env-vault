@@ -289,3 +289,30 @@ The current symlink contract rejects unsafe final config and lock targets. It
 does not claim protection from a hostile same-user process or a pre-existing
 symlink in an ancestor directory; that stronger handle-relative filesystem
 boundary is a documented residual risk rather than a hidden test exclusion.
+
+## Additional native and compatibility checks
+
+`reusable-quality.yml` retains the full Linux unit/race suite, five native
+build/smoke targets, and Windows config burn-in. macOS arm64 and Windows amd64
+also run `go test ./internal/... -count=1`; `scripts/check-native-tests.py`
+requires the named Darwin PTY/signal and Windows identity tests to pass,
+rejecting missing or skipped required scenarios.
+
+`scripts/secret-service-ci.sh` runs a Debian container with a private D-Bus
+session, GNOME Keyring, and temporary home/data/runtime directories. Tests
+create and unlock a disposable collection, confirm its identity through D-Bus
+metadata, and exercise legacy records, profile/label mismatches, missing
+attributes, absence, duplicates, and the public CLI lifecycle. Narrow metadata
+fault injection covers access errors and deadlines without reading values in
+check/list. The container receives no production secrets or host keychains.
+
+`scripts/historical-transfer.sh` fetches exactly
+`a79a02b6c079ccaa136b634ea6329a626f316b85` (v0.4.2), checks the SHA, builds that
+CLI, exports random default/named-service values, and imports with the current
+CLI into a fresh gated test store. Values and passphrase stay in memory or
+stdin; no plaintext expectation files or transfer/teststore artifacts are
+uploaded. An unavailable baseline or failed scenario fails CI. Ordinary unit
+tests do not fetch a baseline or use the network.
+
+Disposable macOS checks do not verify prompts or access decisions in the
+owner's login session; that remains a manual item in the backlog.
