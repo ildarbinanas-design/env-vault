@@ -2,9 +2,8 @@
 
 ## P0
 
-- Verify real macOS Keychain manually.
-- Verify real Debian Secret Service manually.
-- Verify Linux `pass` manually with installed `pass` and an initialized password store.
+- Verify macOS user-session prompts, refusal, and locked/login keychain behavior
+  manually. Disposable CI keychains do not establish these user-session facts.
 
 ## P1
 
@@ -22,7 +21,6 @@ Gated by ADR 0008 (2026-07-30) — same rule as P1.
 
 - Optional Vault/1Password/KeePassXC connectors.
 - Passwork connector deferred; requires separate design and explicit approval.
-- Production file/plaintext backend deferred; requires separate ADR and explicit approval.
 - MCP server wrapper for agent runtime.
 - Policy hooks for enterprise use.
 - Secret rotation workflow helpers. **Boundary (2026-07-30, see
@@ -45,7 +43,14 @@ Gated by ADR 0008 (2026-07-30) — same rule as P1.
   PersonalOS" decision for this item.
 - Public GitHub binary releases for Linux, macOS, and Windows.
 - Homebrew formula distribution with automatic tap updates and tap CI.
-- Default-branch manual releases with explicit semantic versions and retained tag-driven releases.
+- Release migration #107 completed on 2026-09-29 (ADR 0011): pushes to `main`
+  maintain the Release Please PR; its owner-authorized merge publishes the
+  release. No tag-triggered workflow remains.
+- Native CI covers disposable macOS keychains, Windows Credential Manager,
+  Linux `pass`, and an isolated Debian Secret Service session. Unit/race tests,
+  all five build targets, Windows config burn-in, and pinned v0.4.2 container
+  import compatibility remain required. These checks do not replace the
+  outstanding macOS user-session exercise above.
 - Pinned automated license gate before release publication.
 - Verify public GitHub repository settings after first push. **Verified
   2026-07-30** by the release planning check. ADR 0011 (2026-09-29) removed

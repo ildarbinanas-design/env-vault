@@ -24,8 +24,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-    with:
-      source_sha: ${{ github.sha }}
 
   quality-gate:
     if: always()

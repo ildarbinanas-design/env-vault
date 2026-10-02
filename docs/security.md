@@ -68,6 +68,12 @@ a same-directory replacement, and a symlink or non-regular file at the target
 is rejected rather than written through. `export` refuses to overwrite an
 existing file without `--force`.
 
+Import checks backend identity before writing. On Windows, entries that name
+one credential through case variants of service or name are rejected with
+`BUNDLE_INVALID`, regardless of conflict policy. Preflight failures write
+nothing; failures during the later write phase can leave a partial import.
+External concurrent changes are not excluded by the preflight.
+
 ## Config
 
 Config files store only profile mappings:
@@ -108,7 +114,7 @@ Production secret storage uses OS keychain-style backends through `github.com/99
 
 If `pass` is explicitly selected and unavailable, commands return structured error code `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
 
-The production backend allowlist excludes plaintext file-style fallback. `keyring.FileBackend`, env files, and other plaintext storage must not be production-enabled without a separate ADR and explicit approval.
+The production backend allowlist excludes plaintext file-style fallback. Production plaintext storage is forbidden; `keyring.FileBackend` and env files are not production fallback options.
 
 Passwork is not implemented in this MVP and is deferred.
 
@@ -116,7 +122,7 @@ The insecure test backend is available only when all three gates are set:
 
 - `ENV_VAULT_BACKEND=test`
 - `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`
-- `ENV_VAULT_TEST_STORE=/tmp/...`
+- `ENV_VAULT_TEST_STORE=<absolute path under the system temporary directory>`
 
 The test backend is never a production fallback.
 

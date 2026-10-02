@@ -26,6 +26,7 @@ const (
 
 type workflow struct {
 	Name        string                 `yaml:"name"`
+	CacheMode   string                 `yaml:"cache-mode"`
 	RunName     string                 `yaml:"run-name"`
 	On          map[string]yaml.Node   `yaml:"on"`
 	Permissions map[string]string      `yaml:"permissions"`
@@ -188,9 +189,11 @@ func TestCIUsesReusableQualityAndCancellationSafeGate(t *testing.T) {
 		t.Fatalf("ci quality uses=%q", quality.Uses)
 	}
 	assertPermissions(t, "ci quality", quality.Permissions, map[string]string{"actions": "read", "contents": "read"})
-	// ADR 0011: CI no longer classifies release commits, so it passes only
-	// the commit to check.
-	assertPermissions(t, "ci quality inputs", quality.With, map[string]string{"source_sha": "${{ github.sha }}"})
+	// Quality always checks the triggering commit; callers cannot substitute
+	// another revision in a workflow_dispatch run on the default branch.
+	if len(quality.With) != 0 {
+		t.Fatal("quality must not accept a caller-selected source")
+	}
 
 	gate := wf.Jobs["quality-gate"]
 	if compactExpression(gate.If) != "always()" || !slices.Equal([]string(gate.Needs), []string{"quality"}) {
@@ -228,8 +231,8 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	assertPermissions(t, "reusable quality", wf.Permissions, map[string]string{"contents": "read"})
 	assertTrigger(t, wf, "workflow_call")
 	call := decodeTrigger[callTrigger](t, wf, "workflow_call")
-	if len(call.Inputs) != 1 || !call.Inputs["source_sha"].Required {
-		t.Fatalf("reusable quality inputs=%+v, want only the required source_sha", call.Inputs)
+	if len(call.Inputs) != 0 {
+		t.Fatal("quality must use the triggering commit without source inputs")
 	}
 	// ADR 0011: release.yml builds releases. CI neither injects a version nor
 	// reads a release contract; the binary reports the version Go stamps.
@@ -239,6 +242,9 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		}
 	}
 	assertJobIDs(t, wf, "resolve", "source-quality", "license", "native", "e2e-gate")
+	if wf.CacheMode != "none" {
+		t.Fatal("quality jobs must not receive cache access")
+	}
 
 	resolve := wf.Jobs["resolve"]
 	if resolve.TimeoutMinutes != 15 || len(resolve.Outputs) != 0 {
@@ -266,7 +272,7 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	reporterUploads := 0
 	for _, target := range e2eTargets {
 		upload := namedStep(t, resolve, "Upload "+target+" current-attempt E2E reporter")
-		wantName := "env-vault-tooling-gotestsum-" + target + "-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}"
+		wantName := "env-vault-tooling-gotestsum-" + target + "-${{ github.sha }}-attempt-${{ github.run_attempt }}"
 		if upload.Uses != uploadArtifactAction || upload.With["name"] != wantName ||
 			upload.With["path"] != "reporter-tools/"+target || upload.With["if-no-files-found"] != "error" {
 			t.Fatalf("%s reporter artifact is not exact-source/current-attempt qualified: uses=%q with=%v", target, upload.Uses, upload.With)
@@ -331,7 +337,7 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	}
 	reporterDownload := namedStep(t, native, "Download exact current-attempt E2E reporter")
 	if reporterDownload.Uses != downloadAction ||
-		reporterDownload.With["name"] != "env-vault-tooling-gotestsum-${{ matrix.id }}-${{ inputs.source_sha }}-attempt-${{ github.run_attempt }}" ||
+		reporterDownload.With["name"] != "env-vault-tooling-gotestsum-${{ matrix.id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}" ||
 		reporterDownload.With["path"] != "reporter-tool" {
 		t.Fatalf("native reporter download is not bound to the current source/attempt: uses=%q with=%v", reporterDownload.Uses, reporterDownload.With)
 	}
@@ -349,7 +355,7 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		"CGO_ENABLED":              "${{ matrix.cgo }}",
 		"ENV_VAULT_E2E_GOOS":       "${{ matrix.goos }}",
 		"ENV_VAULT_E2E_GOARCH":     "${{ matrix.goarch }}",
-		"ENV_VAULT_E2E_COMMIT_SHA": "${{ inputs.source_sha }}",
+		"ENV_VAULT_E2E_COMMIT_SHA": "${{ github.sha }}",
 	}) {
 		t.Fatalf("native E2E env=%v", runE2E.Env)
 	}
@@ -365,6 +371,9 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	}
 	for _, job := range wf.Jobs {
 		for _, step := range job.Steps {
+			if step.Uses == checkoutAction && step.With["ref"] != "${{ github.sha }}" {
+				t.Fatal("quality checkout must use the triggering commit")
+			}
 			if strings.Contains(step.Run, "go install gotest.tools/gotestsum") || strings.Contains(step.Run, "go run gotest.tools/gotestsum") {
 				t.Fatalf("workflow retains a matrix-time network reporter fallback: %q", step.Run)
 			}
@@ -390,10 +399,16 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		t.Fatalf("reusable quality expands to %d jobs, want 11", expandedJobs)
 	}
 
-	for _, command := range []string{"go test ./...", "go vet ./...", "scripts/vuln-check.sh", "go test -race ./..."} {
+	for _, command := range []string{"go test ./...", "go vet ./...", "scripts/vuln-check.sh", "go test -race ./...", "scripts/historical-transfer.sh", "scripts/secret-service-ci.sh"} {
 		if !jobRunsExact(wf.Jobs["source-quality"], command) {
 			t.Fatalf("source-quality missing %q", command)
 		}
+	}
+	nativeTests := namedStep(t, native, "Run native internal tests")
+	if nativeTests.If != "matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64'" ||
+		!containsAll(nativeTests.Run, "go test ./internal/... -count=1", "-timeout=5m", "scripts/check-native-tests.py") ||
+		nativeTests.Env["ENV_VAULT_NATIVE_WINCRED_TEST"] != "${{ matrix.goos == 'windows' && '1' || '' }}" {
+		t.Fatal("native internal tests must execute and require platform scenarios")
 	}
 	gate := wf.Jobs["e2e-gate"]
 	assertCancellationSafe(t, "reusable e2e-gate", gate)

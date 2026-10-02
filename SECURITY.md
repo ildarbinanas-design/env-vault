@@ -12,6 +12,11 @@ Use GitHub private vulnerability reporting when it is available for this reposit
 
 ## Secret Handling In Reports
 
-env-vault must not print, log, or store secret values outside the operating system keychain. Reports should never include real credentials. If a reproduction needs a secret-shaped value, generate an ephemeral dummy value and revoke or delete it immediately after testing.
+env-vault must not print or log secret values. Production values stay in the
+operating system keychain, apart from authenticated encrypted transfer
+containers and the memory/environment of an explicitly launched child.
+`export` uses a passphrase from a hidden prompt; containers and passphrases
+must never appear in reports. A child can disclose the values it receives;
+env-vault cannot constrain its output or downstream use. Reports should never include real credentials. If a reproduction needs a secret-shaped value, generate an ephemeral dummy value and revoke or delete it immediately after testing.
 
 Supported production storage is limited to OS keychain-style `github.com/99designs/keyring` backends: macOS Keychain, Linux Secret Service, Linux `pass`, KWallet, and Windows Credential Manager. The `file`/plaintext backend and Passwork are not production-enabled.

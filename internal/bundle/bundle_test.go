@@ -2,10 +2,10 @@ package bundle
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 )
@@ -15,15 +15,15 @@ import (
 // the production memory cost on every case.
 var testParams = Params{Time: 1, MemoryKiB: minMemoryKiB, Parallelism: 1}
 
-const testPassphrase = "correct horse battery staple"
+var testPassphrase = rand.Text()
 
 func testPayload() Payload {
 	return Payload{
 		Secrets: []SecretEntry{
-			{Service: "env-vault", Name: "nexus-token", Value: []byte("token-value")},
-			{Service: "env-vault", Name: "raw-bytes", Value: []byte{0x00, 0xff, 0xfe, 0x80}},
+			{Service: "env-vault", Name: "nexus-token", Value: []byte(rand.Text())},
+			{Service: "env-vault", Name: "raw-bytes", Value: append([]byte{0x00, 0xff, 0xfe, 0x80}, []byte(rand.Text())...)},
 			{Service: "env-vault", Name: "empty", Value: []byte{}},
-			{Service: "custom/service", Name: "nexus-token", Value: []byte("other-value")},
+			{Service: "custom/service", Name: "nexus-token", Value: []byte(rand.Text())},
 		},
 	}
 }
@@ -55,10 +55,10 @@ func TestRoundTripPreservesPayload(t *testing.T) {
 	for i, entry := range got.Secrets {
 		expected := want.Secrets[i]
 		if entry.Service != expected.Service || entry.Name != expected.Name {
-			t.Errorf("secret %d = %+v, want %+v", i, entry, expected)
+			t.Errorf("secret %d metadata changed", i)
 		}
 		if !bytes.Equal(entry.Value, expected.Value) {
-			t.Errorf("secret %d value = %v, want %v", i, entry.Value, expected.Value)
+			t.Errorf("secret %d value changed", i)
 		}
 	}
 }
@@ -66,11 +66,12 @@ func TestRoundTripPreservesPayload(t *testing.T) {
 // The container must disclose nothing about its contents to someone holding
 // the file but not the passphrase.
 func TestSealedContainerHidesNamesAndValues(t *testing.T) {
-	raw := sealForTest(t, testPayload())
+	payload := testPayload()
+	raw := sealForTest(t, payload)
 
-	for _, secret := range []string{"nexus-token", "token-value", "custom/service", "other-value"} {
+	for _, secret := range []string{"nexus-token", "custom/service", string(payload.Secrets[0].Value), string(payload.Secrets[3].Value), testPassphrase} {
 		if bytes.Contains(raw, []byte(secret)) {
-			t.Errorf("container discloses %q in the clear", secret)
+			t.Error("container discloses protected content in the clear")
 		}
 	}
 
@@ -110,7 +111,7 @@ func TestSealIsRandomizedPerCall(t *testing.T) {
 func TestOpenRejectsWrongPassphrase(t *testing.T) {
 	raw := sealForTest(t, testPayload())
 
-	_, err := Open(raw, []byte("wrong passphrase entirely"))
+	_, err := Open(raw, []byte(rand.Text()))
 	if !errors.Is(err, ErrAuthFailed) {
 		t.Fatalf("Open error = %v, want ErrAuthFailed", err)
 	}
@@ -308,9 +309,9 @@ func TestOpenRejectsEmptyPassphrase(t *testing.T) {
 func TestSealRejectsWeakPassphrase(t *testing.T) {
 	tests := map[string]string{
 		"empty": "",
-		"short": strings.Repeat("a", MinPassphraseLength-1),
+		"short": rand.Text()[:MinPassphraseLength-1],
 		// Two bytes per letter: enough bytes, too few characters.
-		"short in Cyrillic": strings.Repeat("я", MinPassphraseLength/2),
+		"short in Cyrillic": randomCyrillic(MinPassphraseLength / 2),
 	}
 
 	for name, passphrase := range tests {
@@ -326,7 +327,7 @@ func TestSealRejectsWeakPassphrase(t *testing.T) {
 // Before v0.4.1 the minimum counted bytes, so six Cyrillic letters (twelve
 // bytes) sealed a container. Open must keep accepting such a container.
 func TestOpenAcceptsAContainerSealedBelowTheCurrentMinimum(t *testing.T) {
-	passphrase := []byte(strings.Repeat("я", MinPassphraseLength/2))
+	passphrase := []byte(randomCyrillic(MinPassphraseLength / 2))
 	if ValidatePassphrase(passphrase) == nil {
 		t.Fatal("the passphrase must be below the current minimum for this test")
 	}
@@ -350,10 +351,10 @@ func TestOpenAcceptsAContainerSealedBelowTheCurrentMinimum(t *testing.T) {
 }
 
 func TestValidatePassphraseCountsCharacters(t *testing.T) {
-	if err := ValidatePassphrase([]byte(strings.Repeat("я", MinPassphraseLength))); err != nil {
+	if err := ValidatePassphrase([]byte(randomCyrillic(MinPassphraseLength))); err != nil {
 		t.Fatalf("%d Cyrillic letters were rejected: %v", MinPassphraseLength, err)
 	}
-	if err := ValidatePassphrase([]byte(strings.Repeat("я", MinPassphraseLength-1))); err == nil {
+	if err := ValidatePassphrase([]byte(randomCyrillic(MinPassphraseLength - 1))); err == nil {
 		t.Fatalf("%d Cyrillic letters were accepted", MinPassphraseLength-1)
 	}
 }
@@ -361,11 +362,11 @@ func TestValidatePassphraseCountsCharacters(t *testing.T) {
 func TestSealRejectsIncompletePayload(t *testing.T) {
 	tests := map[string]Payload{
 		"no secrets": {},
-		"no service": {Secrets: []SecretEntry{{Name: "nexus-token", Value: []byte("v")}}},
-		"no name":    {Secrets: []SecretEntry{{Service: "env-vault", Value: []byte("v")}}},
+		"no service": {Secrets: []SecretEntry{{Name: "nexus-token", Value: []byte(rand.Text())}}},
+		"no name":    {Secrets: []SecretEntry{{Service: "env-vault", Value: []byte(rand.Text())}}},
 		"duplicate entry": {Secrets: []SecretEntry{
-			{Service: "env-vault", Name: "nexus-token", Value: []byte("a")},
-			{Service: "env-vault", Name: "nexus-token", Value: []byte("b")},
+			{Service: "env-vault", Name: "nexus-token", Value: []byte(rand.Text())},
+			{Service: "env-vault", Name: "nexus-token", Value: []byte(rand.Text())},
 		}},
 	}
 
@@ -420,12 +421,12 @@ func TestSealUsesDefaultParamsForZeroValue(t *testing.T) {
 }
 
 func TestWipeClearsBytes(t *testing.T) {
-	buffer := []byte("key material")
+	buffer := []byte(rand.Text())
 	Wipe(buffer)
 
 	for i, b := range buffer {
 		if b != 0 {
-			t.Fatalf("byte %d = %d, want 0", i, b)
+			t.Fatalf("byte %d was not wiped", i)
 		}
 	}
 }
@@ -459,4 +460,16 @@ func kdf(document map[string]any) map[string]any {
 
 func cipherSection(document map[string]any) map[string]any {
 	return document["cipher"].(map[string]any)
+}
+
+func randomCyrillic(length int) string {
+	raw := make([]byte, length)
+	if _, err := rand.Read(raw); err != nil {
+		panic("cannot generate test passphrase")
+	}
+	result := make([]rune, length)
+	for i, b := range raw {
+		result[i] = 'А' + rune(b%64)
+	}
+	return string(result)
 }

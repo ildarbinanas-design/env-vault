@@ -25,6 +25,6 @@ binary releases, and Homebrew distribution now exist.
   and the threat-model consequences.
 - No automatic (scheduled/triggered, unattended) secret rotation. A helper
   that a human must invoke each time — wrapping the existing `secret set`/
-  `secret remove` flow, e.g. a combined "revoke old + prompt for new +
+  `secret delete` flow, e.g. a combined "revoke old + prompt for new +
   remove stale mapping" command — is in scope and is not automatic rotation
   (2026-07-30; see `backlog.md` P2).

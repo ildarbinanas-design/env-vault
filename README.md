@@ -43,7 +43,7 @@ On Linux, process environment variables may be visible to the same user through 
 - Config mutations reject symlink targets and use a synced mode-`0600` temporary sibling for same-directory replacement.
 - Environment target names are compared case-insensitively so a profile remains unambiguous when moved to Windows.
 - The `file`/plaintext keyring backend is not production-enabled.
-- The test backend is insecure and enabled only when all three env vars are set: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and `ENV_VAULT_TEST_STORE=/tmp/...`.
+- The test backend is insecure and enabled only when all three env vars are set: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and `ENV_VAULT_TEST_STORE=<absolute path under the system temporary directory>`.
 - Tests and smoke checks use generated ephemeral fixtures; stable secret payload fixtures are not stored in the repo.
 
 ## Install
@@ -198,6 +198,12 @@ archive. The E2E reporter is built once from an isolated checksum-pinned tool
 module, and each E2E job consumes only its source-SHA- and attempt-qualified
 reporter artifact with network fallback disabled.
 
+CI also runs the internal tests natively on macOS arm64 and Windows amd64,
+requires the Darwin PTY/signal scenarios to execute, and verifies Secret
+Service in a disposable Debian D-Bus session. A separate Linux check imports
+a container exported by the fixed v0.4.2 source commit; it does not track the
+latest release automatically.
+
 Releases follow [ADR 0011](docs/adr/0011-minimal-release-pipeline.md).
 `release.yml` runs on every push to `main`, where Release Please maintains the
 generated release pull request. Pull request titles follow Conventional
@@ -337,6 +343,11 @@ Export refuses a larger container with `BUNDLE_INVALID` and leaves the output
 path untouched, including with `--force`. The limit applies to all selected
 secrets together; base64 encoding means their combined raw values must fit
 below 12 MiB.
+
+On Windows, import rejects a container whose entries address the same
+credential through case variants of the service or secret name, for every
+`--on-conflict` policy. This returns `BUNDLE_INVALID` before any write. A later
+backend write can still fail partway through an import; it is not transactional.
 
 Export covers the default keychain service. If you stored something with
 `secret set --service <name>`, name that service again on export — a keychain

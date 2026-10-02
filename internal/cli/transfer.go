@@ -205,6 +205,19 @@ func (a *App) importCommand() *cobra.Command {
 				return err
 			}
 
+			if validator, ok := store.(secretstore.IdentityValidator); ok {
+				identities := make([]secretstore.Metadata, len(payload.Secrets))
+				for i, entry := range payload.Secrets {
+					identities[i] = secretstore.Metadata{Service: entry.Service, Name: entry.Name}
+				}
+				if err := validator.ValidateIdentities(identities); err != nil {
+					if stderrors.Is(err, secretstore.ErrIdentityCollision) {
+						return bundleError("import", fmt.Errorf("%w: %w", bundle.ErrInvalid, err))
+					}
+					return backendUnavailable("import", err)
+				}
+			}
+
 			dryRun := a.dryRun(cmd)
 			reported := make([]map[string]string, 0, len(payload.Secrets))
 			writes := make([]bundle.SecretEntry, 0, len(payload.Secrets))

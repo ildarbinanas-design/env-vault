@@ -21,7 +21,7 @@ env-vault is a Go CLI with a small package boundary:
 
 ## SecretStore Interface
 
-The interface supports `Set`, `Get`, `Exists`, `Delete`, and `List`. Commands never expose `Get` to the user. `Get` exists only so `exec` can inject values into the child environment.
+The interface supports `Set`, `Get`, `Exists`, `Delete`, and `List`. Commands never expose `Get` to the user. `Get` supplies values for child environment injection, encrypted export, and explicit write verification. `check` and `list` use metadata only.
 
 Production storage uses `github.com/99designs/keyring` with an explicit allowlist: macOS Keychain, Secret Service, KWallet, Windows Credential Manager, and `pass`. `pass` is kept after the platform keychain backends so discovery still prefers the native OS stores first. `keyring.FileBackend`, plaintext/env-file storage, and Passwork are not production backends.
 
@@ -179,7 +179,12 @@ output file; the container format and opening limits remain unchanged.
 
 The plaintext is a JSON object holding one entry per secret, each with its
 keychain service, name, and base64 value. Entries are unique by
-`(service, name)`, which is how the backend addresses a secret.
+the exact `(service, name)` pair in the portable format. Before the first
+write, import also checks the selected backend's identity. Windows compares
+the complete `keyring:<service>:<name>` TargetName with the operating system's
+case-insensitive ordinal comparison, verified against native Credential
+Manager tests. A collision inside the container returns `BUNDLE_INVALID` for
+every conflict policy. Other backends keep their existing identity rules.
 
 The container carries values only. Profile mappings are not included because
 `.env-vault.yaml` holds no values and is already portable through the
@@ -191,7 +196,25 @@ which accepts a comma-separated list and may be repeated; a keychain cannot
 enumerate services, so custom ones must be named. The flag is deliberately not
 called `--service`: on `secret set` that name replaces the default service,
 whereas here the default is always included and the listed services are added
-to it. Import applies `--on-conflict fail|skip|overwrite` per secret.
+to it. Import applies `--on-conflict fail|skip|overwrite` per secret. Identity,
+metadata, conflict, and size checks complete before any `Set`. This preflight
+is not a transaction: a later write can fail, and another process can change
+the backend between checks and writes.
+
+### Native record identity
+
+The Secret Service adapter retains the dependency's collection paths, `profile`
+attribute, and JSON Item encoding for existing records. All operations use
+that collection and attribute; labels remain display text. Missing attributes
+are ignored, missing records return absence, and metadata or access errors
+remain backend errors. Multiple physical records for one identity return
+`BACKEND_UNAVAILABLE` with guidance to inspect the keychain; env-vault never
+chooses or repairs a duplicate. Metadata listing does not call `GetSecret`.
+
+The Windows adapter projects only generic credential metadata from
+`CredEnumerateW` with flags zero, preserves enumeration errors, and checks the
+complete namespace/service boundary. `ERROR_NOT_FOUND` alone means an empty
+listing. The 2560-byte value limit and existing TargetName encoding remain.
 
 ## Output Schema
 
