@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.4...v0.4.5) (2026-10-03)
+
+
+### Bug Fixes
+
+* preserve exports and harden secret input handling ([#135](https://github.com/ildarbinanas-design/env-vault/issues/135)) ([c23cf6f](https://github.com/ildarbinanas-design/env-vault/commit/c23cf6f47afea61cb3cdc5cb380007a823b1cfb5))
+
 ## [0.4.4](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.3...v0.4.4) (2026-10-03)
 
 
