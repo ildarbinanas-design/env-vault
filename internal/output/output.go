@@ -171,16 +171,28 @@ func (r Renderer) writeHumanSuccess(env Envelope) error {
 	case "profile_create":
 		profile, _ := stringFromData(env.Data, "profile")
 		path, _ := stringFromData(env.Data, "path")
+		if dryRun, ok := boolFromData(env.Data, "dry_run"); ok && dryRun {
+			_, err := fmt.Fprintf(r.stdout, "dry run: profile %s would be created (%s)\n", profile, path)
+			return err
+		}
 		_, err := fmt.Fprintf(r.stdout, "profile created: %s (%s)\n", profile, path)
 		return err
 	case "profile_add":
 		profile, _ := stringFromData(env.Data, "profile")
 		envName, _ := stringFromData(env.Data, "env")
+		if dryRun, ok := boolFromData(env.Data, "dry_run"); ok && dryRun {
+			_, err := fmt.Fprintf(r.stdout, "dry run: profile %s would add %s\n", profile, envName)
+			return err
+		}
 		_, err := fmt.Fprintf(r.stdout, "profile updated: %s added %s\n", profile, envName)
 		return err
 	case "profile_remove":
 		profile, _ := stringFromData(env.Data, "profile")
 		envName, _ := stringFromData(env.Data, "env")
+		if dryRun, ok := boolFromData(env.Data, "dry_run"); ok && dryRun {
+			_, err := fmt.Fprintf(r.stdout, "dry run: profile %s would remove %s\n", profile, envName)
+			return err
+		}
 		_, err := fmt.Fprintf(r.stdout, "profile updated: %s removed %s\n", profile, envName)
 		return err
 	case "profile_show":

@@ -179,6 +179,10 @@ JSON envelope including the base64 ciphertext and escaped header fields.
 Oversized exports return `BUNDLE_INVALID` before creating or replacing the
 output file; the container format and opening limits remain unchanged.
 
+Both the container and decrypted payload must contain exactly one JSON document.
+Only whitespace may follow it. Unknown fields and repeated fields, including
+escaped spellings and case aliases, are rejected at every object level.
+
 The plaintext is a JSON object holding one entry per secret, each with its
 keychain service, name, and base64 value. Entries are unique by
 the exact `(service, name)` pair in the portable format. Before the first

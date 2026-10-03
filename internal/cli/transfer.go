@@ -138,7 +138,11 @@ func (a *App) exportCommand() *cobra.Command {
 			if err != nil {
 				return bundleError("export", err)
 			}
-			if err := atomicfile.Write(outPath, raw); err != nil {
+			write := atomicfile.WriteNew
+			if force {
+				write = atomicfile.Write
+			}
+			if err := write(outPath, raw); err != nil {
 				return exportWriteError(err)
 			}
 			return a.renderer().Success("export", data, nil)
@@ -322,6 +326,13 @@ func sortedKeys(values map[string]struct{}) []string {
 // There is deliberately no flag or environment variable carrying a passphrase,
 // mirroring the rule that a secret value never reaches the command line.
 func (a *App) readPassphrase(command string, confirm bool) ([]byte, error) {
+	// A partial gate must fail before stdin can become a passphrase source.
+	// NewFromEnv validates the full gate without reading or creating a store file.
+	if teststore.RequestedFromEnv() {
+		if _, err := teststore.NewFromEnv(command); err != nil {
+			return nil, err
+		}
+	}
 	read := a.passphraseInput(command)
 
 	first, err := read("Passphrase: ")
@@ -457,6 +468,9 @@ func ensureExportTarget(path string, force bool) error {
 }
 
 func exportWriteError(err error) error {
+	if stderrors.Is(err, os.ErrExist) {
+		return apperrors.Usage("export", "Container already exists", "Choose another --out path or pass --force")
+	}
 	if atomicfile.IsUnsafeTarget(err) {
 		return apperrors.Usage("export", "Unsafe container target: "+err.Error(), "Write the container to a regular file path")
 	}
