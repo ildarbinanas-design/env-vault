@@ -324,8 +324,9 @@ uploaded. An unavailable baseline or failed scenario fails CI. Ordinary unit
 tests do not fetch a baseline or use the network.
 
 Disposable macOS checks do not verify prompts or access decisions in the
-owner's login session. The manual observations below cover explicit refusal
-and approval; completing the locked-keychain scenario remains in the backlog.
+owner's login session. The manual observations below cover explicit refusal,
+approval, and a locked-keychain timeout. Recovery from the repeated native
+dialogs remains in the backlog.
 
 ## Manual macOS login-session check (2026-10-03)
 
@@ -364,6 +365,70 @@ keychain and search list matched their initial state. The temporary records
 and helper scripts were removed; existing records and their access controls
 were unchanged. No password or keychain settings were changed.
 
-This is a manual observation record, not automated coverage. A controlled
-locked-keychain check that identifies the failure cause and confirms reliable
-recovery remains open in [the backlog](../backlog.md#p0).
+This is a manual observation record, not automated coverage. The controlled
+locked-keychain follow-up below distinguishes cancellation from timeout;
+reliable recovery remains open in [the backlog](../backlog.md#p0).
+
+## Locked macOS login-session follow-up (2026-10-03)
+
+The owner and an agent used the Homebrew
+[v0.4.5 binary](https://github.com/ildarbinanas-design/env-vault/releases/tag/v0.4.5)
+on macOS 26.6.2 (25G83), darwin/arm64. Homebrew upgraded the installed CLI
+from v0.4.3. Its release source was
+`933e58f05e00ddfd77df4c0dd0b5cdac0f358a99`; `gh attestation verify` returned
+exit 0 for the installed binary with the repository, release workflow,
+`refs/heads/main`, exact source commit, and `--deny-self-hosted-runners` pinned.
+
+An independently reviewed temporary harness generated one disposable value
+in memory and passed it through stdin to a uniquely named record in the login
+keychain. The temporary profile contained only the record name and environment
+mapping. The harness checked captured CLI and child output for the value and
+selected encodings before emitting only status metadata. A child marker
+detected whether the requested command started; the child would compare its
+injected value with the original in memory.
+
+The Keychain API confirmed the login keychain was locked immediately before
+each `exec` below. The keychain was still locked after each run; the default
+keychain and search list matched their initial state.
+
+| Exercise | Observed result |
+| --- | --- |
+| Owner selected **Cancel** | Exit 4, `BACKEND_UNAVAILABLE`, after 2.605 seconds. Remediation: "Allow env-vault in the system keychain prompt or unlock the keychain, then retry". The child did not start. |
+| Owner confirmed no interaction with the prompt until the command exited | Exit 4, `BACKEND_UNAVAILABLE`, after 120.023 seconds. Remediation: "Answer the system keychain prompt or unlock the keychain, then retry". The child did not start. The owner confirmed that the system dialog remained visible after the CLI exited. |
+
+After the clean timeout, the owner selected **Cancel** once and confirmed
+that the dialog closed and immediately appeared again. This reproduces the
+repeated-dialog observation without interaction during the timeout interval.
+The owner reported that manually terminating SecurityAgent after this run did
+not stop the recurring windows. A subsequent process-name inspection found
+no running env-vault process; the test controller was idle.
+
+Neither run needed the harness watchdog to terminate the CLI. No disposable
+value leak was detected in captured CLI or child output. Both failures use
+the same public error code; the owner's action, elapsed time, and remediation
+distinguish the observations.
+
+An earlier timeout attempt is excluded from the no-interaction result because
+the owner reported pressing buttons during it. Its dialog reappeared after
+Cancel; the owner completed the requested manual SecurityAgent termination
+before the clean repeat. The repeated-dialog cause was not established.
+
+The owner then reported that the system prompt accepted the login-keychain
+password but appeared again. The Keychain API confirmed that login was now
+unlocked, with the default keychain and search list unchanged. No new `exec`
+was started while the dialogs were recurring, so successful child execution
+after this timeout remains unverified.
+
+Cleanup completed: deletion of the exact temporary record returned exit 0;
+the subsequent `secret check` returned exit 3, `MISSING_SECRET`. Final API
+status confirmed the initial unlocked state, default keychain, and search
+list were restored. The controller exited and its temporary script and
+metadata-only profile were removed. The password was entered only by the
+owner in the macOS dialog. After cleanup, the owner needed several further
+Cancel actions, then confirmed that no dialogs remained or reappeared.
+
+The clean repeat confirms that the command timeout does not guarantee that
+the native dialog disappears or stays closed after Cancel. It does not
+establish which component retains or reopens the dialog. The repeated-dialog
+problem and verification of successful `exec` after recovery remain open in
+[the backlog](../backlog.md#p0).

@@ -219,6 +219,12 @@ conflict policy; see [transfer containers](#transfer-containers).
   with `BACKEND_UNAVAILABLE` and is never treated as a missing secret. A
   timed-out write may still complete afterwards when the backend helper, such
   as `pass` or `gpg`, keeps running; check with `secret check` before retrying.
+- In a [manual macOS login-session check](e2e.md#locked-macos-login-session-follow-up-2026-10-03),
+  a native dialog remained after a read timed out and reappeared after Cancel,
+  even though the CLI had exited. Entering the keychain password restored the
+  unlocked state but did not stop the recurring windows. The command timeout
+  does not guarantee dismissal of the system dialog; the cause and reliable
+  recovery remain under investigation.
 - Any process or principal with write access through ownership, group mode, or
   ACLs can replace a parent directory, lock path, or temporary filename during
   a checked filesystem operation. This remains outside the cooperative
