@@ -1,58 +1,65 @@
 # Releasing env-vault
 
-Releases follow [ADR 0011](docs/adr/0011-minimal-release-pipeline.md) and
-[ADR 0012](docs/adr/0012-attestation-verification-pins-release-workflow.md).
-One workflow, [`.github/workflows/release.yml`](.github/workflows/release.yml),
-does all of it. No workflow runs on a tag.
+[ADR 0011](docs/adr/0011-minimal-release-pipeline.md) and
+[ADR 0012](docs/adr/0012-attestation-verification-pins-release-workflow.md)
+define the release contract. [`.github/workflows/release.yml`](.github/workflows/release.yml)
+runs on pushes to `main`; no workflow runs on a tag.
 
-## How a release happens
+## Authorize a release
 
-1. Changes reach `main` through squash-merged pull requests with Conventional
-   Commits titles. Only `feat`, `fix`, `perf`, and `revert` appear in the
-   changelog and create a release; `docs`, `ci`, `build`, `test`, `refactor`,
-   and `chore` do not. Dependabot titles Go module updates `fix(deps)` and
-   GitHub Actions updates `ci(deps)`.
-2. On every push to `main`, Release Please opens or updates the release pull
-   request: the version, `CHANGELOG.md`, `.release-please-manifest.json`, and
-   the marked README line. It uses `RELEASE_PLANNING_TOKEN`, because a pull
-   request opened with `GITHUB_TOKEN` would not run the required checks.
-3. **Merging the release pull request is the release authorization.** Review
-   the version and changelog, check that the required checks are green, and
-   merge head-guarded, so a head that moved during review is never published:
+Release Please maintains the generated release pull request when product
+changes require a release. `feat`, `fix`, `perf`, and `revert` create releases;
+`docs`, `ci`, `build`, `test`, `refactor`, and `chore` do not. Dependabot uses
+`fix(deps)` for Go modules and `ci(deps)` for Actions updates. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for title and version rules.
 
-   ```sh
-   gh pr merge <number> --repo ildarbinanas-design/env-vault \
-     --squash --match-head-commit <full-head-sha>
-   ```
+**Merging the generated release pull request authorizes its exact version.**
+Review the version, changelog, manifest and marked README line, confirm the
+required checks are green, then merge the reviewed head:
 
-   Either maintainer may merge it. An agent merges it only on the owner's
-   explicit instruction (see `AGENTS.md`).
-4. The `release.yml` run for the merge commit then works through these jobs:
-   - **release-please** tags the merge commit and opens a draft release. Only
-     the run for the tagged commit builds, so the attestations name exactly
-     that commit. The run for the merge commit fails if the tag is missing or
-     points to another commit, so a release never stops silently.
-   - **build** stops unless the tag points to the checked-out commit. It builds
-     the five targets, checks that the build information is unmodified and
-     that `--version` reports the tag, uploads each binary, and smoke-tests the
-     real OS secret store.
-   - **publish** packages the five archives deterministically, attests the
-     archives and the binaries, and verifies those attestations. It then
-     uploads the ten files to the draft and publishes it. Releases are
-     immutable, so the published release can no longer change. Never publish
-     the draft by hand: a release published before its run built it stays
-     without files, the run for its commit fails at **release-please** or
-     **publish**, and the version has to be abandoned (see
-     [When a release fails](#when-a-release-fails)).
-   - **verify** checks that the release is published and immutable and that
-     the tag points to the release commit. It downloads the ten assets and
-     checks their checksums and attestations.
-   - **tap** generates the formula from the published archives and opens a
-     pull request in `ildarbinanas-design/homebrew-tap` with auto-merge. The
-     tap's `test` check must pass first; it compares the entire formula with
-     its reviewed template, using the version and published checksums.
+```sh
+gh pr merge <number> --repo ildarbinanas-design/env-vault \
+  --squash --match-head-commit <full-head-sha>
+```
 
-## Verifying a release
+Either maintainer may authorize a release. An agent needs the owner's explicit
+instruction ([AGENTS.md](AGENTS.md)). A changed head requires a new review.
+
+## From merge to Homebrew
+
+An ordinary push maintains release planning. Publication follows the merge of
+the generated release pull request; only the run for its tagged commit builds.
+
+```mermaid
+flowchart TD
+    Main["Push to main"] --> Plan["Release Please: maintain a release PR<br/>when product changes require one"]
+    Plan -->|"Owner authorizes the reviewed release PR"| Merge["Head-guarded squash merge"]
+    Merge --> Tag["Release Please: tag the merge SHA<br/>and create a draft"]
+    Tag --> Build["Only the run for the tagged merge SHA builds<br/>Build five targets; check version and clean build info<br/>Smoke-test OS secret stores"]
+    Build --> Package["Package five archives deterministically<br/>Write SHA-256 sidecars"]
+    Package --> Attest["Attest archives and binaries<br/>Verify workflow, main, merge SHA and hosted runner"]
+    Attest --> Publish["Upload ten files to draft<br/>Publish immutable release"]
+    Publish --> Verify["Verify published release, tag,<br/>ten assets, checksums and archive attestations"]
+    Verify --> Tap["Open Homebrew formula PR<br/>Auto-merge after tap test passes"]
+```
+
+The five targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+The `build` job checks the tag, the unmodified Go build information, and
+`--version` before uploading each binary and running the backend smoke test.
+Full E2E runs in CI on its own builds; release binaries get the release job's
+build checks and backend smoke tests.
+
+`publish` attests all five archives and all five binaries before publishing
+five archives and their five checksum files. `verify` downloads the published
+files, requires an immutable release and the expected tag commit, and checks
+the assets and archive attestations. `tap` then generates the formula from
+those archives. The tap's required `test` checks the complete formula against
+its reviewed template and published checksums before auto-merge.
+
+**Never publish the draft by hand.** If it becomes immutable before the run
+uploads its files, that version cannot be completed. See recovery below.
+
+## Verify a release
 
 ```sh
 TARGET=darwin-arm64
@@ -66,92 +73,76 @@ gh attestation verify "env-vault-$TARGET.tar.gz" \
   --deny-self-hosted-runners
 ```
 
-An installed binary verifies the same way: pass `"$(command -v env-vault)"`
-instead of the archive. `-R` alone is not enough, because it accepts an
-attestation from any branch or workflow in the repository (ADR 0012).
+For an installed binary, pass `"$(command -v env-vault)"` instead of the
+archive. `-R` alone accepts attestations from any branch or workflow in the
+repository. The release workflow also pins `--source-digest` to the release
+commit (ADR 0012).
 
-The archives are deterministic. Rebuilding from the tag with the Go version in
-`go.mod` reproduces the Linux and Windows binaries and, from the published
-binaries, all five archives (`scripts/release/package-archives.sh` with
-`SOURCE_DATE_EPOCH` set to the commit time). Darwin binaries use cgo and can be
-rebuilt only on macOS.
+Rebuilding from the tag with the Go version in `go.mod` reproduces the Linux
+and Windows binaries. Repackaging the published binaries with
+`scripts/release/package-archives.sh` and `SOURCE_DATE_EPOCH` set to the commit
+time reproduces all five archives. Darwin binaries use cgo and require macOS
+to rebuild.
 
 ## When a release fails
 
-- Use **Re-run failed jobs** on the same run. A re-run uses the same workflow
-  file and commit, so it cannot fix a defect in them. Do not use **Re-run all
-  jobs** once the release is published: that run finds the published release,
-  skips `verify` and `tap`, and ends green.
-- If the merge commit's run fails because its tag is missing, Release Please
-  did not create it: re-run the failed job. If the tag points to another
-  commit, for example because it was created by hand before the merge, the
-  version cannot be released.
-- `publish` never replaces an uploaded asset. On a re-run it keeps assets whose
-  bytes match and stops on any difference. If an asset in the draft is broken,
-  the owner deletes that asset from the draft, which can still change, and
-  re-runs the failed job. After the release is published, a re-run of
-  `publish` only confirms that the published files are these files.
-- `tap` re-runs reuse the branch and the pull request of an earlier attempt,
-  but only a branch that changes nothing except the formula. A re-run never
-  moves the tap back to an older version. If the tap's `test` check fails, the
-  pull request stays open. Fix the cause and let auto-merge finish.
-- A draft published by hand before its run uploaded the files can never get
-  them, so every re-run fails again at **release-please** or **publish**.
-  Abandon that version as described next.
-- A tag cannot be moved or deleted. If a tagged version cannot be finished,
-  abandon it: label its release pull request `autorelease: abandoned`, fix the
-  defect if there is one, and release the next version.
+Inspect the current run, release and tap PR before retrying an ambiguous
+mutation. Use **Re-run failed jobs** on the same run. A re-run keeps the
+original workflow and commit, so it cannot fix a defect in either. **Re-run all
+jobs** after publication skips `verify` and `tap` and can end green without
+finishing them.
 
-## Configuration
+| Failure | Recovery |
+| --- | --- |
+| Release commit has no tag | Re-run the failed job so Release Please can create it. |
+| Release commit's tag points to another commit | Abandon that version; tags cannot be moved or deleted. |
+| A draft asset differs from the build | `publish` stops without replacing it. The owner deletes the broken draft asset, then re-runs the failed job. Matching uploaded bytes are reused. |
+| `publish` is retried after publication | It succeeds only if the release already has exactly the built files. |
+| Tap PR or branch already exists | The job reuses it only if the branch changes just the formula and its content matches the expected state. It never downgrades the tap. |
+| Tap `test` fails | Fix the cause in the open PR and let auto-merge finish. |
+| Draft was published before files were uploaded | Abandon the version; an immutable release cannot receive the missing files. |
 
-- `release-please-config.json` makes Release Please open draft releases,
-  create the tag itself (`force-tag-creation`), and hide the non-product
-  changelog sections. `.release-please-manifest.json` holds the version.
-- The `release-planning` environment holds `RELEASE_PLANNING_TOKEN`, a
-  fine-grained token for this repository that expires every 90 days. The next
-  renewal is due before 2026-12-26.
-- The `release` environment holds `HOMEBREW_TAP_TOKEN`, a fine-grained token
-  for `ildarbinanas-design/homebrew-tap`. Both environments admit only `main`;
-  the `v*` rule the old pipeline needed in `release` is removed in migration
-  step 5 ([#107](https://github.com/ildarbinanas-design/env-vault/issues/107)).
-- [`docs/release-external-settings.md`](docs/release-external-settings.md)
-  lists every external setting, the token permissions, and how to check and
-  rotate them.
-- Immutable releases are enabled for the repository. The `main` ruleset
-  requires the `quality-gate`, `pr-title`, `Dependency review`,
-  `Analyze (go)`, and `Analyze (actions)` checks.
+To abandon a version that cannot be completed, label its release pull request
+`autorelease: abandoned`, fix the cause, and release a higher version.
+
+## Configuration and external settings
+
+- `release-please-config.json` enables draft releases and tag creation
+  (`force-tag-creation`) and hides non-product changelog sections.
+  `.release-please-manifest.json` holds the version.
+- `release-planning` holds `RELEASE_PLANNING_TOKEN`; `release` holds
+  `HOMEBREW_TAP_TOKEN`. Both environments admit only `main`. Planning uses a PAT
+  because a PR created with `GITHUB_TOKEN` would not run the required checks.
+- Immutable releases and the `main`/`v*` rulesets protect publication. Required
+  `main` checks are `quality-gate`, `pr-title`, `Dependency review`,
+  `Analyze (go)`, and `Analyze (actions)`.
+
+[External settings](docs/release-external-settings.md) lists permissions,
+rulesets, token expiry and rotation. Check it at each audit and after settings
+changes; the release workflow does not verify those settings itself.
 
 ## Versions that must stay unpublished
 
-- `v0.0.8` through `v0.0.11` are failed immutable tags. They stay, and they
-  never get a GitHub Release.
-- `v0.0.12` (pull request #31) and `v0.3.3` (pull request #102) are abandoned.
-  No tag or release may exist for them.
-- Published releases are immutable. To correct one, publish a higher version.
+- `v0.0.8` through `v0.0.11` are failed immutable tags. They stay without a
+  GitHub Release.
+- `v0.0.12` (PR #31) and `v0.3.3` (PR #102) are abandoned. Neither may get a tag
+  or release.
+- Published releases are immutable; corrections ship in a higher version.
 
-## Before ADR 0011
+## Historical releases
 
-### Reading the v0.3.4 release notes
-
-The generated v0.3.4 changelog links to v0.3.3, which was abandoned and has no
-tag or published release. Use the
+The generated v0.3.4 changelog links to abandoned v0.3.3. Use the
 [v0.3.2 to v0.3.4 comparison](https://github.com/ildarbinanas-design/env-vault/compare/v0.3.2...v0.3.4)
-to see what changed between the published versions. The runtime fix first
-shipped in v0.3.4 is preserving ignored SIGHUP and SIGINT for a child under
-`nohup` ([#101](https://github.com/ildarbinanas-design/env-vault/pull/101));
-[#103](https://github.com/ildarbinanas-design/env-vault/pull/103) corrected the
-previous release pipeline's handling of a deleted GitHub App author.
+for the changes between published releases. The runtime fix first shipped in
+v0.3.4 preserves ignored SIGHUP and SIGINT under `nohup`
+([#101](https://github.com/ildarbinanas-design/env-vault/pull/101));
+[#103](https://github.com/ildarbinanas-design/env-vault/pull/103) repaired the
+previous pipeline's handling of a deleted GitHub App author. Repeated older
+entries, including encrypted transfer (#78), artifact lifecycle tooling (#60)
+and the initial MVP, do not date those features to v0.3.4.
 
-That generated section also repeats earlier work, including encrypted
-import/export (#78), Actions artifact lifecycle tooling (#60), and the initial
-MVP. Those entries do not mean the features were introduced in v0.3.4. The
-original generated changelog and immutable releases remain the historical
-record; this note explains how to read them.
-
-### Previous pipeline
-
-Releases up to v0.3.4 went through the previous pipeline: release planning,
-the tag-triggered publisher, and the repair workflows. Its procedures are in
+Releases through v0.3.4 used the previous pipeline. Its procedures remain in
 [`RELEASING.md` at v0.3.4](https://github.com/ildarbinanas-design/env-vault/blob/1fd6638295fb616189e66da7cc110cf4831a3d94/RELEASING.md).
-Migration step 6 ([#107](https://github.com/ildarbinanas-design/env-vault/issues/107))
-removed its workflows and code; git history keeps them.
+Migration [#107](https://github.com/ildarbinanas-design/env-vault/issues/107)
+removed that code; git history, generated changelog and immutable releases
+retain the record.

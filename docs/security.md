@@ -16,20 +16,26 @@ Secret input is limited to:
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
+On macOS and Linux, interrupted hidden prompts restore the terminal on SIGINT,
+SIGTERM, SIGHUP and SIGQUIT. Inherited ignored SIGINT/SIGHUP remain ignored.
+SIGKILL cannot be handled or restore terminal state.
+
 ## Transfer Containers
 
-`export` writes every stored secret value to a single encrypted file; `import`
-restores them into the keychain on another machine. The format is AES-256-GCM
+`export` writes values from the selected keychain services to one encrypted
+file; `import` restores them into the keychain on another machine. The format is AES-256-GCM
 under a key derived with Argon2id (64 MiB, three passes, four lanes), with the
 header authenticated and the key-derivation parameters bounds-checked before
-any key is derived. Secret names live inside the ciphertext, so a container
-discloses nothing about its contents without the passphrase. See
+any key is derived. Secret names and values live inside the ciphertext. The
+cleartext header exposes the creation time, tool version and encryption
+parameters; the file length is visible too. See
 [ADR 0010](adr/0010-encrypted-secret-transfer-container.md).
 
-A container carries values only. Profile mappings stay in `.env-vault.yaml`,
-which holds no values and is meant to be committed, so it is already portable
-and duplicating it into the container would only widen what a leaked container
-discloses.
+A container carries values only. Profile mappings stay in YAML, contain no
+values, and can be versioned with the consuming project. They are already
+portable; duplicating them into the container would widen what a leaked
+container discloses. This repository ignores its own local `.env-vault.yaml`
+and lock file, as explained in [README.md](../README.md#profiles-and-config).
 
 Export covers the default keychain service plus any service named explicitly
 with `--with-services`. A keychain cannot enumerate the services an application
@@ -63,12 +69,19 @@ Understand what a container costs you before writing one:
   collector may have copied them, so this narrows the window rather than
   closing it.
 
+Containers allow at most 16 MiB of ciphertext, including encoded values,
+metadata and the authentication tag, and 24 MiB for the complete file. Export
+refuses larger output with `BUNDLE_INVALID` before creating or replacing the
+file, including with `--force`. Base64 encoding means the selected raw values
+together must fit below 12 MiB. See [format and KDF bounds](design.md#transfer-container).
+
 Containers are written with mode `0600` through a synced temporary sibling and
 a same-directory replacement, and a symlink or non-regular file at the target
 is rejected rather than written through. `export` refuses to overwrite an
 existing file without `--force`.
 
-Import checks backend identity before writing. On Windows, entries that name
+Import authenticates and decrypts the container before any keychain write.
+It then checks backend identity. On Windows, entries that name
 one credential through case variants of service or name are rejected with
 `BUNDLE_INVALID`, regardless of conflict policy. Preflight failures write
 nothing; failures during the later write phase can leave a partial import.
@@ -128,6 +141,68 @@ The test backend is never a production fallback.
 
 Tests and smoke checks generate ephemeral secret fixture values at runtime. Stable secret payload fixtures must not be committed to tests, scripts, docs, CI output, JSON/JSONL examples, or evidence bundles.
 
+### macOS installation and Keychain access
+
+Use Homebrew for release binaries on macOS 15+. They are not Developer ID
+signed or notarized ([ADR 0009](adr/0009-no-code-signing-homebrew-only-macos-distribution.md)),
+so `spctl --assess` rejects them. A browser download, or extraction from an
+archive carrying Gatekeeper quarantine, can produce a binary macOS terminates
+on launch. Homebrew does not attach quarantine.
+
+`xattr -d com.apple.quarantine env-vault` is a manual local override after
+verifying the release source and checksum; it does not replace signing or
+notarization. env-vault never removes quarantine automatically, and manual
+release downloads remain an unsupported installation path on macOS.
+
+macOS asks for Keychain access the first time a given binary reads a stored
+value: `exec`, `secret set --verify`, or `export`. Each Homebrew upgrade installs
+a new binary, so access prompts return once per secret. After upgrading, run
+each profile in a terminal and choose **Always Allow**:
+
+```sh
+env-vault exec dev -- true
+```
+
+A non-interactive process such as a LaunchAgent may otherwise wait for an
+unanswered prompt for up to two minutes and fail with `BACKEND_UNAVAILABLE`.
+Denied access fails the same way. `secret check`, `secret list`,
+`profile add --check-secret`, import conflict checks, and `doctor` only list
+stored names and never read a value.
+
+### Linux backend selection
+
+Secret Service requires a compatible daemon and session. For `pass`, install
+the command and initialize its password store; `ENV_VAULT_BACKEND=pass` selects
+it explicitly. A slashed service never falls back to `pass`, because that
+backend cannot distinguish `team/ci` + `tok` from `team` + `ci/tok`. An older
+entry created with the first combination remains reachable with the second.
+
+Secret Service collections are selected by an env-vault alias where supported,
+otherwise by their exact collection label. KDE saves the alias on the next
+write; GNOME does not support custom aliases. Existing collections keep their
+records and encoding. Duplicate labels or a competing legacy path fail with
+`BACKEND_UNAVAILABLE`, even if another collection has the requested label.
+This includes some old KDE `_HH` name collisions, which are indistinguishable
+from renamed GNOME collections through this metadata. Identify the intended
+collection before resolving the conflict: on KDE, its explicit env-vault alias
+can select it; for a renamed old GNOME collection, restore its original unique
+service label in the keyring manager. No automatic migration is attempted.
+
+For headless automation, use a CI secret manager or an explicitly supported
+backend with its required session; plaintext config is never a fallback.
+
+### Windows Credential Manager
+
+Values are limited to 2560 bytes. Secret names are case-insensitive:
+`secret set TOKEN` over `token` reports `overwritten`, with a record ID based on
+the spelling supplied. Service names are compared exactly in listings, so keep
+one spelling per service. Oversized writes return `SECRET_TOO_LARGE`; import
+checks every value it will write before its first write.
+
+Import also rejects entries that address the same complete Windows credential
+through case variants of service or name. This is independent of the selected
+conflict policy; see [transfer containers](#transfer-containers).
+
 ## Known Limitations
 
 - A child process receives secret values through environment variables and can leak them if it prints or forwards its environment.
@@ -152,4 +227,6 @@ Tests and smoke checks generate ephemeral secret fixture values at runtime. Stab
 
 Do not include secret values in bug reports, terminal transcripts, screenshots, logs, or reproduction data. Include command names, structured error codes, platform, keychain backend notes, and redacted config mappings only.
 
-Security reports should be sent privately once a public maintainer contact exists. Until then, keep reports local and do not publish secret-bearing evidence.
+Follow [SECURITY.md](../SECURITY.md#reporting-a-vulnerability): use GitHub private
+vulnerability reporting when available, or contact the maintainer privately
+before sharing reproduction details. Never publish secret-bearing evidence.
