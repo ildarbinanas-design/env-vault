@@ -2,12 +2,17 @@
 
 ## P0
 
-- Complete the manual locked login-keychain exercise on macOS: distinguish
-  cancellation/refusal from a backend timeout and verify recovery without
-  repeated unlock dialogs. The [2026-10-03 session check](docs/e2e.md#manual-macos-login-session-check-2026-10-03)
-  verified explicit refusal and one-time approval with an unlocked keychain,
-  but did not resolve the locked case. Disposable CI keychains do not establish
-  these user-session facts.
+- Investigate recurring native dialogs after a locked login-keychain timeout
+  on macOS and verify successful `exec` after recovery.
+  The [v0.4.5 follow-up](docs/e2e.md#locked-macos-login-session-follow-up-2026-10-03)
+  distinguished explicit cancellation (2.605 seconds) from an unattended
+  backend timeout (120.023 seconds); both failed without launching the child.
+  The system dialog remained after the timeout and immediately reappeared
+  after Cancel. Entering the password restored the unlocked state but did
+  not stop the recurring windows. The temporary record was removed and the
+  initial keychain state restored; successful `exec` after recovery remains
+  unverified. Disposable CI keychains do not establish these user-session
+  facts.
 
 ## P1
 
