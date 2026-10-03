@@ -432,3 +432,24 @@ the native dialog disappears or stays closed after Cancel. It does not
 establish which component retains or reopens the dialog. The repeated-dialog
 problem and verification of successful `exec` after recovery remain open in
 [the backlog](../backlog.md#p0).
+
+## Planned isolated macOS session check
+
+This follow-up to the [recorded observations](#locked-macos-login-session-follow-up-2026-10-03)
+has not been run; [P0 remains open](../backlog.md#p0).
+
+- Use a separate macOS test account and its login keychain. Create a disposable
+  record with a runtime-generated value supplied through a hidden prompt or
+  stdin; leave the owner's working keychain untouched.
+- Confirm the test keychain is locked before each attempt. Check explicit
+  Cancel, then separately leave a request unanswered through the two-minute
+  backend timeout. Start the next attempt only after earlier dialogs close.
+- After access is restored and dialogs have closed, verify that `exec`
+  successfully runs its child without printing the injected value.
+- Record elapsed time, exit code, structured error and remediation, whether
+  the child started, the operator's actions, and whether dialogs remained or
+  reappeared. Do not record secret values or their digests.
+- If dialogs recur, stop the check and issue no further access requests.
+  After recovery, delete the temporary record, confirm its absence, and
+  verify the keychain's initial lock state, default selection, and search list
+  are restored.
