@@ -22,13 +22,15 @@ import (
 )
 
 type App struct {
-	stdin      io.Reader
-	stdout     io.Writer
-	stderr     io.Writer
-	currentEnv []string
-	output     output.Options
-	dryRunFlag bool
-	configPath string
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	currentEnv    []string
+	output        output.Options
+	metadataReady bool
+	metadataGuard func() error
+	dryRunFlag    bool
+	configPath    string
 	// passphraseReader replaces the hidden container passphrase prompt in
 	// tests. It is unexported and never assigned outside this package, so it
 	// adds no flag, no environment variable, and no production code path.
@@ -72,6 +74,9 @@ func (app *App) runStatus(args []string) (int, os.Signal) {
 	root := app.rootCommand()
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
+		if !app.metadataReady {
+			app.recoverErrorFormat(root, args)
+		}
 		if exitStatus, ok := apperrors.ExitStatusFrom(err); ok {
 			return exitStatus.Code, exitStatus.Signal
 		}
@@ -90,6 +95,7 @@ func (a *App) rootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "env-vault",
 		Short:         "OS-keychain-backed environment profile executor",
+		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -128,11 +134,17 @@ func (a *App) rootCommand() *cobra.Command {
 	root.AddCommand(a.doctorCommand())
 	root.AddCommand(a.exportCommand())
 	root.AddCommand(a.importCommand())
+	a.protectCommandArguments(root)
 	return root
 }
 
 func (a *App) renderer() output.Renderer {
-	return output.New(a.stdout, a.stderr, a.output)
+	options := a.output
+	options.ValidateOutputPath = a.metadataGuard
+	if !a.metadataReady {
+		options.OutputPath = ""
+	}
+	return output.New(a.stdout, a.stderr, options)
 }
 
 func (a *App) dryRun(cmd *cobra.Command) bool {
@@ -148,6 +160,7 @@ func (a *App) versionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.renderVersion()
 		},
@@ -162,6 +175,7 @@ func (a *App) secretCommand() *cobra.Command {
 	secretCmd := &cobra.Command{
 		Use:   "secret",
 		Short: "Manage secret metadata in the OS keychain",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return apperrors.Usage("secret", "Subcommand is required", "Run: env-vault secret --help")
 		},
@@ -362,6 +376,7 @@ func (a *App) profileCommand() *cobra.Command {
 	profileCmd := &cobra.Command{
 		Use:   "profile",
 		Short: "Manage secret-to-env profile mappings",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return apperrors.Usage("profile", "Subcommand is required", "Run: env-vault profile --help")
 		},
@@ -739,7 +754,7 @@ func (a *App) readSecret(useStdin bool) ([]byte, error) {
 		return nil, apperrors.Usage("secret_set", "Interactive hidden prompt requires a terminal", "Use --stdin when piping secret input")
 	}
 	fmt.Fprint(a.stderr, "Secret: ")
-	value, err := term.ReadPassword(int(file.Fd()))
+	value, err := readHiddenPassword(int(file.Fd()))
 	fmt.Fprintln(a.stderr)
 	if err != nil {
 		return nil, apperrors.Wrap("secret_set", apperrors.CodeRuntimeError, "Unable to read hidden secret prompt", "Retry from an interactive terminal or use --stdin", apperrors.ExitRuntimeError, err)

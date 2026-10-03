@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -132,6 +133,55 @@ func (list *stringList) UnmarshalYAML(node *yaml.Node) error {
 	}
 }
 
+// Emulate the persisted producer outputs when only a failed native job reruns.
+// The checked-out SHA/run stay the same; github.run_attempt has advanced, but
+// no upload action has run again. Resolve the actual workflow expressions to
+// prove every consumer still selects its existing immutable artifact ID.
+func TestPartialRerunUsesPersistedReporterArtifact(t *testing.T) {
+	wf := readWorkflow(t, "../.github/workflows/reusable-quality.yml")
+	resolve, native := wf.Jobs["resolve"], wf.Jobs["native"]
+	if native.Env["REPORTER_ARTIFACT_ID"] != "${{ needs.resolve.outputs[format('{0}-artifact-id', matrix.id)] }}" {
+		t.Fatal("reporter selection must use the persisted resolve outputs")
+	}
+	steps := map[string]string{}
+	artifacts := map[string]string{}
+	sha := strings.Repeat("a", 40)
+	for index, target := range []string{"linux-amd64", "darwin-arm64", "windows-amd64"} {
+		upload := namedStep(t, resolve, "Upload "+target+" current-attempt E2E reporter")
+		if upload.ID == "" {
+			t.Fatal("reporter upload must expose its result")
+		}
+		id := fmt.Sprint(100 + index)
+		steps["${{ steps."+upload.ID+".outputs.artifact-id }}"] = id
+		artifacts[id] = strings.NewReplacer("${{ github.sha }}", sha, "${{ github.run_attempt }}", "1").Replace(upload.With["name"])
+	}
+	persisted := map[string]string{}
+	for key, expression := range resolve.Outputs {
+		persisted[key] = steps[expression]
+	}
+	for _, attempt := range []string{"1", "2", "3"} {
+		for _, target := range []string{"linux-amd64", "darwin-arm64", "windows-amd64"} {
+			id := persisted[target+"-artifact-id"]
+			want := "env-vault-tooling-gotestsum-" + target + "-" + sha + "-attempt-1"
+			if id == "" || artifacts[id] != want {
+				t.Fatalf("native attempt %s target %s selects %q, want existing artifact %s", attempt, target, id, want)
+			}
+		}
+	}
+
+	guard := namedStep(t, native, "Require the resolved E2E reporter")
+	if guard.Shell != "bash" || guard.ContinueOnError {
+		t.Fatal("invalid reporter IDs must stop before the download action")
+	}
+	for _, id := range []string{"100", "", "0", "1,2", "123invalid", " 100", "100\n"} {
+		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", guard.Run)
+		cmd.Env = append(os.Environ(), "REPORTER_ARTIFACT_ID="+id)
+		if out, err := cmd.CombinedOutput(); (err == nil) != (id == "100") {
+			t.Fatalf("reporter ID %q: err=%v output=%s", id, err, out)
+		}
+	}
+}
+
 func TestWorkflowFilesParseAndPinReviewedActions(t *testing.T) {
 	expected := map[string]string{
 		"actions/checkout":                 checkoutAction,
@@ -247,8 +297,8 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	}
 
 	resolve := wf.Jobs["resolve"]
-	if resolve.TimeoutMinutes != 15 || len(resolve.Outputs) != 0 {
-		t.Fatalf("resolve timeout=%d outputs=%v, want 15 minutes and no outputs", resolve.TimeoutMinutes, resolve.Outputs)
+	if resolve.TimeoutMinutes != 15 || len(resolve.Outputs) != 3 {
+		t.Fatalf("resolve timeout=%d outputs=%v, want 15 minutes and three reporter IDs", resolve.TimeoutMinutes, resolve.Outputs)
 	}
 	var resolveSetup workflowStep
 	for _, step := range resolve.Steps {
@@ -319,13 +369,14 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 		t.Fatalf("native E2E selection=%q, want one target per operating system", native.Env["E2E"])
 	}
 	for name, wantIf := range map[string]string{
-		"Package native release artifact on Unix":     "env.E2E == 'true' && runner.os != 'Windows'",
-		"Package native release artifact on Windows":  "env.E2E == 'true' && runner.os == 'Windows'",
-		"Download exact current-attempt E2E reporter": "env.E2E == 'true'",
-		"Run E2E and finalize reports":                "env.E2E == 'true'",
-		"Upload current-attempt E2E reports":          "always() && env.E2E == 'true'",
-		"Build native release artifact":               "",
-		"Smoke-test the real OS secret store":         "",
+		"Package native release artifact on Unix":    "env.E2E == 'true' && runner.os != 'Windows'",
+		"Package native release artifact on Windows": "env.E2E == 'true' && runner.os == 'Windows'",
+		"Require the resolved E2E reporter":          "env.E2E == 'true'",
+		"Download exact resolved E2E reporter":       "env.E2E == 'true'",
+		"Run E2E and finalize reports":               "env.E2E == 'true'",
+		"Upload current-attempt E2E reports":         "always() && env.E2E == 'true'",
+		"Build native release artifact":              "",
+		"Smoke-test the real OS secret store":        "",
 	} {
 		if step := namedStep(t, native, name); step.If != wantIf {
 			t.Fatalf("native step %q if=%q, want %q", name, step.If, wantIf)
@@ -335,11 +386,12 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	if !strings.Contains(build.Run, `go build -trimpath -ldflags="-s -w" -o "dist/${name}/${BINARY}" ./cmd/env-vault`) || strings.Contains(build.Run, "-X ") {
 		t.Fatalf("native build must match the release build flags without a version override: %q", build.Run)
 	}
-	reporterDownload := namedStep(t, native, "Download exact current-attempt E2E reporter")
+	reporterDownload := namedStep(t, native, "Download exact resolved E2E reporter")
 	if reporterDownload.Uses != downloadAction ||
-		reporterDownload.With["name"] != "env-vault-tooling-gotestsum-${{ matrix.id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}" ||
+		reporterDownload.With["artifact-ids"] != "${{ env.REPORTER_ARTIFACT_ID }}" ||
+		len(reporterDownload.With) != 2 ||
 		reporterDownload.With["path"] != "reporter-tool" {
-		t.Fatalf("native reporter download is not bound to the current source/attempt: uses=%q with=%v", reporterDownload.Uses, reporterDownload.With)
+		t.Fatalf("native reporter download must use only the resolved ID in this run: uses=%q with=%v", reporterDownload.Uses, reporterDownload.With)
 	}
 	runE2E := namedStep(t, native, "Run E2E and finalize reports")
 	if runE2E.Shell != "bash" ||
@@ -361,7 +413,8 @@ func TestReusableQualityBuildsTheReleaseTargetsAndRunsE2EOncePerOS(t *testing.T)
 	}
 	assertStepOrder(t, native,
 		"Build native release artifact",
-		"Download exact current-attempt E2E reporter",
+		"Require the resolved E2E reporter",
+		"Download exact resolved E2E reporter",
 		"Run E2E and finalize reports",
 		"Smoke-test the real OS secret store",
 	)

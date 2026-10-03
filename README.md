@@ -21,6 +21,9 @@ On Linux, process environment variables may be visible to the same user through 
 - There is no `secret get` command.
 - There is no `--value` flag.
 - Secret input is accepted only through a hidden prompt or `--stdin`.
+- On macOS and Linux, interrupted hidden prompts restore the terminal on
+  SIGINT, SIGTERM, SIGHUP, and SIGQUIT. Inherited ignored SIGINT/SIGHUP remain
+  ignored. SIGKILL cannot be handled or restore terminal state.
 - `--stdin` trims exactly one trailing line ending (`\n` or `\r\n`). It reads a
   pipe or a file and refuses a terminal, which would show the value as it is
   typed; there, omit `--stdin` and use the hidden prompt.
@@ -404,6 +407,11 @@ its name in `data.signal`, such as `SIGTERM`. env-vault prints nothing of its
 own to stdout or stderr, except that `--verbose` reports `OUTPUT_WRITE_FAILED`
 on stderr when the file cannot be written; the previous record then stays.
 
+`--output` must use a separate path from configs, their lock files, and the
+input or output transfer container. A path conflict returns `USAGE` without
+writing metadata to that path. Malformed flag invocations also leave metadata
+files untouched because their paths could not be fully checked.
+
 `--output` names a regular file or a new one; missing directories are created
 with mode `0700`. env-vault writes a new file with mode `0600` next to it and
 renames it into place, so a reader never sees a partial record. The directory
@@ -425,6 +433,10 @@ env-vault --json doctor
 ## Config
 
 The local config file is `.env-vault.yaml`. If present, it has priority over the user config for profile definitions.
+Fallback to the user config happens only when the local file is absent.
+Unreadable files, symlinks, and non-regular paths return `CONFIG_INVALID`.
+Each config must contain exactly one YAML document; trailing documents or
+invalid trailing content are rejected before a profile command can save it.
 
 User config defaults:
 
@@ -475,6 +487,17 @@ env-vault exec dev -- true
 checks, and `doctor` only list stored names and never read a value.
 
 Debian/Linux systems may require a Secret Service-compatible keyring daemon depending on desktop or headless setup. Linux also supports `pass` when the `pass` command is installed and the password store is initialized. Headless environments should use a CI secret manager or an explicit supported backend, not plaintext config.
+
+Secret Service collections are selected by an env-vault alias where supported,
+otherwise by their exact collection label. KDE saves the alias on the next
+write; GNOME does not support custom aliases. Existing collections keep their
+records and encoding. Duplicate labels or a competing legacy path fail with
+`BACKEND_UNAVAILABLE`, even if another collection has the requested label.
+This includes some old KDE `_HH` name collisions, which are indistinguishable
+from renamed GNOME collections through this metadata. Identify the intended
+collection before resolving the conflict: on KDE, its explicit env-vault alias
+can select it; for a renamed old GNOME collection, restore its original unique
+service label in the keyring manager. No automatic migration is attempted.
 
 To force `pass`, set `ENV_VAULT_BACKEND=pass`. If `pass` is unavailable, commands return `BACKEND_UNAVAILABLE` with remediation to install `pass` or use another supported OS keychain backend.
 

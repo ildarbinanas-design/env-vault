@@ -376,7 +376,7 @@ func (a *App) terminalPassphrase(command string) func(string) ([]byte, error) {
 			return nil, apperrors.Usage(command, "Interactive hidden prompt requires a terminal", "Run "+command+" from an interactive terminal")
 		}
 		fmt.Fprint(a.stderr, prompt)
-		value, err := term.ReadPassword(int(file.Fd()))
+		value, err := readHiddenPassword(int(file.Fd()))
 		fmt.Fprintln(a.stderr)
 		if err != nil {
 			return nil, apperrors.Wrap(command, apperrors.CodeRuntimeError, "Unable to read hidden passphrase prompt", "Retry from an interactive terminal", apperrors.ExitRuntimeError, err)

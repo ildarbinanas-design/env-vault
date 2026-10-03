@@ -15,6 +15,12 @@ jobs:
     name: resolve-source-quality
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # A partial rerun preserves a successful resolve job and its outputs.
+    # Consumers must use these uploaded IDs, not the consumer's run_attempt.
+    outputs:
+      linux-amd64-artifact-id: ${{ steps.reporter-linux-amd64.outputs.artifact-id }}
+      darwin-arm64-artifact-id: ${{ steps.reporter-darwin-arm64.outputs.artifact-id }}
+      windows-amd64-artifact-id: ${{ steps.reporter-windows-amd64.outputs.artifact-id }}
     env:
       GOTOOLCHAIN: local
     steps:
@@ -46,6 +52,7 @@ jobs:
           scripts/release/build-e2e-reporters.sh "$targets" reporter-tools
 
       - name: Upload linux-amd64 current-attempt E2E reporter
+        id: reporter-linux-amd64
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-tooling-gotestsum-linux-amd64-${{ github.sha }}-attempt-${{ github.run_attempt }}
@@ -54,6 +61,7 @@ jobs:
           retention-days: 14
 
       - name: Upload darwin-arm64 current-attempt E2E reporter
+        id: reporter-darwin-arm64
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-tooling-gotestsum-darwin-arm64-${{ github.sha }}-attempt-${{ github.run_attempt }}
@@ -62,6 +70,7 @@ jobs:
           retention-days: 14
 
       - name: Upload windows-amd64 current-attempt E2E reporter
+        id: reporter-windows-amd64
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: env-vault-tooling-gotestsum-windows-amd64-${{ github.sha }}-attempt-${{ github.run_attempt }}
@@ -151,6 +160,7 @@ jobs:
       # ADR 0011: E2E runs once per operating system; build and smoke cover
       # all five targets.
       E2E: ${{ matrix.id == 'linux-amd64' || matrix.id == 'darwin-arm64' || matrix.id == 'windows-amd64' }}
+      REPORTER_ARTIFACT_ID: ${{ needs.resolve.outputs[format('{0}-artifact-id', matrix.id)] }}
     # The five release targets. release.yml builds the same ones, and
     # tests/workflows_test.go keeps the two lists equal.
     strategy:
@@ -270,11 +280,23 @@ jobs:
           $checksum = Join-Path "dist" $env:CHECKSUM
           [System.IO.File]::WriteAllText($checksum, "$hash  $env:ARCHIVE`n", [System.Text.Encoding]::ASCII)
 
-      - name: Download exact current-attempt E2E reporter
+      - name: Require the resolved E2E reporter
+        if: env.E2E == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # An empty artifact-ids input means "download all", so fail first.
+          [[ "$REPORTER_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo "resolve did not provide one reporter artifact ID" >&2
+            exit 1
+          }
+
+      - name: Download exact resolved E2E reporter
         if: env.E2E == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: env-vault-tooling-gotestsum-${{ matrix.id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          # Without a github-token override the action reads this run only.
+          artifact-ids: ${{ env.REPORTER_ARTIFACT_ID }}
           path: reporter-tool
 
       - name: Run E2E and finalize reports

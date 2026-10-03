@@ -145,6 +145,11 @@ func testCLIArgumentErrors(sc *scenario) {
 	}{
 		{nil, "root", "USAGE"},
 		{[]string{"--unknown"}, "env-vault", "USAGE"},
+		{[]string{"unknown"}, "env-vault", "USAGE"},
+		{[]string{"secret", "unknown"}, "secret", "USAGE"},
+		{[]string{"doctor", "extra"}, "doctor", "USAGE"},
+		{[]string{"secret", "list", "extra"}, "secret_list", "USAGE"},
+		{[]string{"version", "extra"}, "version", "USAGE"},
 		{[]string{"secret"}, "secret", "USAGE"},
 		{[]string{"profile"}, "profile", "USAGE"},
 		{[]string{"secret", "check"}, "secret_check", "USAGE"},

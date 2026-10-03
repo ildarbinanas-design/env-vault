@@ -17,6 +17,9 @@ type Options struct {
 	OutputPath string
 	Quiet      bool
 	Verbose    bool
+	// ValidateOutputPath rechecks protected input identities immediately before
+	// publishing metadata, including aliases of files created by the command.
+	ValidateOutputPath func() error
 }
 
 type ErrorObject struct {
@@ -201,6 +204,11 @@ func (r Renderer) writeHumanSuccess(env Envelope) error {
 func (r Renderer) writeOutputFile(env Envelope) error {
 	if r.options.OutputPath == "" {
 		return nil
+	}
+	if r.options.ValidateOutputPath != nil {
+		if err := r.options.ValidateOutputPath(); err != nil {
+			return err
+		}
 	}
 	var data bytes.Buffer
 	if err := json.NewEncoder(&data).Encode(env); err != nil {

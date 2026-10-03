@@ -14,61 +14,18 @@ import (
 	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
 )
 
-// Keep the dependency's collection paths and JSON Item encoding. Only the
-// Secret Service adapter changes: identity is (collection, profile), never Label.
-// In particular, neither metadata operation opens a secret session or GetSecret.
+// Keep the dependency's JSON Item encoding and profile attributes. Collection
+// aliases (where supported) and API labels identify the service; object paths
+// are opaque. Item labels never identify records. Metadata operations do not
+// open a secret session or call GetSecret.
 type secretService struct {
 	service      *libsecret.Service
 	conn         *dbus.Conn
 	name         string
 	property     func(dbus.ObjectPath, string) (dbus.Variant, error)
 	unlockObject func(libsecret.DBusObject) error
-}
-
-func openPlatform(cfg keyring.Config) (keyring.Keyring, error) {
-	for _, backend := range cfg.AllowedBackends {
-		one := cfg
-		one.AllowedBackends = []keyring.BackendType{backend}
-		if backend != keyring.SecretServiceBackend {
-			if ring, err := keyring.Open(one); err == nil {
-				return ring, nil
-			}
-			continue
-		}
-		ring, err := openSecretService(cfg.ServiceName)
-		if err == nil {
-			return ring, nil
-		}
-		if !errors.Is(err, keyring.ErrNoAvailImpl) {
-			return nil, err
-		}
-	}
-	return nil, keyring.ErrNoAvailImpl
-}
-
-func openSecretService(name string) (*secretService, error) {
-	conn, err := dbus.SessionBus()
-	if err != nil {
-		return nil, keyring.ErrNoAvailImpl
-	}
-	service, err := libsecret.NewService()
-	if err != nil {
-		return nil, err
-	}
-	s := &secretService{service: service, conn: conn, name: name, unlockObject: service.Unlock}
-	s.property = func(path dbus.ObjectPath, property string) (dbus.Variant, error) {
-		return conn.Object(libsecret.DBusServiceName, path).GetProperty(property)
-	}
-	// Probe availability without swallowing permission/metadata errors and
-	// falling back to a different store that would appear empty.
-	if _, err := s.collection(); err != nil {
-		var busErr dbus.Error
-		if errors.As(err, &busErr) && (busErr.Name == "org.freedesktop.DBus.Error.ServiceUnknown" || busErr.Name == "org.freedesktop.DBus.Error.NameHasNoOwner") {
-			return nil, keyring.ErrNoAvailImpl
-		}
-		return nil, err
-	}
-	return s, nil
+	readAlias    func(string) (dbus.ObjectPath, error)
+	setAlias     func(string, dbus.ObjectPath) error
 }
 
 func decodeCollectionPath(src string) string {
@@ -86,7 +43,15 @@ func decodeCollectionPath(src string) string {
 	return out.String()
 }
 
+// Encode every byte: KDE preserves literal underscores in object paths, while
+// GNOME escapes them. In particular, team-ab and team_2dab need distinct aliases.
+func (s *secretService) alias() string { return "env_vault_" + hex.EncodeToString([]byte(s.name)) }
+
 func (s *secretService) collection() (*libsecret.Collection, error) {
+	path, err := s.readAlias(s.alias())
+	if err != nil {
+		return nil, err
+	}
 	value, err := s.property(dbus.ObjectPath(libsecret.DBusPath), "org.freedesktop.Secret.Service.Collections")
 	if err != nil {
 		return nil, err
@@ -95,16 +60,83 @@ func (s *secretService) collection() (*libsecret.Collection, error) {
 	if !ok {
 		return nil, errors.New("invalid Secret Service collection metadata")
 	}
+	if path != "/" {
+		for _, candidate := range paths {
+			if candidate == path {
+				return libsecret.NewCollection(s.conn, path), nil
+			}
+		}
+		return nil, errors.New("Secret Service alias refers to an unavailable collection")
+	}
+	// The old adapter created collections using ServiceName as their label but
+	// never set an alias. Read that label through the API: interpreting path
+	// escapes confuses KDE literal _HH with another service and misses suffixes
+	// assigned to colliding collection paths.
 	var found *libsecret.Collection
+	var legacyPaths []dbus.ObjectPath
 	for _, path := range paths {
-		if decodeCollectionPath(string(path)) == libsecret.DBusPath+"/collection/"+s.name {
+		value, err := s.property(path, "org.freedesktop.Secret.Collection.Label")
+		if err != nil {
+			return nil, err
+		}
+		label, ok := value.Value().(string)
+		if !ok {
+			return nil, errors.New("invalid Secret Service collection label")
+		}
+		if label == s.name {
 			if found != nil {
 				return nil, secretstore.ErrAmbiguous
 			}
 			found = libsecret.NewCollection(s.conn, path)
 		}
+		oldPath := libsecret.DBusPath + "/collection/" + s.name
+		if string(path) == oldPath || decodeCollectionPath(string(path)) == oldPath {
+			legacyPaths = append(legacyPaths, path)
+		}
+	}
+	for _, legacyPath := range legacyPaths {
+		if found == nil || found.Path() != legacyPath {
+			// A renamed legacy GNOME collection and a literal KDE name can look
+			// identical, even when another collection has the requested label.
+			// The label alone cannot authorize switching namespaces. Require the
+			// owner to resolve the conflict, or an explicit alias to select it.
+			return nil, secretstore.ErrAmbiguous
+		}
 	}
 	return found, nil
+}
+
+func (s *secretService) bindCollection(collection *libsecret.Collection) error {
+	alias := s.alias()
+	path, err := s.readAlias(alias)
+	if err != nil {
+		return err
+	}
+	if path == collection.Path() {
+		return nil
+	}
+	if path != "/" {
+		return secretstore.ErrAmbiguous
+	}
+	if err := s.setAlias(alias, collection.Path()); err != nil {
+		var busErr dbus.Error
+		// GNOME only supports setting the default alias. Keep its existing
+		// collections usable, with the same fail-closed label resolution above.
+		if errors.As(err, &busErr) && busErr.Name == "org.freedesktop.DBus.Error.NotSupported" {
+			return nil
+		}
+		return err
+	}
+	// KDE can return success without changing an alias when the collection no
+	// longer exists. Verify before touching a secret; never retry the mutation.
+	path, err = s.readAlias(alias)
+	if err != nil {
+		return err
+	}
+	if path != collection.Path() {
+		return secretstore.ErrAmbiguous
+	}
+	return nil
 }
 
 func (s *secretService) unlock(object libsecret.DBusObject, kind string) error {
@@ -250,6 +282,9 @@ func (s *secretService) Set(item keyring.Item) error {
 		}
 	}
 	if err := s.unlock(collection, "Collection"); err != nil {
+		return err
+	}
+	if err := s.bindCollection(collection); err != nil {
 		return err
 	}
 	session, err := s.service.Open()

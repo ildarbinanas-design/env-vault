@@ -6,7 +6,7 @@
 # ASSET_DIR holds the four macOS and Linux archives of the release with their
 # .sha256 sidecars, and every sidecar must match its archive. The formula
 # keeps its `version` line, which the tap's pins check reads, and its test
-# accepts any `--version` output that contains the tag.
+# checks the version and a profile lifecycle without opening a secret store.
 set -euo pipefail
 export LC_ALL=C
 
@@ -87,6 +87,17 @@ class EnvVault < Formula
 
   test do
     assert_match "v#{version}", shell_output("#{bin}/env-vault --version")
+
+    # Profile mappings are metadata; this never opens a secret store.
+    config = testpath/"config.yaml"
+    system bin/"env-vault", "--config", config, "profile", "create", "brew-test"
+    system bin/"env-vault", "--config", config, "profile", "add", "brew-test", "brew-token:BREW_TEST_TOKEN"
+    show = "#{bin}/env-vault --config #{config} --json profile show brew-test"
+    data = JSON.parse(shell_output(show)).fetch("data")
+    assert_equal "brew-test", data.fetch("profile")
+    assert_equal ["BREW_TEST_TOKEN"], data.fetch("secrets").map { |mapping| mapping.fetch("env") }
+    system bin/"env-vault", "--config", config, "profile", "remove", "brew-test", "BREW_TEST_TOKEN"
+    assert_empty JSON.parse(shell_output(show)).fetch("data").fetch("secrets")
   end
 end
 EOF
