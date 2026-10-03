@@ -171,6 +171,7 @@ func testCLIArgumentErrors(sc *scenario) {
 	wantExit(sc.t, human, 2)
 	wantEmpty(sc.t, human.Stdout, "human usage stdout")
 	wantContains(sc.t, human.Stderr, "code=USAGE\n", "human usage stderr")
+	testEarlyErrorFormats(sc)
 }
 
 func testTextOutputContracts(sc *scenario) {
@@ -426,6 +427,7 @@ func testProfileTargetsCheckSecret(sc *scenario) {
 	if envs := decodeProfileEnvs(sc.t, showChecked); fmt.Sprint(envs) != fmt.Sprint([]string{"TOKEN_EXISTING"}) {
 		sc.t.Fatalf("successful --check-secret did not persist mapping: %v", envs)
 	}
+	testConfigFallbackIntegrity(sc)
 }
 
 func isolatedUserConfigPath(sc *scenario) string {
@@ -462,6 +464,7 @@ func testProfileCollisionsPersistence(sc *scenario) {
 	if got := parseEnvelope(sc.t, missing); got.Error == nil || got.Error.Code != "PROFILE_NOT_FOUND" {
 		sc.t.Fatalf("unexpected missing profile result: %#v", got)
 	}
+	testConfigTrailingDocuments(sc)
 }
 
 func testProfileAtomicPermissions(sc *scenario) {
@@ -621,6 +624,7 @@ func testExecMissingSecretNoChild(sc *scenario) {
 			sc.t.Fatalf("unexpected non-executable result: %#v", got)
 		}
 	}
+	testExecPathPermissions(sc)
 }
 
 func testDryRunNoSideEffects(sc *scenario) {
@@ -765,6 +769,7 @@ func testOutputJSONJSONLFile(sc *scenario) {
 	if got := parseEnvelope(sc.t, errorResult); got.OK || got.Error == nil || got.Error.Code != "MISSING_SECRET" {
 		sc.t.Fatalf("invalid structured error: %#v", got)
 	}
+	testMetadataConfigProtection(sc)
 }
 
 func testDoctorBackends(sc *scenario) {
@@ -823,6 +828,7 @@ func testDoctorBackends(sc *scenario) {
 	if _, err := os.Stat(sc.store); !os.IsNotExist(err) {
 		sc.t.Fatalf("incomplete test backend gate touched the store: %v", err)
 	}
+	testCorruptBackendErrors(sc)
 }
 
 func setSecret(sc *scenario, name, value string) {
@@ -1018,4 +1024,6 @@ func testTransferRejectsTampering(sc *scenario) {
 	if _, err := os.Stat(planned); !os.IsNotExist(err) {
 		sc.t.Fatalf("dry run created %s (err=%v)", planned, err)
 	}
+	testTransferPathProtection(sc, container)
+	testTransferInputValidation(sc, container, containerPassphrase)
 }
