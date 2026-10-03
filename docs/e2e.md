@@ -282,6 +282,15 @@ Each E2E job fails closed if a required file is missing, malformed, or leaked,
 if a scenario skips unexpectedly, if critical scenario coverage is below 100%,
 or if statement coverage falls below the conservative 60% floor.
 
+A reported 100% critical scenario coverage means that every required manifest
+scenario has an accepted result: a pass or its declared platform skip. A pass
+checks only the existing assertions; a skip does not execute the behavior.
+This percentage does not measure all documented behavior or prove that the
+assertions would catch a regression. Audit a critical promise by checking its negative cases and side
+effects, then use an independent reproduction or a temporary mutation in an
+isolated checkout to verify that the relevant test fails. Never make these
+checks against a user's real secrets or keychain.
+
 Each platform's reports stand alone: CI no longer combines them into a
 five-platform matrix proof (ADR 0011).
 

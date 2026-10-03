@@ -163,13 +163,15 @@ documented in
 ```
 
 The header is the additional authenticated data. It carries no secret names:
-those are inside the ciphertext, so a container without its passphrase says
-nothing about what it holds. Declared key-derivation parameters are
+those are inside the ciphertext. The cleartext header still reveals the
+creation time, tool version and encryption parameters; the file length is also
+visible. Declared key-derivation parameters are
 bounds-checked before a key is derived — `memory_kib` in [8192, 1048576],
 `time` in [1, 10], `parallelism` in [1, 8], `key_length` exactly 32, salt 16
 bytes, nonce 12 bytes, ciphertext at most 16 MiB, file at most 24 MiB — so a
-hostile container cannot force a large allocation ahead of authentication. Salt
-and nonce are drawn fresh per export.
+declared memory cost is capped at 1 GiB before authentication. This bounds the
+allocation; it does not make an untrusted container cheap to open. Salt and
+nonce are drawn fresh per export.
 
 Sealing enforces the same size limits before key derivation and encryption.
 It counts the serialized payload plus the 16-byte GCM tag, then the complete
@@ -240,6 +242,32 @@ status in `exit_code` and, for a signal, its name in `signal`:
 {"ok":false,"command":"exec","timestamp":"RFC3339","data":{"argv":["make","test"],"clean_env":false,"dry_run":false,"exit_code":143,"override_env":false,"secret_count":1,"secrets":[{"env":"NEXUS_TOKEN","fingerprint":"<record id>","name":"nexus-token","record_id":"<record id>"}],"signal":"SIGTERM"},"warnings":[],"error":{"code":"COMMAND_FAILED","message":"Command was killed by SIGTERM (status 143)","remediation":"Inspect the command's output"}}
 ```
 
+### Metadata files
+
+`--output` must use a separate path from configs, their lock files, and input
+or output transfer containers. Conflicts return `USAGE` without writing to that
+path. Malformed flags leave metadata files untouched because their paths could
+not be fully checked.
+
+The target must be a regular file or a new path. Missing directories are
+created with mode `0700`; a synced mode-`0600` temporary sibling is renamed into
+place. The directory must be writable, and the file belongs to whoever ran
+env-vault. Symlinks, devices and pipes are refused. On Windows, replacement
+blocked by another program's open handle is retried for up to one second.
+
+## Version
+
+`version` and `--version` print the version, short commit and commit date.
+`--json version` adds the full commit, commit time, modified-tree flag, Go
+version and platform. These describe the Go build information, also inspectable
+with `go version -m`.
+
+A checkout between releases reports a pseudo-version, ending in `+dirty` when
+the build tree was modified. A build without Git information omits commit
+fields; one without a module version reports `dev`. This output helps diagnosis
+but cannot authenticate a binary. Use the pinned attestation verification in
+[README.md](../README.md#manual-download--linux-and-windows) for provenance.
+
 ## Dry Run
 
 `--dry-run` validates without mutation or child execution.
@@ -267,6 +295,10 @@ CI reads the version from `go.mod`, so the compiler recorded in every artifact
 is the compiler that actually ran its checks.
 
 ## Release Artifact Builds
+
+Use the latest published GitHub Release. The failed immutable tags v0.0.8
+through v0.0.11 intentionally have no Release; v0.3.3 was never tagged or
+published, and its changes shipped in v0.3.4.
 
 Releases follow [ADR 0011](adr/0011-minimal-release-pipeline.md) and
 [ADR 0012](adr/0012-attestation-verification-pins-release-workflow.md).
