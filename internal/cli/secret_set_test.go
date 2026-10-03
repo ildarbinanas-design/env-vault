@@ -26,11 +26,12 @@ func runSecretSet(t *testing.T, value string, extra ...string) (secretSetData, s
 	t.Helper()
 	args := append([]string{"--json", "secret", "set", "nexus-token", "--stdin"}, extra...)
 	var stdout, stderr bytes.Buffer
-	if code := Run(args, strings.NewReader(value+"\n"), &stdout, &stderr); code != 0 {
-		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
+	code := Run(args, strings.NewReader(value+"\n"), &stdout, &stderr)
 	testutil.AssertNotContains(t, "secret set stdout", stdout.String(), value)
 	testutil.AssertNotContains(t, "secret set stderr", stderr.String(), value)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
 	var env output.Envelope
 	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
 		t.Fatalf("json: %v", err)
@@ -76,6 +77,8 @@ func TestSecretSetVerifyReadsBackWithoutPrinting(t *testing.T) {
 	value := testutil.EphemeralValue(t)
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"secret", "set", "nexus-token", "--stdin", "--verify"}, strings.NewReader(value+"\n"), &stdout, &stderr)
+	testutil.AssertNotContains(t, "secret set --verify stdout", stdout.String(), value)
+	testutil.AssertNotContains(t, "secret set --verify stderr", stderr.String(), value)
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
@@ -83,7 +86,6 @@ func TestSecretSetVerifyReadsBackWithoutPrinting(t *testing.T) {
 	if stdout.String() != want {
 		t.Fatalf("stdout=%q, want %q", stdout.String(), want)
 	}
-	testutil.AssertNotContains(t, "secret set --verify stdout", stdout.String(), value)
 }
 
 func TestSecretDryRunHumanOutputDoesNotClaimMutation(t *testing.T) {

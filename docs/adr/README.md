@@ -16,14 +16,15 @@ Nygard's ADRs, with the Considered options section from MADR.
 | [0005](0005-informational-link-and-homebrew-bridge.md) | Informational Link metadata and a protected-main Homebrew bridge | Superseded by 0011 |
 | [0006](0006-versioned-operational-release-contract.md) | Versioned operational release contract and closed historical routing | Superseded by 0011 |
 | [0007](0007-actions-artifact-lifecycle.md) | Typed Actions artifact lifecycle and bounded cleanup | Superseded by 0011 |
-| [0008](0008-freeze-release-ceremony-require-personalos-link.md) | Freeze release-engineering investment; require an explicit PersonalOS link | Accepted, amended by 0011 |
+| [0008](0008-freeze-release-ceremony-require-personalos-link.md) | Freeze release-engineering investment; require an explicit PersonalOS link | Superseded by 0013 |
 | [0009](0009-no-code-signing-homebrew-only-macos-distribution.md) | No code signing or notarization; Homebrew tap is the supported macOS install path | Accepted |
 | [0010](0010-encrypted-secret-transfer-container.md) | Encrypted Secret Transfer Container | Accepted |
-| [0011](0011-minimal-release-pipeline.md) | Minimal release pipeline for an equal-maintainer team | Accepted, amended by 0012 |
+| [0011](0011-minimal-release-pipeline.md) | Minimal release pipeline for an equal-maintainer team | Accepted, amended by 0012 and 0013 |
 | [0012](0012-attestation-verification-pins-release-workflow.md) | Attestation verification pins the release workflow and main | Accepted |
+| [0013](0013-owner-benefit-scope.md) | Justify work by owner benefit or demonstrated risk | Accepted |
 
-In force: 0001, 0008 as amended by 0011, 0009, 0010, and 0011 as amended by
-0012. Since step 3 of ADR 0011, releases run on `release.yml`. Step 6 removed
+In force: 0001, 0009, 0010, 0011 as amended by 0012 and 0013, and 0013.
+Since step 3 of ADR 0011, releases run on `release.yml`. Step 6 removed
 the code of the old pipeline, so the superseded records describe code that now
 lives only in git history.
 

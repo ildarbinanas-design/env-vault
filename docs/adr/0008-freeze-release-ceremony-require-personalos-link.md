@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted. Amended by [ADR 0011](0011-minimal-release-pipeline.md) (2026-09-27),
-which lifts the release-engineering freeze for the release pipeline rewrite
-only.
+Superseded by [ADR 0013](0013-owner-benefit-scope.md) (2026-10-03).
+Previously amended by [ADR 0011](0011-minimal-release-pipeline.md)
+(2026-09-27) for the release pipeline rewrite. The PersonalOS gate and release
+freeze below are historical; ADR 0013 defines the current scope test.
 
 ## Date
 
