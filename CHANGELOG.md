@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.3...v0.4.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* preserve local data and reject backend failures ([#132](https://github.com/ildarbinanas-design/env-vault/issues/132)) ([0e52d87](https://github.com/ildarbinanas-design/env-vault/commit/0e52d87b5910cc0eecc22a6e467098c343921cdf))
+
 ## [0.4.3](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.2...v0.4.3) (2026-10-02)
 
 
