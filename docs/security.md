@@ -16,9 +16,10 @@ Secret input is limited to:
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
-On macOS and Linux, interrupted hidden prompts restore the terminal on SIGINT,
-SIGTERM, SIGHUP and SIGQUIT. Inherited ignored SIGINT/SIGHUP remain ignored.
-SIGKILL cannot be handled or restore terminal state.
+On macOS and Linux, hidden prompts interrupted by SIGINT, SIGTERM, SIGHUP or
+SIGQUIT discard partially typed input before restoring the terminal. Inherited
+ignored SIGINT/SIGHUP remain ignored. SIGKILL cannot be handled or restore
+terminal state.
 
 ## Transfer Containers
 
