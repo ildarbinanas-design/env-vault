@@ -35,7 +35,7 @@ old binary. The formula does not automatically overwrite unmanaged files.
 
 ### Manual download — Linux and Windows
 
-Current version: `v0.4.4`. <!-- x-release-please-version -->
+Current version: `v0.4.5`. <!-- x-release-please-version -->
 
 Use the [latest published release](https://github.com/ildarbinanas-design/env-vault/releases/latest).
 For Linux, substitute the release version and architecture:
