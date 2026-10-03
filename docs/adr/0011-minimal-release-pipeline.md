@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Amended by [ADR 0012](0012-attestation-verification-pins-release-workflow.md)
-(2026-09-27).
+(2026-09-27) and [ADR 0013](0013-owner-benefit-scope.md) (2026-10-03).
+ADR 0013 replaces the PersonalOS product-scope requirement in Consequences;
+the release pipeline and release authorization remain unchanged.
 
 Supersedes [ADR 0002](0002-release-github-transport.md),
 [ADR 0004](0004-empty-release-asset-bootstrap.md),

@@ -5,7 +5,7 @@ process's environment, using the production credential stores allowed by
 [ADR 0001](docs/adr/0001-secret-backend.md). Preserve secret confidentiality,
 `exec` behavior on macOS, Linux and Windows, and verified delivery through
 GitHub Releases and Homebrew. Keep changes proportionate to a single-user
-tool ([ADR 0008](docs/adr/0008-freeze-release-ceremony-require-personalos-link.md)).
+tool ([ADR 0013](docs/adr/0013-owner-benefit-scope.md)).
 
 Read documentation when the task needs it: [CONTRIBUTING.md](CONTRIBUTING.md)
 for checks and PR conventions, [docs/design.md](docs/design.md) for architecture,
@@ -92,11 +92,15 @@ Agents may, without asking:
   The branch is deleted when the check is done;
 - merge their own pull request into `main` head-guarded (`gh pr merge <n>
   --squash --match-head-commit <head-sha>` or the API equivalent) once every
-  required check is green on that exact head, a fresh-context review of the
-  final diff found nothing blocking, and the pull request changes no reserved
-  path. An independent reviewer (human or a separate agent without the
-  implementer's conversation) must inspect the diff and validation results;
-  repeat the review after material changes.
+  required check is green on that exact head, the review below found nothing
+  blocking, and the pull request changes no reserved path.
+
+Self-review is sufficient only for purely editorial changes that do not alter
+commands, behavior, contracts or permissions. All other changes, including
+code, dependencies, security and CI/release changes, require an independent
+reviewer (human or a separate agent without the implementer's conversation)
+to inspect the final diff and validation results. Mixed or uncertain cases
+require independent review. Repeat it after material changes.
 
 Reserved for the owner:
 
@@ -155,4 +159,6 @@ that distinction.
 The MVP command surface is `version`, `secret set/check/delete/list`,
 `profile create/add/remove/show`, `exec`, `doctor`, `export` and `import`.
 See [project charter](docs/project-charter.md) and [backlog](backlog.md) for
-non-goals and the ADR 0008 scope restrictions.
+non-goals and priorities. New work needs a concrete benefit to the owner or a
+demonstrated risk, with effort proportionate to this personal CLI. A PersonalOS
+consumer is not required ([ADR 0013](docs/adr/0013-owner-benefit-scope.md)).

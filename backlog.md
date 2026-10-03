@@ -11,8 +11,11 @@
 
 ## P1
 
-Gated by ADR 0008 (2026-07-30): none of these are picked up without an
-explicit PersonalOS consumer or a security requirement driving them.
+Gated by [ADR 0013](docs/adr/0013-owner-benefit-scope.md) (2026-10-03): before
+picking up an item, identify a concrete benefit to the env-vault owner or a
+demonstrated risk it addresses, and keep the cost proportionate to a
+single-user CLI. A PersonalOS consumer is not required. Listing an item here
+does not override security rules, non-goals or owner approval boundaries.
 
 - Evaluate whether GoReleaser would materially improve the working custom release and Homebrew pipeline.
 - Nexus binary publishing.
@@ -21,7 +24,7 @@ explicit PersonalOS consumer or a security requirement driving them.
 
 ## P2
 
-Gated by ADR 0008 (2026-07-30) — same rule as P1.
+Gated by [ADR 0013](docs/adr/0013-owner-benefit-scope.md) — same rule as P1.
 
 - Optional Vault/1Password/KeePassXC connectors.
 - Passwork connector deferred; requires separate design and explicit approval.
