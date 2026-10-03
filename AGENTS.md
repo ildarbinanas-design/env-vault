@@ -46,9 +46,10 @@ Homebrew, and everything else stays proportionate to a single-user tool
   failed release is resumed with "Re-run failed jobs" on the same run, never
   "Re-run all jobs" (see `RELEASING.md`).
 - The release audit trail is the GitHub Releases page, the attestations, and
-  ordinary git and pull request history. The published `release-evidence`
-  branch and the durable evidence artifacts already in Actions storage are
-  frozen history: never rewrite, extend, or retrofit them.
+  ordinary git and pull request history. The owner removed the retired
+  `release-evidence` branch and its ruleset on 2026-10-03; do not recreate them.
+  Durable evidence artifacts already in Actions storage are frozen history:
+  never rewrite, extend, or retrofit them.
 
 ## Working Mode
 
@@ -118,8 +119,9 @@ Reserved for the owner:
 
 GitHub enforces only its rulesets, for everyone including the owner: `main`
 changes only through a squash-merged pull request with the required checks and
-cannot be force-pushed or deleted, `release-evidence` cannot be force-pushed or
-deleted, and `v*` tags cannot be updated or deleted. Nothing else reserved for
+cannot be force-pushed or deleted, and `v*` tags cannot be updated or deleted.
+The retired `release-evidence` branch and its ruleset were removed on
+2026-10-03. Nothing else reserved for
 the owner above is enforced; it is an instruction, not a control. Agents act
 under the owner's GitHub identity, so GitHub cannot tell an agent's merge from
 the owner's.

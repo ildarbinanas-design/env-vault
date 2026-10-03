@@ -602,6 +602,17 @@ func TestHomebrewFormulaPinsTheVerifiedArchives(t *testing.T) {
 
   test do
     assert_match "v#{version}", shell_output("#{bin}/env-vault --version")
+
+    # Profile mappings are metadata; this never opens a secret store.
+    config = testpath/"config.yaml"
+    system bin/"env-vault", "--config", config, "profile", "create", "brew-test"
+    system bin/"env-vault", "--config", config, "profile", "add", "brew-test", "brew-token:BREW_TEST_TOKEN"
+    show = "#{bin}/env-vault --config #{config} --json profile show brew-test"
+    data = JSON.parse(shell_output(show)).fetch("data")
+    assert_equal "brew-test", data.fetch("profile")
+    assert_equal ["BREW_TEST_TOKEN"], data.fetch("secrets").map { |mapping| mapping.fetch("env") }
+    system bin/"env-vault", "--config", config, "profile", "remove", "brew-test", "BREW_TEST_TOKEN"
+    assert_empty JSON.parse(shell_output(show)).fetch("data").fetch("secrets")
   end
 end
 `

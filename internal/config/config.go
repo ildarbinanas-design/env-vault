@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,11 +94,19 @@ func Load(path string) (*File, error) {
 		}
 		return nil, apperrors.ConfigInvalid("config", "Unable to read config", "Check the config path and permissions", err)
 	}
+	return parse(data)
+}
+
+func parse(data []byte) (*File, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	var cfg File
 	if err := decoder.Decode(&cfg); err != nil {
 		return nil, apperrors.ConfigInvalid("config", "Invalid YAML config", "Fix the YAML syntax and schema", err)
+	}
+	var trailing yaml.Node
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, apperrors.ConfigInvalid("config", "Config must contain exactly one YAML document", "Remove trailing YAML documents or invalid content", err)
 	}
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]Profile{}
@@ -228,17 +237,19 @@ func Validate(cfg *File) error {
 
 func ResolveReadPath(explicitPath string) (string, bool, error) {
 	if explicitPath != "" {
-		return explicitPath, fileExists(explicitPath), nil
+		exists, err := configFileExists(explicitPath)
+		return explicitPath, exists, err
 	}
 	local := filepath.Join(".", LocalFile)
-	if fileExists(local) {
-		return local, true, nil
+	if exists, err := configFileExists(local); err != nil || exists {
+		return local, exists, err
 	}
 	userPath, err := platform.UserConfigPath()
 	if err != nil {
 		return "", false, apperrors.ConfigInvalid("config", "Unable to resolve user config path", "Set --config explicitly", err)
 	}
-	return userPath, fileExists(userPath), nil
+	exists, err := configFileExists(userPath)
+	return userPath, exists, err
 }
 
 func ResolveCreatePath(explicitPath string, local, global bool) (string, error) {
@@ -301,7 +312,19 @@ func RemoveMapping(profile Profile, selector string) (Profile, string, bool, err
 	return profile, removedEnv, removed, nil
 }
 
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+func configFileExists(path string) (bool, error) {
+	// Lstat distinguishes an absent file from a dangling symlink. Only the
+	// former permits selecting a different config; every other failure must
+	// stay attached to the path the user selected.
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, configTargetValidationError(err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, configTargetValidationError(&unsafeConfigTargetError{reason: "config path is not a regular file"})
+	}
+	return true, nil
 }

@@ -77,6 +77,9 @@ func validateExecutable(name string) error {
 	}
 	path, err := exec.LookPath(name)
 	if err != nil {
+		if stderrors.Is(err, exec.ErrNotFound) && pathHasNonExecutable(name) {
+			return apperrors.New("exec", apperrors.CodeCommandNotExecutable, "Command is not executable: "+name, "Set execute permissions or choose another command", apperrors.ExitCommandNotExecutable)
+		}
 		return apperrors.New("exec", apperrors.CodeCommandNotFound, "Command not found: "+name, "Check the command name or PATH", apperrors.ExitCommandNotFound)
 	}
 	info, err := os.Stat(filepath.Clean(path))

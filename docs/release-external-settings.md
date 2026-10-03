@@ -88,8 +88,9 @@ release authorization, and a second approval would stop every release halfway.
   push or deletion; no bypass.
 - Ruleset on `refs/tags/v*`: tags cannot be updated or deleted; creation stays
   allowed so Release Please can tag the release commit; no bypass.
-- Ruleset on `refs/heads/release-evidence`: no force push or deletion. The
-  branch is frozen history of the old pipeline.
+
+The owner removed the retired `release-evidence` branch and its protecting
+ruleset on 2026-10-03. Neither should be recreated for the current pipeline.
 
 ### `homebrew-tap`
 
