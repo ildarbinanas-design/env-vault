@@ -60,6 +60,45 @@ func ValidateTarget(path string) error {
 // following it, and the check turns an already-present symlink into a clear
 // failure instead of a write through it.
 func Write(path string, data []byte) error {
+	return write(path, data, replace)
+}
+
+// WriteNew publishes data at path with mode 0600 only if the target is absent.
+// The final publication atomically refuses every existing directory entry,
+// including a file created after the initial validation. It returns an error
+// wrapping os.ErrExist for a regular file that already exists.
+//
+// Publication uses a native exclusive rename, with a hard-link fallback when
+// the operation is unsupported. Filesystems that support neither fail without
+// a fallback that could overwrite a concurrent file or expose a partial result.
+func WriteNew(path string, data []byte) error {
+	return write(path, data, publishNew)
+}
+
+func publishNew(temporaryPath, path string) error {
+	if err := ValidateTarget(path); err != nil {
+		return err
+	}
+	if err := moveNew(temporaryPath, path); err != nil {
+		return fmt.Errorf("publish new target: %w", err)
+	}
+	return nil
+}
+
+// linkNew retains exclusive publication when native exclusive rename is not
+// available. Both names refer to the complete file before the temporary name
+// is removed; no copy or replacing rename is permitted here.
+func linkNew(temporaryPath, path string) error {
+	if err := os.Link(temporaryPath, path); err != nil {
+		return err
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return fmt.Errorf("remove temporary file: %w", err)
+	}
+	return nil
+}
+
+func write(path string, data []byte, publish func(string, string) error) error {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create directory: %w", err)
@@ -93,7 +132,7 @@ func Write(path string, data []byte) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary file: %w", err)
 	}
-	if err := replace(temporaryPath, path); err != nil {
+	if err := publish(temporaryPath, path); err != nil {
 		return err
 	}
 	committed = true

@@ -86,6 +86,15 @@ func LoadForRead(explicitPath string) (*File, string, bool, error) {
 	return cfg, path, true, err
 }
 
+// ValidateTarget checks a prospective config mutation target without creating
+// directories, files, or locks. Dry-runs use the same target checks as writes.
+func ValidateTarget(path string) error {
+	if err := validateConfigTarget(path); err != nil {
+		return configTargetValidationError(err)
+	}
+	return nil
+}
+
 func Load(path string) (*File, error) {
 	data, err := readConfigFile(path)
 	if err != nil {
@@ -286,9 +295,7 @@ func RemoveMapping(profile Profile, selector string) (Profile, string, bool, err
 		byPair = true
 	} else {
 		if err := ValidateEnvName(selector); err != nil {
-			if nameErr := ValidateSecretName(selector); nameErr != nil {
-				return profile, "", false, err
-			}
+			return profile, "", false, err
 		}
 	}
 	out := profile.Secrets[:0]
@@ -299,7 +306,7 @@ func RemoveMapping(profile Profile, selector string) (Profile, string, bool, err
 		if byPair {
 			match = mapping.Name == wanted.Name && mapping.Env == wanted.Env
 		} else {
-			match = mapping.Env == selector || mapping.Name == selector
+			match = mapping.Env == selector
 		}
 		if match {
 			removed = true

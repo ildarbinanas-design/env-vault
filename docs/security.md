@@ -16,9 +16,10 @@ Secret input is limited to:
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
-On macOS and Linux, interrupted hidden prompts restore the terminal on SIGINT,
-SIGTERM, SIGHUP and SIGQUIT. Inherited ignored SIGINT/SIGHUP remain ignored.
-SIGKILL cannot be handled or restore terminal state.
+On macOS and Linux, hidden prompts interrupted by SIGINT, SIGTERM, SIGHUP or
+SIGQUIT discard partially typed input before restoring the terminal. Inherited
+ignored SIGINT/SIGHUP remain ignored. SIGKILL cannot be handled or restore
+terminal state.
 
 ## Transfer Containers
 
@@ -75,10 +76,12 @@ refuses larger output with `BUNDLE_INVALID` before creating or replacing the
 file, including with `--force`. Base64 encoding means the selected raw values
 together must fit below 12 MiB. See [format and KDF bounds](design.md#transfer-container).
 
-Containers are written with mode `0600` through a synced temporary sibling and
-a same-directory replacement, and a symlink or non-regular file at the target
-is rejected rather than written through. `export` refuses to overwrite an
-existing file without `--force`.
+Containers are written with mode `0600` through a synced temporary sibling.
+Without `--force`, publication atomically refuses an occupied destination,
+including a file created while the passphrase prompt is open. With `--force`,
+the complete temporary file replaces the destination. Symlinks and non-regular
+targets are rejected. A filesystem that cannot safely publish without replacing
+an existing file returns an error; export never falls back to an overwrite.
 
 Import authenticates and decrypts the container before any keychain write.
 It then checks backend identity. On Windows, entries that name

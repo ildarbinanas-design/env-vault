@@ -215,6 +215,11 @@ func (a *App) secretSetCommand() *cobra.Command {
 				"dry_run":     a.dryRun(cmd),
 			}
 			if a.dryRun(cmd) {
+				// Store construction only validates selection and the test gate;
+				// production backends open lazily on a store operation.
+				if _, err := a.openStore("secret_set"); err != nil {
+					return err
+				}
 				return a.renderer().Success("secret_set", data, nil)
 			}
 			value, err := a.readSecret(useStdin)
@@ -888,6 +893,9 @@ func verifyStoredSecret(ctx context.Context, store secretstore.Store, service, n
 func applyConfigMutation(ctx context.Context, path string, dryRun bool, mutate config.TransactionFunc) error {
 	if !dryRun {
 		return config.Transaction(ctx, path, mutate)
+	}
+	if err := config.ValidateTarget(path); err != nil {
+		return err
 	}
 	cfg, err := config.Load(path)
 	if err != nil {

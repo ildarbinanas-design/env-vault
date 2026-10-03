@@ -46,7 +46,7 @@ func readHiddenPassword(fd int) ([]byte, error) {
 		for sig := range notifications {
 			// Discard a partially typed line before restoring echo. Otherwise
 			// the calling shell could read the unfinished secret as its input.
-			_ = unix.IoctlSetTermios(fd, promptFlushTermios, state)
+			restoreInterruptedPrompt(fd, state)
 			signal.Stop(notifications)
 			runner.ExitBySignal(sig)
 			os.Exit(128 + int(sig.(syscall.Signal)))

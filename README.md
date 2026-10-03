@@ -131,7 +131,7 @@ Use `env-vault <command> --help` for arguments and flags.
 | `secret delete <name> --confirm <name> [--service <name>]` | Delete a stored secret. |
 | `profile create <profile> [--local\|--global]` | Create a profile; local is the default. |
 | `profile add <profile> <secret-name:ENV_NAME> [--check-secret]` | Add a mapping, optionally checking existence first. |
-| `profile remove <profile> <ENV_NAME\|secret-name:ENV_NAME>` | Remove a mapping. |
+| `profile remove <profile> <ENV_NAME\|secret-name:ENV_NAME>` | Remove by environment name or exact pair. |
 | `profile show <profile>` | Show mappings without values. |
 | `exec [profile] [--secret <name:ENV_NAME> …] -- <cmd> [args…]` | Resolve secrets and run a child process. |
 | `doctor` | Report config/backend status without reading values. |

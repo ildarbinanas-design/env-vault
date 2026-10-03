@@ -1,7 +1,6 @@
 package bundle
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -22,11 +21,9 @@ func Open(raw []byte, passphrase []byte) (Payload, error) {
 		return Payload{}, fmt.Errorf("%w: container exceeds %d bytes", ErrInvalid, MaxContainerBytes)
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var document container
-	if err := decoder.Decode(&document); err != nil {
-		return Payload{}, fmt.Errorf("%w: %s", ErrInvalid, err)
+	if err := decodeStrictJSON(raw, &document); err != nil {
+		return Payload{}, err
 	}
 
 	if document.Schema != Schema {
@@ -89,11 +86,9 @@ func Open(raw []byte, passphrase []byte) (Payload, error) {
 	}
 	defer Wipe(plaintext)
 
-	payloadDecoder := json.NewDecoder(bytes.NewReader(plaintext))
-	payloadDecoder.DisallowUnknownFields()
 	var payload Payload
-	if err := payloadDecoder.Decode(&payload); err != nil {
-		return Payload{}, fmt.Errorf("%w: %s", ErrInvalid, err)
+	if err := decodeStrictJSON(plaintext, &payload); err != nil {
+		return Payload{}, err
 	}
 	if err := validatePayload(payload); err != nil {
 		return Payload{}, err
