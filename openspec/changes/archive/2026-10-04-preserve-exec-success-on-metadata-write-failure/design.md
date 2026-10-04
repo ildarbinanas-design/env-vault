@@ -9,15 +9,15 @@
 
 ### Подтверждённые факты
 
-- В `b6ff33a` [execCommand](../../../internal/cli/cli.go) вызывает
+- В `b6ff33a` [execCommand](../../../../internal/cli/cli.go) вызывает
   `Renderer.Success` только после `runner.Run` с `exitCode == 0` и `err == nil`.
   Сигналы и ненулевые коды уже проходят через `CommandFailed`.
-- [Success](../../../internal/output/output.go) возвращает ошибку файла до
+- [Success](../../../../internal/output/output.go) возвращает ошибку файла до
   вывода success envelope. `runStatus` преобразует обычную ошибку в
   `RUNTIME_ERROR`, код `1`, и вызывает error renderer. `CommandFailed` уже
   сохраняет child status и сообщает об отказе файла только с `--verbose`.
 - `writeOutputFile` вызывает `ValidateOutputPath`, затем атомарную публикацию.
-  [Предварительная проверка](../../../internal/cli/preflight.go) и повторный
+  [Предварительная проверка](../../../../internal/cli/preflight.go) и повторный
   guard защищают конфигурацию и её lock-файл, включая файловые алиасы.
 - Текущий human-вывод реального успешного `exec` молчит. JSON/JSONL печатаются
   даже с `--quiet`; успешные данные не содержат добавленного `exit_code: 0`.
@@ -102,9 +102,9 @@ success renderer: внутренние ограниченные повторы a
 - Для отказа stdout child должен молчать: writer возвращает ошибку при записи
   JSON/JSONL envelope, чтобы не спутать её с ошибкой копирования потоков runner.
 - Unix-сигналы проверять существующим способом в
-  [exec_output_test.go](../../../internal/cli/exec_output_test.go), дополнительно
+  [exec_output_test.go](../../../../internal/cli/exec_output_test.go), дополнительно
   с недоступным файлом. Переносимый E2E расширить в
-  [OUTPUT_JSON_JSONL_FILE](../../../e2e/scenarios_test.go), используя helper
+  [OUTPUT_JSON_JSONL_FILE](../../../../e2e/scenarios_test.go), используя helper
   `streams` и существующую изоляцию тестового backend.
 
 ### Документация и совместимость

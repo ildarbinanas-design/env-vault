@@ -6,7 +6,7 @@
 если не удалось записать `--output`: автоматизация получает ложный отказ и может
 повторить уже выполненное действие. Сохранение результата child устраняет
 конкретный риск для владельца в границах
-[ADR 0013](../../../docs/adr/0013-owner-benefit-scope.md).
+[ADR 0013](../../../../docs/adr/0013-owner-benefit-scope.md).
 
 ## What Changes
 
@@ -41,13 +41,13 @@
 
 Будущая реализация затрагивает `internal/cli`, `internal/output`, их тесты и
 сценарий E2E `OUTPUT_JSON_JSONL_FILE`; документация —
-[README](../../../README.md#output-and-dry-run) и
-[дизайн вывода](../../../docs/design.md#output-schema).
+[README](../../../../README.md#output-and-dry-run) и
+[дизайн вывода](../../../../docs/design.md#output-schema).
 Runner, backend, атомарная запись, зависимости и release-процесс не меняются.
 
 **Подтверждённые факты.** На чистом `main` (`b6ff33a`) проверены
-[успешная ветка CLI](../../../internal/cli/cli.go),
-[Success и CommandFailed](../../../internal/output/output.go) и безопасное
+[успешная ветка CLI](../../../../internal/cli/cli.go),
+[Success и CommandFailed](../../../../internal/output/output.go) и безопасное
 воспроизведение без mappings с полностью включённым test backend:
 child `0` + `--output` на каталог дают CLI `1`; child `7` дают CLI `7`.
 Тестовое хранилище при воспроизведении не создавалось. Подробности проверки —
@@ -64,4 +64,4 @@ child `0` + `--output` на каталог дают CLI `1`; child `7` дают 
 Также рассматривались полезные подсказки в `doctor` и изолированная проверка
 восстановления macOS Keychain. Первый вариант требует отдельного контракта
 предупреждений, второй — интерактивной тестовой сессии. Открытый
-[P0](../../../backlog.md#p0) этим изменением не закрывается.
+[P0](../../../../backlog.md#p0) этим изменением не закрывается.
