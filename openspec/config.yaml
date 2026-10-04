@@ -1,0 +1,47 @@
+# Настроено с OpenSpec 1.14.0; CLI — инструмент разработки вне зависимостей продукта.
+schema: spec-driven
+
+context: |
+  Language: Russian
+  Документы OpenSpec пишутся по-русски. Структурные заголовки шаблонов,
+  SHALL/MUST и маркеры WHEN/THEN остаются на английском.
+  Пути источников ниже указаны от корня репозитория.
+
+  env-vault — личный Go CLI владельца для передачи секретов в окружение child.
+  Go 1.26.8 (go.mod), Cobra, yaml.v3; macOS, Linux и Windows.
+  cmd/env-vault — вход; internal/cli — команды; config — YAML и блокировки;
+  secretstore — backend-интерфейс; runner — процессы и сигналы;
+  output — human/JSON/JSONL; atomicfile — публикация; bundle — шифрованный перенос.
+  Архитектура и действующие контракты: docs/design.md; интерфейс: README.md.
+  Совместимость: YAML v1, env-vault.bundle.v1 и импорт контейнеров v0.4.2;
+  форматы вывода, коды завершения и платформенное поведение exec.
+  Менять эти контракты только явно в proposal и проверяемых delta specs.
+
+  Общие правила, безопасность и полномочия: AGENTS.md и docs/security.md.
+  Решения: docs/adr/0001-secret-backend.md,
+  docs/adr/0010-encrypted-secret-transfer-container.md,
+  docs/adr/0011-minimal-release-pipeline.md,
+  docs/adr/0012-attestation-verification-pins-release-workflow.md,
+  docs/adr/0013-owner-benefit-scope.md. Приоритеты: backlog.md.
+  Контекст — краткий указатель; общие правила остаются в AGENTS.md,
+  архитектурные решения — в ADR, требования изменения — в его спецификации.
+  Примеры используют синтетические метаданные; секреты для тестов генерируются
+  во время выполнения через internal/testutil, без вывода значений в диагностику.
+
+  Проверки выбираются по изменению из CONTRIBUTING.md:
+  git diff --check; GOTOOLCHAIN=go1.26.8 go mod tidy -diff;
+  GOTOOLCHAIN=go1.26.8 go mod verify; GOTOOLCHAIN=go1.26.8 go test ./...;
+  GOTOOLCHAIN=go1.26.8 go vet ./...; GOTOOLCHAIN=go1.26.8 go test -race ./...;
+  GOTOOLCHAIN=go1.26.8 scripts/smoke.sh; GOTOOLCHAIN=go1.26.8 scripts/vuln-check.sh;
+  GOTOOLCHAIN=go1.26.8 scripts/license-check.sh. E2E: docs/e2e.md.
+  Локальный прогон не подтверждает native-поведение других ОС.
+
+rules:
+  proposal:
+    - Обосновать пользу владельцу или конкретный риск; отделить факты от предположений.
+  specs:
+    - Описывать наблюдаемое поведение; каждое требование имеет конкретный проверяемый сценарий.
+  design:
+    - Зафиксировать выбранное решение, границы совместимости, альтернативы и нерешённые вопросы.
+  tasks:
+    - Каждая задача имеет проверяемый результат; связать реализацию с тестами и документацией.

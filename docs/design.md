@@ -133,7 +133,9 @@ every other command (see Output Schema) and never prints a secret value.
     failed child is recorded in the `--output` file as `COMMAND_FAILED` (see
     Output Schema); stdout and stderr carry only the child's own output,
     except that `--verbose` reports `OUTPUT_WRITE_FAILED` if the file cannot
-    be written. The previous record then stays.
+    be written. A successful child keeps exit code `0` if only writing the
+    metadata fails; its usual success output still follows. See Output Schema
+    for diagnostic and error boundaries.
 
 `env-vault exec ... -- bash -lc ...` is allowed because the user explicitly supplied the shell.
 
@@ -238,6 +240,21 @@ Error:
 
 Human errors use the same fields: `code`, `message`, and `remediation`.
 
+After a real child execution returns exit code `0` without runner errors,
+`CommandSucceeded` attempts metadata publication once, then renders the usual
+success envelope. A file failure is non-fatal: only `--verbose` adds one
+`OUTPUT_WRITE_FAILED` diagnostic to stderr, including with `--quiet`. Child
+streams pass through; human success adds nothing, and JSON/JSONL still append
+the same success envelope to stdout even with `--quiet`. The file failure adds
+no warning, error object, or `exit_code: 0` field to the envelope. It does not
+rerun the child or request a second metadata publication.
+
+This handling is limited to post-exec file publication. Errors starting or
+waiting for the child, copying its streams, and writing the success envelope
+to stdout retain their existing failure behavior. Other commands and
+`exec --dry-run` still use `Success`, which returns metadata-write errors.
+The two paths share the same terminal success rendering.
+
 A command that `exec` ran and that failed is recorded only in the `--output`
 file. Unlike other errors, it keeps the exec metadata in `data`, with the
 status in `exit_code` and, for a signal, its name in `signal`:
@@ -249,15 +266,22 @@ status in `exit_code` and, for a signal, its name in `signal`:
 ### Metadata files
 
 `--output` must use a separate path from configs, their lock files, and input
-or output transfer containers. Conflicts return `USAGE` without writing to that
-path. Malformed flags leave metadata files untouched because their paths could
-not be fully checked.
+or output transfer containers. Conflicts found before execution return `USAGE`
+without writing to that path or launching the child. The path is checked again
+before publication: a conflict that appears during successful child execution
+still prevents the write and follows the non-fatal post-exec file handling
+above. Malformed flags leave metadata files untouched because their paths
+could not be fully checked.
 
 The target must be a regular file or a new path. Missing directories are
 created with mode `0700`; a synced mode-`0600` temporary sibling is renamed into
 place. The directory must be writable, and the file belongs to whoever ran
 env-vault. Symlinks, devices and pipes are refused. On Windows, replacement
 blocked by another program's open handle is retried for up to one second.
+These bounded retries remain part of a single publication attempt. A failed
+publication can leave an older metadata record unchanged and therefore stale;
+env-vault does not remove it or replace it with an error envelope solely
+because post-exec metadata publication failed.
 
 ## Version
 

@@ -5,6 +5,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,4 +75,26 @@ func readEnvelopeFile(t *testing.T, path string) output.Envelope {
 		t.Fatalf("decode %s: %v", path, err)
 	}
 	return env
+}
+
+func TestExecMetadataFailurePreservesChildSignal(t *testing.T) {
+	setupExecMetadata(t)
+	for _, verbose := range []bool{false, true} {
+		t.Run(fmt.Sprintf("verbose=%v", verbose), func(t *testing.T) {
+			args := []string{"--json", "--quiet", "--output", t.TempDir()}
+			if verbose {
+				args = append(args, "--verbose")
+			}
+			args = append(args, "exec", "--", "sh", "-c", "kill -TERM $$")
+			var stdout, stderr bytes.Buffer
+			code, sig := newApp(strings.NewReader(""), &stdout, &stderr).runStatus(args)
+			if code != 128+int(syscall.SIGTERM) || sig != syscall.SIGTERM {
+				t.Fatalf("status=%d signal=%v, want SIGTERM", code, sig)
+			}
+			if stdout.Len() != 0 {
+				t.Fatal("metadata failure added stdout after child signal")
+			}
+			assertExecMetadataStderr(t, stderr.String(), "", verbose)
+		})
+	}
 }
