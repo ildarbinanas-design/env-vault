@@ -654,7 +654,7 @@ func (a *App) execCommand() *cobra.Command {
 				a.renderer().CommandFailed("exec", data, exitCode, "")
 				return apperrors.NewExitStatus(exitCode)
 			}
-			return a.renderer().Success("exec", data, nil)
+			return a.renderer().CommandSucceeded("exec", data, nil)
 		},
 	}
 	cmd.Flags().StringArrayVar(&directSpecs, "secret", nil, "direct secret mapping <secret-name:ENV_NAME>")

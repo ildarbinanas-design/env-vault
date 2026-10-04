@@ -732,9 +732,79 @@ func testOutputJSONJSONLFile(sc *scenario) {
 		sc.t.Fatalf("invalid exec output metadata: %#v", execEnvelope)
 	}
 
-	// A successful command whose metadata cannot be written is a runtime
-	// failure. Machine output remains isolated on stdout; diagnostics are
-	// opt-in through --verbose.
+	// Metadata failure after a successful child preserves its streams and
+	// status, and still renders the usual success envelope in machine modes.
+	const childStdout = "exec-child-stdout\n"
+	const childStderr = "exec-child-stderr\n"
+	for _, format := range []string{"human", "json", "jsonl"} {
+		for _, quiet := range []bool{false, true} {
+			for _, verbose := range []bool{false, true} {
+				label := fmt.Sprintf("%s-quiet-%t-verbose-%t", format, quiet, verbose)
+				unavailableOutput := filepath.Join(sc.root, "exec-output-directory-"+label)
+				if err := os.Mkdir(unavailableOutput, 0o700); err != nil {
+					sc.t.Fatal(err)
+				}
+				args := []string{"--output", unavailableOutput}
+				if format != "human" {
+					args = append(args, "--"+format)
+				}
+				if quiet {
+					args = append(args, "--quiet")
+				}
+				if verbose {
+					args = append(args, "--verbose")
+				}
+				// Keep mixed child/JSON stdout normalizable on Windows too:
+				// a slash path avoids JSON-escaped backslashes in argv.
+				args = append(args, "exec", "--secret", "token:TOKEN", "--", filepath.ToSlash(sc.suite.helper),
+					"streams", "--stdout", childStdout, "--stderr", childStderr)
+				result := sc.run(args...)
+				wantExit(sc.t, result, 0)
+				remainingStdout, ok := strings.CutPrefix(result.Stdout, childStdout)
+				if !ok {
+					sc.t.Fatalf("%s: child stdout changed", label)
+				}
+				if format == "human" {
+					wantEmpty(sc.t, remainingStdout, label+" human metadata stdout")
+				} else {
+					got := parseEnvelopeBytes(sc.t, []byte(remainingStdout), label+" exec success")
+					data := parseDataMap(sc.t, got)
+					_, hasExitCode := data["exit_code"]
+					if !got.OK || got.Command != "exec" || got.Error != nil || len(got.Warnings) != 0 ||
+						data["dry_run"] != false || data["secret_count"] != float64(1) || hasExitCode {
+						sc.t.Fatalf("%s: exec success metadata changed", label)
+					}
+					normalized := strings.TrimPrefix(sc.normalizeText(result.Stdout), childStdout)
+					var normalizedEnvelope envelope
+					if err := json.Unmarshal([]byte(normalized), &normalizedEnvelope); err != nil {
+						sc.t.Fatalf("%s: normalized contract is invalid JSON: %v", label, err)
+					}
+					normalizedArgs, ok := parseDataMap(sc.t, normalizedEnvelope)["argv"].([]any)
+					if !ok || len(normalizedArgs) == 0 || normalizedArgs[0] != "<TEST_HELPER>" {
+						sc.t.Fatalf("%s: normalized contract retained the temporary helper path", label)
+					}
+				}
+				diagnostic, ok := strings.CutPrefix(result.Stderr, childStderr)
+				if !ok {
+					sc.t.Fatalf("%s: child stderr changed", label)
+				}
+				if verbose {
+					if !strings.HasPrefix(diagnostic, "OUTPUT_WRITE_FAILED: ") ||
+						!strings.HasSuffix(diagnostic, "\n") || strings.Count(diagnostic, "\n") != 1 {
+						sc.t.Fatalf("%s: expected one metadata-write diagnostic", label)
+					}
+				} else {
+					wantEmpty(sc.t, diagnostic, label+" metadata stderr")
+				}
+				if info, err := os.Stat(unavailableOutput); err != nil || !info.IsDir() {
+					sc.t.Fatalf("%s: output directory was replaced: %v", label, err)
+				}
+			}
+		}
+	}
+
+	// Outside real child execution, metadata-write failure remains a runtime
+	// failure. Machine output stays on stdout and diagnostics are opt-in.
 	badOutput := sc.root // An existing directory cannot be opened as a file.
 	runtimeFailure := sc.run("--json", "--output", badOutput, "version")
 	wantExit(sc.t, runtimeFailure, 1)

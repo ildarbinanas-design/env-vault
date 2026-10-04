@@ -58,6 +58,21 @@ func (r Renderer) Success(command string, data any, warnings []string) error {
 	if err := r.writeOutputFile(env); err != nil {
 		return err
 	}
+	return r.writeSuccess(env)
+}
+
+// CommandSucceeded reports a completed child without turning a metadata-file
+// failure into a failed command. Terminal output errors remain errors, as in
+// Success; only the optional file failure is diagnosed through --verbose.
+func (r Renderer) CommandSucceeded(command string, data any, warnings []string) error {
+	env := r.envelope(true, command, data, warnings, nil)
+	if err := r.writeOutputFile(env); err != nil && r.options.Verbose {
+		fmt.Fprintf(r.stderr, "OUTPUT_WRITE_FAILED: %s\n", err.Error())
+	}
+	return r.writeSuccess(env)
+}
+
+func (r Renderer) writeSuccess(env Envelope) error {
 	if r.options.JSON || r.options.JSONL {
 		return writeMachine(r.stdout, env, r.options.JSONL)
 	}

@@ -196,8 +196,19 @@ child. An explicitly requested `--output` file can still receive metadata.
 Errors contain `code`, `message` and `remediation`. For `exec`, child stdout and
 stderr pass through and can break machine-readable stdout. A failed child keeps
 its exit status; env-vault records `COMMAND_FAILED` only in `--output`, with
-`data.exit_code` and, when applicable, `data.signal`. Only `--verbose` reports
-a metadata-write failure on stderr.
+`data.exit_code` and, when applicable, `data.signal`.
+
+After a child completes successfully, a failure to write `--output` keeps exit
+code `0` and the usual success output, including JSON/JSONL with `--quiet`.
+For both successful and failed children, only `--verbose` adds
+`OUTPUT_WRITE_FAILED` on stderr; `--quiet` does not suppress that diagnostic.
+An older metadata record may remain, so check it before relying on it. env-vault
+does not rerun the child because writing metadata failed.
+
+Output-path conflicts detected before execution still prevent the child from
+starting. Errors starting or waiting for the child, copying its streams, or
+writing env-vault's own stdout retain their existing failure behavior. Metadata
+write failures also remain errors for other commands and `exec --dry-run`.
 
 Use a separate regular file for `--output`, never a config, config lock or
 transfer container. See the [output schema and file rules](docs/design.md#output-schema),
