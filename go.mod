@@ -5,7 +5,7 @@ go 1.26.8
 require (
 	github.com/99designs/keyring v1.2.2
 	github.com/danieljoos/wincred v1.1.2
-	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2
+	github.com/godbus/dbus v4.1.0+incompatible
 	github.com/gofrs/flock v0.13.1
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c
 	github.com/spf13/cobra v1.10.2
