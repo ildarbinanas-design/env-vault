@@ -56,6 +56,10 @@ same Conventional Commit that reviewers approved.
 Update durable documentation in the same pull request as the behavior or
 operator contract it describes. In particular:
 
+- update the affected specification in `openspec/specs/` for any change to
+  behavior, output, exit codes or the release pipeline, and run
+  `openspec validate --specs --strict`; a contract change goes through an
+  OpenSpec change proposal with delta specs;
 - update `README.md` for user-facing installation or CLI behavior;
 - update `docs/design.md` for architecture and trust-boundary changes;
 - update `RELEASING.md` and `docs/release-external-settings.md` for release or

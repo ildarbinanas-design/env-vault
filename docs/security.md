@@ -74,7 +74,7 @@ Containers allow at most 16 MiB of ciphertext, including encoded values,
 metadata and the authentication tag, and 24 MiB for the complete file. Export
 refuses larger output with `BUNDLE_INVALID` before creating or replacing the
 file, including with `--force`. Base64 encoding means the selected raw values
-together must fit below 12 MiB. See [format and KDF bounds](design.md#transfer-container).
+together must fit below 12 MiB. See [format and KDF bounds](../openspec/specs/secret-transfer/spec.md).
 
 Containers are written with mode `0600` through a synced temporary sibling.
 Without `--force`, publication atomically refuses an occupied destination,

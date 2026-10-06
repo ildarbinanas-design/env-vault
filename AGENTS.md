@@ -8,7 +8,8 @@ GitHub Releases and Homebrew. Keep changes proportionate to a single-user
 tool ([ADR 0013](docs/adr/0013-owner-benefit-scope.md)).
 
 Read documentation when the task needs it: [CONTRIBUTING.md](CONTRIBUTING.md)
-for checks and PR conventions, [docs/design.md](docs/design.md) for architecture,
+for checks and PR conventions, [openspec/specs/](openspec/specs/) for current
+behavior and the release pipeline, [docs/design.md](docs/design.md) for architecture,
 [docs/security.md](docs/security.md) for secret handling, and
 [RELEASING.md](RELEASING.md) for release work.
 

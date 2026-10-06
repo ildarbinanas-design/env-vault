@@ -1,9 +1,13 @@
 # Releasing env-vault
 
-[ADR 0011](docs/adr/0011-minimal-release-pipeline.md) and
-[ADR 0012](docs/adr/0012-attestation-verification-pins-release-workflow.md)
-define the release contract. [`.github/workflows/release.yml`](.github/workflows/release.yml)
-runs on pushes to `main`; no workflow runs on a tag.
+This is the operator runbook. The
+[release-process](openspec/specs/release-process/spec.md) and
+[homebrew-distribution](openspec/specs/homebrew-distribution/spec.md)
+specifications define what the pipeline does; ADRs
+[0011](docs/adr/0011-minimal-release-pipeline.md) and
+[0012](docs/adr/0012-attestation-verification-pins-release-workflow.md) record
+why. [`.github/workflows/release.yml`](.github/workflows/release.yml) runs on
+pushes to `main`; no workflow runs on a tag.
 
 ## Authorize a release
 
@@ -43,18 +47,8 @@ flowchart TD
     Verify --> Tap["Open Homebrew formula PR<br/>Auto-merge after tap test passes"]
 ```
 
-The five targets are Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
-The `build` job checks the tag, the unmodified Go build information, and
-`--version` before uploading each binary and running the backend smoke test.
-Full E2E runs in CI on its own builds; release binaries get the release job's
-build checks and backend smoke tests.
-
-`publish` attests all five archives and all five binaries before publishing
-five archives and their five checksum files. `verify` downloads the published
-files, requires an immutable release and the expected tag commit, and checks
-the assets and archive attestations. `tap` then generates the formula from
-those archives. The tap's required `test` checks the complete formula against
-its reviewed template and published checksums before auto-merge.
+Each step's checks are specified in
+[release-process](openspec/specs/release-process/spec.md).
 
 **Never publish the draft by hand.** If it becomes immutable before the run
 uploads its files, that version cannot be completed. See recovery below.
@@ -107,15 +101,9 @@ To abandon a version that cannot be completed, label its release pull request
 
 ## Configuration and external settings
 
-- `release-please-config.json` enables draft releases and tag creation
-  (`force-tag-creation`) and hides non-product changelog sections.
-  `.release-please-manifest.json` holds the version.
-- `release-planning` holds `RELEASE_PLANNING_TOKEN`; `release` holds
-  `HOMEBREW_TAP_TOKEN`. Both environments admit only `main`. Planning uses a PAT
-  because a PR created with `GITHUB_TOKEN` would not run the required checks.
-- Immutable releases and the `main`/`v*` rulesets protect publication. Required
-  `main` checks are `quality-gate`, `pr-title`, `Dependency review`,
-  `Analyze (go)`, and `Analyze (actions)`.
+`release-please-config.json` and `.release-please-manifest.json` drive
+version planning. Tokens, environments, rulesets and required checks are
+specified in [release-process](openspec/specs/release-process/spec.md).
 
 [External settings](docs/release-external-settings.md) lists permissions,
 rulesets, token expiry and rotation. Check it at each audit and after settings
