@@ -62,9 +62,10 @@ failure it SHALL be determined by where the error arises, not by its code:
   subcommand), and the subcommand identifier for a subcommand;
 - `env-vault` run without a command, and an unexpected error that is not an
   env-vault error, SHALL use `root`;
-- an error raised by the config layer while selecting, reading, parsing,
-  validating, locking or writing a config SHALL use `config`, whichever
-  command triggered it;
+- a `CONFIG_INVALID` or `CONFIG_LOCKED` error created by the config layer
+  while selecting, reading, parsing, validating, locking or writing a config
+  SHALL use `config`, whichever command triggered it; a usage error from
+  config path selection SHALL keep the invoking subcommand identifier;
 - every other error, including `CONFIG_INVALID` raised by a subcommand's own
   checks, SHALL keep the subcommand identifier.
 
@@ -84,6 +85,11 @@ No envelope field SHALL contain a secret value or passphrase.
 
 - **WHEN** `env-vault --json profile show dev` reads a config with invalid YAML
 - **THEN** the error envelope has `command: "config"` and code `CONFIG_INVALID`
+
+#### Scenario: Usage error from config path selection
+
+- **WHEN** the user runs `env-vault --json profile create dev --local --global` without `--config`
+- **THEN** env-vault exits `2` and the error envelope has `command: "profile_create"`, code `USAGE` and message `Use only one of --local or --global`
 
 #### Scenario: Subcommand CONFIG_INVALID in JSON mode
 
