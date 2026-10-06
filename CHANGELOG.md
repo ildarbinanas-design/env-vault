@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.6](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.5...v0.4.6) (2026-10-06)
+
+
+### Bug Fixes
+
+* **deps:** update wincred to v1.2.3 and reject D-Bus downgrade ([#144](https://github.com/ildarbinanas-design/env-vault/issues/144)) ([71d4dbb](https://github.com/ildarbinanas-design/env-vault/commit/71d4dbb1ee77793aeecea38fb1ac9fcd3f98e425))
+* **exec:** preserve success when metadata output fails ([#140](https://github.com/ildarbinanas-design/env-vault/issues/140)) ([260f99b](https://github.com/ildarbinanas-design/env-vault/commit/260f99b91f8157bf7926f884acca7ecf2e1cddf9))
+
 ## [0.4.5](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.4...v0.4.5) (2026-10-03)
 
 
