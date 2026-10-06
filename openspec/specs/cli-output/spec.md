@@ -50,26 +50,45 @@ SHALL be the UTC time in RFC 3339 format. `warnings` SHALL be an array, empty
 when there are none. On success `ok` SHALL be `true` and `error` SHALL be
 `null`. On failure `ok` SHALL be `false`, `data` SHALL be `null` (except for
 `COMMAND_FAILED`, see `exec`), and `error` SHALL hold `code`, `message` and
-`remediation`. `command` SHALL be the command identifier: `version`,
-`secret_set`, `secret_check`, `secret_list`, `secret_delete`,
-`profile_create`, `profile_add`, `profile_remove`, `profile_show`, `exec`,
-`doctor`, `export` or `import`. Other values SHALL be used as follows:
-`env-vault` for an unknown command or an unknown root flag; `root` for
-`env-vault` run without a command and for an unexpected error that is not an
-env-vault error; `secret` or `profile` for that group run without a
-subcommand; and `config` for a config load, validation, write or lock error
-(`CONFIG_INVALID`, `CONFIG_LOCKED`) raised by any command. No envelope field
-SHALL contain a secret value or passphrase.
+`remediation`. The subcommand identifiers SHALL be `version`, `secret_set`,
+`secret_check`, `secret_list`, `secret_delete`, `profile_create`,
+`profile_add`, `profile_remove`, `profile_show`, `exec`, `doctor`, `export`
+and `import`. On success `command` SHALL be the subcommand identifier. On
+failure it SHALL be determined by where the error arises, not by its code:
+
+- an argument or flag parsing error SHALL use the identifier of the command
+  being parsed: `env-vault` for the root (an unknown command or root flag),
+  `secret` or `profile` for a group (an unknown subcommand or a missing
+  subcommand), and the subcommand identifier for a subcommand;
+- `env-vault` run without a command, and an unexpected error that is not an
+  env-vault error, SHALL use `root`;
+- an error raised by the config layer while selecting, reading, parsing,
+  validating, locking or writing a config SHALL use `config`, whichever
+  command triggered it;
+- every other error, including `CONFIG_INVALID` raised by a subcommand's own
+  checks, SHALL keep the subcommand identifier.
+
+No envelope field SHALL contain a secret value or passphrase.
 
 #### Scenario: Unknown command in JSON mode
 
 - **WHEN** the user runs `env-vault --json bogus`
 - **THEN** the error envelope has `command: "env-vault"` and code `USAGE`
 
-#### Scenario: Config error in JSON mode
+#### Scenario: Unknown subcommand in JSON mode
+
+- **WHEN** the user runs `env-vault --json secret bogus`
+- **THEN** the error envelope has `command: "secret"` and code `USAGE`
+
+#### Scenario: Config layer error in JSON mode
 
 - **WHEN** `env-vault --json profile show dev` reads a config with invalid YAML
 - **THEN** the error envelope has `command: "config"` and code `CONFIG_INVALID`
+
+#### Scenario: Subcommand CONFIG_INVALID in JSON mode
+
+- **WHEN** profile `dev` maps `tok:TOKEN` and the user runs `env-vault --json profile add dev other:token`, or `env-vault --json profile remove dev token`
+- **THEN** the error envelope has code `CONFIG_INVALID` and `command: "profile_add"`, or `command: "profile_remove"`, respectively
 
 #### Scenario: Successful JSON result
 
