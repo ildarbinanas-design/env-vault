@@ -7,7 +7,7 @@ Direct runtime dependencies:
 | Module | Version | License |
 |---|---:|---|
 | `github.com/99designs/keyring` | `v1.2.2` | MIT |
-| `github.com/danieljoos/wincred` | `v1.1.2` | MIT |
+| `github.com/danieljoos/wincred` | `v1.2.3` | MIT |
 | `github.com/godbus/dbus` | `v0.0.0-20190726142602-4481cbc300e2` | BSD-2-Clause |
 | `github.com/gsterjov/go-libsecret` | `v0.0.0-20161001094733-a6f4afe4910c` | MIT |
 | `github.com/gofrs/flock` | `v0.13.1` | BSD-3-Clause |
