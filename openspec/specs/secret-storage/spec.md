@@ -128,7 +128,8 @@ ignored.
 `secret set <name>` SHALL check whether the record exists, then write the
 value, and SHALL report `action` as `created` or `overwritten` from that
 check. Its data SHALL contain `name`, `service`, `record_id`, `fingerprint`,
-`action`, `verified` and `dry_run`. When the backend has a value limit and the
+`action`, `verified` and `dry_run`; a dry run SHALL omit `action` and
+`verified`. When the backend has a value limit and the
 value exceeds it, the command SHALL fail with `SECRET_TOO_LARGE` (exit `2`)
 before writing. On Windows Credential Manager the limit SHALL be 2560 bytes.
 With `--dry-run`, it SHALL validate the name, the service and the backend
@@ -138,6 +139,11 @@ selection and SHALL NOT read input, open a production backend or write.
 
 - **WHEN** `secret set token --stdin` stores a name that did not exist
 - **THEN** the result reports `action: created` and `verified: false`
+
+#### Scenario: Dry run
+
+- **WHEN** the user runs `env-vault --json --dry-run secret set token`
+- **THEN** the data holds `name`, `service`, `record_id`, `fingerprint` and `dry_run: true`, without `action` or `verified`, and no input is read
 
 #### Scenario: Oversized value on Windows
 

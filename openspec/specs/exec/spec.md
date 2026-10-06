@@ -42,11 +42,14 @@ target, compared without regard to case, SHALL fail with `CONFIG_INVALID`
 
 ### Requirement: Resolution before launch
 
-env-vault SHALL resolve every mapping before starting the child. A missing
-required secret SHALL fail with `MISSING_SECRET` (exit `3`); a missing
-optional secret (`required: false`) SHALL be skipped and its target left
-unset; a backend failure SHALL fail with `BACKEND_UNAVAILABLE` (exit `4`). In
-each of these cases the child SHALL NOT start.
+env-vault SHALL resolve every mapping, in order, before starting the child.
+For each mapping it SHALL first apply the collision rule of the child
+environment, then read the secret. A missing required secret SHALL fail with
+`MISSING_SECRET` (exit `3`) and a backend failure with `BACKEND_UNAVAILABLE`
+(exit `4`); in both cases the child SHALL NOT start. A missing optional
+secret (`required: false`) SHALL be skipped and the child SHALL start: env-vault
+SHALL NOT set, change or remove the target, so a variable inherited under
+`--override-env` keeps its inherited value.
 
 #### Scenario: Missing required secret
 
@@ -55,8 +58,13 @@ each of these cases the child SHALL NOT start.
 
 #### Scenario: Missing optional secret
 
-- **WHEN** a mapping has `required: false` and its secret is not stored
+- **WHEN** a mapping has `required: false`, its secret is not stored, and the target is not set in the environment
 - **THEN** the child runs without that variable and the result omits the mapping
+
+#### Scenario: Missing optional secret with an inherited variable
+
+- **WHEN** `OPT=inherited` is set, a mapping targets `OPT` with `required: false`, and its secret is not stored
+- **THEN** without `--override-env` env-vault exits `2` with `ENV_COLLISION` and the child does not start; with `--override-env` the child starts and sees `OPT=inherited`
 
 ### Requirement: Child environment
 

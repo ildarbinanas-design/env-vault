@@ -53,9 +53,23 @@ when there are none. On success `ok` SHALL be `true` and `error` SHALL be
 `remediation`. `command` SHALL be the command identifier: `version`,
 `secret_set`, `secret_check`, `secret_list`, `secret_delete`,
 `profile_create`, `profile_add`, `profile_remove`, `profile_show`, `exec`,
-`doctor`, `export` or `import`; errors raised before a subcommand is selected
-use `root`, `secret` or `profile`. No envelope field SHALL contain a secret
-value or passphrase.
+`doctor`, `export` or `import`. Other values SHALL be used as follows:
+`env-vault` for an unknown command or an unknown root flag; `root` for
+`env-vault` run without a command and for an unexpected error that is not an
+env-vault error; `secret` or `profile` for that group run without a
+subcommand; and `config` for a config load, validation, write or lock error
+(`CONFIG_INVALID`, `CONFIG_LOCKED`) raised by any command. No envelope field
+SHALL contain a secret value or passphrase.
+
+#### Scenario: Unknown command in JSON mode
+
+- **WHEN** the user runs `env-vault --json bogus`
+- **THEN** the error envelope has `command: "env-vault"` and code `USAGE`
+
+#### Scenario: Config error in JSON mode
+
+- **WHEN** `env-vault --json profile show dev` reads a config with invalid YAML
+- **THEN** the error envelope has `command: "config"` and code `CONFIG_INVALID`
 
 #### Scenario: Successful JSON result
 
@@ -151,12 +165,15 @@ exit code is the child's (see `exec`).
 
 When `--output <path>` is set, env-vault SHALL write the same envelope it
 renders, followed by a newline, to that path for both successful and failed
-commands. The file SHALL be published atomically through a synced temporary
-sibling with mode `0600`; missing parent directories SHALL be created with
-mode `0700`. The target SHALL be a regular file or a new path; symlinks,
-directories, devices and pipes SHALL be refused. On Windows a replacement
-blocked by another program's open handle SHALL be retried for up to one
-second within the same publication attempt.
+commands. The complete content SHALL be written to a synced temporary sibling
+with mode `0600` and then renamed onto the target in the same directory;
+missing parent directories SHALL be created with mode `0700`. On Unix the
+replacement SHALL be atomic. On Windows, where the rename is not guaranteed to
+be atomic, env-vault SHALL never delete the previous file before the rename
+and SHALL retry a rename blocked by another program's open handle (access,
+sharing or lock violation) for up to one second within the same publication
+attempt. The target SHALL be a regular file or a new path; symlinks,
+directories, devices and pipes SHALL be refused.
 
 #### Scenario: Error recorded in the file
 

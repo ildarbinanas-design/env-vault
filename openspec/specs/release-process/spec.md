@@ -22,8 +22,11 @@ enforced by the `pr-title` check. The `main` ruleset SHALL require the checks
 workflow passed: source checks (`go mod tidy -diff`, `go mod verify`,
 `go test ./...`, `go vet ./...`, `govulncheck`, smoke tests, the race
 detector, the pinned historical-transfer check and the Debian Secret Service
-check), license checks on Linux, macOS and Windows, and the native build,
-test, E2E and real-backend smoke matrix for the five release targets.
+check), license checks on Linux, macOS and Windows, and the native matrix:
+build and real-backend smoke test for all five release targets
+(`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`,
+`windows-amd64`), and the E2E suite once per operating system on
+`linux-amd64`, `darwin-arm64` and `windows-amd64`.
 
 #### Scenario: Non-conventional title
 
@@ -52,8 +55,9 @@ module updates `fix(deps)` and Actions updates `ci(deps)`.
 ### Requirement: Release authorization
 
 Merging the generated release pull request SHALL be the only release
-authorization, and SHALL be done by the owner as a head-guarded squash merge
-(`gh pr merge <n> --squash --match-head-commit <head-sha>`). It SHALL
+authorization. A maintainer SHALL merge it as a head-guarded squash merge
+(`gh pr merge <n> --squash --match-head-commit <head-sha>`); an agent SHALL do
+so only on the owner's explicit instruction. It SHALL
 authorize only the version, tag and merge commit produced by that head. No
 workflow SHALL run on a tag, and tags or releases SHALL NOT be created by any
 other path. A draft release SHALL NOT be published by hand.

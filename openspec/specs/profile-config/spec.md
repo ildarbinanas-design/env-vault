@@ -12,11 +12,12 @@ environment mappings only, never values.
 
 ### Requirement: Config schema
 
-A config SHALL be a single YAML document with `version: 1` and a `profiles`
-map from profile name to profile. A profile SHALL have an optional
-`description` and an optional `secrets` list; each mapping SHALL have `name`
-(secret name), `env` (target variable) and `required` (boolean). Unknown
-fields SHALL be rejected. Validation SHALL require `version` to equal `1`, a
+A config SHALL be a single YAML document with `version: 1` and an optional
+`profiles` map from profile name to profile; a missing or null `profiles`
+SHALL be read as an empty map. A profile SHALL have an optional `description`
+and an optional `secrets` list; each mapping SHALL have `name` (secret name)
+and `env` (target variable) and an optional boolean `required` that defaults
+to `false` when omitted. Unknown fields SHALL be rejected. Validation SHALL require `version` to equal `1`, a
 non-empty profile name, a valid secret name (see `secret-storage`), an `env`
 matching `[A-Za-z_][A-Za-z0-9_]*`, and `env` values that are unique within a
 profile when compared without regard to case. A config SHALL NOT contain
@@ -26,6 +27,16 @@ secret values.
 
 - **WHEN** a config contains `profiles.dev.secrets[0].value: abc`
 - **THEN** every command that loads it fails with `CONFIG_INVALID` (exit `5`)
+
+#### Scenario: Omitted profiles and required
+
+- **WHEN** a config contains only `version: 1`, or a profile mapping omits `required`
+- **THEN** the config loads as having no profiles, or the mapping is shown with `required: "false"` and treated as optional by `exec`
+
+#### Scenario: Missing version
+
+- **WHEN** a config omits `version`
+- **THEN** loading fails with `CONFIG_INVALID`
 
 #### Scenario: Targets differing only by case
 

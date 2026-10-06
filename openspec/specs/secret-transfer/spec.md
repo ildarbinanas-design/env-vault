@@ -142,8 +142,10 @@ to `fail`; another value SHALL fail with `USAGE`. Before the first write,
 import SHALL check every entry's existence through the key listing and, for
 `fail`, SHALL stop at the first existing secret with `SECRET_EXISTS` (exit
 `2`) without writing; `skip` SHALL leave existing secrets untouched and
-`overwrite` SHALL replace them. It SHALL also refuse, before the first write,
-any value larger than the backend stores with `SECRET_TOO_LARGE`. The data
+`overwrite` SHALL replace them. Before the first write it SHALL also refuse
+with `SECRET_TOO_LARGE` any value that would be written (a new secret, or an
+existing one under `overwrite`) and is larger than the backend stores; a value
+skipped under `skip` SHALL NOT be checked against that limit. The data
 SHALL contain `path`, `services`, `secret_count`, `on_conflict`, `dry_run` and
 `secrets`, each with `service`, `name`, `record_id`, `fingerprint` and
 `action` (`created`, `overwritten` or `skipped`).
@@ -152,6 +154,11 @@ SHALL contain `path`, `services`, `secret_count`, `on_conflict`, `dry_run` and
 
 - **WHEN** the container holds `tok` and `tok` is already stored
 - **THEN** import exits `2` with `SECRET_EXISTS` and remediation `Re-run with --on-conflict overwrite or --on-conflict skip`, and nothing is written
+
+#### Scenario: Oversized value that is skipped
+
+- **WHEN** on Windows Credential Manager the container holds a 3000-byte value for `tok`, `tok` already exists, and the policy is `skip`
+- **THEN** import does not fail on the size, leaves `tok` unchanged and reports `action: skipped`
 
 #### Scenario: Skip policy
 
