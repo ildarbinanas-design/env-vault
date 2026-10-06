@@ -94,7 +94,7 @@ env-vault exec --secret nexus-token:NPM_TOKEN -- make test
 `exec` launches the supplied argv directly and returns the child's exit status.
 Use an explicit shell only when needed, for example
 `env-vault exec dev -- bash -lc 'make test'`. See
-[process and signal behavior](docs/design.md#exec-flow) for Unix signal handling.
+[process and signal behavior](openspec/specs/exec/spec.md) for Unix signal handling.
 
 ### How values move
 
@@ -140,13 +140,13 @@ Use `env-vault <command> --help` for arguments and flags.
 `exec` refuses existing environment targets unless `--override-env` is set.
 `--clean-env` starts with a minimal environment that retains essentials such as
 `PATH` and `HOME`. Target names are compared without regard to case on every
-platform. See [resolution rules](docs/design.md#exec-flow).
+platform. See [resolution rules](openspec/specs/exec/spec.md).
 
 Overwriting a secret reports `overwritten`. Its `record_id` identifies the
 service/name pair and stays unchanged when the value changes; `fingerprint` is
 a deprecated alias. `--verify` compares the value read back in constant time.
 A failure reports `SECRET_UNVERIFIED` or a backend error after the write;
-it does not roll the write back. See [record identity](docs/design.md#secretstore-interface).
+it does not roll the write back. See [record identity](openspec/specs/secret-storage/spec.md).
 
 ## Profiles and config
 
@@ -177,7 +177,7 @@ Mappings are portable and may be versioned with the project that uses them.
 This repository ignores its own local `.env-vault.yaml` and persistent
 `.env-vault.yaml.lock`; decide explicitly which mapping file to track in a
 consumer project. Profile mutations are serialized through that adjacent lock;
-a timeout returns `CONFIG_LOCKED`. See [config storage](docs/design.md#config-schema).
+a timeout returns `CONFIG_LOCKED`. See [config storage](openspec/specs/profile-config/spec.md).
 
 ## Output and dry run
 
@@ -211,8 +211,8 @@ writing env-vault's own stdout retain their existing failure behavior. Metadata
 write failures also remain errors for other commands and `exec --dry-run`.
 
 Use a separate regular file for `--output`, never a config, config lock or
-transfer container. See the [output schema and file rules](docs/design.md#output-schema),
-[dry-run contract](docs/design.md#dry-run), and [version metadata](docs/design.md#version).
+transfer container. See the [output, dry-run and version contract](openspec/specs/cli-output/spec.md)
+and the [exec result rules](openspec/specs/exec/spec.md).
 
 ## Move secrets to another machine
 
@@ -262,7 +262,9 @@ the explicit test-only gate, and filesystem/threat-model limits.
 ## Development and releases
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): pull requests and local checks.
-- [Design](docs/design.md): architecture, config, process and output contracts.
+- [Specifications](openspec/specs/): the normative behavior of every command
+  and of the release pipeline.
+- [Design](docs/design.md): architecture and the reasons behind it.
 - [E2E verification](docs/e2e.md): scenarios, native platform matrix and reports.
 - [RELEASING.md](RELEASING.md): Release Please, release authorization, delivery
   checks and recovery. Only merging the generated release pull request
