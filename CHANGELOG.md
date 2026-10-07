@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.7](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.6...v0.4.7) (2026-10-07)
+
+
+### Bug Fixes
+
+* **cli:** accept long hidden prompt input and cap secret size at 64 KiB ([#146](https://github.com/ildarbinanas-design/env-vault/issues/146)) ([7c48bb3](https://github.com/ildarbinanas-design/env-vault/commit/7c48bb332ffc3a8b043ba77b8e9cd9181df602e8))
+
 ## [0.4.6](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.5...v0.4.6) (2026-10-06)
 
 
