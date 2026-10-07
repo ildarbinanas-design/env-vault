@@ -35,7 +35,7 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 
 ## 5. Manual macOS checks
 
-- [ ] 5.1 Build the updated CLI with Go 1.26.8 and perform real terminal paste checks using all three test-backend gates: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and an absolute `ENV_VAULT_TEST_STORE` under the system temporary directory. Generate the 6050-byte clipboard value with `openssl rand -base64 4600 | tr -d '\n' | head -c 6050 | pbcopy`; generate fresh sufficiently large inputs for 65536 and 65537 bytes in the same way. Acceptance: `secret set EXAMPLE` accepts 6050 and 65536 bytes; `pbpaste | shasum -a 256` matches the digest from `exec --secret EXAMPLE:EXAMPLE -- sh -c 'printf %s "$EXAMPLE" | shasum -a 256'`; 65537 bytes returns `SECRET_TOO_LARGE`, leaves the previous value intact and restores the terminal. Record only lengths/digests/statuses, then remove the disposable store and clipboard contents.
+- [x] 5.1 Build the updated CLI with Go 1.26.8 and perform real terminal paste checks using all three test-backend gates: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and an absolute `ENV_VAULT_TEST_STORE` under the system temporary directory. Generate the 6050-byte clipboard value with `openssl rand -base64 4600 | tr -d '\n' | head -c 6050 | pbcopy`; generate fresh sufficiently large inputs for 65536 and 65537 bytes in the same way. Acceptance: `secret set EXAMPLE` accepts 6050 and 65536 bytes; `pbpaste | shasum -a 256` matches the digest from `exec --secret EXAMPLE:EXAMPLE -- sh -c 'printf %s "$EXAMPLE" | shasum -a 256'`; 65537 bytes returns `SECRET_TOO_LARGE`, leaves the previous value intact and restores the terminal. Record only lengths/digests/statuses, then remove the disposable store and clipboard contents.
 - [ ] 5.2 Interrupt a long partial paste with Ctrl+C in the same isolated macOS terminal setup. Acceptance: echo returns, no partial secret becomes shell input, the established interruption status is preserved, and the disposable store is removed after checking.
 - [x] 5.3 With test-backend variables unset, generate a fresh 65536-byte value at runtime and pipe it to `secret set size-probe --service env-vault-size-probe --stdin --verify`; remove it with `secret delete size-probe --service env-vault-size-probe --confirm size-probe`. Acceptance: verified Keychain write and deletion both succeed, no other entry is touched, and `sysctl kern.argmax` is recorded. Report unavailable interactive access rather than claiming this check passed.
 
@@ -100,7 +100,7 @@ pass from the plan or from a test that did not execute.
 | Linux E2BIG regression | [Run 37579807389](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579807389), product `b2bb23d` | Per-string CLI and aggregate runner tests executed and passed |
 | Full local CONTRIBUTING checks and explicit skips | Go 1.26.8, implementation `b2bb23dc593c785acada22960bbab2c2ee955917`; commands below | All commands passed; full and race suites each 861 pass events and 9 explicit skips |
 | Native CI execution and exact heads | Dedicated runs below; full [37582064720](https://github.com/ildarbinanas-design/env-vault/actions/runs/37582064720) at `9adfd4df2d87d309063bd0360d30446f719ffbee` | All 12 full-matrix jobs passed; native event proofs and explicit skips recorded below |
-| Manual macOS paste, interrupt and Keychain probe | Native probe and isolated Terminal script described below | Keychain write/verify/delete pass; 6050-byte paste pass; 65536 result check failed and repeat pending; overflow/interrupt not reached |
+| Manual macOS paste, interrupt and Keychain probe | Native probe and isolated Terminal script described below | Keychain write/verify/delete pass; owner's 08:13 UTC repeat passes 6050/65536 paste and 65537 rejection; Ctrl+C terminal-state comparison failed and remains under diagnosis |
 | Independent implementation review | Separate reviewer without implementation conversation; final code/test head `9adfd4d` and final native results | No actionable code/test/security findings; manual checks and final spec/archive review remain incomplete |
 | Final synchronized-spec and archive checks | Awaiting manual acceptance | Not run; active change retained |
 
@@ -435,7 +435,7 @@ from manual acceptance: tasks 5.1/5.2 are incomplete, and a material fix after
 a manual repeat requires renewed review. Synced specs and archive have not
 yet been produced or reviewed.
 
-## Remaining manual acceptance and owner action
+## Manual acceptance status before the owner-operated repeat
 
 The isolated real Terminal run passed the 6050-byte length/digest comparison.
 For 65536 bytes the CLI returned exit `0` and restored terminal attributes,
@@ -513,3 +513,87 @@ undetermined until a macOS repeat supplies the missing verification result.
 Tasks 5.1/5.2 remain incomplete. The owner was asked to repeat the script
 using the freshly built `env-vault-head-8f7ed6a` binary, or identify an
 already-created repeat log.
+
+## Owner-operated macOS repeat at 08:13 UTC
+
+On 2026-10-07 the owner ran the updated manual script in Terminal with
+`env-vault-head-8f7ed6a`, built using Go 1.26.8 from
+`8f7ed6a18684d40edc4ad8a9be98b0ad6a4a6623`. The supplied output matches
+the appended local manual log. All three test-backend gates were active.
+
+| Input bytes | Stored bytes | Hash comparison | Set exit | Exec exit | Action |
+| --- | --- | --- | --- | --- | --- |
+| 6050 | 6050 | matches clipboard | 0 | 0 | created |
+| 65536 | 65536 | matches clipboard | 0 | 0 | overwritten |
+| 65537 | 65536 | previous value unchanged | 2 (`SECRET_TOO_LARGE`) | 0 | none |
+
+All three size cases restored the original terminal attributes and echo.
+The script subsequently cleared its clipboard and removed its disposable
+store. These results complete task 5.1. They do not establish why the
+initial 65536 verification failed. The preserved log also includes an
+earlier 07:56 UTC attempt with clipboard length 6050 but stored length 479
+and a hash mismatch; its cause is likewise not established.
+
+The 08:13 UTC Ctrl+C phase failed the script's whole-terminal-state equality
+check. The script checked that equality before logging child exit status,
+and did not log the differing attributes. Thus this run alone establishes
+neither failed echo restoration nor a preserved SIGINT exit. The script's
+final cleanup restored attributes, cleared the clipboard and removed the
+store; the pending-input check was not reached. Task 5.2 remains incomplete.
+
+No product code was changed in response. Diagnostic logging now records
+child exit and terminal flag differences before asserting restoration.
+The existing native macOS signal/flush regressions were repeated:
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=1 -json ./internal/cli -run '^(TestHiddenPromptsRestoreTerminalOnSignals|TestHiddenPromptDiscardsInterruptedInput)$'
+```
+
+Exit `0`: 21 test pass events, no failures or skips (19 leaf cases plus
+the two parent tests). This does not replace the incomplete manual Ctrl+C
+acceptance check. The isolated PTY comparison below identifies a reproducible
+false-failure condition in the script, while the cause of this particular
+manual failure remains unconfirmed without its terminal-state differences.
+
+### Isolated macOS Ctrl+C diagnosis
+
+An independent agent ran the exact binary in isolated native macOS PTYs
+with Python's caught SIGINT handler, both with and without the Bash no-op
+SIGINT trap used by the manual script. Each case asserted a complete write
+of 6050 runtime-generated bytes; no Terminal UI or clipboard was accessed.
+The diagnostic commands were:
+
+```sh
+python3 /private/tmp/env-vault-independent-interrupt-probe.py plain python interrupt
+python3 /private/tmp/env-vault-independent-interrupt-probe.py plain bash interrupt
+python3 /private/tmp/env-vault-independent-interrupt-probe.py pendin python interrupt
+python3 /private/tmp/env-vault-independent-interrupt-probe.py pendin bash interrupt
+python3 /private/tmp/env-vault-independent-interrupt-probe.py plain bash complete
+python3 /private/tmp/env-vault-independent-interrupt-probe.py pendin bash complete
+```
+
+All six diagnostic supervisors completed with status `0`. All four
+interrupted CLI processes exited by SIGINT (`-2`, shell status `130`),
+restored echo and canonical mode, left zero pending input bytes and created
+no store. With `PENDIN` initially set, the sole difference was that local
+flag becoming clear (`0x20000000`); all other flags, speeds and control
+characters matched. The Bash wrapper did not affect the result. Normal
+completion also demonstrated that `PENDIN` can change independently of
+terminal configuration.
+
+The local Apple SDK's `usr/include/sys/termios.h` defines `PENDIN` as pending
+input state. Thus whole-state equality is too strict for this manual
+restoration check. This establishes a script defect that can reproduce the
+reported symptom; it does not retrospectively prove that the original
+08:13 failure differed only in this bit. The earlier length/hash failures
+are separate and still have no established cause.
+
+The temporary manual script now logs the child exit and all terminal
+differences before checking restoration. It compares all configuration
+fields exactly except `PENDIN`, still requires echo, exact SIGINT termination,
+zero queued bytes and an unchanged stored value, and retains cleanup. A new
+`--interrupt-only` mode seeds a fresh gated disposable store through stdin
+and verifies its length/hash, then requests only the remaining 6050-byte
+paste and Ctrl+C. Shell and embedded Python syntax passed; the independent
+agent reviewed the script update without blocking findings. No product code
+was modified. Task 5.2 awaits this real terminal repeat.
