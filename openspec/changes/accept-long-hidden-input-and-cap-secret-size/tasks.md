@@ -462,3 +462,54 @@ Enter for the final interruption check.
 The repeat result is pending. Tasks 5.1/5.2 remain unchecked, so this change
 has not been synchronized, archived or submitted as a PR. The owner required
 all acceptance criteria to be completed before that delivery.
+
+## Manual failure diagnostic follow-up
+
+The owner reported that an independent Linux PTY check at
+`8f7ed6a18684d40edc4ad8a9be98b0ad6a4a6623` passed with 1024-byte paste chunks
+and CR termination: 6050 and 65536 bytes had matching exec hashes, 65537
+returned `SECRET_TOO_LARGE` without changing the stored value, and Ctrl+C
+terminated with SIGINT. This is owner-supplied Linux evidence, not a repeat
+of the required real macOS clipboard paste.
+
+The two suggested script causes were checked against the original script's
+authoring history as well as the current script and original log. From its
+first version, the generator used 4600 random bytes for 6050 and 52000 for
+both larger inputs, and checked the actual clipboard length before `READY`.
+The failing run records an actual clipboard length of 65536. The script
+checked only exit status and error code; it never required `action=created`
+for the second write. Neither insufficient generated input nor a mistaken
+`created` assertion explains the recorded failure. An independent script
+audit reached the same conclusion and found insufficient historical
+diagnostics to identify the actual cause.
+
+A fresh macOS diagnostic built the exact source head above and used a new
+temporary store with all three gates. It generated values at runtime and
+used `--stdin` for sequential writes to the same `EXAMPLE`, followed by the
+same shell-based exec length/hash comparison as the manual script:
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go build -o /tmp/env-vault-hidden-input-evidence/env-vault-head-8f7ed6a ./cmd/env-vault
+python3 /tmp/env-vault-hidden-input-evidence/check-manual-hypotheses.py
+```
+
+Both commands exited `0`. Generated base64 lengths were 6136 from 4600
+random bytes and 69336 from 52000, with exact requested lengths after
+truncation. The disposable store was removed; no clipboard or terminal UI
+was used for this diagnostic.
+
+| Input bytes | Stored bytes | Hash matches expected retained value | Set exit | Exec exit | Action | Error code |
+| --- | --- | --- | --- | --- | --- | --- |
+| 6050 | 6050 | true | 0 | 0 | created | none |
+| 65536 | 65536 | true | 0 | 0 | overwritten | none |
+| 65537 | 65536 | true | 2 | 0 | none | SECRET_TOO_LARGE |
+
+The manual script now also logs allowlisted action metadata and explicitly
+expects `created` for the first write and `overwritten` for the second. Its
+shell and embedded Python syntax checks passed. This improves diagnostics;
+it is not evidence of a fix for the original failure. The original log is
+preserved, no product code was changed, and the historical cause remains
+undetermined until a macOS repeat supplies the missing verification result.
+Tasks 5.1/5.2 remain incomplete. The owner was asked to repeat the script
+using the freshly built `env-vault-head-8f7ed6a` binary, or identify an
+already-created repeat log.
