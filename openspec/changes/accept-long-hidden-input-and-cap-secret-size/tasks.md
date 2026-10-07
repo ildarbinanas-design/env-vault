@@ -30,7 +30,7 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 
 ## 4. Explain OS environment-size launch failures
 
-- [ ] 4.1 Match wrapped `E2BIG` in the runner start-error path and use the remediation in the exec delta without changing `RUNTIME_ERROR`, exit `1`, `Unable to start command` or other launch handling. Add a native Linux CLI regression that seeds a generated 131072-byte value directly into the gated test store, plus coverage of aggregate-limit error mapping. Acceptance: native Linux execution reports the new remediation, no child starts and no environment/value appears in output; ordinary start, stream, exit and signal tests remain green.
+- [x] 4.1 Match wrapped `E2BIG` in the runner start-error path and use the remediation in the exec delta without changing `RUNTIME_ERROR`, exit `1`, `Unable to start command` or other launch handling. Add a native Linux CLI regression that seeds a generated 131072-byte value directly into the gated test store, plus coverage of aggregate-limit error mapping. Acceptance: native Linux execution reports the new remediation, no child starts and no environment/value appears in output; ordinary start, stream, exit and signal tests remain green.
 - [x] 4.2 Explain the practical 64 KiB bound and remaining per-string/aggregate OS limits in `README.md` and `docs/security.md`. Acceptance: documentation explains reducing the size or number of secrets after `E2BIG` without promising that arbitrary environment names, argv or many valid secrets always fit.
 
 ## 5. Manual macOS checks
@@ -41,7 +41,7 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 
 ## 6. Full validation and independent implementation review
 
-- [ ] 6.1 Run the complete applicable CONTRIBUTING set listed below, plus strict change and main-spec validation. Acceptance: record each exact command/result, fix failures, list unavailable checks and skips explicitly, and do not count a skipped native/E2E/release-script test as passed. Keep `CHANGELOG.md`, backend implementations, dependencies and reserved paths unchanged in the product branch.
+- [x] 6.1 Run the complete applicable CONTRIBUTING set listed below, plus strict change and main-spec validation. Acceptance: record each exact command/result, fix failures, list unavailable checks and skips explicitly, and do not count a skipped native/E2E/release-script test as passed. Keep `CHANGELOG.md`, backend implementations, dependencies and reserved paths unchanged in the product branch.
 - [ ] 6.2 Verify the final implementation on native CI, including `ubuntu-latest` prompt and Linux E2BIG tests. Ordinary CI alone does not establish native Windows behavior: run `GOTOOLCHAIN=go1.26.8 go test -count=1 -json ./internal/cli/... ./internal/secretstore/keyring/...` on `windows-latest` from a temporary `agent/verify-windows-*` branch following AGENTS.md. Acceptance: record run URLs and exact tested head SHAs; inspect JSON test events to prove the Windows 2560/2561-byte limit and pre-backend refusal tests actually ran, and that every new applicable Linux test ran without a PTY skip; retain native macOS results. Delete the temporary verification branches after checking. If the Windows run is impossible, record `Windows: not natively verified` in the evidence log and leave this task incomplete.
 - [ ] 6.3 Give an independent reviewer without the implementer's conversation the final implementation diff, the agreed delta specs and before/after validation results. Acceptance: all blocking findings are resolved, material fixes are re-reviewed and relevant checks rerun, and the reviewer result/limitations are recorded below. This does not authorize merging the eventual PR.
 
@@ -97,9 +97,9 @@ pass from the plan or from a test that did not execute.
 | Original-code macOS PTY regression | Test commit `9c1214d48653e41e67c1d218e51ddda21ed273dd`; command below | Expected exit 1: 4 short cases pass; 12 long cases time out; no skips or cleanup failures |
 | Original-code Linux PTY regression | [Run 37577529799](https://github.com/ildarbinanas-design/env-vault/actions/runs/37577529799), verification head `badb451521e6a2e00516f01f73f0ebb07e11bcbe`, test source `9c1214d` | Expected Go exit 1; 10 short cases pass, 6 long cases fail with length/digest mismatch; all 16 executed without skips |
 | Fixed prompt, size and compatibility tests | Native macOS commands below | Pass; no targeted prompt/size skips; actual pinned v0.4.2 source tested |
-| Linux E2BIG regression | Pending apply | Not run |
-| Full local CONTRIBUTING checks and explicit skips | Pending apply | Not run |
-| Native CI execution and exact heads | Pending apply | Not run |
+| Linux E2BIG regression | [Run 37579807389](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579807389), product `b2bb23d` | Per-string CLI and aggregate runner tests executed and passed |
+| Full local CONTRIBUTING checks and explicit skips | Go 1.26.8, implementation `b2bb23dc593c785acada22960bbab2c2ee955917`; commands below | All commands passed; full and race suites each 861 pass events and 9 explicit skips |
+| Native CI execution and exact heads | Dedicated Linux/Windows runs below | Required tests passed; initial full matrix needs E2E coverage follow-up |
 | Manual macOS paste, interrupt and Keychain probe | Pending apply | Not run |
 | Independent implementation review | Pending apply | Not performed |
 | Final synchronized-spec and archive checks | Pending apply | Not run |
@@ -216,5 +216,119 @@ disposable named entry was used. `kern.argmax: 1048576`. Binary SHA-256:
 
 The real Terminal clipboard check is pending owner interaction: Computer Use
 refused access to `com.apple.Terminal` for safety reasons. The prepared isolated
-script timed out without a paste and cleaned its clipboard and temporary
-store. Automated PTY passes do not substitute for this manual check.
+script recorded a complete 6050-byte length/digest match, then accepted the
+65536-byte prompt but failed its subsequent result check. Clipboard and
+temporary store cleanup succeeded. That failed check is being diagnosed;
+automated PTY passes do not substitute for completing this manual check.
+
+## Full local validation
+
+Implementation revision: `b2bb23dc593c785acada22960bbab2c2ee955917`.
+All commands below returned exit `0` on native macOS arm64:
+
+```sh
+gofmt -w $(git ls-files '*.go')
+git diff --check
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go mod tidy -diff
+GOTOOLCHAIN=go1.26.8 go mod verify
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go vet ./...
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -json ./...
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -race -json ./...
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache scripts/smoke.sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache scripts/vuln-check.sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache scripts/license-check.sh
+openspec validate accept-long-hidden-input-and-cap-secret-size --strict
+openspec validate --specs --strict
+```
+
+New untracked Go files were also formatted before committing. Module tidy had
+no diff; module verification reported all modules verified; smoke reported
+`smoke ok`. Govulncheck v1.8.0 reported zero reachable vulnerabilities and one
+advisory in a required module whose affected code is not called. The license
+check passed with go-licenses v2.0.1 (assembly inspection warnings only).
+Strict change validation passed, and strict main-spec validation reported
+7 passed, 0 failed, with informational long-requirement notices only.
+
+Both full and race JSON runs recorded 861 passing test events and these nine
+explicit skips; none is counted as a successful execution:
+
+- `TestE2E`: requires the binary-only E2E runner; native CI runs that separately.
+- `TestHistoricalTransfer`: requires the pinned historical binary gate; the
+  separate historical command above actually ran and passed.
+- `TestReleaseFindStepBuildsOnlyTheTaggedReleaseCommit`,
+  `TestReleasePublishStepNeverReplacesAssetsAndResumes`,
+  `TestReleaseTapStepOpensOnePullRequestAndResumes`,
+  `TestReleasePublishVerifiesEveryArchiveAndBinary`,
+  `TestReleaseVerifyStepChecksThePublishedRelease`: GNU base64 unavailable.
+- `TestPackageArchivesIsDeterministicAndKeepsTheLayout`,
+  `TestPackageReleaseArrangesDownloadsAndAttestationSubjects`: GNU tar
+  unavailable. These release-script tests run on the normal Linux CI runner.
+
+No backend implementation, dependency, changelog or reserved product path
+changed. Linux-specific E2BIG tests are absent from a macOS build rather than
+counted as local passes.
+
+## Native verification and full-matrix follow-up
+
+Dedicated verification of product
+`b2bb23dc593c785acada22960bbab2c2ee955917` passed:
+
+| Native runner | Verification head / run | Command | Required event proof |
+| --- | --- | --- | --- |
+| `ubuntu-latest` | `d4df39a98c79589408b77344114fff4dae754285`; [37579807389](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579807389) | `GOTOOLCHAIN=go1.26.8 go test -count=1 -json ./internal/cli/... ./internal/runner/... ./internal/secretstore/keyring/...` | Exit 0; 116 required cases each ran and passed, including every prompt leaf without PTY skips, both E2BIG tests, legacy exec and actual pinned v0.4.2 oversized normal/dry-run imports |
+| `windows-latest` | `704beed61ca7d72b97aa190b002fef15c87a09c9`; [37579814611](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579814611) | `GOTOOLCHAIN=go1.26.8 go test -count=1 -json ./internal/cli/... ./internal/secretstore/keyring/...` | Exit 0; 48 required cases each ran and passed, including 2560/2561 secret-set/import boundaries, LF/CRLF and refusal before backend operations in human/JSON/JSONL output |
+
+Both verification commits add only their temporary workflow and event-verifier
+metadata to the product revision. Workflows restricted their trigger/ref to
+their own branch, used `contents: read`, no secrets, pinned action SHAs and job
+timeouts. The temporary `agent/verify-linux-hidden-input-20261007` and
+`agent/verify-windows-hidden-input-20261007` remote/local branches and worktrees
+were deleted after verification. Actions history/artifacts were not changed.
+
+Explicit unrelated skips in these targeted package runs:
+
+- Linux: `TestSecretServiceDisposableIntegration` (isolated service gate),
+  `TestMetadataDetectsMissingCaseAlias` and
+  `TestMetadataRechecksNewFilesystemAliases` (filesystem/platform cases).
+- Windows: `TestInvalidLocalConfigNeverFallsBackToGlobal/unreadable_file` and
+  `/unsearchable_directory` (Unix permissions);
+  `TestPassBackendScopesSafeSlashNames`,
+  `TestKeyringAdapterRejectsTraversalBeforeOpeningBackend`,
+  `TestExistsReadsKeyListingWithoutDecryptingValue` (`pass` unavailable);
+  `TestWindowsNativeCredentialIdentity` (native session gate);
+  `TestHistoricalTransfer` (historical binary gate); and
+  `TestLegacyLargeSecretExecPreservesValue` (macOS/Linux environment allowance).
+  No required Windows size or pre-backend test was skipped.
+
+The first ordinary full matrix,
+[37579748237](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579748237),
+tested the same product head. Source quality (including the full race suite,
+actual historical transfer and isolated Debian Secret Service), all three
+license jobs, Linux arm64, macOS amd64 and Windows amd64 native jobs passed.
+Linux amd64 and macOS arm64 E2E each passed all 24 functional scenarios, but
+failed statement coverage: 58.80% and 59.90%, respectively, below the existing
+60% floor. Their downstream real-store smoke steps did not run. The new Unix
+prompt needs a real-binary E2E regression; the threshold remains unchanged.
+This run is recorded as failed, not as a complete matrix pass.
+
+## Real-binary E2E regression
+
+Extended the existing `SECRET_LIFECYCLE` scenario without changing manifest
+IDs, production code, dependencies, CI or the 60% coverage floor. It accepts
+65536 bytes plus CRLF through stdin with verification, rejects 65537 without
+changing the store, and on macOS/Linux drives the actual CLI through a PTY
+for 6050/65536-byte input, editing, overflow, no echo and terminal restoration.
+The child checks only byte length and SHA-256; generated values remain in
+the existing isolated stores and sentinel tracking.
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache GOPROXY=off go run ./e2e/cmd/e2e-runner run --phase candidate --binary /tmp/env-vault-hidden-input-evidence/e2e-prompt-cli --reporter /tmp/env-vault-audit-20261003.0HKrh2/reporters/darwin-arm64/gotestsum --reporter-checksum /tmp/env-vault-audit-20261003.0HKrh2/reporters/darwin-arm64/gotestsum.sha256 --reports reports/e2e-prompt-check --coverage-floor 60 --test-timeout 3m --command-timeout 3m
+```
+
+Exit `0` on native macOS: 24 scenarios passed, zero failures/skips/missing;
+critical feature coverage 100%, statement coverage 63.7%. Three full-suite
+and five locking burn-ins completed; the registry validated 245 records and
+the leak scan found zero occurrences across 18 report files. The existing
+reporter was checksum-verified. Generated reports were moved out of the
+checkout into the local evidence directory. Linux amd64 and Windows amd64
+E2E package cross-builds passed; these are not substitutes for native CI.

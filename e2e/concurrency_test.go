@@ -33,6 +33,9 @@ func launchEnvVault(sc *scenario, options runOptions, args ...string) (*launched
 	cmd.Dir = options.cwd
 	cmd.Env = sc.baseEnv(options.env, options.unset)
 	cmd.Stdin = bytes.NewReader(options.stdin)
+	if options.terminal != nil {
+		cmd.Stdin = options.terminal
+	}
 	launched := &launchedCommand{cmd: cmd, args: append([]string(nil), args...), finished: make(chan struct{})}
 	cmd.Stdout = &launched.stdout
 	cmd.Stderr = &launched.stderr

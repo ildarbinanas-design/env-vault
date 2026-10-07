@@ -60,8 +60,9 @@ func runArgs(args []string) error {
 func runEnv(args []string) error {
 	set := flag.NewFlagSet("env", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
-	var hashes, values, absent stringList
+	var hashes, lengths, values, absent stringList
 	set.Var(&hashes, "expect-hash", "NAME=SHA256")
+	set.Var(&lengths, "expect-length", "NAME=BYTE_LENGTH")
 	set.Var(&values, "expect-value", "NAME=VALUE")
 	set.Var(&absent, "expect-absent", "NAME")
 	if err := set.Parse(args); err != nil {
@@ -82,6 +83,17 @@ func runEnv(args []string) error {
 		sum := sha256.Sum256([]byte(value))
 		if hex.EncodeToString(sum[:]) != want {
 			return fmt.Errorf("environment variable %q has an unexpected digest", name)
+		}
+	}
+	for _, spec := range lengths {
+		name, want, ok := strings.Cut(spec, "=")
+		size, err := strconv.Atoi(want)
+		if !ok || name == "" || err != nil || size < 0 {
+			return errors.New("invalid --expect-length specification")
+		}
+		value, exists := os.LookupEnv(name)
+		if !exists || len(value) != size {
+			return fmt.Errorf("environment variable %q has an unexpected length", name)
 		}
 	}
 	for _, spec := range values {
