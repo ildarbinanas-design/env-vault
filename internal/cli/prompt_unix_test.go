@@ -3,6 +3,9 @@
 package cli
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -41,11 +44,168 @@ func TestHiddenPromptHelper(t *testing.T) {
 	} else {
 		value, err = app.terminalPassphrase("import")("Passphrase: ")
 	}
-	bundle.Wipe(value)
 	if err != nil {
+		bundle.Wipe(value)
 		os.Exit(1)
 	}
+	// Only this non-secret summary crosses the subprocess boundary.
+	fmt.Fprintf(os.Stdout, "%d %x\n", len(value), sha256.Sum256(value))
+	bundle.Wipe(value)
 	os.Exit(0)
+}
+
+func TestHiddenPromptPreservesLongInput(t *testing.T) {
+	for _, length := range []int{1, 1023, 1024, 1025, 4095, 4096, 6050, 65536} {
+		for _, mode := range []string{"single-write", "chunked"} {
+			t.Run(fmt.Sprintf("length-%d/%s", length, mode), func(t *testing.T) {
+				t.Parallel()
+				value := ephemeralPromptInput(t, length)
+				t.Cleanup(func() { bundle.Wipe(value) })
+				input := append(append([]byte(nil), value...), '\n')
+				t.Cleanup(func() { bundle.Wipe(input) })
+				chunkSize := len(input)
+				if mode == "chunked" {
+					chunkSize = 251
+				}
+				runHiddenPromptInput(t, "secret", input, value, chunkSize)
+			})
+		}
+	}
+}
+
+// ephemeralPromptInput generates printable disposable bytes so terminal
+// control characters cannot alter the intended length. Values stay in memory.
+func ephemeralPromptInput(t *testing.T, length int) []byte {
+	t.Helper()
+	value := make([]byte, length)
+	for offset := 0; offset < len(value); {
+		offset += copy(value[offset:], testutil.EphemeralValue(t))
+	}
+	return value
+}
+
+func runHiddenPromptInput(t *testing.T, kind string, input, want []byte, chunkSize int) {
+	t.Helper()
+	controller, terminal := openPseudoTerminal(t)
+	original, err := unix.IoctlGetTermios(int(terminal.Fd()), promptReadTermios)
+	if err != nil {
+		t.Fatal("unable to inspect terminal state")
+	}
+	if original.Lflag&unix.ECHO == 0 {
+		t.Fatal("test terminal started with echo disabled")
+	}
+	// A separately owned, nonblocking descriptor makes os.File.Write pollable.
+	// Its deadline bounds both a single large write and chunked delivery when
+	// the original canonical prompt stops consuming a full input queue.
+	writerFD, err := unix.Dup(int(controller.Fd()))
+	if err != nil {
+		t.Fatal("unable to duplicate terminal writer")
+	}
+	if err := unix.SetNonblock(writerFD, true); err != nil {
+		_ = unix.Close(writerFD)
+		t.Fatal("unable to prepare terminal writer")
+	}
+	unix.CloseOnExec(writerFD)
+	writer := os.NewFile(uintptr(writerFD), "prompt-test-writer")
+	t.Cleanup(func() { _ = writer.Close() })
+	var output bytes.Buffer
+	child := exec.Command(os.Args[0], "-test.run=^TestHiddenPromptHelper$")
+	child.Env = append(os.Environ(), "ENV_VAULT_PROMPT_TEST_HELPER="+kind)
+	child.Stdin = terminal
+	child.Stdout, child.Stderr = &output, io.Discard
+	if err := child.Start(); err != nil {
+		t.Fatal("unable to start hidden prompt")
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- child.Wait() }()
+	processDone := false
+	t.Cleanup(func() {
+		if !processDone {
+			_ = child.Process.Kill()
+			select {
+			case <-finished:
+			case <-time.After(5 * time.Second):
+				t.Error("prompt process cleanup timed out")
+			}
+		}
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		state, err := unix.IoctlGetTermios(int(terminal.Fd()), promptReadTermios)
+		if err != nil {
+			t.Fatal("unable to inspect hidden prompt state")
+		}
+		if state.Lflag&unix.ECHO == 0 {
+			break
+		}
+		select {
+		case <-finished:
+			processDone = true
+			t.Fatal("prompt exited before hiding input")
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("prompt did not hide input")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := writer.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal("unable to bound terminal write")
+	}
+	written := make(chan error, 1)
+	go func() {
+		for remaining := input; len(remaining) > 0; {
+			n := min(chunkSize, len(remaining))
+			count, err := writer.Write(remaining[:n])
+			if err != nil {
+				written <- err
+				return
+			}
+			if count != n {
+				written <- io.ErrShortWrite
+				return
+			}
+			remaining = remaining[n:]
+		}
+		written <- nil
+	}()
+	writerDone := false
+	t.Cleanup(func() {
+		if !writerDone {
+			_ = writer.Close()
+			select {
+			case <-written:
+			case <-time.After(5 * time.Second):
+				t.Error("prompt writer cleanup timed out")
+			}
+		}
+	})
+	select {
+	case err := <-written:
+		writerDone = true
+		if err != nil {
+			t.Fatal("hidden prompt write timed out or failed")
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("hidden prompt write timed out")
+	}
+	select {
+	case err := <-finished:
+		processDone = true
+		if err != nil {
+			t.Fatal("completed prompt failed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hidden prompt read timed out")
+	}
+	expected := fmt.Sprintf("%d %x\n", len(want), sha256.Sum256(want))
+	if output.String() != expected {
+		t.Fatal("length/digest mismatch")
+	}
+	after, err := unix.IoctlGetTermios(int(controller.Fd()), promptReadTermios)
+	if err != nil || !reflect.DeepEqual(original, after) {
+		t.Fatal("prompt did not restore terminal state")
+	}
 }
 
 func TestHiddenPromptsRestoreTerminalOnSignals(t *testing.T) {
