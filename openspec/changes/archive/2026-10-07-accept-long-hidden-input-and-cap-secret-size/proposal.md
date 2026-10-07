@@ -6,7 +6,7 @@ The owner's 6050-character hidden input exposed a canonical-terminal limit:
 long lines can hang on macOS or be silently truncated on Linux, while values
 accepted by storage can later cause `exec` to fail with an unhelpful `E2BIG`
 error. Fixing input integrity and bounding new values addresses this concrete
-owner failure within [ADR 0013](../../../docs/adr/0013-owner-benefit-scope.md).
+owner failure within [ADR 0013](../../../../docs/adr/0013-owner-benefit-scope.md).
 
 ## What Changes
 

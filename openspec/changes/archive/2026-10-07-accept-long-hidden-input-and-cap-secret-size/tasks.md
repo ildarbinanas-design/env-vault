@@ -36,7 +36,7 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 ## 5. Manual macOS checks
 
 - [x] 5.1 Build the updated CLI with Go 1.26.8 and perform real terminal paste checks using all three test-backend gates: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and an absolute `ENV_VAULT_TEST_STORE` under the system temporary directory. Generate the 6050-byte clipboard value with `openssl rand -base64 4600 | tr -d '\n' | head -c 6050 | pbcopy`; generate fresh sufficiently large inputs for 65536 and 65537 bytes in the same way. Acceptance: `secret set EXAMPLE` accepts 6050 and 65536 bytes; `pbpaste | shasum -a 256` matches the digest from `exec --secret EXAMPLE:EXAMPLE -- sh -c 'printf %s "$EXAMPLE" | shasum -a 256'`; 65537 bytes returns `SECRET_TOO_LARGE`, leaves the previous value intact and restores the terminal. Record only lengths/digests/statuses, then remove the disposable store and clipboard contents.
-- [ ] 5.2 Interrupt a long partial paste with Ctrl+C in the same isolated macOS terminal setup. Acceptance: echo returns, no partial secret becomes shell input, the established interruption status is preserved, and the disposable store is removed after checking.
+- [x] 5.2 Interrupt a long partial paste with Ctrl+C in the same isolated macOS terminal setup. Acceptance: echo returns, no partial secret becomes shell input, the established interruption status is preserved, and the disposable store is removed after checking.
 - [x] 5.3 With test-backend variables unset, generate a fresh 65536-byte value at runtime and pipe it to `secret set size-probe --service env-vault-size-probe --stdin --verify`; remove it with `secret delete size-probe --service env-vault-size-probe --confirm size-probe`. Acceptance: verified Keychain write and deletion both succeed, no other entry is touched, and `sysctl kern.argmax` is recorded. Report unavailable interactive access rather than claiming this check passed.
 
 ## 6. Full validation and independent implementation review
@@ -47,9 +47,9 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 
 ## 7. Synchronize and archive in the same PR
 
-- [ ] 7.1 Use `openspec-sync-specs` as part of the `openspec-archive-change` workflow to merge the four complete MODIFIED deltas into `openspec/specs/`. Acceptance: `openspec validate --specs --strict` passes and `rg -n '2560|SECRET_TOO_LARGE|hidden prompt' openspec/specs` shows no statements contradicting the implemented contract; retain unrelated requirements and scenarios.
-- [ ] 7.2 Archive with `openspec-archive-change` to `openspec/changes/archive/<date>-accept-long-hidden-input-and-cap-secret-size/`, preserving validation commands and results in this file and fixing relative links affected by the extra directory. Acceptance: the archive exists, the active change is absent, all earlier acceptance criteria have recorded evidence, and this final checkbox is marked complete in the archived file only after the move succeeds.
-- [ ] 7.3 Review the archived change and synchronized main specs against the final diff and rerun `git diff --check` and `openspec validate --specs --strict`. Acceptance: both pass, all task checkboxes in the archive are complete, no behavioral conflict remains, and the independent reviewer has inspected any material final changes.
+- [x] 7.1 Use `openspec-sync-specs` as part of the `openspec-archive-change` workflow to merge the four complete MODIFIED deltas into `openspec/specs/`. Acceptance: `openspec validate --specs --strict` passes and `rg -n '2560|SECRET_TOO_LARGE|hidden prompt' openspec/specs` shows no statements contradicting the implemented contract; retain unrelated requirements and scenarios.
+- [x] 7.2 Archive with `openspec-archive-change` to `openspec/changes/archive/<date>-accept-long-hidden-input-and-cap-secret-size/`, preserving validation commands and results in this file and fixing relative links affected by the extra directory. Acceptance: the archive exists, the active change is absent, all earlier acceptance criteria have recorded evidence, and this final checkbox is marked complete in the archived file only after the move succeeds.
+- [x] 7.3 Review the archived change and synchronized main specs against the final diff and rerun `git diff --check` and `openspec validate --specs --strict`. Acceptance: both pass, all task checkboxes in the archive are complete, no behavioral conflict remains, and the independent reviewer has inspected any material final changes.
 
 ## Validation commands and evidence log
 
@@ -88,9 +88,9 @@ Record which product/test head it verifies; delete only the verification
 branch created for this task, leaving Actions artifacts untouched. Do not
 merge the temporary workflow into the product branch.
 
-No implementation checks have run in Phase 1. Fill this table with actual
-commands, results and evidence as implementation proceeds; do not infer a
-pass from the plan or from a test that did not execute.
+The table summarizes completed acceptance. The detailed sections preserve
+chronological attempts, including failures and intermediate pending states;
+later successful checks do not turn earlier failed or skipped runs into passes.
 
 | Evidence | Command / revision / run | Actual result |
 | --- | --- | --- |
@@ -100,9 +100,9 @@ pass from the plan or from a test that did not execute.
 | Linux E2BIG regression | [Run 37579807389](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579807389), product `b2bb23d` | Per-string CLI and aggregate runner tests executed and passed |
 | Full local CONTRIBUTING checks and explicit skips | Go 1.26.8, implementation `b2bb23dc593c785acada22960bbab2c2ee955917`; commands below | All commands passed; full and race suites each 861 pass events and 9 explicit skips |
 | Native CI execution and exact heads | Dedicated runs below; full [37582064720](https://github.com/ildarbinanas-design/env-vault/actions/runs/37582064720) at `9adfd4df2d87d309063bd0360d30446f719ffbee` | All 12 full-matrix jobs passed; native event proofs and explicit skips recorded below |
-| Manual macOS paste, interrupt and Keychain probe | Native probe and isolated Terminal script described below | Keychain write/verify/delete pass; owner's 08:13 UTC repeat passes 6050/65536 paste and 65537 rejection; Ctrl+C terminal-state comparison failed and remains under diagnosis |
-| Independent implementation review | Separate reviewer without implementation conversation; final code/test head `9adfd4d` and final native results | No actionable code/test/security findings; manual checks and final spec/archive review remain incomplete |
-| Final synchronized-spec and archive checks | Awaiting manual acceptance | Not run; active change retained |
+| Manual macOS paste, interrupt and Keychain probe | Native probe and isolated Terminal script described below | Keychain write/verify/delete pass; 08:13 UTC repeat passes 6050/65536 paste and 65537 rejection; 08:25 UTC Ctrl+C repeat passes SIGINT, terminal restoration, zero pending input and unchanged stored value |
+| Independent implementation review | Separate reviewer without implementation conversation; final code/test head `9adfd4d` and final native results | No blocking findings after independent implementation and final spec/archive review; manual acceptance completed |
+| Final synchronized-spec and archive checks | Inline sync/archive on 2026-10-07; final commands and review below | Six requirements synchronized across four specs; archived change, valid links, all 22 tasks complete; strict validation and diff check pass |
 
 ## Delivery after archival
 
@@ -214,11 +214,12 @@ Verified write and deletion each returned exit `0`, `ok: true`; only the
 disposable named entry was used. `kern.argmax: 1048576`. Binary SHA-256:
 `39650bdaee8d9732412be0266a53bac1ae0c9fcf856e130c670fcf5868ca7dc7`.
 
-The real Terminal clipboard check is pending owner interaction: Computer Use
+At this earlier checkpoint the real Terminal clipboard check was pending owner
+interaction: Computer Use
 refused access to `com.apple.Terminal` for safety reasons. The prepared isolated
 script recorded a complete 6050-byte length/digest match, then accepted the
 65536-byte prompt but failed its subsequent result check. Clipboard and
-temporary store cleanup succeeded. That failed check is being diagnosed;
+temporary store cleanup succeeded. That failed check required a diagnostic repeat;
 automated PTY passes do not substitute for completing this manual check.
 
 ## Full local validation
@@ -343,8 +344,8 @@ limits, import preflight/skip behavior, legacy compatibility or E2BIG mapping.
 It separately reviewed the final E2E follow-up before commit `08a7452`,
 including bounded process/writer cleanup, no secret-bearing arguments or
 diagnostics, and the actual canonical report/registry/leak-scan results; no
-actionable blockers were found. Final native results and spec/archive review
-remain separate completion checks.
+actionable blockers were found. At that checkpoint, final native results and spec/archive review
+remained separate completion checks.
 
 After the E2E-only follow-up:
 
@@ -431,9 +432,9 @@ the E2E fingerprint assertion and evidence changed afterward.
 The independent reviewer inspected the final results, report metadata and
 leak scans and completed code review at `9adfd4d` with no actionable code,
 test or security findings. It explicitly distinguished code-review completion
-from manual acceptance: tasks 5.1/5.2 are incomplete, and a material fix after
-a manual repeat requires renewed review. Synced specs and archive have not
-yet been produced or reviewed.
+from manual acceptance: tasks 5.1/5.2 were then incomplete, and a material fix
+after a manual repeat would require renewed review. Synced specs and archive
+had not yet been produced or reviewed at that checkpoint.
 
 ## Manual acceptance status before the owner-operated repeat
 
@@ -459,8 +460,9 @@ Enter for the final interruption check.
 /bin/bash /tmp/env-vault-hidden-input-evidence/manual-paste.sh /tmp/env-vault-hidden-input-evidence/env-vault
 ```
 
-The repeat result is pending. Tasks 5.1/5.2 remain unchecked, so this change
-has not been synchronized, archived or submitted as a PR. The owner required
+At that checkpoint the repeat result was pending. Tasks 5.1/5.2 remained
+unchecked, so the change had not yet been synchronized, archived or submitted
+as a PR. The owner required
 all acceptance criteria to be completed before that delivery.
 
 ## Manual failure diagnostic follow-up
@@ -510,7 +512,7 @@ shell and embedded Python syntax checks passed. This improves diagnostics;
 it is not evidence of a fix for the original failure. The original log is
 preserved, no product code was changed, and the historical cause remains
 undetermined until a macOS repeat supplies the missing verification result.
-Tasks 5.1/5.2 remain incomplete. The owner was asked to repeat the script
+Tasks 5.1/5.2 were still incomplete at that checkpoint. The owner was asked to repeat the script
 using the freshly built `env-vault-head-8f7ed6a` binary, or identify an
 already-created repeat log.
 
@@ -539,7 +541,8 @@ check. The script checked that equality before logging child exit status,
 and did not log the differing attributes. Thus this run alone establishes
 neither failed echo restoration nor a preserved SIGINT exit. The script's
 final cleanup restored attributes, cleared the clipboard and removed the
-store; the pending-input check was not reached. Task 5.2 remains incomplete.
+store; the pending-input check was not reached. Task 5.2 remained incomplete
+after that attempt.
 
 No product code was changed in response. Diagnostic logging now records
 child exit and terminal flag differences before asserting restoration.
@@ -596,4 +599,85 @@ zero queued bytes and an unchanged stored value, and retains cleanup. A new
 and verifies its length/hash, then requests only the remaining 6050-byte
 paste and Ctrl+C. Shell and embedded Python syntax passed; the independent
 agent reviewed the script update without blocking findings. No product code
-was modified. Task 5.2 awaits this real terminal repeat.
+was modified. At that point task 5.2 awaited the real terminal repeat below.
+
+### Completed owner-operated Ctrl+C repeat at 08:25 UTC
+
+The owner ran the following command on 2026-10-07 at 08:25:36 UTC using the
+same Go 1.26.8 binary from `8f7ed6a`. The supplied output matches the local
+log, and all three test-backend gates were active:
+
+```sh
+/bin/bash /tmp/env-vault-hidden-input-evidence/manual-paste.sh /tmp/env-vault-hidden-input-evidence/env-vault-head-8f7ed6a --interrupt-only
+```
+
+The generated 65536-byte seed was created successfully (set exit `0`,
+`action=created`), and its exec length/hash matched. After a generated
+6050-byte partial paste and Ctrl+C, the CLI exited by SIGINT (`-2`, shell
+status `130`). Echo and canonical mode were restored; all configuration
+fields matched. The sole raw difference was local flags `536872395` to
+`1483`, exactly the `PENDIN` bit identified by the isolated diagnostic.
+The pending-input probe read zero bytes. Exec exited `0` and confirmed the
+previous 65536-byte value's unchanged length/hash. The script cleared its
+clipboard, removed the disposable store, and reported
+`manual_macOS_interrupt=PASS`. This completes task 5.2.
+
+This repeat confirms the script's full-state equality can report failure
+solely because Darwin changes `PENDIN`, while the required restoration and
+interruption behavior succeeds. The script correction excludes only that
+runtime bit and preserves all functional checks; no CLI fix was needed.
+The earlier 08:13 attempt did not record its flag difference, so that exact
+historical state cannot be reconstructed. The original length/hash failures
+remain explicitly unexplained rather than attributed to this separate issue.
+The retained log also has an 08:24 attempt that returned exit `2` instead of
+SIGINT; it is not counted as a successful interruption check.
+
+Tasks 5.1, 5.2 and 5.3 now have separate successful native macOS evidence.
+All runtime code and tests are unchanged since the green full CI run at
+`9adfd4d`; subsequent commits have recorded evidence only.
+
+## Final specification synchronization and archive
+
+On 2026-10-07, the inline `openspec-sync-specs` workflow applied six complete
+MODIFIED requirements across `cli-output`, `exec`, `secret-storage` and
+`secret-transfer`. The main specs preserve their titles, purposes, unrelated
+requirements and every pre-existing scenario. Comparing all six updated
+blocks with their deltas leaves nothing pending to synchronize; no delta
+operation headings appear in the main specs.
+
+`openspec validate --specs --strict` exited `0` (7 passed, 0 failed);
+`git diff --check` passed. The requested
+`rg -n '2560|SECRET_TOO_LARGE|hidden prompt' openspec/specs` review found no
+contradiction with the agreed common/backend limits, Unix prompt behavior,
+legacy read/export boundary or import preflight. Task 7.1 is complete.
+
+The `openspec-archive-change` workflow then moved the complete change,
+including `.openspec.yaml`, to
+`openspec/changes/archive/2026-10-07-accept-long-hidden-input-and-cap-secret-size/`.
+The destination was confirmed absent before the move; afterward the archive
+exists and the active change does not. The proposal's ADR link was corrected
+for the additional directory depth. Task 7.2 was marked complete only in the
+archived file after the move succeeded. Only the final independent review
+and validation remained at that checkpoint.
+
+A fresh independent agent, without the implementer's conversation, reviewed
+the final product diff, synchronized specs, archive and validation evidence.
+It verified exact agreement of all six MODIFIED blocks, retention of all 49
+existing requirements and their scenario names, and byte-for-byte preservation
+of 43 unrelated requirement blocks. All eight change files were archived;
+all five relative Markdown links resolve. No product/test/dependency change
+exists after the green `9adfd4d` code/test head, and no reserved path changed.
+The reviewer independently confirmed the full CI run's exact head and all
+12 successful jobs and checked the successful owner-operated manual logs.
+
+The only final finding was stale present-tense pending status in this
+historical evidence. The summary now reports completed acceptance and prior
+pending passages are explicitly historical. No product, contract or security
+finding remained. The reviewer did not repeat product tests or owner-operated
+manual steps; it inspected their evidence and live CI metadata.
+
+Final `git diff --check` passed and `openspec validate --specs --strict`
+exited `0` with 7 passed, 0 failed (informational length notices only).
+All 22 task checkboxes are complete; `openspec list --json` reports no active
+changes. The final requirement/link comparison passed. Task 7.3 is complete.
+The PR must remain unmerged for the owner's requested review.

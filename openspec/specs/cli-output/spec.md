@@ -167,7 +167,7 @@ listed status:
 | `PROFILE_NOT_FOUND` | 2 | the named profile does not exist |
 | `ENV_COLLISION` | 2 | an `exec` target already exists in the environment |
 | `SECRET_EXISTS` | 2 | `import --on-conflict fail` met an existing secret |
-| `SECRET_TOO_LARGE` | 2 | a value exceeds the backend limit |
+| `SECRET_TOO_LARGE` | 2 | a value exceeds the size limit (65536 bytes; 2560 on Windows Credential Manager) |
 | `PASSPHRASE_INVALID` | 2 | an empty, short or mismatched transfer passphrase |
 | `MISSING_SECRET` | 3 | a required secret is not stored |
 | `BACKEND_UNAVAILABLE` | 4 | the secret backend failed, timed out, refused or was not selectable |
@@ -185,6 +185,16 @@ exit code is the child's (see `exec`).
 
 - **WHEN** any command needs the secret backend and the backend is unavailable
 - **THEN** env-vault exits `4` with code `BACKEND_UNAVAILABLE` and a remediation naming the next step
+
+#### Scenario: Common size limit in JSON output
+
+- **WHEN** `env-vault --json secret set token --stdin` receives a generated 65537-byte value
+- **THEN** env-vault exits `2` with `command: "secret_set"`, `data: null`, code `SECRET_TOO_LARGE` and a remediation to use a shorter value, without including the value in any output field
+
+#### Scenario: Windows size limit retains its error code
+
+- **WHEN** Windows Credential Manager is selected and `secret set token --stdin` receives a generated 2561-byte value
+- **THEN** env-vault exits `2` with `SECRET_TOO_LARGE`, without treating the size refusal as `BACKEND_UNAVAILABLE`
 
 ### Requirement: Metadata output file
 
