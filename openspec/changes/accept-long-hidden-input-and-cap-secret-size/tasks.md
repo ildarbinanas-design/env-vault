@@ -42,8 +42,8 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 ## 6. Full validation and independent implementation review
 
 - [x] 6.1 Run the complete applicable CONTRIBUTING set listed below, plus strict change and main-spec validation. Acceptance: record each exact command/result, fix failures, list unavailable checks and skips explicitly, and do not count a skipped native/E2E/release-script test as passed. Keep `CHANGELOG.md`, backend implementations, dependencies and reserved paths unchanged in the product branch.
-- [ ] 6.2 Verify the final implementation on native CI, including `ubuntu-latest` prompt and Linux E2BIG tests. Ordinary CI alone does not establish native Windows behavior: run `GOTOOLCHAIN=go1.26.8 go test -count=1 -json ./internal/cli/... ./internal/secretstore/keyring/...` on `windows-latest` from a temporary `agent/verify-windows-*` branch following AGENTS.md. Acceptance: record run URLs and exact tested head SHAs; inspect JSON test events to prove the Windows 2560/2561-byte limit and pre-backend refusal tests actually ran, and that every new applicable Linux test ran without a PTY skip; retain native macOS results. Delete the temporary verification branches after checking. If the Windows run is impossible, record `Windows: not natively verified` in the evidence log and leave this task incomplete.
-- [ ] 6.3 Give an independent reviewer without the implementer's conversation the final implementation diff, the agreed delta specs and before/after validation results. Acceptance: all blocking findings are resolved, material fixes are re-reviewed and relevant checks rerun, and the reviewer result/limitations are recorded below. This does not authorize merging the eventual PR.
+- [x] 6.2 Verify the final implementation on native CI, including `ubuntu-latest` prompt and Linux E2BIG tests. Ordinary CI alone does not establish native Windows behavior: run `GOTOOLCHAIN=go1.26.8 go test -count=1 -json ./internal/cli/... ./internal/secretstore/keyring/...` on `windows-latest` from a temporary `agent/verify-windows-*` branch following AGENTS.md. Acceptance: record run URLs and exact tested head SHAs; inspect JSON test events to prove the Windows 2560/2561-byte limit and pre-backend refusal tests actually ran, and that every new applicable Linux test ran without a PTY skip; retain native macOS results. Delete the temporary verification branches after checking. If the Windows run is impossible, record `Windows: not natively verified` in the evidence log and leave this task incomplete.
+- [x] 6.3 Give an independent reviewer without the implementer's conversation the final implementation diff, the agreed delta specs and before/after validation results. Acceptance: all blocking findings are resolved, material fixes are re-reviewed and relevant checks rerun, and the reviewer result/limitations are recorded below. This does not authorize merging the eventual PR.
 
 ## 7. Synchronize and archive in the same PR
 
@@ -99,10 +99,10 @@ pass from the plan or from a test that did not execute.
 | Fixed prompt, size and compatibility tests | Native macOS commands below | Pass; no targeted prompt/size skips; actual pinned v0.4.2 source tested |
 | Linux E2BIG regression | [Run 37579807389](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579807389), product `b2bb23d` | Per-string CLI and aggregate runner tests executed and passed |
 | Full local CONTRIBUTING checks and explicit skips | Go 1.26.8, implementation `b2bb23dc593c785acada22960bbab2c2ee955917`; commands below | All commands passed; full and race suites each 861 pass events and 9 explicit skips |
-| Native CI execution and exact heads | Dedicated Linux/Windows runs below | Required tests passed; initial full matrix needs E2E coverage follow-up |
+| Native CI execution and exact heads | Dedicated runs below; full [37582064720](https://github.com/ildarbinanas-design/env-vault/actions/runs/37582064720) at `9adfd4df2d87d309063bd0360d30446f719ffbee` | All 12 full-matrix jobs passed; native event proofs and explicit skips recorded below |
 | Manual macOS paste, interrupt and Keychain probe | Native probe and isolated Terminal script described below | Keychain write/verify/delete pass; 6050-byte paste pass; 65536 result check failed and repeat pending; overflow/interrupt not reached |
-| Independent implementation review | Separate reviewer without implementation conversation, product `b2bb23d` and E2E follow-up | No actionable code/test blockers; final native results and archive review pending |
-| Final synchronized-spec and archive checks | Pending apply | Not run |
+| Independent implementation review | Separate reviewer without implementation conversation; final code/test head `9adfd4d` and final native results | No actionable code/test/security findings; manual checks and final spec/archive review remain incomplete |
+| Final synchronized-spec and archive checks | Awaiting manual acceptance | Not run; active change retained |
 
 ## Delivery after archival
 
@@ -403,3 +403,62 @@ GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -race -json ./...
 
 Both returned exit `0`, each recording 861 pass events and the same nine
 explicit local skips documented above.
+
+## Final full CI and independent review result
+
+[Run 37582064720](https://github.com/ildarbinanas-design/env-vault/actions/runs/37582064720)
+completed successfully on exact code/test head
+`9adfd4df2d87d309063bd0360d30446f719ffbee`. All 12 jobs passed: source quality,
+three platform license checks, source resolution, all five native artifact
+jobs (Linux amd64/arm64, macOS amd64/arm64, Windows amd64), E2E gate and
+quality gate. The native jobs completed their applicable real-store smoke
+checks. Source quality covered the full tests/race/vet/module/vulnerability/
+smoke set, pinned historical transfer and isolated Debian Secret Service.
+
+| Native binary E2E | Passed | Explicit skips | Statement coverage |
+| --- | --- | --- | --- |
+| Linux amd64 | 24 | 0 | 62.6% |
+| macOS arm64 | 24 | 0 | 63.7% |
+| Windows amd64 | 22 | 2: `EXEC_SIGNAL_FORWARDING`, `PROFILE_SYMLINK_REJECTED` | 61.8% |
+
+All three reports have 100% critical-feature coverage, no unexpected skips
+and zero detected leaks. They name the exact head above and reviewed semantic
+suite hash `ad508a7c62217b8dfdae87b82ee38619f795b71faea5397595947add31501ad5`.
+The runtime implementation and targeted CLI/keyring/runner tests are unchanged
+from the dedicated final-head Linux/Windows verification at `08a7452`; only
+the E2E fingerprint assertion and evidence changed afterward.
+
+The independent reviewer inspected the final results, report metadata and
+leak scans and completed code review at `9adfd4d` with no actionable code,
+test or security findings. It explicitly distinguished code-review completion
+from manual acceptance: tasks 5.1/5.2 are incomplete, and a material fix after
+a manual repeat requires renewed review. Synced specs and archive have not
+yet been produced or reviewed.
+
+## Remaining manual acceptance and owner action
+
+The isolated real Terminal run passed the 6050-byte length/digest comparison.
+For 65536 bytes the CLI returned exit `0` and restored terminal attributes,
+but the script's subsequent verification failed. Its original diagnostic did
+not record enough metadata to identify the cause. No operator error or product
+root cause is inferred. The 65537-byte and Ctrl+C phases were not reached.
+The script removed its disposable store and cleared its clipboard.
+
+A separate non-UI stdin-to-store-to-exec shell check passed at both 6050 and
+65536 bytes with exact length/digest matches using the same binary. It does
+not replace the real paste requirement. The manual script now records only
+safe status, length, digest and fixed diagnostic labels for the repeat.
+
+Computer Use explicitly refused to operate `com.apple.Terminal` for safety
+reasons; no alternative UI-control path was used after that refusal. The
+owner was asked to run the following in Terminal and follow its four `READY`
+steps: Cmd+V then Enter for 6050, 65536 and 65537; Cmd+V then Ctrl+C without
+Enter for the final interruption check.
+
+```sh
+/bin/bash /tmp/env-vault-hidden-input-evidence/manual-paste.sh /tmp/env-vault-hidden-input-evidence/env-vault
+```
+
+The repeat result is pending. Tasks 5.1/5.2 remain unchecked, so this change
+has not been synchronized, archived or submitted as a PR. The owner required
+all acceptance criteria to be completed before that delivery.
