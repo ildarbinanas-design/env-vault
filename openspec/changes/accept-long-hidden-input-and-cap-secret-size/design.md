@@ -64,6 +64,17 @@ A buffered or chunked read could consume the second line of one paste into
 the first passphrase prompt and strand the confirmation prompt. Stop at the
 first line terminator without reading the next byte.
 
+Hold the same hidden terminal session across export's first passphrase,
+validation and confirmation. Native macOS tests also exposed corruption of
+the queued second line when canonical mode was restored and immediately
+disabled between the two reads: byte lengths matched but digests differed.
+Factor the existing termios and signal lifecycle around a callback that can
+read both lines; keep its notification, interruption flush and restoration
+body unchanged. Restore the original state once the entire operation returns,
+including validation failures. Injected test readers and Windows/BSD retain
+their existing input behavior. This is an implementation refinement of the
+already specified two-line paste contract, not a new passphrase policy.
+
 | Input | Application behavior before overflow |
 | --- | --- |
 | LF (`0x0a`) or CR (`0x0d`) | Complete the current line; exclude the terminator |

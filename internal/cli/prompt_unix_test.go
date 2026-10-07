@@ -5,11 +5,13 @@ package cli
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"syscall"
@@ -19,11 +21,15 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/ildarbinanas-design/env-vault/internal/bundle"
+	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
+	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
+	"github.com/ildarbinanas-design/env-vault/internal/secretstore/teststore"
 	"github.com/ildarbinanas-design/env-vault/internal/testutil"
 )
 
-// This subprocess calls only the input functions. It cannot open any backend,
-// and no value or passphrase is supplied for the interrupted-prompt cases.
+// This subprocess reads generated test input and emits only its length/digest.
+// The overflow command is gated to a disposable test store and must fail before
+// constructing it; other cases call only the input functions.
 func TestHiddenPromptHelper(t *testing.T) {
 	kind := os.Getenv("ENV_VAULT_PROMPT_TEST_HELPER")
 	if kind == "" {
@@ -33,14 +39,49 @@ func TestHiddenPromptHelper(t *testing.T) {
 		signal.Ignore(syscall.SIGINT)
 		kind = strings.TrimSuffix(kind, "-ignored")
 	}
+	if kind != "secret-overflow-next" {
+		// Exercise the real terminal passphrase route regardless of the test
+		// runner's environment. These cases never invoke a storage command.
+		for _, name := range []string{teststore.BackendEnv, teststore.AllowEnv, teststore.StoreEnv} {
+			if err := os.Unsetenv(name); err != nil {
+				os.Exit(1)
+			}
+		}
+	}
 	app := newApp(os.Stdin, io.Discard, io.Discard)
 	var value []byte
 	var err error
 	if kind == "secret" {
 		value, err = app.readSecret(false)
+	} else if kind == "secret-empty-eof" {
+		value, err = readHiddenSecret(int(os.Stdin.Fd()))
+		if !errors.Is(err, io.EOF) || value != nil {
+			bundle.Wipe(value)
+			os.Exit(1)
+		}
+		err = nil
+	} else if kind == "secret-overflow-next" {
+		app.wrapStore = func(store secretstore.Store) secretstore.Store {
+			os.Exit(3)
+			return store
+		}
+		root := app.rootCommand()
+		root.SetArgs([]string{"secret", "set", "oversized-prompt"})
+		appErr, ok := apperrors.From(root.Execute())
+		if !ok || appErr.Code != apperrors.CodeSecretTooLarge || appErr.ExitCode != 2 {
+			os.Exit(1)
+		}
+		value, err = app.readSecret(false)
 	} else if kind == "confirmation" {
-		app.passphraseReader = app.terminalPassphrase("export")
 		value, err = app.readPassphrase("export", true)
+	} else if kind == "confirmation-invalid" {
+		value, err = app.readPassphrase("export", true)
+		appErr, ok := apperrors.From(err)
+		if !ok || appErr.Code != apperrors.CodePassphraseInvalid || value != nil {
+			bundle.Wipe(value)
+			os.Exit(1)
+		}
+		err = nil
 	} else {
 		value, err = app.terminalPassphrase("import")("Passphrase: ")
 	}
@@ -94,23 +135,15 @@ func runHiddenPromptInput(t *testing.T, kind string, input, want []byte, chunkSi
 	if original.Lflag&unix.ECHO == 0 {
 		t.Fatal("test terminal started with echo disabled")
 	}
-	// A separately owned, nonblocking descriptor makes os.File.Write pollable.
-	// Its deadline bounds both a single large write and chunked delivery when
-	// the original canonical prompt stops consuming a full input queue.
-	writerFD, err := unix.Dup(int(controller.Fd()))
-	if err != nil {
-		t.Fatal("unable to duplicate terminal writer")
-	}
-	if err := unix.SetNonblock(writerFD, true); err != nil {
-		_ = unix.Close(writerFD)
-		t.Fatal("unable to prepare terminal writer")
-	}
-	unix.CloseOnExec(writerFD)
-	writer := os.NewFile(uintptr(writerFD), "prompt-test-writer")
-	t.Cleanup(func() { _ = writer.Close() })
+	writer := promptTestWriter(t, controller)
 	var output bytes.Buffer
 	child := exec.Command(os.Args[0], "-test.run=^TestHiddenPromptHelper$")
 	child.Env = append(os.Environ(), "ENV_VAULT_PROMPT_TEST_HELPER="+kind)
+	if kind == "secret-overflow-next" {
+		child.Env = append(child.Env,
+			teststore.BackendEnv+"=test", teststore.AllowEnv+"=1",
+			teststore.StoreEnv+"="+filepath.Join(t.TempDir(), "store"))
+	}
 	child.Stdin = terminal
 	child.Stdout, child.Stderr = &output, io.Discard
 	if err := child.Start(); err != nil {
@@ -208,9 +241,57 @@ func runHiddenPromptInput(t *testing.T, kind string, input, want []byte, chunkSi
 	}
 }
 
+func promptTestWriter(t *testing.T, controller *os.File) *os.File {
+	t.Helper()
+	// A separately owned, nonblocking descriptor makes os.File.Write pollable.
+	// Its deadline bounds a write even when the reader stops consuming input.
+	fd, err := unix.Dup(int(controller.Fd()))
+	if err != nil {
+		t.Fatal("unable to duplicate terminal writer")
+	}
+	if err := unix.SetNonblock(fd, true); err != nil {
+		_ = unix.Close(fd)
+		t.Fatal("unable to prepare terminal writer")
+	}
+	unix.CloseOnExec(fd)
+	writer := os.NewFile(uintptr(fd), "prompt-test-writer")
+	t.Cleanup(func() { _ = writer.Close() })
+	return writer
+}
+
+func writePartialHiddenInput(t *testing.T, controller *os.File, input []byte) {
+	t.Helper()
+	writer := promptTestWriter(t, controller)
+	if err := writer.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal("unable to bound terminal write")
+	}
+	written := make(chan error, 1)
+	go func() {
+		n, err := writer.Write(input)
+		if err == nil && n != len(input) {
+			err = io.ErrShortWrite
+		}
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal("unable to type partial input")
+		}
+	case <-time.After(6 * time.Second):
+		_ = writer.Close()
+		select {
+		case <-written:
+		case <-time.After(time.Second):
+			t.Error("partial-input writer cleanup timed out")
+		}
+		t.Fatal("partial-input write timed out")
+	}
+}
+
 func TestHiddenPromptsRestoreTerminalOnSignals(t *testing.T) {
 	for _, kind := range []string{"secret", "passphrase", "confirmation"} {
-		for _, termination := range []string{"ctrl-c", "sigterm", "ignored-interrupt", "completed"} {
+		for _, termination := range []string{"ctrl-c", "long-ctrl-c", "sigterm", "ignored-interrupt", "completed"} {
 			t.Run(kind+"/"+termination, func(t *testing.T) {
 				controller, terminal := openPseudoTerminal(t)
 				original, err := unix.IoctlGetTermios(int(terminal.Fd()), promptReadTermios)
@@ -258,8 +339,13 @@ func TestHiddenPromptsRestoreTerminalOnSignals(t *testing.T) {
 				}
 				wantSignal := syscall.SIGTERM
 				switch termination {
-				case "ctrl-c":
+				case "ctrl-c", "long-ctrl-c":
 					wantSignal = syscall.SIGINT
+					if termination == "long-ctrl-c" {
+						partial := ephemeralPromptInput(t, 6050)
+						t.Cleanup(func() { bundle.Wipe(partial) })
+						writePartialHiddenInput(t, controller, partial)
+					}
 					if _, err := controller.Write([]byte{3}); err != nil {
 						t.Fatal(err)
 					}
@@ -313,11 +399,11 @@ func TestHiddenPromptsRestoreTerminalOnSignals(t *testing.T) {
 }
 
 func TestHiddenPromptDiscardsInterruptedInput(t *testing.T) {
-	for _, kind := range []string{"secret", "passphrase"} {
+	for _, kind := range []string{"secret", "passphrase", "secret-long", "passphrase-long"} {
 		t.Run(kind, func(t *testing.T) {
 			controller, terminal := openPseudoTerminal(t)
 			child := exec.Command(os.Args[0], "-test.run=^TestHiddenPromptHelper$")
-			child.Env = append(os.Environ(), "ENV_VAULT_PROMPT_TEST_HELPER="+kind)
+			child.Env = append(os.Environ(), "ENV_VAULT_PROMPT_TEST_HELPER="+strings.TrimSuffix(kind, "-long"))
 			child.Stdin = terminal
 			child.Stdout, child.Stderr = io.Discard, io.Discard
 			// Leave the terminal session alive after this process exits, as an
@@ -340,10 +426,16 @@ func TestHiddenPromptDiscardsInterruptedInput(t *testing.T) {
 				}
 				time.Sleep(time.Millisecond)
 			}
-			if _, err := controller.Write([]byte(testutil.EphemeralValue(t))); err != nil {
-				t.Fatal("unable to type partial input")
+			length := 43
+			termination := syscall.SIGTERM
+			if strings.HasSuffix(kind, "-long") {
+				length = 6050
+				termination = syscall.SIGINT
 			}
-			if err := child.Process.Signal(syscall.SIGTERM); err != nil {
+			partial := ephemeralPromptInput(t, length)
+			t.Cleanup(func() { bundle.Wipe(partial) })
+			writePartialHiddenInput(t, controller, partial)
+			if err := child.Process.Signal(termination); err != nil {
 				t.Fatal(err)
 			}
 			finished := make(chan error, 1)

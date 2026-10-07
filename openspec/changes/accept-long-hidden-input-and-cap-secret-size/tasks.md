@@ -16,28 +16,28 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 
 ## 2. Implement and verify hidden input
 
-- [ ] 2.1 Add `secretstore.MaxValueBytes = 64 << 10` and the bounded Unix secret-input entry point described in the design. Apply the exact noncanonical flags, one-byte reads, UTF-8 Backspace, Ctrl+U, Unicode-whitespace Ctrl+W, empty/nonempty Ctrl+D and CR/LF termination; retain unbounded transfer passphrase input and leave `prompt_other.go`, signals and `restoreInterruptedPrompt` unchanged. Acceptance: all eight length cases in both delivery modes pass on macOS, the 6050-byte passphrase is read intact, and the targeted prompt suite retains existing restoration/flush behavior.
-- [ ] 2.2 Add regression cases for 65537-byte overflow, overflow followed by editing or actual EOF, no rejected-line tail for the next reader, UTF-8 and invalid-tail Backspace with both erase bytes, Ctrl+U, Ctrl+W, empty/nonempty Ctrl+D and CR. Implement latched overflow, drain through Enter, wipe with `bundle.Wipe`, and map `ErrValueTooLarge` to `SECRET_TOO_LARGE` before store construction. Acceptance: the targeted suite passes, overflow returns no value/backend call even if input ends during draining, and focused memory-ownership checks verify old allocations and removed suffixes are wiped.
-- [ ] 2.3 Add two identical 6050-byte export passphrase lines in one write, a 65537-byte passphrase accepted without a secret-value cap, and Ctrl+C after more than 4096 partial input bytes. Acceptance: confirmation consumes exactly two lines, the passphrase is accepted intact, the terminal state and input flush match the old signal contract, and all existing signal tests remain green.
-- [ ] 2.4 Update `README.md` and `docs/security.md` for long macOS/Linux hidden input, editing keys, the Enter/drain behavior after overflow and unchanged interruption recovery. Acceptance: review the documented behavior against every Secret input and Transfer passphrase scenario without introducing a passphrase maximum or changing Windows/BSD prompt promises.
+- [x] 2.1 Add `secretstore.MaxValueBytes = 64 << 10` and the bounded Unix secret-input entry point described in the design. Apply the exact noncanonical flags, one-byte reads, UTF-8 Backspace, Ctrl+U, Unicode-whitespace Ctrl+W, empty/nonempty Ctrl+D and CR/LF termination; retain unbounded transfer passphrase input and leave `prompt_other.go`, signals and `restoreInterruptedPrompt` unchanged. Acceptance: all eight length cases in both delivery modes pass on macOS, the 6050-byte passphrase is read intact, and the targeted prompt suite retains existing restoration/flush behavior.
+- [x] 2.2 Add regression cases for 65537-byte overflow, overflow followed by editing or actual EOF, no rejected-line tail for the next reader, UTF-8 and invalid-tail Backspace with both erase bytes, Ctrl+U, Ctrl+W, empty/nonempty Ctrl+D and CR. Implement latched overflow, drain through Enter, wipe with `bundle.Wipe`, and map `ErrValueTooLarge` to `SECRET_TOO_LARGE` before store construction. Acceptance: the targeted suite passes, overflow returns no value/backend call even if input ends during draining, and focused memory-ownership checks verify old allocations and removed suffixes are wiped.
+- [x] 2.3 Add two identical 6050-byte export passphrase lines in one write, a 65537-byte passphrase accepted without a secret-value cap, and Ctrl+C after more than 4096 partial input bytes. Keep both export prompts within one hidden terminal session on macOS/Linux so restoring canonical mode cannot corrupt the queued confirmation. Acceptance: the real terminal-input route consumes exactly two complete lines, restores state after success or validation failure, preserves the existing signal/flush lifecycle, and all existing signal tests remain green.
+- [x] 2.4 Update `README.md` and `docs/security.md` for long macOS/Linux hidden input, editing keys, the Enter/drain behavior after overflow and unchanged interruption recovery. Acceptance: review the documented behavior against every Secret input and Transfer passphrase scenario without introducing a passphrase maximum or changing Windows/BSD prompt promises.
 
 ## 3. Enforce new-write limits and preserve legacy reads
 
-- [ ] 3.1 Bound `--stdin` with `io.LimitReader(stdin, limit+3)`, trim exactly one LF/CRLF before checking length, and wipe owned buffers. Enforce the smaller positive backend `ValueLimiter` limit before `Exists` or `Set`, retaining `ErrValueTooLarge`, `CodeSecretTooLarge`, dry-run behavior and the backend's defensive check. Acceptance: tests accept `limit`, `limit` plus LF and `limit` plus CRLF, reject `limit+1` with `SECRET_TOO_LARGE` and zero store-factory calls, and reject a smaller backend violation with zero backend operations; terminal stdin remains refused.
-- [ ] 3.2 Extend `refuseOversizedValues` and `internal/cli/value_limit_test.go` for the effective common/backend limit, including absent, zero and larger advertised backend limits. Acceptance: 65536-byte writes pass where permitted; a batch with a small entry before a 65537-byte entry writes nothing under normal or dry-run import, oversized overwrite writes nothing, `skip` exempts existing entries, and Windows 2560/2561-byte coverage remains green. Generate oversized containers directly or seed a disposable store below the CLI boundary, never through the now-restricted `secret set`.
-- [ ] 3.3 Verify legacy compatibility boundaries with generated values seeded directly into a gated temporary test store and an otherwise valid v0.4.2-format container. Acceptance: `secret check` does not read/reject the old value, `exec` can use a value over 65536 bytes when the OS allows it, `export` preserves it as authenticated ciphertext, and importing an oversized selected value fails with `SECRET_TOO_LARGE` before any write; ordinary historical-format import still passes. Record the actual historical validation method and any unavailable historical binary explicitly.
-- [ ] 3.4 Update `README.md` and `docs/security.md` for 65536 bytes, the effective 2560-byte Windows Credential Manager limit, write-only application, skipped-import exemption and the explicit old-container import acceptance break. Acceptance: source/spec/document review finds no claim that legacy reads or export are capped, no implication that the container encoding changed, and size remediation accurately names the applicable limit in human and machine output.
+- [x] 3.1 Bound `--stdin` with `io.LimitReader(stdin, limit+3)`, trim exactly one LF/CRLF before checking length, and wipe owned buffers. Enforce the smaller positive backend `ValueLimiter` limit before `Exists` or `Set`, retaining `ErrValueTooLarge`, `CodeSecretTooLarge`, dry-run behavior and the backend's defensive check. Acceptance: tests accept `limit`, `limit` plus LF and `limit` plus CRLF, reject `limit+1` with `SECRET_TOO_LARGE` and zero store-factory calls, and reject a smaller backend violation with zero backend operations; terminal stdin remains refused.
+- [x] 3.2 Extend `refuseOversizedValues` and `internal/cli/value_limit_test.go` for the effective common/backend limit, including absent, zero and larger advertised backend limits. Acceptance: 65536-byte writes pass where permitted; a batch with a small entry before a 65537-byte entry writes nothing under normal or dry-run import, oversized overwrite writes nothing, `skip` exempts existing entries, and Windows 2560/2561-byte coverage remains green. Generate oversized containers directly or seed a disposable store below the CLI boundary, never through the now-restricted `secret set`.
+- [x] 3.3 Verify legacy compatibility boundaries with generated values seeded directly into a gated temporary test store and an otherwise valid v0.4.2-format container. Acceptance: `secret check` does not read/reject the old value, `exec` can use a value over 65536 bytes when the OS allows it, `export` preserves it as authenticated ciphertext, and importing an oversized selected value fails with `SECRET_TOO_LARGE` before any write; ordinary historical-format import still passes. Record the actual historical validation method and any unavailable historical binary explicitly.
+- [x] 3.4 Update `README.md` and `docs/security.md` for 65536 bytes, the effective 2560-byte Windows Credential Manager limit, write-only application, skipped-import exemption and the explicit old-container import acceptance break. Acceptance: source/spec/document review finds no claim that legacy reads or export are capped, no implication that the container encoding changed, and size remediation accurately names the applicable limit in human and machine output.
 
 ## 4. Explain OS environment-size launch failures
 
 - [ ] 4.1 Match wrapped `E2BIG` in the runner start-error path and use the remediation in the exec delta without changing `RUNTIME_ERROR`, exit `1`, `Unable to start command` or other launch handling. Add a native Linux CLI regression that seeds a generated 131072-byte value directly into the gated test store, plus coverage of aggregate-limit error mapping. Acceptance: native Linux execution reports the new remediation, no child starts and no environment/value appears in output; ordinary start, stream, exit and signal tests remain green.
-- [ ] 4.2 Explain the practical 64 KiB bound and remaining per-string/aggregate OS limits in `README.md` and `docs/security.md`. Acceptance: documentation explains reducing the size or number of secrets after `E2BIG` without promising that arbitrary environment names, argv or many valid secrets always fit.
+- [x] 4.2 Explain the practical 64 KiB bound and remaining per-string/aggregate OS limits in `README.md` and `docs/security.md`. Acceptance: documentation explains reducing the size or number of secrets after `E2BIG` without promising that arbitrary environment names, argv or many valid secrets always fit.
 
 ## 5. Manual macOS checks
 
 - [ ] 5.1 Build the updated CLI with Go 1.26.8 and perform real terminal paste checks using all three test-backend gates: `ENV_VAULT_BACKEND=test`, `ENV_VAULT_ALLOW_INSECURE_TEST_BACKEND=1`, and an absolute `ENV_VAULT_TEST_STORE` under the system temporary directory. Generate the 6050-byte clipboard value with `openssl rand -base64 4600 | tr -d '\n' | head -c 6050 | pbcopy`; generate fresh sufficiently large inputs for 65536 and 65537 bytes in the same way. Acceptance: `secret set EXAMPLE` accepts 6050 and 65536 bytes; `pbpaste | shasum -a 256` matches the digest from `exec --secret EXAMPLE:EXAMPLE -- sh -c 'printf %s "$EXAMPLE" | shasum -a 256'`; 65537 bytes returns `SECRET_TOO_LARGE`, leaves the previous value intact and restores the terminal. Record only lengths/digests/statuses, then remove the disposable store and clipboard contents.
 - [ ] 5.2 Interrupt a long partial paste with Ctrl+C in the same isolated macOS terminal setup. Acceptance: echo returns, no partial secret becomes shell input, the established interruption status is preserved, and the disposable store is removed after checking.
-- [ ] 5.3 With test-backend variables unset, generate a fresh 65536-byte value at runtime and pipe it to `secret set size-probe --service env-vault-size-probe --stdin --verify`; remove it with `secret delete size-probe --service env-vault-size-probe --confirm size-probe`. Acceptance: verified Keychain write and deletion both succeed, no other entry is touched, and `sysctl kern.argmax` is recorded. Report unavailable interactive access rather than claiming this check passed.
+- [x] 5.3 With test-backend variables unset, generate a fresh 65536-byte value at runtime and pipe it to `secret set size-probe --service env-vault-size-probe --stdin --verify`; remove it with `secret delete size-probe --service env-vault-size-probe --confirm size-probe`. Acceptance: verified Keychain write and deletion both succeed, no other entry is touched, and `sysctl kern.argmax` is recorded. Report unavailable interactive access rather than claiming this check passed.
 
 ## 6. Full validation and independent implementation review
 
@@ -96,7 +96,7 @@ pass from the plan or from a test that did not execute.
 | --- | --- | --- |
 | Original-code macOS PTY regression | Test commit `9c1214d48653e41e67c1d218e51ddda21ed273dd`; command below | Expected exit 1: 4 short cases pass; 12 long cases time out; no skips or cleanup failures |
 | Original-code Linux PTY regression | [Run 37577529799](https://github.com/ildarbinanas-design/env-vault/actions/runs/37577529799), verification head `badb451521e6a2e00516f01f73f0ebb07e11bcbe`, test source `9c1214d` | Expected Go exit 1; 10 short cases pass, 6 long cases fail with length/digest mismatch; all 16 executed without skips |
-| Fixed prompt, size and compatibility tests | Pending apply | Not run |
+| Fixed prompt, size and compatibility tests | Native macOS commands below | Pass; no targeted prompt/size skips; actual pinned v0.4.2 source tested |
 | Linux E2BIG regression | Pending apply | Not run |
 | Full local CONTRIBUTING checks and explicit skips | Pending apply | Not run |
 | Native CI execution and exact heads | Pending apply | Not run |
@@ -150,3 +150,71 @@ for both delivery modes; every expectation was met. Run
 passed because it confirmed the expected regression. The earlier verification
 run stopped on the expected nonzero Go status before event inspection; only
 the temporary workflow shell handling changed for this successful run.
+
+## Fixed native macOS prompt evidence
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=1 -json -timeout=120s ./internal/cli -run '^TestHidden'
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=20 -json -timeout=120s ./internal/cli -run '^TestHiddenPassphraseLongInputAndConfirmation$'
+```
+
+Both returned exit `0` without skips. The first includes all 16 length cases,
+editing and memory wiping, overflow/EOF and pre-store rejection, confirmation,
+validation-failure restoration, and existing signal/flush cases extended with
+a 6050-byte partial SIGINT. The second reran the previously unstable pasted
+confirmation route: 80 leaf passes, zero failures or skips. Both export prompts
+share a hidden terminal session to avoid macOS corruption of queued input when
+canonical mode is restored between them. The signal handler and interruption
+restoration bodies remain unchanged. Windows/BSD's original prompt file is
+unchanged. README/security documentation was checked against these scenarios.
+
+## Write limits and legacy compatibility evidence
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=1 -json -timeout=180s ./internal/cli -run '^Test(RefuseOversizedValues|SecretSet.*(ValueLimit|Oversized|DryRun|Stdin)|ReadSecretStdin|Import.*(ValueLimit|Oversized))'
+GOCACHE=/tmp/env-vault-hidden-input-evidence/go-cache GOTOOLCHAIN=go1.26.8 go test ./internal/cli -run '^TestLegacy' -count=1 -v
+GOCACHE=/tmp/env-vault-hidden-input-evidence/go-cache GOTOOLCHAIN=go1.26.8 scripts/historical-transfer.sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=1 -json ./internal/runner/...
+```
+
+All returned exit `0` on macOS. The size suite recorded 82 pass events, no
+failures or skips, including common 65536/65537 and simulated backend
+2560/2561 boundaries, zero backend operations on refusal, import normal,
+dry-run, overwrite and skip policies, bounded stdin and wiping, and existing
+terminal-stdin/dry-run controls. This macOS run is not native Windows evidence.
+Legacy tests proved metadata-only check, 65537-byte exec preservation and
+authenticated export, with import rejection before writes. Historical
+verification fetched and verified v0.4.2 source
+`a79a02b6c079ccaa136b634ea6329a626f316b85`, built its actual binary and the current
+binary, and passed ordinary default/named-service imports plus oversized
+normal/dry-run refusal of a container produced by the old binary. No historical
+binary was unavailable. Runner controls recorded 30 passes without skips;
+the new Linux-only E2BIG regressions still require native Linux.
+
+The initial legacy-test attempt could not access the sandbox's default Go
+cache; using the writable temporary cache above resolved it before tests ran.
+README/security documentation now describes the applicable write limit,
+legacy reads, old-container import acceptance change, skipped-import exemption
+and remaining OS environment/argument limits.
+
+## Native macOS Keychain probe
+
+Built with `GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go build -o
+/tmp/env-vault-hidden-input-evidence/env-vault ./cmd/env-vault`. With all three
+test-backend variables unset, generated a fresh 65536-byte value in memory
+and supplied it only on stdin to:
+
+```sh
+env-vault --json secret set size-probe --service env-vault-size-probe --stdin --verify
+env-vault --json secret delete size-probe --service env-vault-size-probe --confirm size-probe
+sysctl kern.argmax
+```
+
+Verified write and deletion each returned exit `0`, `ok: true`; only the
+disposable named entry was used. `kern.argmax: 1048576`. Binary SHA-256:
+`39650bdaee8d9732412be0266a53bac1ae0c9fcf856e130c670fcf5868ca7dc7`.
+
+The real Terminal clipboard check is pending owner interaction: Computer Use
+refused access to `com.apple.Terminal` for safety reasons. The prepared isolated
+script timed out without a paste and cleaned its clipboard and temporary
+store. Automated PTY passes do not substitute for this manual check.

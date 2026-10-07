@@ -273,7 +273,7 @@ func (a *App) importCommand() *cobra.Command {
 			for _, entry := range writes {
 				if err := store.Set(cmd.Context(), entry.Service, entry.Name, entry.Value); err != nil {
 					if stderrors.Is(err, secretstore.ErrValueTooLarge) {
-						return apperrors.New("import", apperrors.CodeSecretTooLarge, "Secret "+entry.Name+" is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+						return secretTooLarge("import", entry.Name, effectiveValueLimit(store))
 					}
 					return backendUnavailable("import", err)
 				}
@@ -333,8 +333,13 @@ func (a *App) readPassphrase(command string, confirm bool) ([]byte, error) {
 			return nil, err
 		}
 	}
-	read := a.passphraseInput(command)
+	if a.passphraseReader == nil && !teststore.EnabledFromEnv() {
+		return a.readTerminalPassphrase(command, confirm)
+	}
+	return a.collectPassphrase(command, confirm, a.passphraseInput(command))
+}
 
+func (a *App) collectPassphrase(command string, confirm bool, read func(string) ([]byte, error)) ([]byte, error) {
 	first, err := read("Passphrase: ")
 	if err != nil {
 		return nil, err
@@ -381,13 +386,17 @@ func (a *App) passphraseInput(command string) func(prompt string) ([]byte, error
 }
 
 func (a *App) terminalPassphrase(command string) func(string) ([]byte, error) {
+	return a.terminalPassphraseWithReader(command, readHiddenPassword)
+}
+
+func (a *App) terminalPassphraseWithReader(command string, read func(int) ([]byte, error)) func(string) ([]byte, error) {
 	return func(prompt string) ([]byte, error) {
 		file, ok := a.stdin.(interface{ Fd() uintptr })
 		if !ok || !term.IsTerminal(int(file.Fd())) {
 			return nil, apperrors.Usage(command, "Interactive hidden prompt requires a terminal", "Run "+command+" from an interactive terminal")
 		}
 		fmt.Fprint(a.stderr, prompt)
-		value, err := readHiddenPassword(int(file.Fd()))
+		value, err := read(int(file.Fd()))
 		fmt.Fprintln(a.stderr)
 		if err != nil {
 			return nil, apperrors.Wrap(command, apperrors.CodeRuntimeError, "Unable to read hidden passphrase prompt", "Retry from an interactive terminal", apperrors.ExitRuntimeError, err)
@@ -432,20 +441,13 @@ func parseConflictPolicy(value string) (string, error) {
 	}
 }
 
-// refuseOversizedValues fails before any write when the backend cannot store
-// one of the values, so an import does not stop halfway.
+// refuseOversizedValues checks all selected writes against common and backend
+// limits before an import writes anything. Skipped entries are not writes.
 func refuseOversizedValues(store secretstore.Store, entries []bundle.SecretEntry) error {
-	limiter, ok := store.(secretstore.ValueLimiter)
-	if !ok {
-		return nil
-	}
-	limit := limiter.MaxValueBytes()
-	if limit <= 0 {
-		return nil
-	}
+	limit := effectiveValueLimit(store)
 	for _, entry := range entries {
 		if len(entry.Value) > limit {
-			return apperrors.New("import", apperrors.CodeSecretTooLarge, "Secret "+entry.Name+" is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+			return secretTooLarge("import", entry.Name, limit)
 		}
 	}
 	return nil

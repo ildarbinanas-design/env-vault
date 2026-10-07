@@ -85,6 +85,20 @@ env-vault exec dev -- make test
 a terminal and trims exactly one trailing `\n` or `\r\n`. There is no
 `secret get` command or secret-value flag.
 
+On macOS and Linux, the hidden prompt accepts long pasted lines without
+truncation. Enter finishes the line; Backspace removes one UTF-8 character,
+Ctrl+U clears the line, and Ctrl+W removes trailing whitespace and the previous
+word. Ctrl+D ends an empty prompt and is ignored after input. If a secret
+exceeds 64 KiB, press Enter to finish discarding the line: the command returns
+`SECRET_TOO_LARGE` without opening the backend. Ctrl+C restores the terminal
+and discards partial input. Windows and BSD keep their native prompt editing.
+
+New values written by `secret set` or `import` are limited to 64 KiB (65536
+bytes), or a smaller backend limit: Windows Credential Manager allows 2560
+bytes. Oversized input returns `SECRET_TOO_LARGE` with the applicable byte
+limit. Existing larger values remain usable by `secret check`, `exec` and
+`export`; these commands do not apply the new write limit.
+
 You can also supply a mapping directly:
 
 ```sh
@@ -95,6 +109,12 @@ env-vault exec --secret nexus-token:NPM_TOKEN -- make test
 Use an explicit shell only when needed, for example
 `env-vault exec dev -- bash -lc 'make test'`. See
 [process and signal behavior](openspec/specs/exec/spec.md) for Unix signal handling.
+
+The 64 KiB write limit leaves room below common per-string environment limits,
+but the OS also limits the combined environment and command arguments. Long
+names, many secrets or large arguments can still prevent a launch. When the
+OS reports this size failure, `exec` returns `RUNTIME_ERROR` (exit `1`) and
+asks you to reduce the size or number of secrets.
 
 ### How values move
 
@@ -223,6 +243,9 @@ env-vault import vault.evb
 
 Both commands use a hidden passphrase prompt; export asks twice. The container
 carries values only. Transfer your mapping file separately.
+On macOS and Linux, these prompts support the same long input and editing as
+`secret set`; the passphrase and confirmation can be pasted as two lines at
+once. The secret-value size limit does not cap passphrase length.
 
 - Export includes the default service. Add custom services with
   `--with-services team/ci,team/ops` or repeat the flag; they cannot be discovered
@@ -231,6 +254,11 @@ carries values only. Transfer your mapping file separately.
 - Import defaults to `--on-conflict fail`: any existing secret prevents all
   writes. Use `skip` or `overwrite` deliberately. Later backend failures can
   leave a partial import.
+- Import checks the size of every selected write before writing anything,
+  including with `--dry-run`. Existing entries left alone by `skip` are exempt.
+  Older containers, including v0.4.2 containers, can still be opened, but an
+  oversized value selected for writing now rejects the import. This changes
+  which old containers can be imported, without changing the container format.
 - Containers are AES-256-GCM encrypted under an Argon2id-derived key. Their
   strength depends on the passphrase; copies cannot be revoked. Keep `*.evb`
   out of git and synced folders.
