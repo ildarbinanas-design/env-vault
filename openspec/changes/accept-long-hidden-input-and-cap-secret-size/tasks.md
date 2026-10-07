@@ -42,7 +42,7 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 ## 6. Full validation and independent implementation review
 
 - [ ] 6.1 Run the complete applicable CONTRIBUTING set listed below, plus strict change and main-spec validation. Acceptance: record each exact command/result, fix failures, list unavailable checks and skips explicitly, and do not count a skipped native/E2E/release-script test as passed. Keep `CHANGELOG.md`, backend implementations, dependencies and reserved paths unchanged in the product branch.
-- [ ] 6.2 Verify the final implementation on native CI, including `ubuntu-latest` prompt and Linux E2BIG tests and the existing Windows limit tests. Acceptance: record run URLs and exact tested head SHAs; inspect verbose/JSON test events to prove every new applicable Linux test ran without a PTY skip, and retain the native Windows/macOS results. If ordinary CI logs cannot prove execution, use the temporary verification branch procedure below and remove that branch afterwards.
+- [ ] 6.2 Verify the final implementation on native CI, including `ubuntu-latest` prompt and Linux E2BIG tests. Ordinary CI alone does not establish native Windows behavior: run `GOTOOLCHAIN=go1.26.8 go test -count=1 -json ./internal/cli/... ./internal/secretstore/keyring/...` on `windows-latest` from a temporary `agent/verify-windows-*` branch following AGENTS.md. Acceptance: record run URLs and exact tested head SHAs; inspect JSON test events to prove the Windows 2560/2561-byte limit and pre-backend refusal tests actually ran, and that every new applicable Linux test ran without a PTY skip; retain native macOS results. Delete the temporary verification branches after checking. If the Windows run is impossible, record `Windows: not natively verified` in the evidence log and leave this task incomplete.
 - [ ] 6.3 Give an independent reviewer without the implementer's conversation the final implementation diff, the agreed delta specs and before/after validation results. Acceptance: all blocking findings are resolved, material fixes are re-reviewed and relevant checks rerun, and the reviewer result/limitations are recorded below. This does not authorize merging the eventual PR.
 
 ## 7. Synchronize and archive in the same PR
@@ -108,8 +108,13 @@ pass from the plan or from a test that did not execute.
 
 Open a PR from `agent/hidden-prompt-long-input` with the exact title
 `fix(cli): accept long hidden prompt input and cap secret size at 64 KiB`.
+This is a patch release: keep the title without `!`. Do not put the tokens
+`BREAKING CHANGE:` or `BREAKING-CHANGE:` in any commit message or the PR body,
+because the body becomes the squash commit body and those tokens would make
+Release Please select v1.0.0. The word BREAKING may remain in `proposal.md`.
 Its body must link the archived change, explain the intentional old-container
-import acceptance change, include the failing/passing regression results,
+import acceptance change in a `Compatibility` section using ordinary prose,
+include the failing/passing regression results,
 every check and explicit skip, native CI evidence and manual macOS results.
 Return the PR URL, head SHA and check list. Leave the PR unmerged for the
 separate independent reviewer and owner; task completion is not permission
