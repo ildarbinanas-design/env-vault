@@ -100,8 +100,8 @@ pass from the plan or from a test that did not execute.
 | Linux E2BIG regression | [Run 37579807389](https://github.com/ildarbinanas-design/env-vault/actions/runs/37579807389), product `b2bb23d` | Per-string CLI and aggregate runner tests executed and passed |
 | Full local CONTRIBUTING checks and explicit skips | Go 1.26.8, implementation `b2bb23dc593c785acada22960bbab2c2ee955917`; commands below | All commands passed; full and race suites each 861 pass events and 9 explicit skips |
 | Native CI execution and exact heads | Dedicated Linux/Windows runs below | Required tests passed; initial full matrix needs E2E coverage follow-up |
-| Manual macOS paste, interrupt and Keychain probe | Pending apply | Not run |
-| Independent implementation review | Pending apply | Not performed |
+| Manual macOS paste, interrupt and Keychain probe | Native probe and isolated Terminal script described below | Keychain write/verify/delete pass; 6050-byte paste pass; 65536 result check failed and repeat pending; overflow/interrupt not reached |
+| Independent implementation review | Separate reviewer without implementation conversation, product `b2bb23d` and E2E follow-up | No actionable code/test blockers; final native results and archive review pending |
 | Final synchronized-spec and archive checks | Pending apply | Not run |
 
 ## Delivery after archival
@@ -332,3 +332,74 @@ the leak scan found zero occurrences across 18 report files. The existing
 reporter was checksum-verified. Generated reports were moved out of the
 checkout into the local evidence directory. Linux amd64 and Windows amd64
 E2E package cross-builds passed; these are not substitutes for native CI.
+
+## Independent review and follow-up validation
+
+An independent agent without the implementation conversation reviewed the
+product diff at `b2bb23d` against `f5012e1`, the agreed deltas, baseline failures
+and passing local evidence. It found no actionable correctness/security
+blockers in the terminal editor, memory ownership, signal lifecycle, write
+limits, import preflight/skip behavior, legacy compatibility or E2BIG mapping.
+It separately reviewed the final E2E follow-up before commit `08a7452`,
+including bounded process/writer cleanup, no secret-bearing arguments or
+diagnostics, and the actual canonical report/registry/leak-scan results; no
+actionable blockers were found. Final native results and spec/archive review
+remain separate completion checks.
+
+After the E2E-only follow-up:
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go vet ./e2e/...
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -race ./e2e/...
+```
+
+Both returned exit `0`. The ordinary binary-gated `TestE2E` is skipped in this
+package invocation; the canonical runner above actually exercised it.
+`git diff b2bb23d 08a7452 -- internal` is empty: the follow-up changes only
+E2E tests/helper and documentation/evidence.
+
+## Final-head native checks and suite fingerprint correction
+
+Dedicated native verification was repeated from product/test revision
+`08a7452e054fb14145cd97cf1f7832fe83b595b1`, using the same commands and event
+expectations as above:
+
+- Linux [37581451390](https://github.com/ildarbinanas-design/env-vault/actions/runs/37581451390),
+  verification head `29ff76cd4afd4856576809d055d0e28adbd08a79`: Go exit `0`,
+  all 116 required run/pass events, no required skips.
+- Windows [37581459331](https://github.com/ildarbinanas-design/env-vault/actions/runs/37581459331),
+  verification head `9df021b7eb8b2b791c3c0cd685a9540d0562e1a4`: Go exit `0`,
+  all 48 required run/pass events, including 2560/2561 and pre-backend refusal.
+
+Unrelated/platform skips matched the previous dedicated runs. Both temporary
+`agent/verify-linux-hidden-input-final-20261007` and
+`agent/verify-windows-hidden-input-final-20261007` branches and worktrees were
+deleted, with remote absence verified. Previous logs and Actions artifacts
+were preserved.
+
+The second full matrix,
+[37581338054](https://github.com/ildarbinanas-design/env-vault/actions/runs/37581338054),
+passed Linux amd64 E2E (24/24, no skips, statement coverage 62.60%, critical
+coverage 100%) and its real-store smoke. Source tests and macOS/Windows native
+internal tests found the stale expected constant in
+`TestCanonicalRepositoryHashIsPinned`; their only test failure was this suite
+fingerprint mismatch. The later E2E/report steps on those two native jobs did
+not run. This matrix is recorded as failed.
+
+Updated only the expected test fingerprint to the hash of the intentionally
+changed E2E sources:
+`ad508a7c62217b8dfdae87b82ee38619f795b71faea5397595947add31501ad5`. The independent
+reviewer recomputed it from the 30 canonical E2E source files and approved the
+update; `GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-review-gocache go test
+-count=1 ./internal/e2esuite` passed. The hash algorithm, schema, production
+code and historical reports were unchanged.
+
+Repeated local full and race commands after that correction:
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -json ./...
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -race -json ./...
+```
+
+Both returned exit `0`, each recording 861 pass events and the same nine
+explicit local skips documented above.
