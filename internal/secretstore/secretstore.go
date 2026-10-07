@@ -13,6 +13,9 @@ import (
 
 const DefaultService = "env-vault"
 
+// MaxValueBytes limits new secret values, not reads of existing records.
+const MaxValueBytes = 64 << 10
+
 var secretNameRE = regexp.MustCompile(`^[A-Za-z0-9._/@-]+$`)
 
 var (
@@ -27,7 +30,7 @@ var (
 	// ErrUnreadable reports a record the backend lists but refused to return,
 	// for example after a denied macOS Keychain prompt or a locked keychain.
 	ErrUnreadable = errors.New("secret exists but the backend did not return it")
-	// ErrValueTooLarge reports a value larger than the backend can store.
+	// ErrValueTooLarge reports a value beyond the common or backend write limit.
 	ErrValueTooLarge = errors.New("secret value is larger than the backend stores")
 	// ErrPassServiceSlash reports a service name the pass backend cannot keep
 	// apart from secret names; see ValidatePassServiceName.
@@ -39,7 +42,6 @@ const (
 	PassBackendRemediation       = "install pass or use another supported OS keychain backend."
 	TimeoutBackendRemediation    = "Answer the system keychain prompt or unlock the keychain, then retry"
 	UnreadableBackendRemediation = "Allow env-vault in the system keychain prompt or unlock the keychain, then retry"
-	ValueTooLargeRemediation     = "Windows Credential Manager stores at most 2560 bytes per secret; store a shorter value"
 	PassServiceRemediation       = "Use a service name without a slash with the pass backend"
 )
 

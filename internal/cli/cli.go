@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/ildarbinanas-design/env-vault/internal/bundle"
 	"github.com/ildarbinanas-design/env-vault/internal/config"
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/output"
@@ -226,9 +227,14 @@ func (a *App) secretSetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer bundle.Wipe(value)
 			store, err := a.store("secret_set")
 			if err != nil {
 				return err
+			}
+			limit := effectiveValueLimit(store)
+			if len(value) > limit {
+				return secretTooLarge("secret_set", "", limit)
 			}
 			ctx := context.Background()
 			existed, err := store.Exists(ctx, service, name)
@@ -237,7 +243,7 @@ func (a *App) secretSetCommand() *cobra.Command {
 			}
 			if err := store.Set(ctx, service, name, value); err != nil {
 				if stderrors.Is(err, secretstore.ErrValueTooLarge) {
-					return apperrors.New("secret_set", apperrors.CodeSecretTooLarge, "Secret value is larger than the backend stores", secretstore.ValueTooLargeRemediation, apperrors.ExitUsage)
+					return secretTooLarge("secret_set", "", limit)
 				}
 				return backendUnavailable("secret_set", err)
 			}
@@ -744,11 +750,19 @@ func (a *App) readSecret(useStdin bool) ([]byte, error) {
 		if file, ok := a.stdin.(interface{ Fd() uintptr }); ok && term.IsTerminal(int(file.Fd())) {
 			return nil, apperrors.Usage("secret_set", "--stdin reads a pipe, but stdin is a terminal that would show the secret", "Omit --stdin to type the secret at the hidden prompt, or pipe it into --stdin")
 		}
-		value, err := io.ReadAll(a.stdin)
+		owned, err := io.ReadAll(io.LimitReader(a.stdin, int64(secretstore.MaxValueBytes+3)))
 		if err != nil {
+			bundle.Wipe(owned)
 			return nil, apperrors.Wrap("secret_set", apperrors.CodeRuntimeError, "Unable to read secret from stdin", "Retry with --stdin and a readable pipe", apperrors.ExitRuntimeError, err)
 		}
-		value = trimLineEnding(value)
+		value := trimLineEnding(owned)
+		// The returned slice no longer owns the trimmed suffix. Wipe that
+		// suffix now; the command wipes the retained value after using it.
+		bundle.Wipe(owned[len(value):])
+		if len(value) > secretstore.MaxValueBytes {
+			bundle.Wipe(owned)
+			return nil, secretTooLarge("secret_set", "", secretstore.MaxValueBytes)
+		}
 		if len(value) == 0 {
 			return nil, apperrors.Usage("secret_set", "Secret input is empty", "Provide secret input through a hidden prompt or --stdin")
 		}
@@ -759,9 +773,13 @@ func (a *App) readSecret(useStdin bool) ([]byte, error) {
 		return nil, apperrors.Usage("secret_set", "Interactive hidden prompt requires a terminal", "Use --stdin when piping secret input")
 	}
 	fmt.Fprint(a.stderr, "Secret: ")
-	value, err := readHiddenPassword(int(file.Fd()))
+	value, err := readHiddenSecret(int(file.Fd()))
 	fmt.Fprintln(a.stderr)
 	if err != nil {
+		bundle.Wipe(value)
+		if stderrors.Is(err, secretstore.ErrValueTooLarge) {
+			return nil, secretTooLarge("secret_set", "", secretstore.MaxValueBytes)
+		}
 		return nil, apperrors.Wrap("secret_set", apperrors.CodeRuntimeError, "Unable to read hidden secret prompt", "Retry from an interactive terminal or use --stdin", apperrors.ExitRuntimeError, err)
 	}
 	if len(value) == 0 {

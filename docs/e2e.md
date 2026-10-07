@@ -56,6 +56,11 @@ process tree. Concurrency and signal tests use readiness files and bounded
 polling, not sleeps. Tests do not run in parallel, and burn-in uses shuffled
 order without rerunning failed tests. The runner records and requires three
 distinct full-suite scenario-order seeds and five distinct locking-suite seeds.
+The secret lifecycle scenario also checks the 65536-byte stdin boundary and
+oversized-write refusal. On macOS/Linux it drives the built CLI through a
+pseudo-terminal to verify long hidden input, editing, overflow, and terminal
+restoration, then checks delivery using only length and SHA-256. Missing PTY
+access fails this native scenario instead of silently skipping it.
 Before the binary suite, every native matrix job runs the config package once;
 Windows additionally runs the focused concurrent save/read test ten times in
 one process as a sequential burn-in. Any failed repetition fails the job.

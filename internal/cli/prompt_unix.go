@@ -3,22 +3,57 @@
 package cli
 
 import (
-	"errors"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 
+	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/runner"
+	"github.com/ildarbinanas-design/env-vault/internal/secretstore"
 )
 
-// readHiddenPassword keeps the terminal in canonical mode, with echo disabled.
+func readHiddenPassword(fd int) ([]byte, error) { return readHiddenInput(fd, 0) }
+
+func readHiddenSecret(fd int) ([]byte, error) {
+	return readHiddenInput(fd, secretstore.MaxValueBytes)
+}
+
+func readHiddenInput(fd, limit int) ([]byte, error) {
+	return withHiddenPrompt(fd, func() ([]byte, error) {
+		return readHiddenLine(func(p []byte) (int, error) { return unix.Read(fd, p) }, limit)
+	})
+}
+
+func (a *App) readTerminalPassphrase(command string, confirm bool) ([]byte, error) {
+	file, ok := a.stdin.(interface{ Fd() uintptr })
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		// Preserve the existing structured error for non-terminal input.
+		return a.collectPassphrase(command, confirm, a.terminalPassphrase(command))
+	}
+	value, err := withHiddenPrompt(int(file.Fd()), func() ([]byte, error) {
+		read := a.terminalPassphraseWithReader(command, func(fd int) ([]byte, error) {
+			return readHiddenLine(func(p []byte) (int, error) { return unix.Read(fd, p) }, 0)
+		})
+		return a.collectPassphrase(command, confirm, read)
+	})
+	if err != nil {
+		if _, ok := apperrors.From(err); !ok {
+			return nil, apperrors.Wrap(command, apperrors.CodeRuntimeError, "Unable to read hidden passphrase prompt", "Retry from an interactive terminal", apperrors.ExitRuntimeError, err)
+		}
+	}
+	return value, err
+}
+
+// withHiddenPrompt disables canonical buffering and echo but retains signals.
 // Register handlers before changing its state and start the handler only after
 // that change, so a signal cannot restore echo just before we disable it. No
 // secret or passphrase is sent to a backend until this function returns.
-func readHiddenPassword(fd int) ([]byte, error) {
+// A confirmation pair shares this session: restoring canonical mode between
+// lines can corrupt a second line that is already queued on a macOS terminal.
+func withHiddenPrompt(fd int, read func() ([]byte, error)) ([]byte, error) {
 	state, err := unix.IoctlGetTermios(fd, promptReadTermios)
 	if err != nil {
 		return nil, err
@@ -33,9 +68,11 @@ func readHiddenPassword(fd int) ([]byte, error) {
 	}
 	signal.Notify(notifications, signals...)
 	hidden := *state
-	hidden.Lflag &^= unix.ECHO
-	hidden.Lflag |= unix.ICANON | unix.ISIG
+	hidden.Lflag &^= unix.ECHO | unix.ICANON | unix.IEXTEN
+	hidden.Lflag |= unix.ISIG
 	hidden.Iflag |= unix.ICRNL
+	hidden.Cc[unix.VMIN] = 1
+	hidden.Cc[unix.VTIME] = 0
 	if err := unix.IoctlSetTermios(fd, promptWriteTermios, &hidden); err != nil {
 		signal.Stop(notifications)
 		return nil, err
@@ -58,27 +95,5 @@ func readHiddenPassword(fd int) ([]byte, error) {
 		<-done
 		_ = unix.IoctlSetTermios(fd, promptWriteTermios, state)
 	}()
-	// The terminal handles line editing in canonical mode. Read one byte at a
-	// time to avoid consuming input intended for a confirmation prompt.
-	var value []byte
-	var b [1]byte
-	for {
-		n, err := unix.Read(fd, b[:])
-		if errors.Is(err, unix.EINTR) {
-			continue
-		}
-		if err != nil {
-			return value, err
-		}
-		if n == 0 {
-			if len(value) == 0 {
-				return nil, io.EOF
-			}
-			return value, nil
-		}
-		if b[0] == '\n' {
-			return value, nil
-		}
-		value = append(value, b[0])
-	}
+	return read()
 }

@@ -66,11 +66,12 @@ type scenario struct {
 }
 
 type runOptions struct {
-	stdin   []byte
-	env     map[string]string
-	unset   []string
-	cwd     string
-	timeout time.Duration
+	stdin    []byte
+	terminal *os.File
+	env      map[string]string
+	unset    []string
+	cwd      string
+	timeout  time.Duration
 }
 
 type commandResult struct {
@@ -299,12 +300,20 @@ func newScenario(t *testing.T, s *suite, id string) *scenario {
 }
 
 func (sc *scenario) newSentinel() string {
+	return sc.newSizedSentinel(len(sentinelPrefix) + 48)
+}
+
+func (sc *scenario) newSizedSentinel(size int) string {
 	sc.t.Helper()
-	random := make([]byte, 24)
+	if size < len(sentinelPrefix)+48 {
+		sc.t.Fatal("sentinel length is too small")
+	}
+	random := make([]byte, (size-len(sentinelPrefix)+1)/2)
 	if _, err := cryptorand.Read(random); err != nil {
 		sc.t.Fatalf("generate sentinel: %v", err)
 	}
-	value := sentinelPrefix + hex.EncodeToString(random)
+	value := (sentinelPrefix + hex.EncodeToString(random))[:size]
+	clear(random)
 	sc.sentinels = append(sc.sentinels, value)
 	if sc.suite.registry != "" {
 		sum := sha256.Sum256([]byte(value))
@@ -905,5 +914,6 @@ func fileSHA256(t *testing.T, filename string) [sha256.Size]byte {
 	if err != nil {
 		t.Fatalf("hash saved test file %s: %v", filepath.Base(filename), err)
 	}
+	defer clear(data)
 	return sha256.Sum256(data)
 }

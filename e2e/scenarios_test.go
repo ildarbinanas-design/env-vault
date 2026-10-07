@@ -290,6 +290,27 @@ func testSecretLifecycle(sc *scenario) {
 		sc.t.Fatalf("custom-service secret escaped into the default-service list: %#v err=%v", listData, err)
 	}
 	wantExit(sc.t, sc.run("--json", "secret", "delete", "custom-token", "--service", customService, "--confirm", "custom-token"), 0)
+	testSecretValueSizeBoundaries(sc)
+	testHiddenSecretInput(sc)
+}
+
+func testSecretValueSizeBoundaries(sc *scenario) {
+	value := sc.newSizedSentinel(65536)
+	input := []byte(value + "\r\n")
+	defer clear(input)
+	set := sc.runWith(runOptions{stdin: input}, "--json", "secret", "set", "size-boundary", "--stdin", "--verify")
+	wantExit(sc.t, set, 0)
+	if parseDataMap(sc.t, parseEnvelope(sc.t, set))["verified"] != true {
+		sc.t.Fatal("value at the common limit was not verified")
+	}
+	before := fileSHA256(sc.t, sc.store)
+	oversized := []byte(sc.newSizedSentinel(65537) + "\n")
+	defer clear(oversized)
+	wantErrorCode(sc, sc.runWith(runOptions{stdin: oversized}, "--json", "secret", "set", "size-boundary", "--stdin"), 2, "SECRET_TOO_LARGE")
+	if fileSHA256(sc.t, sc.store) != before {
+		sc.t.Fatal("oversized replacement changed the private test store")
+	}
+	wantExit(sc.t, sc.run("--json", "secret", "delete", "size-boundary", "--confirm", "size-boundary"), 0)
 }
 
 func testSecretValidationSecurity(sc *scenario) {

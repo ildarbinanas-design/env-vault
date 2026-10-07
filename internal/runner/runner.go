@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	apperrors "github.com/ildarbinanas-design/env-vault/internal/errors"
 	"github.com/ildarbinanas-design/env-vault/internal/platform"
@@ -43,7 +44,11 @@ func (r CommandRunner) Run(ctx context.Context, argv []string, env []string) (in
 		if stderrors.Is(err, exec.ErrNotFound) {
 			return apperrors.ExitCommandNotFound, apperrors.New("exec", apperrors.CodeCommandNotFound, "Command not found: "+argv[0], "Check the command name or PATH", apperrors.ExitCommandNotFound)
 		}
-		return apperrors.ExitRuntimeError, apperrors.Wrap("exec", apperrors.CodeRuntimeError, "Unable to start command", "Check command permissions and arguments", apperrors.ExitRuntimeError, err)
+		remediation := "Check command permissions and arguments"
+		if stderrors.Is(err, syscall.E2BIG) {
+			remediation = "The environment exceeds the operating system limit; reduce the size or number of secrets"
+		}
+		return apperrors.ExitRuntimeError, apperrors.Wrap("exec", apperrors.CodeRuntimeError, "Unable to start command", remediation, apperrors.ExitRuntimeError, err)
 	}
 	stop := forwardSignals(cmd.Process, signals)
 	defer stop()

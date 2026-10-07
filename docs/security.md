@@ -16,6 +16,34 @@ Secret input is limited to:
 
 There is no `secret get` command and no command-line flag for passing a secret value.
 
+`secret set` and the values selected for writing by `import` have a common
+65536-byte (64 KiB) maximum. A backend's smaller positive limit takes precedence;
+Windows Credential Manager permits 2560 bytes. `SECRET_TOO_LARGE` reports the
+effective limit in its remediation in both human and machine output. `--stdin`
+reads at most the common limit plus three bytes, removes exactly one LF or CRLF,
+then checks the size before constructing a store. Smaller backend limits are
+checked before the first existence check or write in `secret set`.
+
+This is a new-write restriction. Existing larger values remain available to
+`secret check`, `exec` and `export`, subject to the existing OS and container
+limits. `secret check` checks metadata without retrieving the value.
+
+On macOS and Linux, hidden secret and transfer-passphrase prompts accept long
+pasted lines without truncation. LF or CR ends a line. Backspace (`0x7f` or
+`0x08`) removes a complete final UTF-8 character, or one byte for an invalid
+UTF-8 tail; Ctrl+U clears input, and Ctrl+W removes trailing Unicode whitespace
+and the preceding word. Ctrl+D ends an empty prompt and otherwise has no
+effect. The export prompts each consume one line, even when the passphrase
+and confirmation arrive in the same paste. Windows/BSD prompt editing is
+unchanged, and the secret-value limit does not limit transfer passphrases.
+
+Once a hidden secret line exceeds 65536 bytes, further bytes are discarded
+through Enter, including any editing keys. The retained input is wiped on a
+best-effort basis, the terminal is restored, and the command returns
+`SECRET_TOO_LARGE` without opening the backend. Editing cannot rescue an
+already oversized line. Removed characters and replaced input buffers are
+also wiped on a best-effort basis; Go may still retain copies in memory.
+
 On macOS and Linux, hidden prompts interrupted by SIGINT, SIGTERM, SIGHUP or
 SIGQUIT discard partially typed input before restoring the terminal. Inherited
 ignored SIGINT/SIGHUP remain ignored. SIGKILL cannot be handled or restore
@@ -89,6 +117,15 @@ one credential through case variants of service or name are rejected with
 `BUNDLE_INVALID`, regardless of conflict policy. Preflight failures write
 nothing; failures during the later write phase can leave a partial import.
 External concurrent changes are not excluded by the preflight.
+
+Import checks every selected value against the smaller of 65536 bytes and a
+positive backend limit before its first write, including under `--dry-run`.
+An existing entry excluded by `--on-conflict skip` is not a selected write;
+`overwrite` is. A valid older container, including one produced by v0.4.2,
+can therefore be rejected with `SECRET_TOO_LARGE` when a selected value exceeds
+the new limit. This intentionally narrows import acceptance; authentication,
+encryption and the container encoding are unchanged. Export continues to
+preserve older oversized values as authenticated ciphertext.
 
 ## Config
 
@@ -209,6 +246,13 @@ conflict policy; see [transfer containers](#transfer-containers).
 ## Known Limitations
 
 - A child process receives secret values through environment variables and can leak them if it prints or forwards its environment.
+- The 64 KiB write bound is practical headroom below common per-string OS
+  limits, not a guarantee that a command can launch. Environment names,
+  arguments and all injected values also count toward platform limits. A
+  start failure caused by `E2BIG` remains `RUNTIME_ERROR`, exit `1`, with message
+  `Unable to start command` and remediation to reduce the size or number of
+  secrets. Existing larger values and many individually valid values can
+  still encounter these per-string or aggregate limits.
 - On Linux, process environment variables may be visible to the same user through `/proc` in some environments.
 - OS keychain availability depends on the platform session and keyring daemon.
   Every backend call gives up after two minutes, so a system prompt that nobody
