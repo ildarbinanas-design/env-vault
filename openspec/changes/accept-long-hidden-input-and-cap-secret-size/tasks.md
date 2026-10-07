@@ -10,9 +10,9 @@ payloads nor passphrases may appear in arguments, fixtures or diagnostics.
 
 ## 1. Record failing prompt regressions before changing production code
 
-- [ ] 1.1 Extend `internal/cli/prompt_unix_test.go` using `openPseudoTerminal` and the existing subprocess helper. Generate values from `testutil.EphemeralValue`; helper stdout must contain only byte length and hex SHA-256, and mismatches only `length/digest mismatch`. Add lengths 1, 1023, 1024, 1025, 4095, 4096, 6050 and 65536, each as one large goroutine write and as chunks; wait for hidden mode before writing and bound writer/process waits. Acceptance: the tests compile against unchanged production code, short-input controls pass, and inspection confirms no raw-value diagnostics or fixed secret payloads.
-- [ ] 1.2 Run the new tests on the original prompt on macOS with `GOTOOLCHAIN=go1.26.8`, without implementing the fix. Acceptance: record the exact command, test-only commit/source SHA and failing long-input timeout result in the evidence log below; no payload is printed and PTY/subprocess cleanup completes.
-- [ ] 1.3 Run the same test-only revision on native Linux `ubuntu-latest` through authorized branch verification before changing production code. Acceptance: retain the run URL, exact head, command, test names and failing long-input length/digest mismatch, distinguish it from macOS timeout, and prove the Linux PTY cases were executed rather than skipped.
+- [x] 1.1 Extend `internal/cli/prompt_unix_test.go` using `openPseudoTerminal` and the existing subprocess helper. Generate values from `testutil.EphemeralValue`; helper stdout must contain only byte length and hex SHA-256, and mismatches only `length/digest mismatch`. Add lengths 1, 1023, 1024, 1025, 4095, 4096, 6050 and 65536, each as one large goroutine write and as chunks; wait for hidden mode before writing and bound writer/process waits. Acceptance: the tests compile against unchanged production code, short-input controls pass, and inspection confirms no raw-value diagnostics or fixed secret payloads.
+- [x] 1.2 Run the new tests on the original prompt on macOS with `GOTOOLCHAIN=go1.26.8`, without implementing the fix. Acceptance: record the exact command, test-only commit/source SHA and failing long-input timeout result in the evidence log below; no payload is printed and PTY/subprocess cleanup completes.
+- [x] 1.3 Run the same test-only revision on native Linux `ubuntu-latest` through authorized branch verification before changing production code. Acceptance: retain the run URL, exact head, command, test names and failing long-input length/digest mismatch, distinguish it from macOS timeout, and prove the Linux PTY cases were executed rather than skipped.
 
 ## 2. Implement and verify hidden input
 
@@ -94,8 +94,8 @@ pass from the plan or from a test that did not execute.
 
 | Evidence | Command / revision / run | Actual result |
 | --- | --- | --- |
-| Original-code macOS PTY regression | Pending apply | Not run |
-| Original-code Linux PTY regression | Pending apply | Not run |
+| Original-code macOS PTY regression | Test commit `9c1214d48653e41e67c1d218e51ddda21ed273dd`; command below | Expected exit 1: 4 short cases pass; 12 long cases time out; no skips or cleanup failures |
+| Original-code Linux PTY regression | [Run 37577529799](https://github.com/ildarbinanas-design/env-vault/actions/runs/37577529799), verification head `badb451521e6a2e00516f01f73f0ebb07e11bcbe`, test source `9c1214d` | Expected Go exit 1; 10 short cases pass, 6 long cases fail with length/digest mismatch; all 16 executed without skips |
 | Fixed prompt, size and compatibility tests | Pending apply | Not run |
 | Linux E2BIG regression | Pending apply | Not run |
 | Full local CONTRIBUTING checks and explicit skips | Pending apply | Not run |
@@ -119,3 +119,34 @@ every check and explicit skip, native CI evidence and manual macOS results.
 Return the PR URL, head SHA and check list. Leave the PR unmerged for the
 separate independent reviewer and owner; task completion is not permission
 to merge it.
+
+## Recorded baseline evidence
+
+On macOS Darwin 25.6.0 arm64 with Go 1.26.8, before production edits:
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=1 -json -timeout=90s ./internal/cli -run '^TestHiddenPromptPreservesLongInput$'
+```
+
+Exit `1`: all 16 cases executed. Lengths 1 and 1023 passed in single-write
+and chunked modes. Lengths 1024, 1025, 4095, 4096, 6050 and 65536 failed in
+both modes with `hidden prompt read timed out`. No PTY skips, writer timeouts
+or cleanup timeouts occurred. The test-only revision is
+`9c1214d48653e41e67c1d218e51ddda21ed273dd`.
+
+```sh
+GOTOOLCHAIN=go1.26.8 GOCACHE=/tmp/env-vault-gocache go test -count=1 -json -timeout=90s ./internal/cli -run '^TestHiddenPromptPreservesLongInput$/^length-(1|1023)$/|^TestHiddenPromptsRestoreTerminalOnSignals$|^TestHiddenPromptDiscardsInterruptedInput$'
+```
+
+Exit `0`: all four short boundaries, twelve existing signal/restoration
+cases and both interrupted-input flush cases passed without skips.
+
+Native Linux baseline ran `GOTOOLCHAIN=go1.26.8 go test -count=1 -json
+./internal/cli/... -run '^TestHiddenPromptPreservesLongInput$'` on
+`ubuntu-latest`. The verifier required pass events through 4095 bytes and
+failure events containing `length/digest mismatch` at 4096, 6050 and 65536,
+for both delivery modes; every expectation was met. Run
+[37577529799](https://github.com/ildarbinanas-design/env-vault/actions/runs/37577529799)
+passed because it confirmed the expected regression. The earlier verification
+run stopped on the expected nonzero Go status before event inspection; only
+the temporary workflow shell handling changed for this successful run.
