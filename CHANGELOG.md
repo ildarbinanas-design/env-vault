@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.8](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.7...v0.4.8) (2026-10-18)
+
+
+### Bug Fixes
+
+* **deps:** bump golang.org/x modules and artifact actions ([#153](https://github.com/ildarbinanas-design/env-vault/issues/153)) ([d4a8494](https://github.com/ildarbinanas-design/env-vault/commit/d4a8494d3aae26917e39ddefa4e04349cd7a65fb))
+
 ## [0.4.7](https://github.com/ildarbinanas-design/env-vault/compare/v0.4.6...v0.4.7) (2026-10-07)
 
 
