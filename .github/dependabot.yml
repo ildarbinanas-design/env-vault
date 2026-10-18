@@ -14,11 +14,13 @@ updates:
       prefix: "fix"
       include: "scope"
     ignore:
-      # This tag predates the current 2019 pseudo-version and lacks
-      # CallWithContext, which the Linux integration tests require (PR #143).
-      # Exclude only this downgrade; keep future D-Bus updates eligible.
+      # Every tag on this module path (v1 through v4.1.0+incompatible)
+      # predates the current 2019 pseudo-version and lacks CallWithContext,
+      # which the Linux integration tests require (PRs #143 and #150).
+      # Newer releases live at github.com/godbus/dbus/v5, a separate module
+      # this rule does not match, so real D-Bus updates stay eligible.
       - dependency-name: "github.com/godbus/dbus"
-        versions: ["= 4.1.0+incompatible"]
+        versions: ["< 5.0.0"]
     # Dependencies that commonly raise the minimum Go version stay out of the
     # broad group so their toolchain impact is reviewed in an isolated PR.
     # golang.org/x/crypto is excluded too: each release requires the latest
