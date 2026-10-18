@@ -20,8 +20,8 @@ import (
 const (
 	checkoutAction       = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 	setupGoAction        = "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16"
-	uploadArtifactAction = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-	downloadAction       = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+	uploadArtifactAction = "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+	downloadAction       = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 	releasePleaseAction  = "googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7"
 )
 
