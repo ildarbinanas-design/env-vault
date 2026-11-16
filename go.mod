@@ -6,7 +6,7 @@ require (
 	github.com/99designs/keyring v1.2.2
 	github.com/danieljoos/wincred v1.2.3
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2
-	github.com/gofrs/flock v0.13.1
+	github.com/gofrs/flock v0.13.2
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.58.0
